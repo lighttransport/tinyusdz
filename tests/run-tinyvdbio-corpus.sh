@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UNIT="${1:?unit-test-tinyusdz path required}"
+UNIT="${1:?unit-test-lightusd path required}"
 DATA="${2:?tinyvdbio data directory required}"
 RENDERER="${3:-}"
 
@@ -16,7 +16,7 @@ TINYVDBIO_DATA_DIR="$DATA" "$UNIT" usdvol_material_binding_test
 # the VDB outside Git avoids adding a multi-megabyte binary fixture.
 if [ -n "$RENDERER" ]; then
   test -x "$RENDERER"
-  TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tinyusdz-vdb-render.XXXXXX")"
+  TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/lightusd-vdb-render.XXXXXX")"
   trap 'rm -rf "$TMP_ROOT"' EXIT
   write_scene() {
     local density="$1"

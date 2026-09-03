@@ -1,27 +1,27 @@
 // TODO: merge into api-tutorial example.
 #include "usda-writer.hh"
-#include "usdGeom.hh"  // Xform/GeomMesh (no longer re-exported by tinyusdz.hh)
+#include "usdGeom.hh"  // Xform/GeomMesh (no longer re-exported by lightusd.hh)
 
 #include <iostream>
 
 //
 // create simple scene composed of Xform and Mesh.
 //
-void SimpleScene(tinyusdz::Stage *stage)
+void SimpleScene(lightusd::Stage *stage)
 {
   //
-  // tinyusdz currently does not provide scene construction API yet, so edit parameters directly.
+  // lightusd currently does not provide scene construction API yet, so edit parameters directly.
   //
-  // TinyUSDZ does not use mutex, smart pointers(e.g. shared_ptr) and C++ exception.
+  // LightUSD does not use mutex, smart pointers(e.g. shared_ptr) and C++ exception.
   // API is not multi-thread safe, thus if you need to manipulate a scene in multi-threaded context,
   // The app must take care of resource locks in app layer.
   //
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
 
-  tinyusdz::XformOp op;
-  op.op_type = tinyusdz::XformOp::OpType::Translate;
-  tinyusdz::value::double3 translate;
+  lightusd::XformOp op;
+  op.op_type = lightusd::XformOp::OpType::Translate;
+  lightusd::value::double3 translate;
   translate[0] = 1.0;
   translate[1] = 2.0;
   translate[2] = 3.0;
@@ -29,11 +29,11 @@ void SimpleScene(tinyusdz::Stage *stage)
 
   xform.xformOps.push_back(op);
 
-  tinyusdz::GeomMesh mesh;
+  lightusd::GeomMesh mesh;
   mesh.name = "quad";
 
   {
-    std::vector<tinyusdz::value::point3f> pts;
+    std::vector<lightusd::value::point3f> pts;
     pts.push_back({0.0f, 0.0f, 0.0f});
 
     pts.push_back({1.0f, 0.0f, 0.0f});
@@ -72,8 +72,8 @@ void SimpleScene(tinyusdz::Stage *stage)
     // int[] primvars:uv:indices = [ ... ]
     //
     {
-      tinyusdz::Attribute uvAttr;
-      std::vector<tinyusdz::value::texcoord2f> uvs;
+      lightusd::Attribute uvAttr;
+      std::vector<lightusd::value::texcoord2f> uvs;
 
       uvs.push_back({0.0f, 0.0f});
       uvs.push_back({1.0f, 0.0f});
@@ -84,20 +84,20 @@ void SimpleScene(tinyusdz::Stage *stage)
       uvAttr.set_value(std::move(uvs));
 
       // or we can first build primvar::PrimVar
-      //tinyusdz::primvar::PrimVar uvVar;
+      //lightusd::primvar::PrimVar uvVar;
       //uvVar.set_value(uvs);
       //uvAttr.set_var(std::move(uvVar));
 
       // Currently `interpolation` is described in Attribute metadataum.
-      uvAttr.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
+      uvAttr.metas().set_interpolation_enum(lightusd::Interpolation::Vertex);
 
-      tinyusdz::Property uvProp(uvAttr, /* custom*/false);
+      lightusd::Property uvProp(uvAttr, /* custom*/false);
 
       mesh.props.emplace("primvars:uv", uvProp);
 
       // ----------------------
 
-      tinyusdz::Attribute uvIndexAttr;
+      lightusd::Attribute uvIndexAttr;
       std::vector<int> uvIndices;
 
       // FIXME: Validate
@@ -107,36 +107,36 @@ void SimpleScene(tinyusdz::Stage *stage)
       uvIndices.push_back(3);
 
 
-      tinyusdz::primvar::PrimVar uvIndexVar;
+      lightusd::primvar::PrimVar uvIndexVar;
       uvIndexVar.set_value(std::move(uvIndices));
       uvIndexAttr.set_var(std::move(uvIndexVar));
 
-      tinyusdz::Property uvIndexProp(uvIndexAttr, /* custom*/false);
+      lightusd::Property uvIndexProp(uvIndexAttr, /* custom*/false);
       mesh.props.emplace("primvars:uv:indices", uvIndexProp);
 
     }
 
     // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
     {
-      tinyusdz::Attribute attrib;
+      lightusd::Attribute attrib;
       double myvalue = 3.0;
-      tinyusdz::primvar::PrimVar var;
+      lightusd::primvar::PrimVar var;
       var.set_value(myvalue);
       attrib.set_var(std::move(var));
 
-      attrib.variability() = tinyusdz::Variability::Uniform;
+      attrib.variability() = lightusd::Variability::Uniform;
 
       attrib.metas().set_hidden(false);
 
-      tinyusdz::Property prop(attrib, /* custom*/true);
+      lightusd::Property prop(attrib, /* custom*/true);
 
       mesh.props.emplace("myvalue", prop);
     }
 
   }
 
-  tinyusdz::Prim meshPrim(mesh);
-  tinyusdz::Prim xformPrim(xform);
+  lightusd::Prim meshPrim(mesh);
+  lightusd::Prim xformPrim(xform);
 
   // [Xform]
   //  |
@@ -149,13 +149,13 @@ void SimpleScene(tinyusdz::Stage *stage)
 
 int main(int argc, char **argv)
 {
-  tinyusdz::Stage stage; // empty scene
+  lightusd::Stage stage; // empty scene
 
   SimpleScene(&stage);
 
   std::string warn;
   std::string err;
-  bool ret = tinyusdz::usda::SaveAsUSDA("output.usda", stage, &warn, &err);
+  bool ret = lightusd::usda::SaveAsUSDA("output.usda", stage, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";

@@ -1,8 +1,8 @@
--- TinyUSDZ xmake build
+-- LightUSD xmake build
 -- Source list synchronized with CMakeLists.txt
 
 set_xmakever("2.7.0")
-set_project("tinyusdz")
+set_project("lightusd")
 set_version("1.0.0-rc3")
 
 set_languages("c11", "c++17")
@@ -56,7 +56,7 @@ option("system_zstd",          {default = false, description = "Use system zstd 
 -- Main library
 -- ============================================================================
 
-target("tinyusdz_static")
+target("lightusd_static")
     set_kind("static")
     set_languages("c11", "c++17")
 
@@ -85,7 +85,7 @@ target("tinyusdz_static")
         "src/crate-path-utils/tree_encode.cc",
         "src/arg-parser.cc",
         "src/asset-resolution.cc",
-        "src/tinyusdz.cc",
+        "src/lightusd.cc",
         "src/xform.cc",
         "src/performance.cc",
         "src/ascii-parser.cc",
@@ -223,49 +223,49 @@ target("tinyusdz_static")
     -- ========================================================================
 
     if has_config("json") then
-        add_defines("TINYUSDZ_WITH_JSON")
+        add_defines("LIGHTUSD_WITH_JSON")
     end
     if has_config("usdmtlx") then
-        add_defines("TINYUSDZ_USE_USDMTLX")
+        add_defines("LIGHTUSD_USE_USDMTLX")
     end
     if has_config("usdobj") then
-        add_defines("TINYUSDZ_USE_USDOBJ")
+        add_defines("LIGHTUSD_USE_USDOBJ")
     end
     if has_config("usdvox") then
-        add_defines("TINYUSDZ_USE_USDVOX")
+        add_defines("LIGHTUSD_USE_USDVOX")
     end
     if has_config("usdfbx") then
-        add_defines("TINYUSDZ_USE_USDFBX")
+        add_defines("LIGHTUSD_USE_USDFBX")
     end
     if has_config("exr") then
-        add_defines("TINYUSDZ_WITH_EXR")
+        add_defines("LIGHTUSD_WITH_EXR")
     end
     if has_config("colorio") then
-        add_defines("TINYUSDZ_WITH_COLORIO")
+        add_defines("LIGHTUSD_WITH_COLORIO")
     end
     if has_config("audio") then
-        add_defines("TINYUSDZ_WITH_AUDIO")
+        add_defines("LIGHTUSD_WITH_AUDIO")
     end
     if has_config("alac_audio") then
-        add_defines("TINYUSDZ_WITH_ALAC_AUDIO")
+        add_defines("LIGHTUSD_WITH_ALAC_AUDIO")
     end
     if has_config("tydra") then
-        add_defines("TINYUSDZ_WITH_TYDRA")
+        add_defines("LIGHTUSD_WITH_TYDRA")
     end
     if has_config("zstd") then
-        add_defines("TINYUSDZ_WITH_ZSTD_COMPRESSION")
+        add_defines("LIGHTUSD_WITH_ZSTD_COMPRESSION")
     end
     if has_config("opensubdiv") then
-        add_defines("TINYUSDZ_WITH_OPENSUBDIV")
+        add_defines("LIGHTUSD_WITH_OPENSUBDIV")
     end
     if has_config("meshopt") then
-        add_defines("TINYUSDZ_WITH_MESHOPT")
+        add_defines("LIGHTUSD_WITH_MESHOPT")
     end
     if has_config("geogram") then
-        add_defines("TINYUSDZ_WITH_GEOGRAM", "GEO_STATIC_LIBS", "GEOGRAM_WITH_LEGACY_NUMERICS")
+        add_defines("LIGHTUSD_WITH_GEOGRAM", "GEO_STATIC_LIBS", "GEOGRAM_WITH_LEGACY_NUMERICS")
     end
     if has_config("wamr") then
-        add_defines("TINYUSDZ_WITH_WAMR")
+        add_defines("LIGHTUSD_WITH_WAMR")
         if is_plat("windows") then
             add_defines("BH_PLATFORM_WINDOWS=1")
         else
@@ -273,10 +273,10 @@ target("tinyusdz_static")
         end
     end
     if has_config("mcp_server") then
-        add_defines("TINYUSDZ_WITH_MCP_SERVER", "OPENSSL_API_3_0")
+        add_defines("LIGHTUSD_WITH_MCP_SERVER", "OPENSSL_API_3_0")
     end
     if has_config("qjs") then
-        add_defines("TINYUSDZ_WITH_QJS")
+        add_defines("LIGHTUSD_WITH_QJS")
     end
     if has_config("remotery") then
         add_defines("RMT_ENABLED=1")
@@ -289,27 +289,27 @@ target("tinyusdz_static")
         end
     end
     if has_config("production_build") then
-        add_defines("TINYUSDZ_PRODUCTION_BUILD")
+        add_defines("LIGHTUSD_PRODUCTION_BUILD")
     end
     if has_config("debug_print") then
-        add_defines("TINYUSDZ_DEBUG_PRINT")
+        add_defines("LIGHTUSD_DEBUG_PRINT")
     end
     if not has_config("builtin_image_loader") then
-        add_defines("TINYUSDZ_NO_BUILTIN_IMAGE_LOADER")
+        add_defines("LIGHTUSD_NO_BUILTIN_IMAGE_LOADER")
     end
 
     -- Inverted module flags
     if not has_config("module_usda_reader") then
-        add_defines("TINYUSDZ_DISABLE_MODULE_USDA_READER")
+        add_defines("LIGHTUSD_DISABLE_MODULE_USDA_READER")
     end
     if not has_config("module_usda_writer") then
-        add_defines("TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
+        add_defines("LIGHTUSD_DISABLE_MODULE_USDA_WRITER")
     end
     if not has_config("module_usdc_reader") then
-        add_defines("TINYUSDZ_DISABLE_MODULE_USDC_READER")
+        add_defines("LIGHTUSD_DISABLE_MODULE_USDC_READER")
     end
     if not has_config("module_usdc_writer") then
-        add_defines("TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
+        add_defines("LIGHTUSD_DISABLE_MODULE_USDC_WRITER")
     end
 
     -- ========================================================================
@@ -588,10 +588,10 @@ target_end()
 -- ============================================================================
 
 if has_config("shared_lib") then
-    target("tinyusdz")
+    target("lightusd")
         set_kind("shared")
         set_languages("c11", "c++17")
-        add_defines("TINYUSDZ_COMPILE_LIBRARY", "TINYUSDZ_SHARED_LIBRARY")
+        add_defines("LIGHTUSD_COMPILE_LIBRARY", "LIGHTUSD_SHARED_LIBRARY")
         -- Clone all settings from static target (xmake doesn't support target cloning,
         -- so for shared lib, users should use CMake or Meson which handle this better)
         -- This is a simplified version; for full shared lib support use CMake.

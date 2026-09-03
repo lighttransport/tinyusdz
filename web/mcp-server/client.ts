@@ -8,7 +8,7 @@ const transport = new StdioClientTransport({
 
 const client = new Client(
   {
-    name: "tinyusdz-example-mcp-client",
+    name: "lightusd-example-mcp-client",
     version: "1.0.0"
   }
 );

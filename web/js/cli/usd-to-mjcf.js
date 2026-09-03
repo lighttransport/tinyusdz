@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// USD Physics -> MJCF (MuJoCo XML) return-leg exporter for TinyUSDZ WASM.
+// USD Physics -> MJCF (MuJoCo XML) return-leg exporter for LightUSD WASM.
 //
 // Loads a USD stage, pulls the physics scene back out via
 // extractPhysicsSceneJSON(), and re-emits a structurally valid MJCF:
@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
+import LightUSDFactory from '../src/lightusd/lightusd.js';
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -558,8 +558,8 @@ async function main() {
   const baseName = path.basename(inputPath, path.extname(inputPath));
   opts.modelName = opts.modelName || baseName;
 
-  const tinyusdz = await TinyUSDZFactory();
-  const native = new tinyusdz.TinyUSDZLoaderNative();
+  const lightusd = await LightUSDFactory();
+  const native = new lightusd.LightUSDLoaderNative();
   let extracted;
   let renderMeshes = new Map();
   const renderWarnings = [];

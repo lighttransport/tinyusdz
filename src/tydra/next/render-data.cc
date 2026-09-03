@@ -8,7 +8,7 @@
 
 #include "safe-arithmetic.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 namespace {
@@ -498,4 +498,4 @@ RenderScene::Stats RenderScene::get_stats() const {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

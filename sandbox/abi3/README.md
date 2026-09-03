@@ -1,6 +1,6 @@
-# TinyUSDZ Python ABI3 Binding Experiment
+# LightUSD Python ABI3 Binding Experiment
 
-This is an experimental Python binding for TinyUSDZ using Python's stable ABI (Limited API) for Python 3.10+.
+This is an experimental Python binding for LightUSD using Python's stable ABI (Limited API) for Python 3.10+.
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ make examples      # Run examples
 
 ### Memory Management
 
-- **C++ Side (TinyUSDZ)**: Uses RAII through the C API wrapper
+- **C++ Side (LightUSD)**: Uses RAII through the C API wrapper
   - Objects are created with `*_new()` functions
   - Objects are freed with `*_free()` functions
   - Automatic cleanup on scope exit
@@ -45,7 +45,7 @@ make examples      # Run examples
 The `ValueArray` class implements Python's buffer protocol, making it compatible with NumPy and other array-processing libraries without data copying:
 
 ```python
-import tinyusdz_abi3
+import lightusd_abi3
 import numpy as np
 
 # Create a ValueArray (normally obtained from USD data)
@@ -92,7 +92,7 @@ python setup.py build_ext --inplace
 python setup.py bdist_wheel
 ```
 
-The resulting wheel will be named `tinyusdz_abi3-0.1.0-cp310-abi3-*.whl` and can be installed on any Python 3.10+ environment.
+The resulting wheel will be named `lightusd_abi3-0.1.0-cp310-abi3-*.whl` and can be installed on any Python 3.10+ environment.
 
 ### Method 4: Using CMake
 
@@ -112,7 +112,7 @@ See `examples/` directory for complete examples:
 ### Basic Stage Loading
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 
 # Load a USD file
 stage = tusd.Stage.load_from_file("model.usd")
@@ -124,7 +124,7 @@ print(stage.to_string())
 ### Creating Values
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 
 # Create integer value
 val_int = tusd.Value.from_int(42)
@@ -140,7 +140,7 @@ print(val_float.as_float())  # 3.14
 ### Creating Prims
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 
 # Create a Mesh prim
 mesh = tusd.Prim("Mesh")
@@ -154,7 +154,7 @@ print(xform.type)  # "Xform"
 ### NumPy Integration (GeomMesh Example)
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 import numpy as np
 
 # Load USD file with mesh
@@ -199,7 +199,7 @@ This binding uses custom Python headers (`include/py_limited_api.h`) that define
 
 ### Value Types Supported
 
-The binding supports all TinyUSDZ value types with optimized buffer protocol access:
+The binding supports all LightUSD value types with optimized buffer protocol access:
 
 - Scalars: `bool`, `int`, `uint`, `int64`, `uint64`, `float`, `double`, `half`
 - Vectors: `int2/3/4`, `float2/3/4`, `double2/3/4`, `half2/3/4`
@@ -277,4 +277,4 @@ make mesh-example
 
 ## License
 
-Apache 2.0 (same as TinyUSDZ)
+Apache 2.0 (same as LightUSD)

@@ -7,8 +7,8 @@ import json
 
 claude_cmd = "claude"
 
-usdz_path = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry/usds"
-screenshot_path = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry/screenshots"
+usdz_path = "/mnt/n/data/lightusd/mcp/african_slate_quarry/usds"
+screenshot_path = "/mnt/n/data/lightusd/mcp/african_slate_quarry/screenshots"
 
 if len(sys.argv) > 1:
     usdz_path = sys.argv[1]
@@ -16,7 +16,7 @@ if len(sys.argv) > 1:
 if len(sys.argv) > 2:
     screenshot_path = sys.argv[2]
 
-prompt_template = "Generate a description from the image. Focus its shape and appearance(PBR material parameter), ignore background and environment: \n\n" 
+prompt_template = "Generate a description from the image. Focus its shape and appearance(PBR material parameter), ignore background and environment: \n\n"
 
 ps = []
 
@@ -60,7 +60,7 @@ for p in ps:
   content = json.dumps(outj, ensure_ascii=True)
   output_file = p[0].with_suffix('.json')
   with open(output_file, 'w') as f:
-      f.write(content)  
+      f.write(content)
 
 
   count += 1

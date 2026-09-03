@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Reader
+// LightUSD Next - USDC Crate Reader
 // Binary USD file parser
 
 #pragma once
@@ -15,7 +15,7 @@
 
 #include "../../security-policy.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for reading crate files
@@ -153,4 +153,4 @@ bool IsUSDCData(const uint8_t* data, size_t size);
 bool IsUSDCFile(const char* filename);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

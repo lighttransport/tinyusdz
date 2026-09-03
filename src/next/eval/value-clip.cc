@@ -10,7 +10,7 @@
 #include <memory>
 #include <sstream>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace {
 
@@ -550,4 +550,4 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

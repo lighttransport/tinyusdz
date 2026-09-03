@@ -1,7 +1,7 @@
 {
-  "name": "tinyusdz-web-tests",
+  "name": "lightusd-web-tests",
   "version": "1.0.0",
-  "description": "Node.js tests for TinyUSDZ WebAssembly bindings",
+  "description": "Node.js tests for LightUSD WebAssembly bindings",
   "main": "test-memory-view.js",
   "scripts": {
     "test": "node test-memory-view.js && node test-value-clip.js && node test-physics-json.js && node test-zero-copy-mock.js && echo 'Note: Run actual tests after building WebAssembly module'",
@@ -13,12 +13,12 @@
     "test-memory-view-mock": "node test-memory-view-mock.js"
   },
   "keywords": [
-    "tinyusdz",
+    "lightusd",
     "webassembly",
     "usd",
     "test"
   ],
-  "author": "TinyUSDZ Contributors",
+  "author": "LightUSD Contributors",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=14.0.0"

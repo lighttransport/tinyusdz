@@ -36,7 +36,7 @@
 #include "tiny-format.hh"
 
 //
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 //
 
@@ -70,13 +70,13 @@
 #include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 
 // Extern template declarations for ParseBasicTypeArray
 // These templates are explicitly instantiated in ascii-parser-basetype.cc
-namespace tinyusdz {
+namespace lightusd {
 namespace ascii {
 
 // Int tuple types
@@ -111,9 +111,9 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace ascii {
 
@@ -347,8 +347,8 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 }
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#else  // LIGHTUSD_DISABLE_MODULE_USDA_READER
 
-#endif  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // LIGHTUSD_DISABLE_MODULE_USDA_READER

@@ -1,11 +1,11 @@
-import createTinyUSDZModule from 'tinyusdz/tinyusdz.js';
+import createLightUSDModule from 'lightusd/lightusd.js';
 
 let native = null;
 let tracer = null;
 let cancelledGeneration = 0;
 
 async function ensureNative() {
-  if (!native) native = await createTinyUSDZModule();
+  if (!native) native = await createLightUSDModule();
   return native;
 }
 

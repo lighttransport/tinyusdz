@@ -7,7 +7,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace color {
 namespace {
 
@@ -284,4 +284,4 @@ bool IsData(const ColorSpaceDesc &space) {
 }
 
 }  // namespace color
-}  // namespace tinyusdz
+}  // namespace lightusd

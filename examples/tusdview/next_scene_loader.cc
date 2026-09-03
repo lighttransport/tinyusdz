@@ -38,7 +38,7 @@
 #include "log.hh"
 
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/eval/attribute-eval.hh" // time/connection-aware light inputs
 #include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
 #include "next/schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
@@ -69,9 +69,9 @@
 
 namespace tusdview {
 
-namespace tydn = ::tinyusdz::tydra::next;
-namespace tnext = ::tinyusdz::next;
-using matrix4d = ::tinyusdz::value::matrix4d;
+namespace tydn = ::lightusd::tydra::next;
+namespace tnext = ::lightusd::next;
+using matrix4d = ::lightusd::value::matrix4d;
 
 namespace {
 class PreviewCacheWriters {
@@ -409,7 +409,7 @@ static void ResolveNextDisplacementMaterial(const tnext::Stage& stage,
 
 namespace {
 
-// Pack a tinyusdz row-major matrix4d (m[row][col], row-vector p*M) into a 3x4
+// Pack a lightusd row-major matrix4d (m[row][col], row-vector p*M) into a 3x4
 // object-to-world (12 floats): row k holds the coefficients of output component
 // k, i.e. worldP.k = dot(vec4(p,1), o2w_row_k). Matches tusdrender Mat4ToObj2World
 // and the instanced vertex shader's aRow0/1/2.
@@ -442,7 +442,7 @@ inline void TransformRowPoint(const double m[16], float x, float y, float z,
   out[2] = static_cast<float>(x * m[2] + y * m[6] + z * m[10] + m[14]);
 }
 
-// Row-major matrix multiply matching tinyusdz value::Mult: (a*b).m[j][i] =
+// Row-major matrix multiply matching lightusd value::Mult: (a*b).m[j][i] =
 // sum_k a.m[j][k]*b.m[k][i]. Row-vector convention: p*(a*b) applies `a` first.
 inline matrix4d Mul4(const matrix4d& a, const matrix4d& b) {
   matrix4d r;
@@ -665,18 +665,18 @@ std::string PreviewFingerprint(const LoadOptions& options) {
 // upside down, which is exactly what a PointInstancer of an oriented prototype did.
 inline matrix4d InstanceTRS(const float* pos, const float* q_wxyz,
                             const float* s3) {
-  ::tinyusdz::value::quatf q;
+  ::lightusd::value::quatf q;
   q.real = q_wxyz[0];
   q.imag[0] = q_wxyz[1];
   q.imag[1] = q_wxyz[2];
   q.imag[2] = q_wxyz[3];
-  ::tinyusdz::value::matrix3d rot = ::tinyusdz::to_matrix3x3(q);
+  ::lightusd::value::matrix3d rot = ::lightusd::to_matrix3x3(q);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) rot.m[i][j] *= static_cast<double>(s3[i]);
-  ::tinyusdz::value::double3 t{static_cast<double>(pos[0]),
+  ::lightusd::value::double3 t{static_cast<double>(pos[0]),
                                static_cast<double>(pos[1]),
                                static_cast<double>(pos[2])};
-  return ::tinyusdz::to_matrix(rot, t);
+  return ::lightusd::to_matrix(rot, t);
 }
 
 // Lazy array readers: try the time sample then the default opinion; materialize a
@@ -1721,7 +1721,7 @@ void RecomputeSmoothNormalsNext(DrawMeshCPU* dm) {
 }
 
 tnext::UsdPrim FindSkeletonInSubtree(const tnext::UsdPrim& root) {
-  if (tinyusdz::next::IsSkeleton(root)) return root;
+  if (lightusd::next::IsSkeleton(root)) return root;
   for (const tnext::UsdPrim& c : root.GetChildren()) {
     tnext::UsdPrim r = FindSkeletonInSubtree(c);
     if (r.IsValid()) return r;
@@ -1730,7 +1730,7 @@ tnext::UsdPrim FindSkeletonInSubtree(const tnext::UsdPrim& root) {
 }
 
 tnext::UsdPrim FindAnimationInSubtree(const tnext::UsdPrim& root) {
-  if (tinyusdz::next::IsSkelAnimation(root)) return root;
+  if (lightusd::next::IsSkelAnimation(root)) return root;
   for (const tnext::UsdPrim& c : root.GetChildren()) {
     tnext::UsdPrim r = FindAnimationInSubtree(c);
     if (r.IsValid()) return r;
@@ -1745,7 +1745,7 @@ tnext::UsdPrim FindBoundSkeletonNext(const tnext::Stage& stage,
   if (const std::vector<tnext::Path>* rel = meshPrim.GetRelationship("skel:skeleton")) {
     if (!rel->empty()) {
       tnext::UsdPrim s = stage.GetPrimAtPath((*rel)[0]);
-      if (s.IsValid() && tinyusdz::next::IsSkeleton(s)) return s;
+      if (s.IsValid() && lightusd::next::IsSkeleton(s)) return s;
     }
   }
   tnext::UsdPrim p = meshPrim.GetParent();
@@ -1754,7 +1754,7 @@ tnext::UsdPrim FindBoundSkeletonNext(const tnext::Stage& stage,
       if (const std::vector<tnext::Path>* rel = p.GetRelationship("skel:skeleton")) {
         if (!rel->empty()) {
           tnext::UsdPrim s = stage.GetPrimAtPath((*rel)[0]);
-          if (s.IsValid() && tinyusdz::next::IsSkeleton(s)) return s;
+          if (s.IsValid() && lightusd::next::IsSkeleton(s)) return s;
         }
       }
       tnext::UsdPrim found = FindSkeletonInSubtree(p);
@@ -1769,17 +1769,17 @@ tnext::UsdPrim FindBoundSkeletonNext(const tnext::Stage& stage,
 // skel:animationSource rel on the mesh's ancestors.
 tnext::UsdPrim FindSkelAnimationNext(const tnext::Stage& stage,
                                      const tnext::UsdPrim& meshPrim,
-                                     const tinyusdz::next::SkeletonData& skel) {
+                                     const lightusd::next::SkeletonData& skel) {
   if (skel.hasAnimationSource && !skel.animationSource.empty()) {
     tnext::UsdPrim a = stage.GetPrimAtPath(skel.animationSource);
-    if (a.IsValid() && tinyusdz::next::IsSkelAnimation(a)) return a;
+    if (a.IsValid() && lightusd::next::IsSkelAnimation(a)) return a;
   }
   tnext::UsdPrim p = meshPrim;
   while (p.IsValid()) {
     if (const std::vector<tnext::Path>* rel = p.GetRelationship("skel:animationSource")) {
       if (!rel->empty()) {
         tnext::UsdPrim a = stage.GetPrimAtPath((*rel)[0]);
-        if (a.IsValid() && tinyusdz::next::IsSkelAnimation(a)) return a;
+        if (a.IsValid() && lightusd::next::IsSkelAnimation(a)) return a;
       }
     }
     p = p.GetParent();
@@ -1800,9 +1800,9 @@ tnext::UsdPrim FindSkelAnimationNext(const tnext::Stage& stage,
 }
 
 // Joint-local transform from TRS (row-vector; matches skinning.cc MakeLocal).
-matrix4d SkinMakeLocal(const float t[3], const ::tinyusdz::value::quatf& r,
+matrix4d SkinMakeLocal(const float t[3], const ::lightusd::value::quatf& r,
                        const float s[3]) {
-  matrix4d m = ::tinyusdz::to_matrix(r);
+  matrix4d m = ::lightusd::to_matrix(r);
   m.m[0][0] *= s[0]; m.m[0][1] *= s[0]; m.m[0][2] *= s[0];
   m.m[1][0] *= s[1]; m.m[1][1] *= s[1]; m.m[1][2] *= s[1];
   m.m[2][0] *= s[2]; m.m[2][1] *= s[2]; m.m[2][2] *= s[2];
@@ -1848,8 +1848,8 @@ bool ResolveNextSkinBinding(const tnext::Stage& stage,
 
   tnext::UsdPrim skelPrim = FindBoundSkeletonNext(stage, meshPrim);
   if (!skelPrim.IsValid()) return false;
-  tinyusdz::next::SkeletonData skel;
-  if (!tinyusdz::next::GetSkeletonData(stage, skelPrim, &skel)) return false;
+  lightusd::next::SkeletonData skel;
+  if (!lightusd::next::GetSkeletonData(stage, skelPrim, &skel)) return false;
   const size_t nj = skel.joints.size();
   if (nj == 0) return false;
 
@@ -1924,14 +1924,14 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
   if (!skinMat) return false;
   tnext::UsdPrim skelPrim = stage.GetPrimAtPath(skelPath);
   if (!skelPrim.IsValid()) return false;
-  tinyusdz::next::SkeletonData skel;
-  if (!tinyusdz::next::GetSkeletonData(stage, skelPrim, &skel)) return false;
+  lightusd::next::SkeletonData skel;
+  if (!lightusd::next::GetSkeletonData(stage, skelPrim, &skel)) return false;
   const size_t nj = skel.joints.size();
   if (nj == 0) return false;
 
   std::vector<int> topo;
   std::string terr;
-  if (!tinyusdz::next::BuildSkelTopology(skel.joints, topo, &terr) ||
+  if (!lightusd::next::BuildSkelTopology(skel.joints, topo, &terr) ||
       topo.size() != nj) {
     return false;
   }
@@ -1974,8 +1974,8 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
   tnext::UsdPrim animPrim =
       animPath.empty() ? tnext::UsdPrim() : stage.GetPrimAtPath(animPath);
   if (animPrim.IsValid()) {
-    tinyusdz::next::SkelAnimationData anim;
-    if (tinyusdz::next::GetSkelAnimationData(stage, animPrim, &anim, time) &&
+    lightusd::next::SkelAnimationData anim;
+    if (lightusd::next::GetSkelAnimationData(stage, animPrim, &anim, time) &&
         !anim.joints.empty()) {
 
       std::unordered_map<std::string, int> skelIdx;
@@ -1985,11 +1985,11 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
         if (it == skelIdx.end()) continue;
         const int j = it->second;
         float t3[3] = {0, 0, 0}, s3[3] = {1, 1, 1};
-        ::tinyusdz::value::quatf q;
+        ::lightusd::value::quatf q;
         q.imag[0] = q.imag[1] = q.imag[2] = 0.0f; q.real = 1.0f;
-        ::tinyusdz::value::double3 dt, ds;
-        ::tinyusdz::value::quatd dq;
-        if (::tinyusdz::decompose(restLocal[j], &dt, &dq, &ds)) {
+        ::lightusd::value::double3 dt, ds;
+        ::lightusd::value::quatd dq;
+        if (::lightusd::decompose(restLocal[j], &dt, &dq, &ds)) {
           t3[0] = float(dt[0]); t3[1] = float(dt[1]); t3[2] = float(dt[2]);
           s3[0] = float(ds[0]); s3[1] = float(ds[1]); s3[2] = float(ds[2]);
           q.imag[0] = float(dq.imag[0]); q.imag[1] = float(dq.imag[1]);
@@ -2035,14 +2035,14 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
   }
 
   std::vector<matrix4d> world;
-  if (!tinyusdz::tydra::ConcatJointTransforms(topo, local, &world) ||
+  if (!lightusd::tydra::ConcatJointTransforms(topo, local, &world) ||
       world.size() != nj) {
     return false;
   }
   // Synthesize the bind pose from the rest world transform when bind is absent.
   if (!haveBind) {
     std::vector<matrix4d> restWorld;
-    if (tinyusdz::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
+    if (lightusd::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
         restWorld.size() == nj) {
       bindWorld = std::move(restWorld);
     }
@@ -2052,14 +2052,14 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
     // space used by the point samples; matching the Tydra path here prevents
     // the inverse-bind step from magnifying the mesh.
     std::vector<matrix4d> restWorld;
-    if (tinyusdz::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
+    if (lightusd::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
         restWorld.size() == nj) {
       bindWorld = std::move(restWorld);
     }
   }
   skinMat->assign(nj, matrix4d::identity());
   for (size_t j = 0; j < nj; ++j)
-    (*skinMat)[j] = ::tinyusdz::inverse(bindWorld[j]) * world[j];
+    (*skinMat)[j] = ::lightusd::inverse(bindWorld[j]) * world[j];
   return true;
 }
 
@@ -2098,19 +2098,19 @@ bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   const matrix4d meshWorld = Mat4dFromArray(meshWorldData);
   const matrix4d skeletonWorld = Mat4dFromArray(skeletonWorldData);
   const matrix4d skeletonToMesh =
-      skeletonWorld * ::tinyusdz::inverse(meshWorld) * bind.geomBind;
+      skeletonWorld * ::lightusd::inverse(meshWorld) * bind.geomBind;
   std::vector<matrix4d> meshLocalSkin(skinMat.size());
   for (size_t j = 0; j < skinMat.size(); ++j)
     meshLocalSkin[j] = skinMat[j] * skeletonToMesh;
 
-  std::vector<::tinyusdz::value::point3f> rest(nv), skinned;
+  std::vector<::lightusd::value::point3f> rest(nv), skinned;
   for (size_t i = 0; i < nv; ++i) {
     rest[i].x = dm->vertices[i].px;
     rest[i].y = dm->vertices[i].py;
     rest[i].z = dm->vertices[i].pz;
   }
   std::string lerr;
-  if (!tinyusdz::tydra::SkinPointsLBS(rest, bind.geomBind, meshLocalSkin, bind.vidx,
+  if (!lightusd::tydra::SkinPointsLBS(rest, bind.geomBind, meshLocalSkin, bind.vidx,
                                       bind.vwgt, bind.numInfl, &skinned, &lerr) ||
       skinned.size() != nv) {
     return false;
@@ -2119,7 +2119,7 @@ bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   // rather than regenerating a smooth normal field from the posed positions:
   // the two disagree wherever the pose bends the surface, and the CPU and GPU
   // skinning paths must render the same image (tusdview-skinning-screenshot-diff).
-  const matrix4d invGeomBind = ::tinyusdz::inverse(bind.geomBind);
+  const matrix4d invGeomBind = ::lightusd::inverse(bind.geomBind);
   std::vector<matrix4d> composed(meshLocalSkin.size());
   for (size_t j = 0; j < meshLocalSkin.size(); ++j)
     composed[j] = bind.geomBind * meshLocalSkin[j] * invGeomBind;
@@ -2289,7 +2289,7 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     const matrix4d skeletonStage = Mat4dFromArray(skeletonStageWorld);
     const matrix4d outputStage = Mat4dFromArray(outputSpaceWorldM);
     const matrix4d skeletonOutput =
-        skeletonStage * ::tinyusdz::inverse(outputStage);
+        skeletonStage * ::lightusd::inverse(outputStage);
     for (int r = 0; r < 4; ++r)
       for (int c = 0; c < 4; ++c)
         nb.skeletonWorld[r * 4 + c] = skeletonOutput.m[r][c];
@@ -2417,7 +2417,7 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
   }
   // Pass 2: scatter [channelId, dx, dy, dz] halfs + the uint16 channelId side
   // buffer (the shader's active-channel skip pre-check).
-  auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
+  auto h = [](float f) { return lightusd::value::float_to_half_full(f).value; };
   dm->morphDeltaHalf.assign(total * 4, 0);
   dm->morphChannelId.assign(total, 0);
   std::vector<uint32_t> cursor(nv, 0u);
@@ -2586,7 +2586,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
   if (placements.empty()) return;
   double pr16[16];
   tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
-  const matrix4d inv_proto = ::tinyusdz::inverse(Mat4dFromArray(pr16));
+  const matrix4d inv_proto = ::lightusd::inverse(Mat4dFromArray(pr16));
 
   std::vector<tnext::UsdPrim> directMeshes, nestedInstancers;
   SplitProtoSubtree(protoRoot, &directMeshes, &nestedInstancers);
@@ -2971,7 +2971,7 @@ bool EndsWithPtx(const std::string& s) {
 std::string ResolveSiblingAsset(const std::string& resolved,
                                 const std::string& rel) {
   if (rel.empty()) return std::string();
-  if (tinyusdz::io::IsAbsPath(rel)) return rel;
+  if (lightusd::io::IsAbsPath(rel)) return rel;
   const size_t p = resolved.find_last_of('/');
   if (p == std::string::npos) return rel;
   return resolved.substr(0, p + 1) + rel;
@@ -3101,18 +3101,18 @@ int NextScalarChannel(tydn::RenderTexture::Channel c) {
 bool NextResizeImage(light3d::Image* img, int w, int h, bool srgb) {
   if (!img || w <= 0 || h <= 0 || img->width <= 0 || img->height <= 0) return false;
   if (img->width == w && img->height == h) return true;
-  tinyusdz::Image src;
+  lightusd::Image src;
   src.width = img->width;
   src.height = img->height;
   src.channels = img->channels;
   src.bpp = 8;
-  src.format = tinyusdz::Image::PixelFormat::UInt;
+  src.format = lightusd::Image::PixelFormat::UInt;
   src.data = img->data;
-  tinyusdz::Image dst;
-  const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
-                           : tinyusdz::tydra::ResizeFilter::Linear;
+  lightusd::Image dst;
+  const auto filter = srgb ? lightusd::tydra::ResizeFilter::SRGB
+                           : lightusd::tydra::ResizeFilter::Linear;
   std::string err;
-  if (!tinyusdz::tydra::ResizeImage(src, w, h, &dst, filter, &err)) return false;
+  if (!lightusd::tydra::ResizeImage(src, w, h, &dst, filter, &err)) return false;
   img->width = dst.width;
   img->height = dst.height;
   img->channels = dst.channels;
@@ -3125,18 +3125,18 @@ bool NextResizeHDR(std::vector<float>* rgb, int width, int height, int w,
   if (!rgb || width <= 0 || height <= 0 || w <= 0 || h <= 0 ||
       rgb->size() < static_cast<size_t>(width) * height * 3u) return false;
   if (width == w && height == h) return true;
-  tinyusdz::Image src;
+  lightusd::Image src;
   src.width = width;
   src.height = height;
   src.channels = 3;
   src.bpp = 32;
-  src.format = tinyusdz::Image::PixelFormat::Float;
+  src.format = lightusd::Image::PixelFormat::Float;
   src.data.resize(rgb->size() * sizeof(float));
   std::memcpy(src.data.data(), rgb->data(), src.data.size());
-  tinyusdz::Image dst;
+  lightusd::Image dst;
   std::string err;
-  if (!tinyusdz::tydra::ResizeImage(src, w, h, &dst,
-                                    tinyusdz::tydra::ResizeFilter::Linear,
+  if (!lightusd::tydra::ResizeImage(src, w, h, &dst,
+                                    lightusd::tydra::ResizeFilter::Linear,
                                     &err)) return false;
   if (dst.data.size() != static_cast<size_t>(w) * h * 3u * sizeof(float))
     return false;
@@ -3156,7 +3156,7 @@ int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
                         const tydn::RenderTexture& rt, const std::string& asset,
                         bool srgb) {
   std::string pre, post;
-  if (!tinyusdz::io::SplitUDIMPath(asset, &pre, &post)) return -1;
+  if (!lightusd::io::SplitUDIMPath(asset, &pre, &post)) return -1;
 
   DrawTextureCPU dt;
   for (uint32_t id = 1001; id <= 1100; ++id) {
@@ -3252,13 +3252,13 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   // Reserve the stable slot now; a bounded post-geometry worker stage fills it.
   // Keep archive, UDIM, Ptex, and kept-compressed KTX paths synchronous until
   // their shared readers have explicit concurrent ownership.
-  if (tc.deferOrdinary && !tinyusdz::io::IsUDIMPath(asset) &&
+  if (tc.deferOrdinary && !lightusd::io::IsUDIMPath(asset) &&
       !EndsWithPtx(asset) && !EndsWithKtx2(asset) && rt.ktx2_hint.empty()) {
     DrawTextureCPU dt;
     dt.assetIdentifier =
-        tinyusdz::io::IsAbsPath(asset) || !tc.decoder
+        lightusd::io::IsAbsPath(asset) || !tc.decoder
             ? asset
-            : tinyusdz::io::JoinPath(tc.decoder->options().base_dir, asset);
+            : lightusd::io::JoinPath(tc.decoder->options().base_dir, asset);
     dt.srgb = srgb;
     dt.wrapS = NextWrapToDraw(rt.wrap_s);
     dt.wrapT = NextWrapToDraw(rt.wrap_t);
@@ -3271,7 +3271,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
 
   // UDIM: tydra-next carries the literal `<UDIM>` token through, so expand +
   // decode tiles ourselves into a sampler2DArray-backed UDIM texture.
-  if (tinyusdz::io::IsUDIMPath(asset)) {
+  if (lightusd::io::IsUDIMPath(asset)) {
     const int uidx = LoadNextUdimTexture(tc, draw, rt, asset, srgb);
     tc.byKey[key] = uidx;
     if (tc.progress) tc.progress->texturesDone.fetch_add(1);
@@ -3309,18 +3309,18 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         tc.ptexSourceByAsset.emplace(asset, sharedBytes);
       }
     }
-    ::tinyusdz::ptx::Reader ptx;
+    ::lightusd::ptx::Reader ptx;
     std::string ptxErr;
     if (!built && sharedBytes &&
-        ::tinyusdz::ptx::Reader::OpenMemory(sharedBytes->data(),
+        ::lightusd::ptx::Reader::OpenMemory(sharedBytes->data(),
                                              sharedBytes->size(), &ptx,
                                             &ptxErr)) {
       const auto ptexBuildBegin = std::chrono::steady_clock::now();
-      const ::tinyusdz::ptx::Info& pi = ptx.info();
+      const ::lightusd::ptx::Info& pi = ptx.info();
       dt.ptexFaces = pi.faces;
       dt.ptexLevels = pi.levels;
       dt.ptexChannels = pi.channels;
-      for (const ::tinyusdz::ptx::FaceInfo& fi : pi.faceInfo) {
+      for (const ::lightusd::ptx::FaceInfo& fi : pi.faceInfo) {
         dt.ptexMaxFaceEdge = std::max(dt.ptexMaxFaceEdge,
                                       std::max(fi.width(), fi.height()));
       }
@@ -3907,7 +3907,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   rm.shader_type = usePreview
                        ? tydn::RenderMaterial::ShaderType::PreviewSurface
                        : tydn::RenderMaterial::ShaderType::OpenPBR;
-  tinyusdz::tydra::RealtimePbrMaterial pbr;
+  lightusd::tydra::RealtimePbrMaterial pbr;
   if (tydn::BuildRealtimePbrMaterial(rm, &pbr)) {
     // BuildRealtimePbrMaterial preserves authored constants from the typed
     // next-core material. Once a live texture slot is resolved those constants
@@ -4104,7 +4104,7 @@ bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
 }
 
 static DrawCameraCPU MakeDrawCameraFromNext(
-    const tinyusdz::value::matrix4d& worldMatrix,
+    const lightusd::value::matrix4d& worldMatrix,
     float focalLength, float horizontalAperture, float verticalAperture,
     float horizontalApertureOffset, float verticalApertureOffset,
     float exposure, int projection,
@@ -4324,7 +4324,7 @@ static void GatherNextCamerasRec(const tnext::Stage& stage,
 }
 
 static DrawCameraCPU MakeDrawCameraFromNext(
-    const tinyusdz::value::matrix4d& worldMatrix,
+    const lightusd::value::matrix4d& worldMatrix,
     float focalLength, float horizontalAperture, float verticalAperture,
     float horizontalApertureOffset, float verticalApertureOffset,
     float exposure, int projection,
@@ -4379,13 +4379,13 @@ void GatherNextCameras(const tnext::Stage& stage, double time,
 // `--camera` was silently unavailable there. The camera's world matrix is already
 // baked into its Node (Tydra composes the hierarchy), and its lens lives in the
 // parallel RenderCamera the node's id indexes.
-bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
-                         const tinyusdz::tydra::Node& node,
+bool FindLegacyCameraRec(const lightusd::tydra::RenderScene& scene,
+                         const lightusd::tydra::Node& node,
                          const std::string& name, NextCameraPose* out) {
   // scene.nodes is the ROOTS of a tree, not a flat list -- a camera is almost
   // always nested under an Xform (Blender writes /root/Camera/Camera), so a
   // top-level-only scan finds nothing.
-  if (node.nodeType == tinyusdz::tydra::NodeType::Camera) {
+  if (node.nodeType == lightusd::tydra::NodeType::Camera) {
     // Match by exact name, exact path, or a "/<name>" path suffix -- the same
     // three ways FindNextCameraRec matches, so one --camera argument means the
     // same thing to both loaders.
@@ -4396,14 +4396,14 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
          path.compare(path.size() - name.size(), name.size(), name) == 0 &&
          path[path.size() - name.size() - 1] == '/');
     if (!match) {
-      for (const tinyusdz::tydra::Node& c : node.children)
+      for (const lightusd::tydra::Node& c : node.children)
         if (FindLegacyCameraRec(scene, c, name, out)) return true;
       return false;
     }
 
     // Row-major (p*M): translation in row 3, local axes in rows 0..2. USD cameras
     // look down local -Z with local +Y up.
-    const tinyusdz::value::matrix4d& m = node.global_matrix;
+    const lightusd::value::matrix4d& m = node.global_matrix;
     float up[3] = {float(m.m[1][0]), float(m.m[1][1]), float(m.m[1][2])};
     float fwd[3] = {-float(m.m[2][0]), -float(m.m[2][1]), -float(m.m[2][2])};
     auto norm3 = [](float v[3]) {
@@ -4419,7 +4419,7 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
     }
     out->fovYDeg = 60.0f;
     if (node.id >= 0 && size_t(node.id) < scene.cameras.size()) {
-      const tinyusdz::tydra::RenderCamera& cam = scene.cameras[size_t(node.id)];
+      const lightusd::tydra::RenderCamera& cam = scene.cameras[size_t(node.id)];
       out->fovYDeg = 2.0f *
                      std::atan(0.5f * cam.verticalAperture /
                                std::max(1.0e-6f, cam.focalLength)) *
@@ -4427,7 +4427,7 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
       out->zNear = std::max(1.0e-4f, cam.znear);
       out->zFar = std::max(out->zNear + 1.0e-3f, cam.zfar);
       out->projection =
-          cam.projection == tinyusdz::GeomCamera::Projection::Orthographic
+          cam.projection == lightusd::GeomCamera::Projection::Orthographic
               ? CameraProjection::Orthographic
               : CameraProjection::Perspective;
       out->horizontalAperture = cam.horizontalAperture;
@@ -4441,10 +4441,10 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
       out->shutterOpen = cam.shutterOpen;
       out->shutterClose = cam.shutterClose;
       switch (cam.stereoRole) {
-        case tinyusdz::GeomCamera::StereoRole::Left:
+        case lightusd::GeomCamera::StereoRole::Left:
           out->stereoRole = DrawCameraCPU::StereoRole::Left;
           break;
-        case tinyusdz::GeomCamera::StereoRole::Right:
+        case lightusd::GeomCamera::StereoRole::Right:
           out->stereoRole = DrawCameraCPU::StereoRole::Right;
           break;
         default:
@@ -4453,21 +4453,21 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
       }
       out->clippingPlanes.clear();
       out->clippingPlanes.reserve(cam.clippingPlanes.size() * 4);
-      for (const tinyusdz::value::float4& plane : cam.clippingPlanes) {
+      for (const lightusd::value::float4& plane : cam.clippingPlanes) {
         for (size_t i = 0; i < 4; ++i) out->clippingPlanes.push_back(plane[i]);
       }
     }
     return true;
   }
-  for (const tinyusdz::tydra::Node& c : node.children)
+  for (const lightusd::tydra::Node& c : node.children)
     if (FindLegacyCameraRec(scene, c, name, out)) return true;
   return false;
 }
 
-bool FindLegacyCamera(const tinyusdz::tydra::RenderScene& scene,
+bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
                       const std::string& name, NextCameraPose* out) {
   if (!out) return false;
-  for (const tinyusdz::tydra::Node& root : scene.nodes)
+  for (const lightusd::tydra::Node& root : scene.nodes)
     if (FindLegacyCameraRec(scene, root, name, out)) return true;
   return false;
 }
@@ -4502,8 +4502,8 @@ static bool ComputeNextBoneRows(const tnext::Stage& stage, const DrawScene& draw
     const matrix4d W = Mat4dFromArray(nb.world);
     const matrix4d R = Mat4dFromArray(nb.renderWorld);
     const matrix4d S = Mat4dFromArray(nb.skeletonWorld);
-    const matrix4d invW = ::tinyusdz::inverse(W);
-    const matrix4d invR = ::tinyusdz::inverse(R);
+    const matrix4d invW = ::lightusd::inverse(W);
+    const matrix4d invR = ::lightusd::inverse(R);
     const size_t nj =
         std::min(sm.size(), static_cast<size_t>(std::max(0, nb.numJoints)));
     for (size_t j = 0; j < nj; ++j) {
@@ -4895,7 +4895,7 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
                      const std::string& usdPath,
                      double time, const TextureRuntimeOptions& texOpts,
                      DrawScene* draw) {
-  const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
+  const std::string baseDir = lightusd::io::GetBaseDir(usdPath);
   tnext::AttributeEval lightEval(&stage);
   lightEval.SetTime(time);
 
@@ -5079,16 +5079,16 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
       if (textureFile && !textureFile->empty()) {
         light.textureFile = *textureFile;
         std::string tpath = *textureFile;
-        if (!tpath.empty() && !tinyusdz::io::IsAbsPath(tpath) && !baseDir.empty()) {
+        if (!tpath.empty() && !lightusd::io::IsAbsPath(tpath) && !baseDir.empty()) {
           tpath = baseDir + "/" + tpath;
         }
         if (texOpts.domeIbl > 0 && TexToolsAvailable()) {
           const auto t0 = std::chrono::steady_clock::now();
           std::vector<float> rgb;
           int ew = 0, eh = 0;
-          auto res = tinyusdz::image::LoadImageFromFile(tpath);
+          auto res = lightusd::image::LoadImageFromFile(tpath);
           if (res) {
-            const tinyusdz::Image& img = res.value().image;
+            const lightusd::Image& img = res.value().image;
             const int ch = img.channels;
             if (img.width > 0 && img.height > 0 && ch >= 1) {
               // Do not expand a very large HDR source into a same-resolution
@@ -5359,8 +5359,8 @@ bool FitNextVolumeDensity(DrawVolumeCPU* volume, size_t maxBytes) {
 // This preserves independently authored OpenVDB transforms while keeping the
 // GPU carrier compact (all 3D textures share density dimensions/bounds).
 std::vector<float> ResampleNextVolumeField(
-    const tinyusdz::usdVol::VDBGrid& src,
-    const tinyusdz::usdVol::VDBGrid& density) {
+    const lightusd::usdVol::VDBGrid& src,
+    const lightusd::usdVol::VDBGrid& density) {
   const size_t n = size_t(density.dim[0]) * size_t(density.dim[1]) *
                    size_t(density.dim[2]);
   std::vector<float> out(n, src.background);
@@ -5500,7 +5500,7 @@ bool BuildNextVolumes(
     DrawScene* draw, Bounds* bounds,
     const std::function<bool(DrawVolumeCPU&&)>* publish = nullptr,
     size_t densityBudgetBytes = 0, size_t* densityBytesUsed = nullptr) {
-  const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
+  const std::string baseDir = lightusd::io::GetBaseDir(usdPath);
 
   std::function<bool(const tnext::UsdPrim&)> rec =
       [&](const tnext::UsdPrim& p) {
@@ -5531,12 +5531,12 @@ bool BuildNextVolumes(
 
         // Resolve the asset path relative to the USD file directory.
         std::string vpath = *ap;
-        if (!vpath.empty() && !tinyusdz::io::IsAbsPath(vpath) && !baseDir.empty()) {
+        if (!vpath.empty() && !lightusd::io::IsAbsPath(vpath) && !baseDir.empty()) {
           vpath = baseDir + "/" + vpath;
         }
-        std::vector<tinyusdz::usdVol::VDBGrid> grids;
+        std::vector<lightusd::usdVol::VDBGrid> grids;
         std::string vw, ve;
-        if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) || grids.empty()) {
+        if (!lightusd::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) || grids.empty()) {
           const std::string reason = !ve.empty() ? ve : (!vw.empty() ? vw :
               "no supported voxel grids");
           draw->skipped.push_back("Volume '" + p.GetPath().str() + "': " + reason);
@@ -5544,7 +5544,7 @@ bool BuildNextVolumes(
                p.GetPath().str().c_str(), vpath.c_str(), reason.c_str());
           continue;
         }
-        tinyusdz::usdVol::VDBGrid* g = nullptr;
+        lightusd::usdVol::VDBGrid* g = nullptr;
         for (auto& gg : grids)
           if (gg.name == fieldName) { g = &gg; break; }
         if (!g) g = &grids[0];
@@ -5919,10 +5919,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         tnext::AssetResolver resolver(resolverConfig);
         std::vector<std::string> candidates;
         candidates.push_back(resolver.ResolvePath(
-            assetPath, tinyusdz::io::GetBaseDir(path)));
+            assetPath, lightusd::io::GetBaseDir(path)));
         for (const std::string& dependency : layerDependencies) {
           candidates.push_back(resolver.ResolvePath(
-              assetPath, tinyusdz::io::GetBaseDir(dependency)));
+              assetPath, lightusd::io::GetBaseDir(dependency)));
         }
         std::string resolved;
         for (const std::string& candidate : candidates) {
@@ -5994,7 +5994,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       std::max<size_t>(1024ull * 1024ull,
                        texCache.ptexAtlasBudgetBytes / 8u));
   tydn::TextureDecodeOptions texOpts;
-  texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
+  texOpts.base_dir = lightusd::io::GetBaseDir(path);
   texOpts.max_edge = opts.textureOptions.maxTextureSize > 0
                          ? uint32_t(opts.textureOptions.maxTextureSize)
                          : 0u;
@@ -6008,7 +6008,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // budget soft: over-subscribe rather than drop, so the failure mode is
   // "blurrier", never "missing".
   texOpts.min_edge = opts.textureFitThresholdBytes > 0 ? 64u : 0u;
-  tinyusdz::next::USDZReader usdzArchive;
+  lightusd::next::USDZReader usdzArchive;
   if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
       usdzArchive.OpenFile(path)) {
     texOpts.usdz = &usdzArchive;
@@ -6637,12 +6637,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
               !std::isfinite(sz) || sx <= 1.0e-8f || sy <= 1.0e-8f ||
               !std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz))
             continue;
-          tinyusdz::value::quatf q;
+          lightusd::value::quatf q;
           q.real = haveQ ? orientations.begin()[i * 4] : 1.0f;
           q.imag[0] = haveQ ? orientations.begin()[i * 4 + 1] : 0.0f;
           q.imag[1] = haveQ ? orientations.begin()[i * 4 + 2] : 0.0f;
           q.imag[2] = haveQ ? orientations.begin()[i * 4 + 3] : 0.0f;
-          const auto r = tinyusdz::to_matrix3x3(q);
+          const auto r = lightusd::to_matrix3x3(q);
           dp.points.insert(dp.points.end(), {px, py, pz});
           dp.widths.push_back(2.0f * std::max(sx, std::max(sy, sz)));
           dp.ellipseRadii.insert(dp.ellipseRadii.end(), {2.0f * sx, 2.0f * sy});
@@ -7829,7 +7829,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                            meshPrims[i].prim, tydn::GeometryKind::Mesh)
                            .estimated_resident_bytes;
   };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // GeometryInfo is a read-only preflight. Run it alongside independent
   // workers; on broad composed scenes this removes a second serial walk over
   // 70k-850k mesh records before the first conversion wave can start.
@@ -8321,7 +8321,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         M[10] == 1.0f;
     if (loc.morphChannelCount > 0 && !linIdentity) {
       auto toHalf = [](float f) {
-        return tinyusdz::value::float_to_half_full(f).value;
+        return lightusd::value::float_to_half_full(f).value;
       };
       for (size_t e = 0; e + 3 < loc.morphDeltaHalf.size(); e += 4) {
         const float d[3] = {NextHalfToFloat(loc.morphDeltaHalf[e + 1]),
@@ -9117,7 +9117,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                  : opts.textureGpuBudgetBytes);
   const bool alwaysProcess =
       opts.textureFit.policy ==
-      tinyusdz::tydra::next::TextureFitPolicy::Always;
+      lightusd::tydra::next::TextureFitPolicy::Always;
   const bool texturesFitComfortably = opts.optimizeTextureUpload &&
                                       !alwaysProcess && comfortBytes > 0 &&
                                       decodedTextureBytes <= comfortBytes / 2u;
@@ -9134,14 +9134,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // Printed unconditionally: the decision was previously invisible unless
     // something was skipped, which made it undiagnosable from a log.
     const uint32_t pct =
-        tinyusdz::tydra::next::TextureFitPercent(opts.textureFit);
+        lightusd::tydra::next::TextureFitPercent(opts.textureFit);
     char fitLabel[64];
     if (pct > 0) {
       std::snprintf(fitLabel, sizeof(fitLabel), "%s (%u%% of VRAM)",
-                    tinyusdz::tydra::next::TextureFitName(opts.textureFit), pct);
+                    lightusd::tydra::next::TextureFitName(opts.textureFit), pct);
     } else {
       std::snprintf(fitLabel, sizeof(fitLabel), "%s",
-                    tinyusdz::tydra::next::TextureFitName(opts.textureFit));
+                    lightusd::tydra::next::TextureFitName(opts.textureFit));
     }
     char thresholdBuf[64];
     if (fitThreshold == (std::numeric_limits<size_t>::max)()) {

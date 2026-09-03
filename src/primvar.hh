@@ -33,7 +33,7 @@
 #include "value-types.hh"
 #include "timesamples.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace primvar {
 
 struct PrimVar {
@@ -251,7 +251,7 @@ struct PrimVar {
   ///
   bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, value::Value *v) const;
 
-  
+
   template <typename T>
   bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, T *v) const {
     if (!v) {
@@ -291,7 +291,7 @@ struct PrimVar {
     return 0;
   }
 
-  const value::TimeSamples &ts_raw() const TINYUSDZ_LIFETIMEBOUND {
+  const value::TimeSamples &ts_raw() const LIGHTUSD_LIFETIMEBOUND {
     if (_extras) {
       return _extras->ts;
     }
@@ -299,16 +299,16 @@ struct PrimVar {
     return s_empty_ts;
   }
 
-  value::Value &value_raw() TINYUSDZ_LIFETIMEBOUND {
+  value::Value &value_raw() LIGHTUSD_LIFETIMEBOUND {
     return _value;
   }
 
-  const value::Value &value_raw() const TINYUSDZ_LIFETIMEBOUND {
+  const value::Value &value_raw() const LIGHTUSD_LIFETIMEBOUND {
     return _value;
   }
 
   // Mutable access lazily allocates the extension block.
-  value::TimeSamples &ts_raw() TINYUSDZ_LIFETIMEBOUND {
+  value::TimeSamples &ts_raw() LIGHTUSD_LIFETIMEBOUND {
     return extras().ts;
   }
 
@@ -375,7 +375,7 @@ struct PrimVar {
 
   bool has_spline() const { return _extras && !_extras->spline.knots.empty(); }
 
-  const SplineData &spline_data() const TINYUSDZ_LIFETIMEBOUND {
+  const SplineData &spline_data() const LIGHTUSD_LIFETIMEBOUND {
     if (_extras) {
       return _extras->spline;
     }
@@ -383,7 +383,7 @@ struct PrimVar {
     return s_empty_spline;
   }
   // Mutable access lazily allocates the extension block.
-  SplineData &spline_data() TINYUSDZ_LIFETIMEBOUND { return extras().spline; }
+  SplineData &spline_data() LIGHTUSD_LIFETIMEBOUND { return extras().spline; }
 
   void set_spline(const SplineData &spline) { extras().spline = spline; }
   void set_spline(SplineData &&spline) { extras().spline = std::move(spline); }
@@ -395,7 +395,7 @@ struct PrimVar {
   };
 
  private:
-  ExtrasBlock &extras() TINYUSDZ_LIFETIMEBOUND {
+  ExtrasBlock &extras() LIGHTUSD_LIFETIMEBOUND {
     if (!_extras) {
       _extras.reset(new ExtrasBlock());
     }
@@ -428,4 +428,4 @@ DEFINE_TYPE_TRAIT(primvar::PrimVar::SplineData, "Spline", TYPE_ID_SPLINE_DATA, 1
 #undef DEFINE_ROLE_TYPE_TRAIT
 
 } // namespace value
-} // namespace tinyusdz
+} // namespace lightusd

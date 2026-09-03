@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - private USDA ASCII parser implementation details.
+// LightUSD Next - private USDA ASCII parser implementation details.
 
 #pragma once
 
@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 class AsciiParser::Impl {
@@ -87,4 +87,4 @@ private:
 bool IsNameToken(const Token& tok);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

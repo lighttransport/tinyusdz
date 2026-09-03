@@ -9,12 +9,12 @@
 #include <vector>
 
 #include "raytracing-data.hh"
-#include "tinyusdz.hh"
-#include "usdGeom.hh"   // GeomMesh (no longer re-exported by tinyusdz.hh)
+#include "lightusd.hh"
+#include "usdGeom.hh"   // GeomMesh (no longer re-exported by lightusd.hh)
 #include "usdShade.hh"  // Material
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Forward declarations
@@ -178,4 +178,4 @@ class RaytracingSceneConverter {
 };
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

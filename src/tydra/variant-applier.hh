@@ -14,7 +14,7 @@
 
 #include "../tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Forward declarations
@@ -124,10 +124,10 @@ class VariantApplier {
   bool enable_caching_{false};
 
   // Cache for variant content lookups: {prim_path + variant_option -> mesh_id}
-  tinyusdz::HashMap<std::string, int32_t> variant_mesh_cache_;
+  lightusd::HashMap<std::string, int32_t> variant_mesh_cache_;
   // Cache for variant materials: {prim_path + variant_option -> material_id}
-  tinyusdz::HashMap<std::string, int32_t> variant_material_cache_;
+  lightusd::HashMap<std::string, int32_t> variant_material_cache_;
 };
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -9,11 +9,11 @@
 #include "external/jsonhpp/nlohmann/json.hpp"
 
 #include "../str-util.hh"  // base64_decode
-#include "../tinyusdz.hh"
+#include "../lightusd.hh"
 #include "../usd-validation.hh"
 #include "mcp-context.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -171,4 +171,4 @@ bool UsdValidate(Context &ctx, const nlohmann::json &args,
 
 }  // namespace mcp
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

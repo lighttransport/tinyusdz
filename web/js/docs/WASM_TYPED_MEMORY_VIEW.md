@@ -30,7 +30,7 @@ if (usd_scene && typeof usd_scene.delete === 'function') {
 }
 ```
 
-This calls the C++ destructor on `TinyUSDZLoaderNative`, which frees all `render_scene_` vectors
+This calls the C++ destructor on `LightUSDLoaderNative`, which frees all `render_scene_` vectors
 (`points`, `normals`, `texcoords`, `jointIndices`, `jointWeights`, `sampler.times/values`, etc.).
 The WASM allocator reclaims that memory and overwrites it with internal bookkeeping data.
 
@@ -57,7 +57,7 @@ Heap monitoring confirmed the WASM heap **never grew** during CesiumMan loading 
 
 Copy all WASM-backed arrays into JS-owned buffers immediately when retrieved:
 
-### Mesh Geometry (`TinyUSDZLoaderUtils.js: convertUsdMeshToThreeMesh`)
+### Mesh Geometry (`LightUSDLoaderUtils.js: convertUsdMeshToThreeMesh`)
 
 ```javascript
 geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));

@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache 2.0
-#if defined(TINYUSDZ_WITH_EXR)
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_WITH_EXR)
+#if defined(LIGHTUSD_EXR_V3)
 #include "external/tinyexr/include/exr.h"
 #else
 #include "external/tinyexr.h"
 #endif
 #endif
 
-#if defined(TINYUSDZ_WITH_TIFF)
+#if defined(LIGHTUSD_WITH_TIFF)
 #include "external/tiny_dng_writer.h"
 #endif
 
-#ifndef TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
+#ifndef LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
 
@@ -22,21 +22,21 @@
 
 #include "external/stb_image_write.h"
 
-#if defined(TINYUSDZ_HAVE_FPNG)
+#if defined(LIGHTUSD_HAVE_FPNG)
 #include "external/fpng.h"
 #endif
 
-#if defined(TINYUSDZ_HAVE_FPNGE)
+#if defined(LIGHTUSD_HAVE_FPNGE)
 #include "external/fpnge/fpnge.h"
 #endif
 
-#if defined(TINYUSDZ_HAVE_QOI)
+#if defined(LIGHTUSD_HAVE_QOI)
 #define QOI_IMPLEMENTATION
 #define QOI_NO_STDIO  // memory-only; we don't use qoi_read/qoi_write file helpers
 #include "external/qoi/qoi.h"
 #endif
 
-#if defined(TINYUSDZ_HAVE_TURBOJPEG)
+#if defined(LIGHTUSD_HAVE_TURBOJPEG)
 #include "turbojpeg.h"
 #endif
 
@@ -53,35 +53,35 @@
 
 #include <climits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace image {
 
 namespace {
 
-bool DetectFileFormatFromExtension(const std::string &_ext, tinyusdz::image::WriteImageFormat &format) {
+bool DetectFileFormatFromExtension(const std::string &_ext, lightusd::image::WriteImageFormat &format) {
 
   std::string ext = to_lower(_ext);
 
   if (ext == "bmp") {
-    format = tinyusdz::image::WriteImageFormat::BMP;
+    format = lightusd::image::WriteImageFormat::BMP;
     return true;
   } else if (ext == "png") {
-    format = tinyusdz::image::WriteImageFormat::PNG;
+    format = lightusd::image::WriteImageFormat::PNG;
     return true;
   } else if ((ext == "jpg") || (ext == "jpeg")) {
-    format = tinyusdz::image::WriteImageFormat::JPEG;
+    format = lightusd::image::WriteImageFormat::JPEG;
     return true;
   } else if ((ext == "tiff") || (ext == "tif")) {
-    format = tinyusdz::image::WriteImageFormat::TIFF;
+    format = lightusd::image::WriteImageFormat::TIFF;
     return true;
   } else if (ext == "dng") {
-    format = tinyusdz::image::WriteImageFormat::DNG;
+    format = lightusd::image::WriteImageFormat::DNG;
     return true;
   } else if (ext == "exr") {
-    format = tinyusdz::image::WriteImageFormat::EXR;
+    format = lightusd::image::WriteImageFormat::EXR;
     return true;
   } else if (ext == "qoi") {
-    format = tinyusdz::image::WriteImageFormat::QOI;
+    format = lightusd::image::WriteImageFormat::QOI;
     return true;
   }
 
@@ -139,7 +139,7 @@ bool ValidDims(const Image &image, std::string *err) {
   return true;
 }
 
-#if defined(TINYUSDZ_HAVE_FPNGE)
+#if defined(LIGHTUSD_HAVE_FPNGE)
 bool EncodePNG_fpnge(const Image &image, std::vector<uint8_t> *out,
                      std::string *err) {
   const size_t bytes_per_channel = size_t((image.bpp > 0) ? image.bpp / 8 : 1);
@@ -188,7 +188,7 @@ bool EncodePNG_fpnge(const Image &image, std::vector<uint8_t> *out,
 }
 #endif
 
-#if defined(TINYUSDZ_HAVE_FPNG)
+#if defined(LIGHTUSD_HAVE_FPNG)
 bool EncodePNG_fpng(const Image &image, std::vector<uint8_t> *out,
                     std::string *err) {
   // fpng only supports 8-bit, 3 or 4 channels.
@@ -220,7 +220,7 @@ bool EncodePNG_fpng(const Image &image, std::vector<uint8_t> *out,
   }
   return true;
 }
-#endif  // TINYUSDZ_HAVE_FPNG
+#endif  // LIGHTUSD_HAVE_FPNG
 
 bool EncodePNG_stb(const Image &image, std::vector<uint8_t> *out,
                    std::string *err) {
@@ -261,7 +261,7 @@ bool EncodePNG(const Image &image, PngEncoder encoder,
   (void)encoder;
   std::string local_err;
 
-#if defined(TINYUSDZ_HAVE_FPNGE)
+#if defined(LIGHTUSD_HAVE_FPNGE)
   if (encoder == PngEncoder::Auto || encoder == PngEncoder::Fpnge) {
     if (EncodePNG_fpnge(image, out, &local_err)) {
       return true;
@@ -269,7 +269,7 @@ bool EncodePNG(const Image &image, PngEncoder encoder,
   }
 #endif
 
-#if defined(TINYUSDZ_HAVE_FPNG)
+#if defined(LIGHTUSD_HAVE_FPNG)
   if (EncodePNG_fpng(image, out, &local_err)) {
     return true;
   }
@@ -286,7 +286,7 @@ bool EncodePNG(const Image &image, PngEncoder encoder,
   return false;
 }
 
-#if defined(TINYUSDZ_HAVE_QOI)
+#if defined(LIGHTUSD_HAVE_QOI)
 bool EncodeQOI(const Image &image, std::vector<uint8_t> *out, std::string *err) {
   // QOI is 8-bit, 3(RGB) or 4(RGBA) channels only.
   if (image.bpp != 8) {
@@ -314,9 +314,9 @@ bool EncodeQOI(const Image &image, std::vector<uint8_t> *out, std::string *err) 
   std::free(enc);
   return true;
 }
-#endif  // TINYUSDZ_HAVE_QOI
+#endif  // LIGHTUSD_HAVE_QOI
 
-#if defined(TINYUSDZ_HAVE_TURBOJPEG)
+#if defined(LIGHTUSD_HAVE_TURBOJPEG)
 bool EncodeJPEG_turbo(const Image &image, int quality, std::vector<uint8_t> *out,
                       std::string *err) {
   // libjpeg-turbo: 8-bit, 1/3/4 channels. RGBA is downsampled to RGB (alpha
@@ -353,21 +353,21 @@ bool EncodeJPEG_turbo(const Image &image, int quality, std::vector<uint8_t> *out
   tjDestroy(h);
   return true;
 }
-#endif  // TINYUSDZ_HAVE_TURBOJPEG
+#endif  // LIGHTUSD_HAVE_TURBOJPEG
 
 }  // namespace
 
 nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
     const Image &image, const WriteOption option) {
-  tinyusdz::image::WriteImageFormat format = option.format;
+  lightusd::image::WriteImageFormat format = option.format;
 
-  if (format == tinyusdz::image::WriteImageFormat::Autodetect) {
+  if (format == lightusd::image::WriteImageFormat::Autodetect) {
     // Choose a sensible default from the pixel format:
     // float -> EXR, otherwise PNG.
     if (image.format == Image::PixelFormat::Float || image.bpp > 16) {
-      format = tinyusdz::image::WriteImageFormat::EXR;
+      format = lightusd::image::WriteImageFormat::EXR;
     } else {
-      format = tinyusdz::image::WriteImageFormat::PNG;
+      format = lightusd::image::WriteImageFormat::PNG;
     }
   }
 
@@ -379,13 +379,13 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
   std::vector<uint8_t> out;
 
   switch (format) {
-    case tinyusdz::image::WriteImageFormat::PNG: {
+    case lightusd::image::WriteImageFormat::PNG: {
       if (!EncodePNG(image, option.png_encoder, &out, &err)) {
         return nonstd::make_unexpected(err);
       }
       return out;
     }
-    case tinyusdz::image::WriteImageFormat::JPEG: {
+    case lightusd::image::WriteImageFormat::JPEG: {
       if (image.bpp != 8) {
         return nonstd::make_unexpected("8bit only for JPEG output.");
       }
@@ -393,7 +393,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       if (q < 1) q = 1;
       if (q > 100) q = 100;
       out.clear();
-#if defined(TINYUSDZ_HAVE_TURBOJPEG)
+#if defined(LIGHTUSD_HAVE_TURBOJPEG)
       // Fast SIMD JPEG (also handles RGBA by dropping alpha). Fall back to stb on
       // failure (e.g. an unusual channel count).
       if (EncodeJPEG_turbo(image, q, &out, &err)) {
@@ -409,7 +409,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       }
       return out;
     }
-    case tinyusdz::image::WriteImageFormat::BMP: {
+    case lightusd::image::WriteImageFormat::BMP: {
       if (image.bpp != 8) {
         return nonstd::make_unexpected("8bit only for BMP output.");
       }
@@ -422,8 +422,8 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       }
       return out;
     }
-    case tinyusdz::image::WriteImageFormat::EXR: {
-#if defined(TINYUSDZ_WITH_EXR)
+    case lightusd::image::WriteImageFormat::EXR: {
+#if defined(LIGHTUSD_WITH_EXR)
       const int comps = image.channels;
       // EXR here supports 1 (Y), 3 (RGB) or 4 (RGBA). 2-channel is rejected: the
       // fp32 SaveEXRToMemory rejects it too, and the fp16 planar setup below only
@@ -442,7 +442,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
             "EXR: image dimensions too large (integer overflow).");
       }
 
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_EXR_V3)
       // --- TinyEXR v3 C encode: de-interleave the interleaved samples into
       // planar channels (HALF for fp16/8-bit input, FLOAT for fp32), then stream
       // them through the mid-level writer. Channels are matched by name, so no
@@ -688,28 +688,28 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       std::vector<uint8_t> exr_out(buf, buf + size_t(ret));
       free(buf);
       return exr_out;
-#endif  // TINYUSDZ_EXR_V3
+#endif  // LIGHTUSD_EXR_V3
 #else
       return nonstd::make_unexpected(
-          "EXR output requires building with TINYUSDZ_WITH_EXR.");
+          "EXR output requires building with LIGHTUSD_WITH_EXR.");
 #endif
     }
-    case tinyusdz::image::WriteImageFormat::QOI: {
-#if defined(TINYUSDZ_HAVE_QOI)
+    case lightusd::image::WriteImageFormat::QOI: {
+#if defined(LIGHTUSD_HAVE_QOI)
       if (!EncodeQOI(image, &out, &err)) {
         return nonstd::make_unexpected(err);
       }
       return out;
 #else
       return nonstd::make_unexpected(
-          "QOI output requires building with TINYUSDZ_WITH_QOI.");
+          "QOI output requires building with LIGHTUSD_WITH_QOI.");
 #endif
     }
-    case tinyusdz::image::WriteImageFormat::TIFF:
-    case tinyusdz::image::WriteImageFormat::DNG:
+    case lightusd::image::WriteImageFormat::TIFF:
+    case lightusd::image::WriteImageFormat::DNG:
       return nonstd::make_unexpected(
           "WriteImageToMemory: TIFF/DNG output is not implemented yet.");
-    case tinyusdz::image::WriteImageFormat::Autodetect:
+    case lightusd::image::WriteImageFormat::Autodetect:
       return nonstd::make_unexpected("Internal error in WriteImageToMemory.");
   }
   // Unreachable but needed for compilers that don't recognize exhaustive switches.
@@ -718,8 +718,8 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
 
 nonstd::expected<bool, std::string> WriteImageToFile(
     const std::string &filename, const Image &image, WriteOption option) {
-  if (option.format == tinyusdz::image::WriteImageFormat::Autodetect) {
-    tinyusdz::image::WriteImageFormat detected;
+  if (option.format == lightusd::image::WriteImageFormat::Autodetect) {
+    lightusd::image::WriteImageFormat detected;
     if (DetectFileFormatFromExtension(io::GetFileExtension(filename),
                                       detected)) {
       option.format = detected;
@@ -743,4 +743,4 @@ nonstd::expected<bool, std::string> WriteImageToFile(
 }
 
 }  // namespace image
-}  // namespace tinyusdz
+}  // namespace lightusd

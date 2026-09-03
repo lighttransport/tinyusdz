@@ -34,11 +34,11 @@
 #endif
 
 // Native runtime multi-versioning via GCC/Clang target_clones + ELF ifunc
-// (Linux). The build defines TINYUSDZ_IMAGEPROC_MULTIVERSION when this is wanted
+// (Linux). The build defines LIGHTUSD_IMAGEPROC_MULTIVERSION when this is wanted
 // and the toolchain/target support it. target_clones emits an ifunc resolver,
 // which requires glibc — musl libc has no ifunc support, so musllinux builds
 // must fall back to the scalar/default path (gate on __GLIBC__).
-#if defined(TINYUSDZ_IMAGEPROC_MULTIVERSION) && !defined(__wasm__) &&         \
+#if defined(LIGHTUSD_IMAGEPROC_MULTIVERSION) && !defined(__wasm__) &&         \
     !defined(IMAGEPROC_NO_MULTIVERSION_TSAN) &&                              \
     (defined(__i386__) || defined(__x86_64__)) &&                            \
     (defined(__GNUC__) || defined(__clang__)) && defined(__ELF__) &&          \
@@ -50,7 +50,7 @@
 #define IMAGEPROC_MV
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace imageproc {
 
 SimdLevel ActiveSimdLevel() {
@@ -118,4 +118,4 @@ void PackChannels8(uint8_t *out, size_t n_pixels, int out_channels,
 }
 
 }  // namespace imageproc
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 
 class StreamReader;
 
@@ -49,4 +49,4 @@ public:
 
 
 
-} // namespace tinyusdz
+} // namespace lightusd

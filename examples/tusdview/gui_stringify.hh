@@ -9,14 +9,14 @@
 
 namespace tusdview {
 
-std::string PropertyToString(const tinyusdz::Property& prop);
+std::string PropertyToString(const lightusd::Property& prop);
 
-std::string PrimMetaSummary(const tinyusdz::Prim& prim);
-std::string AttrMetaSummary(const tinyusdz::Attribute& attr);
-std::string GPrimPropertySummary(const tinyusdz::Prim& prim);
-std::string SubdivisionSchemeName(const tinyusdz::Prim& prim);
-std::string VisibilityState(const tinyusdz::Prim& prim);
-std::string VariantSetDetail(const tinyusdz::Prim& prim);
-std::string GeometrySummary(const tinyusdz::Prim& prim);
+std::string PrimMetaSummary(const lightusd::Prim& prim);
+std::string AttrMetaSummary(const lightusd::Attribute& attr);
+std::string GPrimPropertySummary(const lightusd::Prim& prim);
+std::string SubdivisionSchemeName(const lightusd::Prim& prim);
+std::string VisibilityState(const lightusd::Prim& prim);
+std::string VariantSetDetail(const lightusd::Prim& prim);
+std::string GeometrySummary(const lightusd::Prim& prim);
 
 }  // namespace tusdview

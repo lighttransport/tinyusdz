@@ -1,6 +1,6 @@
 # MaterialX Light Shader Test Examples
 
-This directory contains USDA test files demonstrating MaterialX light shader integration with TinyUSDZ.
+This directory contains USDA test files demonstrating MaterialX light shader integration with LightUSD.
 
 ## Files
 
@@ -139,7 +139,7 @@ A standalone MaterialX 1.38 file containing:
 - Proper MaterialX XML structure
 - Can be referenced from USD files
 
-This file demonstrates the MaterialX XML format that TinyUSDZ can parse.
+This file demonstrates the MaterialX XML format that LightUSD can parse.
 
 ---
 
@@ -186,14 +186,14 @@ Exposure control using photographic EV stops:
 
 ## Testing These Files
 
-### With TinyUSDZ
+### With LightUSD
 
 ```bash
 # Parse and validate
-tinyusdz_viewer 01_basic_uniform_light.usda
+lightusd_viewer 01_basic_uniform_light.usda
 
 # Test MaterialX parsing
-tinyusdz_test --mtlx 04_complete_scene.usda
+lightusd_test --mtlx 04_complete_scene.usda
 ```
 
 ### Expected Behavior
@@ -360,20 +360,20 @@ Controls interaction between material emission and light output:
 
 ## Testing These Files
 
-### With TinyUSDZ
+### With LightUSD
 
 ```bash
 # Parse and validate mesh lights
-tinyusdz_viewer 06_mesh_lights.usda
+lightusd_viewer 06_mesh_lights.usda
 
 # Test animated mesh lights
-tinyusdz_viewer 07_animated_mesh_lights.usda --frame 60
+lightusd_viewer 07_animated_mesh_lights.usda --frame 60
 
 # Convert to render scene
-tinyusdz_test --tydra 06_mesh_lights.usda
+lightusd_test --tydra 06_mesh_lights.usda
 
 # Export to Three.js
-tinyusdz_export --threejs 07_animated_mesh_lights.usda -o output.json
+lightusd_export --threejs 07_animated_mesh_lights.usda -o output.json
 ```
 
 ### Expected Behavior
@@ -410,4 +410,4 @@ tinyusdz_export --threejs 07_animated_mesh_lights.usda -o output.json
 - [MaterialX PBR Spec](https://materialx.org/assets/MaterialX.v1.38.PBRSpec.pdf)
 - [USD Lux Schema](https://openusd.org/release/api/usd_lux_page_front.html)
 - [USD MeshLightAPI](https://openusd.org/release/api/class_usd_lux_mesh_light_a_p_i.html)
-- [TinyUSDZ Documentation](../../../README.md)
+- [LightUSD Documentation](../../../README.md)

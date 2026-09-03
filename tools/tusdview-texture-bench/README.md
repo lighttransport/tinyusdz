@@ -5,8 +5,8 @@ the tusdview renderer and is safe to build while renderer work is in progress.
 
 ```sh
 cmake -S . -B build_ninja -G Ninja \
-  -DTINYUSDZ_BUILD_TEXTURE_GPU_BENCH=ON \
-  -DTINYUSDZ_WITH_TEXTOOLS=ON
+  -DLIGHTUSD_BUILD_TEXTURE_GPU_BENCH=ON \
+  -DLIGHTUSD_WITH_TEXTOOLS=ON
 cmake --build build_ninja --target tusdview_texture_gpu_bench
 
 build_ninja/tusdview_texture_gpu_bench \

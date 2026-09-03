@@ -2,27 +2,27 @@
 
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from '../src/tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from '../src/lightusd/LightUSDLoaderUtils.js';
 
 globalThis.THREE = THREE;
 globalThis.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
 
-assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1 }), 1);
-assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 0 }), 1);
-assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 2 }), 4);
+assert.equal(LightUSDLoaderUtils.calculateDomeLightIntensity({ intensity: 1 }), 1);
+assert.equal(LightUSDLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 0 }), 1);
+assert.equal(LightUSDLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 2 }), 4);
 
 {
   const texture = new THREE.Texture();
-  TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, 'map', 'lin_ap1_scene');
+  LightUSDLoaderUtils.applyTextureMapDefaults(texture, 'map', 'lin_ap1_scene');
   assert.equal(texture.colorSpace, THREE.NoColorSpace);
-  TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, 'map',
+  LightUSDLoaderUtils.applyTextureMapDefaults(texture, 'map',
     'srgb_p3d65_scene');
   assert.equal(texture.colorSpace, THREE.SRGBColorSpace);
   const scene = {
     getTexture: () => ({ textureImageId: 7 }),
     getImageCopy: () => ({ usdColorSpace: 'lin_acescg', colorSpace: 'lin_srgb' })
   };
-  assert.equal(TinyUSDZLoaderUtils.textureSourceColorSpace(0, scene),
+  assert.equal(LightUSDLoaderUtils.textureSourceColorSpace(0, scene),
     'lin_acescg');
   const customMetadata = {
     sourceColorSpaceName: 'studio_ap0',
@@ -43,9 +43,9 @@ assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exp
     getTexture: () => ({ textureImageId: 8 }),
     getImageCopy: () => customMetadata
   };
-  assert.equal(TinyUSDZLoaderUtils.textureSourceColorSpace(0, customScene),
+  assert.equal(LightUSDLoaderUtils.textureSourceColorSpace(0, customScene),
     'studio_ap0');
-  TinyUSDZLoaderUtils.applyTextureMapDefaults(
+  LightUSDLoaderUtils.applyTextureMapDefaults(
     texture, 'map', 'studio_ap0', customMetadata);
   assert.equal(texture.colorSpace, THREE.NoColorSpace);
   texture.dispose();
@@ -119,9 +119,9 @@ function makeMaterial(color) {
     },
   };
 
-  const a = await TinyUSDZLoaderUtils.setupMesh(makeMesh(0), null, usdScene, options);
-  const b = await TinyUSDZLoaderUtils.setupMesh(makeMesh(1), null, usdScene, options);
-  const c = await TinyUSDZLoaderUtils.setupMesh(makeMesh(2), null, usdScene, options);
+  const a = await LightUSDLoaderUtils.setupMesh(makeMesh(0), null, usdScene, options);
+  const b = await LightUSDLoaderUtils.setupMesh(makeMesh(1), null, usdScene, options);
+  const c = await LightUSDLoaderUtils.setupMesh(makeMesh(2), null, usdScene, options);
 
   assert.equal(getMaterialCalls, 3);
   assert.equal(getMaterialWithFormatCalls, 3);
@@ -134,8 +134,8 @@ function makeMaterial(color) {
   const manager = new TextureLoadingManager();
   const usdScene = {};
   let loads = 0;
-  const oldGetTextureFromUSD = TinyUSDZLoaderUtils.getTextureFromUSD;
-  TinyUSDZLoaderUtils.getTextureFromUSD = async () => {
+  const oldGetTextureFromUSD = LightUSDLoaderUtils.getTextureFromUSD;
+  LightUSDLoaderUtils.getTextureFromUSD = async () => {
     loads++;
     return new THREE.Texture();
   };
@@ -148,7 +148,7 @@ function makeMaterial(color) {
     assert.equal(loads, 1, 'duplicate texture IDs should share one load promise');
     assert.equal(m0.map, m1.map);
   } finally {
-    TinyUSDZLoaderUtils.getTextureFromUSD = oldGetTextureFromUSD;
+    LightUSDLoaderUtils.getTextureFromUSD = oldGetTextureFromUSD;
   }
 }
 
@@ -166,13 +166,13 @@ function makeMaterial(color) {
   c.surfaceShader.diffuseColorTextureId = 11;
 
   assert.equal(
-    TinyUSDZLoaderUtils.makeMaterialSignature(a, 'full', usdScene),
-    TinyUSDZLoaderUtils.makeMaterialSignature(b, 'full', usdScene),
+    LightUSDLoaderUtils.makeMaterialSignature(a, 'full', usdScene),
+    LightUSDLoaderUtils.makeMaterialSignature(b, 'full', usdScene),
     'full material signatures should canonicalize texture IDs to image identity'
   );
   assert.notEqual(
-    TinyUSDZLoaderUtils.makeMaterialSignature(a, 'full', usdScene),
-    TinyUSDZLoaderUtils.makeMaterialSignature(c, 'full', usdScene),
+    LightUSDLoaderUtils.makeMaterialSignature(a, 'full', usdScene),
+    LightUSDLoaderUtils.makeMaterialSignature(c, 'full', usdScene),
     'different image identities should not share full material signatures'
   );
 }
@@ -211,7 +211,7 @@ function makeMaterial(color) {
     yieldMode: 'none',
   };
 
-  const threeRoot = await TinyUSDZLoaderUtils.buildThreeNode(root, null, usdScene, options);
+  const threeRoot = await LightUSDLoaderUtils.buildThreeNode(root, null, usdScene, options);
   const meshes = [];
   threeRoot.traverse((obj) => {
     if (obj.isMesh) meshes.push(obj);

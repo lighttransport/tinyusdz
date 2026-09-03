@@ -9,13 +9,13 @@
 #include <map>
 #include <memory>
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <mutex>
 #endif
 
 #include "nonstd/optional.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations - we'll include the full types in the implementation
 class PrimSpec;
@@ -23,17 +23,17 @@ class Path;
 struct LayerMetas;
 struct LayerImpl;
 
-// Similar to SdfLayer 
+// Similar to SdfLayer
 // It is basically hold the list of PrimSpec and Layer metadatum.
 class Layer {
  public:
   Layer();
   ~Layer();
-  
+
   // Copy constructor and assignment
   Layer(const Layer& other);
   Layer& operator=(const Layer& other);
-  
+
   // Move constructor and assignment
   Layer(Layer&& other) noexcept;
   Layer& operator=(Layer&& other) noexcept;
@@ -188,4 +188,4 @@ class Layer {
 
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

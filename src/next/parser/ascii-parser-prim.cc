@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII parser prim/property bodies.
+// LightUSD Next - USDA ASCII parser prim/property bodies.
 
 #include "ascii-parser-internal.hh"
 #include "../prim/identifier.hh"
@@ -9,7 +9,7 @@
 #include "value-parser.hh"
 #include "value-parser-numeric.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -196,7 +196,7 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
 // .prop, ..) against the owning prim's absolute path. Crate files never
 // hold relative paths, and downstream lookups are absolute-only — resolve
 // at parse time (pxr does the same when building SdfPaths).
-std::string ResolveRelativeTargetPath(const ::tinyusdz::next::PrimSpec* prim,
+std::string ResolveRelativeTargetPath(const ::lightusd::next::PrimSpec* prim,
                                       const std::string& target) {
   if (target.empty() || target[0] == '/' || !prim) return target;
   std::string base = prim->path().str();
@@ -269,7 +269,7 @@ bool AsciiParser::Impl::ParsePrim() {
 
   if (!IsValidIdentifier(prim_name)) {
     // AOUSD §7.3/§8 uses Unicode XID_Start/XID_Continue. Reuse the same
-    // generated XID tables as legacy TinyUSDZ rather than bytewise ctype.
+    // generated XID tables as legacy LightUSD rather than bytewise ctype.
     AddError("Prim name contains invalid character(s): \"" + prim_name + "\"");
     return false;
   }
@@ -841,7 +841,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   }
 
   std::vector<Path> targets;
-  const ::tinyusdz::next::PrimSpec* owner = builder_->current();
+  const ::lightusd::next::PrimSpec* owner = builder_->current();
   if (Check(TokenType::OpenBracket)) {
     lexer_->next();
     while (!Check(TokenType::CloseBracket) && !AtEnd()) {
@@ -926,4 +926,4 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

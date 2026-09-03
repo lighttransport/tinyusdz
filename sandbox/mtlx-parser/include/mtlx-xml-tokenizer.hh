@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 enum class TokenType {
@@ -67,18 +67,18 @@ private:
   bool ParseComment(Token& token);
   bool ParseCDATA(Token& token);
   bool ParseProcessingInstruction(Token& token);
-  
+
   // Helper methods for safe string parsing
   bool ParseName(std::string& name);
   bool ParseQuotedString(std::string& str, char quote);
   bool ParseUntil(std::string& str, const char* delimiter);
-  
+
   // Safe character access with bounds checking
   char PeekChar(size_t offset = 0) const;
   char NextChar();
   bool Match(const char* str);
   bool Consume(const char* str);
-  
+
   // Update line/column position
   void UpdatePosition(char c);
 
@@ -86,18 +86,18 @@ private:
   const char* data_ = nullptr;
   size_t size_ = 0;
   size_t position_ = 0;
-  
+
   // Current position tracking
   size_t current_line_ = 1;
   size_t current_column_ = 1;
-  
+
   // Error state
   std::string error_;
-  
+
   // Parsing state
   bool in_tag_ = false;
   std::string current_tag_name_;
-  
+
   // Security limits
   static constexpr size_t MAX_NAME_LENGTH = 256;
   static constexpr size_t MAX_STRING_LENGTH = 64 * 1024;
@@ -105,4 +105,4 @@ private:
 };
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

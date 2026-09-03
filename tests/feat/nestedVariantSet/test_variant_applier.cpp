@@ -1,14 +1,14 @@
 ﻿#include <cassert>
 #include <iostream>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/variant-applier.hh"
 #include "tydra/variant-converter.hh"
 #include "tydra/variant-support.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 // Test 1: Apply single variant selection
 bool test_apply_single_selection() {
@@ -17,7 +17,7 @@ bool test_apply_single_selection() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(
+  bool ret = lightusd::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -65,7 +65,7 @@ bool test_apply_multiple_selections() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(
+  bool ret = lightusd::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -114,7 +114,7 @@ bool test_update_existing_selection() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(
+  bool ret = lightusd::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -173,7 +173,7 @@ bool test_change_tracking() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(
+  bool ret = lightusd::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -219,7 +219,7 @@ bool test_reset_to_defaults() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(
+  bool ret = lightusd::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/with-selection-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -273,7 +273,7 @@ bool test_nested_variant_selections() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(
+  bool ret = lightusd::LoadUSDFromFile(
       "tests/feat/nestedVariantSet/triple-nesting-001.usda", &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";

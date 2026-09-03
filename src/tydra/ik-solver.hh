@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 class SkelHierarchy;  // forward decl (scene-access.hh)
@@ -75,4 +75,4 @@ bool ApplyIKResult(
 void FreeIKChain(TydraIKChain *chain);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

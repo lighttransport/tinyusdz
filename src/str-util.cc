@@ -25,13 +25,13 @@
 // Disable dragonbox's internal asserts for hardened builds
 // We handle all special cases (inf, nan, zero) before calling dragonbox
 #ifndef NDEBUG
-#define TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#define LIGHTUSD_DRAGONBOX_NDEBUG_DEFINED
 #define NDEBUG
 #endif
 #include "external/dragonbox/dragonbox_to_chars.h"
-#ifdef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#ifdef LIGHTUSD_DRAGONBOX_NDEBUG_DEFINED
 #undef NDEBUG
-#undef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#undef LIGHTUSD_DRAGONBOX_NDEBUG_DEFINED
 #endif
 
 // Note: dragonbox_binary16.hh exists for direct fp16 conversion but needs work
@@ -41,7 +41,7 @@
 #include <emmintrin.h>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -2325,4 +2325,4 @@ char *dtoa(double d, char *buf) {
   return buf + len;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,11 +1,11 @@
 # USD Physics, MuJoCo mjcPhysics, and Newton Schema Reference
 
 This document describes the USD Physics schema, MuJoCo's **mjcPhysics** custom
-schema extension, and Newton's USD physics schema as implemented in TinyUSDZ.
+schema extension, and Newton's USD physics schema as implemented in LightUSD.
 
 ## Overview
 
-TinyUSDZ supports three physics schema families:
+LightUSD supports three physics schema families:
 
 - **UsdPhysics** (standard) — rigid bodies, collisions, joints, materials, scenes
 - **mjcPhysics** (MuJoCo extension) — simulation options, solver params, actuators,
@@ -27,7 +27,7 @@ applied together on the same prims.
 
 Per the official USD Physics schema (`pxr.UsdPhysics.Scene`):
 
-| Attribute | USD Type | TinyUSDZ C++ Type | Description |
+| Attribute | USD Type | LightUSD C++ Type | Description |
 |---|---|---|---|
 | `physics:gravityDirection` | `vector3f` | `TypedAttribute<value::vector3f>` | Gravity direction unit vector |
 | `physics:gravityMagnitude` | `float` | `TypedAttribute<float>` | Gravity magnitude (m/s^2) |
@@ -36,7 +36,7 @@ Per the official USD Physics schema (`pxr.UsdPhysics.Scene`):
 
 ## Newton Physics Implementation
 
-TinyUSDZ recognizes the Newton API schemas listed in
+LightUSD recognizes the Newton API schemas listed in
 `newton_usd_schemas/generatedSchema.usda`:
 
 - Scene APIs: `NewtonSceneAPI`, `NewtonXpbdSceneAPI`, `NewtonKaminoSceneAPI`
@@ -50,10 +50,10 @@ TinyUSDZ recognizes the Newton API schemas listed in
 
 ### Typed vs. Generic Storage
 
-TinyUSDZ has typed C++ storage for the Newton data that maps cleanly onto the
+LightUSD has typed C++ storage for the Newton data that maps cleanly onto the
 existing physics prim model:
 
-| Schema | TinyUSDZ representation |
+| Schema | LightUSD representation |
 |---|---|
 | `NewtonSceneAPI` | `PhysicsScene::newtonScene` |
 | `NewtonXpbdSceneAPI` | `PhysicsScene::newtonXpbdScene` |
@@ -444,8 +444,8 @@ MjcImageableAPI marks entities as strictly visual (contype = conaffinity = 0).
 
 ## URDF / MJCF → USD Physics Conversion
 
-TinyUSDZ converts URDF and MuJoCo MJCF robots into a UsdPhysics + mjcPhysics
-stage. The C++ converter is `tinyusdz::tydra::ConvertURDFJsonToUSDStage`
+LightUSD converts URDF and MuJoCo MJCF robots into a UsdPhysics + mjcPhysics
+stage. The C++ converter is `lightusd::tydra::ConvertURDFJsonToUSDStage`
 (`src/tydra/urdf-to-usd.cc`); it consumes a JSON payload produced by the web
 demo (`web/js/urdf.js`) or the node CLI (`web/js/cli/urdf-to-usd.js`), both of
 which parse the source robot and emit per-joint frames (`localPos0/1`,
@@ -531,7 +531,7 @@ status line) instead of being dropped silently:
 
 ---
 
-## TinyUSDZ Implementation Status
+## LightUSD Implementation Status
 
 ### Core (parsing + reconstruction)
 

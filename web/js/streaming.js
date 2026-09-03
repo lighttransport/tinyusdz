@@ -51,7 +51,7 @@
 //
 // or just include streaming.html, which calls mountStreamingDemo().
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
 import { parseUSDZEntries } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
@@ -268,7 +268,7 @@ export class StreamingUSDRenderer {
     this.gl = null;
     this.prog = null;
     this.loc = {};        // uniform locations
-    this.loader = null;   // TinyUSDZLoader (owns the WASM Module)
+    this.loader = null;   // LightUSDLoader (owns the WASM Module)
     this.native = null;   // Emscripten Module (HEAPU8 etc.)
     this.drawables = [];  // { vao, count, indexType, material, bbox }
     this.glTextures = []; // GL texture per RenderScene image id (or null)
@@ -308,7 +308,7 @@ export class StreamingUSDRenderer {
     gl.uniform1i(this.loc.uAoMap, 3);
     gl.uniform1i(this.loc.uEmissiveMap, 4);
 
-    this.loader = new TinyUSDZLoader();
+    this.loader = new LightUSDLoader();
     await this.loader.init();
     this.native = this.loader.native_;
     this._installCameraControls();
@@ -377,7 +377,7 @@ export class StreamingUSDRenderer {
 
     // Fresh native loader; keep textures ENCODED in the heap (JS decodes them),
     // so decoded RGBA never lands in the WASM heap.
-    this.usd = new this.native.TinyUSDZLoaderNative();
+    this.usd = new this.native.LightUSDLoaderNative();
     if (typeof this.usd.setLoadTextureInNative === 'function') {
       this.usd.setLoadTextureInNative(false);
     }

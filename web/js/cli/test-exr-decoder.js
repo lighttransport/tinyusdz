@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache 2.0
-// Test EXRDecoder with Three.js primary + TinyUSDZ fallback
+// Test EXRDecoder with Three.js primary + LightUSD fallback
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { decodeEXR, checkEXRSupport } from '../src/tinyusdz/EXRDecoder.js';
-import createTinyUSDZ from '../src/tinyusdz/tinyusdz.js';
+import { decodeEXR, checkEXRSupport } from '../src/lightusd/EXRDecoder.js';
+import createLightUSD from '../src/lightusd/lightusd.js';
 
 async function main() {
   console.log('=== EXR Decoder Test ===\n');
 
-  // Initialize TinyUSDZ
-  console.log('Initializing TinyUSDZ WASM module...');
-  const tinyusdz = await createTinyUSDZ();
-  console.log('TinyUSDZ initialized\n');
+  // Initialize LightUSD
+  console.log('Initializing LightUSD WASM module...');
+  const lightusd = await createLightUSD();
+  console.log('LightUSD initialized\n');
 
   // Test files
   const testFiles = [
@@ -56,12 +56,12 @@ async function main() {
     console.log(`File size: ${(fileSize / 1024).toFixed(1)} KB`);
 
     // Check support
-    const support = checkEXRSupport(buffer, tinyusdz);
+    const support = checkEXRSupport(buffer, lightusd);
     console.log(`Three.js support: ${support.threejs ? 'YES' : 'NO'}`);
-    console.log(`TinyUSDZ support: ${support.tinyusdz ? 'YES' : 'NO'}`);
+    console.log(`LightUSD support: ${support.lightusd ? 'YES' : 'NO'}`);
 
     // Decode with automatic fallback
-    const result = decodeEXR(buffer, tinyusdz, {
+    const result = decodeEXR(buffer, lightusd, {
       outputFormat: 'float16',
       preferThreeJS: true,
       verbose: true,

@@ -13,7 +13,7 @@
 #include "pprint-enum.hh"  // pprint::GetColumnLimit, format_wrapped_array, is_wrappable_element_v
 
 // forward decl
-namespace tinyusdz {
+namespace lightusd {
 
 // in prim-types.hh
 class Path;
@@ -27,118 +27,118 @@ namespace value {
 struct TimeSamples;
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::char2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::char3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::char4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::short2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::short3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::short4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::int2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::int3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::int4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uint2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uint3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uint4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half4 &v);
 
 // Note: operator<< for StringData is declared in pprinter.hh
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double2 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double3 &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::float2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::float3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::float4 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::double2 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::double3 &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::double4 &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::point3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::point3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::point3d &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3d &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3d &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v);
-
-std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord2h &v);
-std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord2f &v);
-std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord2d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color3h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color4h &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color4f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color4d &v);
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord3h &v);
+                         const lightusd::value::texcoord2h &v);
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord3f &v);
+                         const lightusd::value::texcoord2f &v);
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord3d &v);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quath &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatf &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatd &v);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::token &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::dict &v);
-std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::TimeSamples &ts);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4f &v);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2d &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::frame4d &v);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::timecode &v);
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
+                         const lightusd::value::texcoord2d &v);
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::PathExpression &v);
+                         const lightusd::value::texcoord3h &v);
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::value::texcoord3f &v);
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::value::texcoord3d &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::quath &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::quatf &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::quatd &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::token &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::dict &v);
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::value::TimeSamples &ts);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix2f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix3f &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix4f &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix2d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix3d &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::matrix4d &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::frame4d &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::timecode &v);
+
+std::ostream &operator<<(std::ostream &os, const lightusd::value::AssetPath &v);
+
+std::ostream &operator<<(std::ostream &os,
+                         const lightusd::value::PathExpression &v);
 
 // NOTE: Implemented in pprinter.cc
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::StringData &v);
+                         const lightusd::value::StringData &v);
 
 // NOTE: Implemented in pprinter.cc
-std::ostream &operator<<(std::ostream &os, const tinyusdz::Path &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::Reference &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::Payload &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::LayerOffset &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::SubLayer &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::Collection &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::Path &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::Reference &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::Payload &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::LayerOffset &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::SubLayer &v);
+std::ostream &operator<<(std::ostream &os, const lightusd::Collection &v);
 
 // 1D array
 // All three array containers (std::vector / TypedArray / ChunkedTypedArray)
@@ -157,23 +157,23 @@ inline std::ostream &print_array_impl(std::ostream &os, const ArrayT &v,
     ess << v[i];
     elems.push_back(ess.str());
   }
-  tinyusdz::pprint::print_1d_array(os, elems, wrappable);
+  lightusd::pprint::print_1d_array(os, elems, wrappable);
   return os;
 }
 
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
-  return print_array_impl(os, v, tinyusdz::pprint::is_wrappable_element_v<T>);
+  return print_array_impl(os, v, lightusd::pprint::is_wrappable_element_v<T>);
 }
 
 template <typename T>
-std::ostream &operator<<(std::ostream &os, const tinyusdz::TypedArray<T> &v) {
-  return print_array_impl(os, v, tinyusdz::pprint::is_wrappable_element_v<T>);
+std::ostream &operator<<(std::ostream &os, const lightusd::TypedArray<T> &v) {
+  return print_array_impl(os, v, lightusd::pprint::is_wrappable_element_v<T>);
 }
 
 template <typename T>
-std::ostream &operator<<(std::ostream &os, const tinyusdz::ChunkedTypedArray<T> &v) {
-  return print_array_impl(os, v, tinyusdz::pprint::is_wrappable_element_v<T>);
+std::ostream &operator<<(std::ostream &os, const lightusd::ChunkedTypedArray<T> &v) {
+  return print_array_impl(os, v, lightusd::pprint::is_wrappable_element_v<T>);
 }
 
 // Provide specialized version for int and float array.
@@ -200,7 +200,7 @@ std::ostream &operator<<(std::ostream &os, const std::vector<uint64_t> &v);
 
 }  // namespace std
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::string to_string(bool v);
 std::string to_string(int32_t v);
@@ -266,7 +266,7 @@ std::string to_string(const value::color4d &v);
 
 namespace value {
 
-std::string pprint_value(const tinyusdz::value::Value &v,
+std::string pprint_value(const lightusd::value::Value &v,
                          const uint32_t indent = 0, bool closing_brace = true);
 
 // Renders a value::Value holding a schema *prim* type (Model/Xform/GeomMesh/
@@ -274,7 +274,7 @@ std::string pprint_value(const tinyusdz::value::Value &v,
 // (which carries the schema headers); pprint_value() forwards here for type_ids
 // in [TYPE_ID_MODEL_BEGIN, TYPE_ID_MODEL_END). Split out so value-pprint-dispatch.cc
 // (the base-type/array renderer) compiles without the per-prim-type instantiation.
-std::string pprint_prim_value(const tinyusdz::value::Value &v,
+std::string pprint_prim_value(const lightusd::value::Value &v,
                               const uint32_t indent = 0, bool closing_brace = true);
 
 // Print first N and last N items.
@@ -494,4 +494,4 @@ std::string print_array_snipped(const ChunkedTypedArray<T> &vals, size_t N = 16)
 }
 
 }  // namespace value
-}  // namespace tinyusdz
+}  // namespace lightusd

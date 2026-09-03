@@ -30,7 +30,7 @@
 #define CRASH_REGRESSION_DIR "."
 #endif
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static bool read_file(const std::string &path, std::string &out) {
   std::ifstream f(path, std::ios::binary | std::ios::ate);
@@ -110,7 +110,7 @@ int main() {
       // registry. The extension matters -- the registry dispatches on it -- so
       // the directory has to be named e.g. "foo.mtlx".
       const std::string base =
-          "/tmp/tinyusdz_dir_asset_" + std::to_string(getpid());
+          "/tmp/lightusd_dir_asset_" + std::to_string(getpid());
       const char *exts[] = {".mtlx", ".usda", ".usdc", ".usdz", ".usd"};
       pcp::LayerLoadOptions o;
       for (const char *ext : exts) {

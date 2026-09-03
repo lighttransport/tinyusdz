@@ -10,7 +10,7 @@
 #include "tydra/mcp-tools-query.hh"
 #include "tydra/js-script.hh"
 
-using namespace tinyusdz::tydra::mcp;
+using namespace lightusd::tydra::mcp;
 using json = nlohmann::json;
 
 // Helper: create a context with a variety of root-level prims

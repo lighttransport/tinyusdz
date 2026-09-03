@@ -18,7 +18,7 @@
   } \
 }
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -171,7 +171,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath,
+  lightusd::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -232,7 +232,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  lightusd::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -248,7 +248,7 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath,
+  lightusd::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -332,7 +332,7 @@ bool GetBoundMaterial(
   const Stage &_stage,
   const Path &abs_path,
   const std::string &materialPurpose,
-  tinyusdz::Path *materialPath,
+  lightusd::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -347,7 +347,7 @@ bool GetBoundMaterial(
   std::vector<value::token> purposes;
   if (materialPurpose.empty()) {
     // No purpose requested: this is a preview/realtime consumer, so use the same
-    // fallback chain as the `next` resolver (tinyusdz::next::GetBoundMaterialPath)
+    // fallback chain as the `next` resolver (lightusd::next::GetBoundMaterialPath)
     // -- `material:binding:preview`, then the all-purpose `material:binding`, then
     // `material:binding:full`.
     //
@@ -423,7 +423,7 @@ bool GetBoundMaterial(
 
           boundMaterial = directMaterial;
           boundMaterialPath = directMaterialPath;
-        
+
         } else if (_err.size()) {
           if (err) {
             (*err) += _err;
@@ -458,4 +458,4 @@ bool GetBoundMaterial(
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

@@ -26,9 +26,9 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 namespace {
 

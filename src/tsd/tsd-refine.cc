@@ -19,7 +19,7 @@
 
 #include "tsd-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 namespace {
@@ -503,4 +503,4 @@ Result Refine(const MeshView &mesh, const FVarChannelView *fvar_channels,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

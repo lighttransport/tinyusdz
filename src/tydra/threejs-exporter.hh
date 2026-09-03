@@ -3,7 +3,7 @@
 
 ///
 /// @file threejs-exporter.hh
-/// @brief Three.js material and scene exporter for TinyUSDZ/Tydra
+/// @brief Three.js material and scene exporter for LightUSD/Tydra
 ///
 /// Converts Tydra RenderScene and materials to Three.js-compatible formats,
 /// supporting both WebGPU (MaterialX nodes) and WebGL (standard materials).
@@ -30,7 +30,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 using json = nlohmann::json;
@@ -179,4 +179,4 @@ struct MaterialParameterMapping {
 };
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

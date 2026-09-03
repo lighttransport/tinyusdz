@@ -6,7 +6,7 @@
 
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // Short hash ... it could be used on any message,
@@ -347,4 +347,4 @@ void HashState::Reset(size_t seed) {
   _state = seed;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

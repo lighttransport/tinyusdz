@@ -16,7 +16,7 @@
 #include "value-types.hh"
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class Stage;
@@ -275,7 +275,7 @@ struct MeshVisitorEnv {
   size_t material_cache_misses{0};
 };
 
-bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
+bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
                  const int32_t level, void *userdata, std::string *err);
 
 // -----------------------------------------------------------------------
@@ -299,4 +299,4 @@ bool RawAssetRead(
     std::string *err);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

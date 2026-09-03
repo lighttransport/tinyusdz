@@ -89,7 +89,7 @@ native suite:
 
 ```sh
 cmake -S . -B build_ninja -G Ninja \
-  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_GUI_VIEWER=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build_ninja -j16
 ctest --test-dir build_ninja -R 'tusdview|tool-tusdrender' --output-on-failure
 ```

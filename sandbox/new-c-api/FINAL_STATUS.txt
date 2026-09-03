@@ -1,13 +1,13 @@
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                     FINAL PROJECT STATUS REPORT                            ║
 ║                                                                            ║
-║  TinyUSDZ C99 API with Comprehensive Language Bindings                    ║
+║  LightUSD C99 API with Comprehensive Language Bindings                    ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 
 EXECUTIVE SUMMARY
 ═════════════════════════════════════════════════════════════════════════════
 
-This project successfully delivers a complete, minimal C99 API for TinyUSDZ with
+This project successfully delivers a complete, minimal C99 API for LightUSD with
 comprehensive bindings for 5 languages, extensive documentation, and multiple
 examples.
 
@@ -33,8 +33,8 @@ DELIVERABLES SUMMARY
 📁 CORE DELIVERABLES:
 
   1. C99 API (Pure C, 2,050 lines)
-     - tinyusdz_c.h: 628 lines (70+ functions, opaque handles, PIMPL pattern)
-     - tinyusdz_c.cpp: 1,422 lines (Complete C++ implementation)
+     - lightusd_c.h: 628 lines (70+ functions, opaque handles, PIMPL pattern)
+     - lightusd_c.cpp: 1,422 lines (Complete C++ implementation)
      - Build system: CMake + Make
 
   2. Language Bindings (1,710 lines)
@@ -66,7 +66,7 @@ KEY FEATURES IMPLEMENTED
 
 ✅ PYTHON BINDINGS (MAJOR IMPROVEMENT)
 
-  Previous State (tinyusdz.py):
+  Previous State (lightusd.py):
     ✗ 30% API coverage
     ✗ No type hints
     ✗ Manual resource management
@@ -74,7 +74,7 @@ KEY FEATURES IMPLEMENTED
     ✗ No search/query API
     ✗ Limited iteration options
 
-  New State (tinyusdz_improved.py):
+  New State (lightusd_improved.py):
     ✅ 99%+ API coverage (70+ functions)
     ✅ Full type hints for IDE autocomplete
     ✅ Context managers (__enter__/__exit__) for auto-cleanup
@@ -158,7 +158,7 @@ PYTHON IMPROVEMENTS IN DETAIL
 ═════════════════════════════════════════════════════════════════════════════
 
 1. CONTEXT MANAGERS
-   with TinyUSDZ() as tz:
+   with LightUSD() as tz:
        stage = tz.load_file("model.usd")
    # Automatic cleanup on exit
 
@@ -169,7 +169,7 @@ PYTHON IMPROVEMENTS IN DETAIL
 3. CUSTOM EXCEPTIONS
    try:
        stage = tz.load_file("missing.usd")
-   except TinyUSDZLoadError:
+   except LightUSDLoadError:
        pass
 
 4. GENERATOR ITERATION
@@ -195,7 +195,7 @@ PYTHON IMPROVEMENTS IN DETAIL
    value.get()  # Returns correct Python type automatically
 
 9. LOGGING SUPPORT
-   with TinyUSDZ(enable_logging=True) as tz:
+   with LightUSD(enable_logging=True) as tz:
        stage = tz.load_file("model.usd")
 
 10. ZERO BUILD REQUIREMENT
@@ -206,22 +206,22 @@ PYTHON IMPROVEMENTS IN DETAIL
 FILES LOCATION
 ═════════════════════════════════════════════════════════════════════════════
 
-All files are in: /mnt/nvme02/work/tinyusdz-repo/node-animation/sandbox/new-c-api/
+All files are in: /mnt/nvme02/work/lightusd-repo/node-animation/sandbox/new-c-api/
 
 Core Files:
-  - tinyusdz_c.h              C99 header
-  - tinyusdz_c.cpp            C++ implementation
+  - lightusd_c.h              C99 header
+  - lightusd_c.cpp            C++ implementation
   - CMakeLists.txt / Makefile Build system
 
 Python Bindings (3 versions):
-  - tinyusdz_improved.py      ⭐ RECOMMENDED - Best ergonomics
-  - tinyusdz_complete.py      Complete coverage
-  - tinyusdz.py               Original
+  - lightusd_improved.py      ⭐ RECOMMENDED - Best ergonomics
+  - lightusd_complete.py      Complete coverage
+  - lightusd.py               Original
 
 Other Language Bindings:
   - lib.rs                    Rust
-  - TinyUSDZ.cs              C#
-  - tinyusdz.d.ts            TypeScript
+  - LightUSD.cs              C#
+  - lightusd.d.ts            TypeScript
 
 Examples:
   - example_improved_python.py  10 Python feature examples
@@ -268,16 +268,16 @@ QUICK START GUIDE
 ═════════════════════════════════════════════════════════════════════════════
 
 PYTHON (NO BUILD REQUIRED):
-  from tinyusdz_improved import TinyUSDZ
-  
-  with TinyUSDZ() as tz:
+  from lightusd_improved import LightUSD
+
+  with LightUSD() as tz:
       stage = tz.load_file("model.usd")
       for mesh in stage.iter_all_meshes():
           print(f"{mesh.name}: {mesh.mesh_data.vertex_count} vertices")
 
 C:
-  #include <tinyusdz_c.h>
-  
+  #include <lightusd_c.h>
+
   tusdz_init();
   tusdz_stage stage;
   tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
@@ -286,8 +286,8 @@ C:
   tusdz_shutdown();
 
 RUST:
-  use tinyusdz::{init, shutdown, load_from_file};
-  
+  use lightusd::{init, shutdown, load_from_file};
+
   init()?;
   let stage = load_from_file("model.usd", None)?;
   // Use stage...
@@ -323,7 +323,7 @@ SUMMARY
 STATUS: ✅ READY FOR IMMEDIATE USE
 
 This project is complete and ready for:
-  • Integration into TinyUSDZ repository
+  • Integration into LightUSD repository
   • Standalone use in other projects
   • Distribution as a package
   • Educational and research use
@@ -333,7 +333,7 @@ This project is complete and ready for:
 
 PROJECT CHAMPION: Improved Python Bindings
 
-The most impactful deliverable is the tinyusdz_improved.py file, which:
+The most impactful deliverable is the lightusd_improved.py file, which:
   • Increased API coverage from 30% to 99%+
   • Added 10x better developer ergonomics
   • Provides Pythonic patterns (context managers, generators, etc)
@@ -341,7 +341,7 @@ The most impactful deliverable is the tinyusdz_improved.py file, which:
   • Requires zero build steps (ctypes FFI)
   • Enables data analysis and batch processing workflows
 
-This makes TinyUSDZ accessible to the Python data science community.
+This makes LightUSD accessible to the Python data science community.
 
 ═════════════════════════════════════════════════════════════════════════════
 

@@ -1,4 +1,4 @@
-# TinyUSDZ Documentation
+# LightUSD Documentation
 
 Category index for the docs in this directory. Completed or superseded
 documents live in [archive/](archive/).
@@ -12,18 +12,18 @@ documents live in [archive/](archive/).
 - [pcp.md](pcp.md) — Composition-graph (PCP / DAG engine) API reference,
   OpenUSD and AOUSD alignment.
 - [instancing.md](instancing.md) — OpenUSD instancing model, the Moana Island
-  instancing structure, and TinyUSDZ's instancing state + scaling plan.
+  instancing structure, and LightUSD's instancing state + scaling plan.
 - [timesamples.md](timesamples.md) — Time-sampled attribute evaluation,
   interpolation, and value deduplication.
 - [crate-writer.md](crate-writer.md) — USDC Crate writer internals (ValueRep,
   indices, dedup, time samples).
 - [mmap.md](mmap.md) — MMap-based USD loading and the mmap array fast path.
 - [unregistered-value.md](unregistered-value.md) — UnregisteredValue handling
-  (type inference rules) in OpenUSD vs TinyUSDZ.
+  (type inference rules) in OpenUSD vs LightUSD.
 - [signed-zero.md](signed-zero.md) — IEEE-754 signed-zero handling in OpenUSD,
   AOUSD Core requirements and ambiguities, and bit-exact round-trip guidance.
 - [ousd-vs-tusdz.md](ousd-vs-tusdz.md) — AOUSD Core 1.0.1 / OpenUSD review of
-  TinyUSDZ `next` and Tydra-next, with remediation status.
+  LightUSD `next` and Tydra-next, with remediation status.
 
 ## Schema Domains
 
@@ -69,7 +69,7 @@ documents live in [archive/](archive/).
 - [datarace.md](datarace.md) — Thread-safety and data-race notes.
 - [refactor-next.md](refactor-next.md) — `src/next` optimization & hardening
   roadmap (fuzzers, corpus gate, phase results).
-- [tinyusdz-next.md](tinyusdz-next.md) — `src/next`, Next IO, and Tydra Next
+- [lightusd-next.md](lightusd-next.md) — `src/next`, Next IO, and Tydra Next
   overview.
 
 ## Build, Test, Release

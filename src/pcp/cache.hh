@@ -3,7 +3,7 @@
 //
 // cache.hh - Cached / lazy (partial-composition) USD composition engine.
 //
-// tinyusdz::pcp::Cache is the tinyusdz counterpart to OpenUSD's PcpCache. It
+// lightusd::pcp::Cache is the lightusd counterpart to OpenUSD's PcpCache. It
 // reuses the composition_graph engine (PrimIndex / CompNode / PrimIndexBuilder)
 // and adds the layer the eager CompositionGraph lacks:
 //
@@ -57,13 +57,13 @@
 #include "layer.hh"
 #include "pcp/layer-registry.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 class Stage;  // forward decl; stage.hh is only included in cache.cc
 
 namespace pcp {
 
-namespace cg = tinyusdz::composition_graph;
+namespace cg = lightusd::composition_graph;
 
 // ---------------------------------------------------------------------------
 // CacheOptions
@@ -171,4 +171,4 @@ class Cache {
 };
 
 }  // namespace pcp
-}  // namespace tinyusdz
+}  // namespace lightusd

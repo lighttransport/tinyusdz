@@ -1,6 +1,6 @@
-# UDIM Texture Support in TinyUSDZ
+# UDIM Texture Support in LightUSD
 
-TinyUSDZ supports UDIM textures: loading tiles through the asset resolver, a sparse internal representation for editing, combining tiles into a single atlas texture for the Tydra `RenderScene` (WebGL) and USDZ conversion, and `<UDIM>` round-tripping through the USDA/USDC readers and writers.
+LightUSD supports UDIM textures: loading tiles through the asset resolver, a sparse internal representation for editing, combining tiles into a single atlas texture for the Tydra `RenderScene` (WebGL) and USDZ conversion, and `<UDIM>` round-tripping through the USDA/USDC readers and writers.
 
 ## What is UDIM?
 

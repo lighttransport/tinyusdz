@@ -7,7 +7,7 @@
 ///
 /// Provides abstraction for loading assets from various sources (filesystem,
 /// memory, URLs, custom storage, etc.). Similar to ArAsset system in pxrUSD.
-/// 
+///
 /// Key classes:
 /// - Asset: Abstract asset container with data buffer
 /// - AssetResolutionResolver: Resolver for finding and loading assets
@@ -15,12 +15,12 @@
 ///
 /// The system allows USD to load assets from:
 /// - Local filesystem
-/// - Memory buffers  
+/// - Memory buffers
 /// - Network URLs
 /// - Custom storage backends (databases, cloud storage, etc.)
 ///
 /// Note: To avoid confusion with AR (Augmented Reality), we don't use
-/// abbreviations like `ar`, `Ar` and `AR`. 
+/// abbreviations like `ar`, `Ar` and `AR`.
 ///
 /// Reference: https://graphics.pixar.com/usd/release/api/ar_page_front.html
 ///
@@ -34,7 +34,7 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Abstract class for asset(e.g. file, memory, uri, ...)
@@ -44,9 +44,9 @@ class Asset {
  public:
   size_t size() const { return buf_.size(); }
 
-  const uint8_t *data() const TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
+  const uint8_t *data() const LIGHTUSD_LIFETIMEBOUND { return buf_.data(); }
 
-  uint8_t *data() TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
+  uint8_t *data() LIGHTUSD_LIFETIMEBOUND { return buf_.data(); }
 
   void resize(size_t sz) { buf_.resize(sz); }
 
@@ -72,11 +72,11 @@ class Asset {
     resolved_name_ = name;
   }
 
-  const std::string &name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &name() const LIGHTUSD_LIFETIMEBOUND {
     return name_;
   }
 
-  const std::string &resolved_name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &resolved_name() const LIGHTUSD_LIFETIMEBOUND {
     return resolved_name_;
   }
 
@@ -84,12 +84,12 @@ class Asset {
     version_ = version;
   }
 
-  const std::string &version() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &version() const LIGHTUSD_LIFETIMEBOUND {
     return version_;
   }
 
  private:
-  std::string version_; // optional. 
+  std::string version_; // optional.
   std::string name_;
   std::string resolved_name_;
   std::vector<uint8_t> buf_;
@@ -115,7 +115,7 @@ struct ResolverAssetInfo {
 // @param[out] resolved_asset_name Resolved asset name.
 // @param[out] err Error message.
 // @param[inout] userdata Userdata.
-// 
+//
 // @return 0 upon success. -1 = asset cannot be resolved(not found). other negative value = error
 typedef int (*FSResolveAsset)(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name,
                           std::string *err, void *userdata);
@@ -124,7 +124,7 @@ typedef int (*FSResolveAsset)(const char *asset_name, const std::vector<std::str
 // @param[out] nbytes Bytes of this asset.
 // @param[out] err Error message.
 // @param[inout] userdata Userdata.
-// 
+//
 // @return 0 upon success. negative value = error
 typedef int (*FSSizeAsset)(const char *resolved_asset_name, uint64_t *nbytes,
                           std::string *err, void *userdata);
@@ -146,7 +146,7 @@ typedef int (*FSReadAsset)(const char *resolved_asset_name, uint64_t req_nbytes,
 // @param[in] nbytes Data bytes.
 // @param[out] err Error message.
 // @param[inout] userdata Userdata.
-// 
+//
 // @return 0 upon success. negative value = error
 typedef int (*FSWriteAsset)(const char *asset_name, const char *resolved_asset_name, const uint8_t *buffer,
                            const uint64_t nbytes, std::string *err, void *userdata);
@@ -212,7 +212,7 @@ class AssetResolutionResolver {
     return (*this);
   }
 
-  // TinyUSDZ does not provide global search paths at the moment.
+  // LightUSD does not provide global search paths at the moment.
   // static void SetDefaultSearchPath(const std::vector<std::string> &p);
 
   void set_search_paths(const std::vector<std::string> &paths) {
@@ -228,17 +228,17 @@ class AssetResolutionResolver {
 
   //
   // Asset is first seeked from the current working path(directory) when the Asset's path is a relative path.
-  // 
+  //
   void set_current_working_path(const std::string &cwp) {
     _current_working_path = cwp;
     clear_resolution_cache();
   }
 
-  const std::string &current_working_path() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &current_working_path() const LIGHTUSD_LIFETIMEBOUND {
     return _current_working_path;
   }
 
-  const std::vector<std::string> &search_paths() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<std::string> &search_paths() const LIGHTUSD_LIFETIMEBOUND {
     return _search_paths;
   }
 
@@ -384,7 +384,7 @@ class AssetResolutionResolver {
     if (megabytes > 0) {
       _max_asset_bytes_in_mb = megabytes;
     }
-  } 
+  }
 
   size_t get_max_asset_bytes_in_mb() const {
     return _max_asset_bytes_in_mb;
@@ -430,7 +430,7 @@ class PrimSpec;
 // Fileformat plugin(callback) interface.
 // For fileformat which is used in `subLayers`, `reference` or `payload`.
 //
-// TinyUSDZ uses C++ callback interface for security.
+// LightUSD uses C++ callback interface for security.
 // (On the contrary, pxrUSD uses `plugInfo.json` + dll).
 //
 // Texture image/Shader file(e.g. glsl) is not handled in this API.
@@ -444,7 +444,7 @@ class PrimSpec;
 // @param[out] warn Warning message
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given data is expected file format. 
+// @return true when the given data is expected file format.
 typedef bool (*FileFormatCheckFunction)(const Asset &asset, std::string *warn, std::string *err, void *user_data);
 
 
@@ -458,7 +458,7 @@ typedef bool (*FileFormatCheckFunction)(const Asset &asset, std::string *warn, s
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
 //
-// @return true when reading data succeeds. 
+// @return true when reading data succeeds.
 //
 typedef bool (*FileFormatReadFunction)(const Asset &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
 
@@ -469,13 +469,13 @@ typedef bool (*FileFormatReadFunction)(const Asset &asset, PrimSpec &ps/* inout 
 // @param[out] warn Warning message
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
-// @return true upon data write success. 
+// @return true upon data write success.
 typedef bool (*FileFormatWriteFunction)(const PrimSpec &ps, Asset *out_data, std::string *warn, std::string *err, void *user_data);
 
 struct FileFormatHandler
 {
-  std::string extension; // fileformat extension. 
-  std::string description; // Description of this fileformat. can be empty. 
+  std::string extension; // fileformat extension.
+  std::string description; // Description of this fileformat. can be empty.
 
   FileFormatCheckFunction checker{nullptr};
   FileFormatReadFunction reader{nullptr};
@@ -484,4 +484,4 @@ struct FileFormatHandler
 };
 
 
-}  // namespace tinyusdz
+}  // namespace lightusd

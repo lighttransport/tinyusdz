@@ -12,7 +12,7 @@
 #include <cstring>
 #include <mutex>
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -687,4 +687,4 @@ bool TimeSamples::cast_to_role_type(uint32_t role_type_id) {
 }
 
 } // namespace value
-} // namespace tinyusdz
+} // namespace lightusd

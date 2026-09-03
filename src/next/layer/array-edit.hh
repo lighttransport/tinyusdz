@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - sparse array edit (VtArrayEdit) text building & evaluation.
+// LightUSD Next - sparse array edit (VtArrayEdit) text building & evaluation.
 //
 // The next core carries an authored `edit [ <op>; ... ]` value as a
 // structured op list (PrimSpec::array_edit) whose literal elements are
@@ -20,7 +20,7 @@
 #include "prim-spec.hh"
 #include "../types/value.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Upper bound on the element count a growth op (`resize`/`minsize`) may ask
@@ -49,4 +49,4 @@ bool ApplyArrayEdit(const ArrayEditData& edit, const Value* base,
                     TypeId elem_type, Value* out, std::string* err);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA Writer
+// LightUSD Next - USDA Writer
 // Export Stage/Layer to USDA ASCII format
 
 #pragma once
@@ -11,7 +11,7 @@
 #include <string>
 #include <ostream>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for USDA output
@@ -31,7 +31,7 @@ struct USDAWriteOptions {
   size_t max_elements_per_line = 0;
 
   /// Emit the legacy `custom` qualifier on attributes that carry it. OFF by
-  /// default: `custom` is a deprecated USD qualifier, so tinyusdz omits it.
+  /// default: `custom` is a deprecated USD qualifier, so lightusd omits it.
   /// Enable (e.g. under `--openusd-compat`) to byte-match pxr/usdcat output.
   bool emit_custom = false;
 
@@ -53,7 +53,7 @@ struct USDAWriteOptions {
   bool expand_time_samples = true;
 
   /// Number of threads for subtree serialization (only effective when the next
-  /// module is built with TINYUSDZ_ENABLE_THREAD). 1 = serial (default, so all
+  /// module is built with LIGHTUSD_ENABLE_THREAD). 1 = serial (default, so all
   /// existing callers are unchanged); <= 0 = auto (hardware_concurrency); > 1 =
   /// that many. Output is byte-for-byte identical regardless of thread count.
   int num_threads = 1;
@@ -112,4 +112,4 @@ USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer
                                   const USDAWriteOptions& options = {});
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

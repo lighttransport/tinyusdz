@@ -8,7 +8,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace tinyusdz {
+namespace lightusd {
 
 void ParserTimer::StartTimer(const std::string& operation_name) {
   active_timers_[operation_name] = Clock::now();
@@ -69,10 +69,10 @@ void ParserTimer::Clear() {
 std::string ParserTimer::GenerateReport() const {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(3);
-  
+
   oss << "Parser Timing Report:\n";
   oss << "=====================\n";
-  
+
   if (timing_data_.empty()) {
     oss << "No timing data recorded.\n";
     return oss.str();
@@ -89,7 +89,7 @@ std::string ParserTimer::GenerateReport() const {
       << std::right << std::setw(12) << "Total (ms)"
       << std::setw(10) << "Count"
       << std::setw(12) << "Avg (ms)" << "\n";
-  
+
   oss << std::string(max_name_width + 34, '-') << "\n";
 
   // Sort operations by total time (descending)
@@ -103,10 +103,10 @@ std::string ParserTimer::GenerateReport() const {
   for (const auto& pair : sorted_data) {
     const std::string& name = pair.first;
     const TimingData& data = pair.second;
-    
+
     double total_ms = static_cast<double>(data.total_time.count()) / 1000000.0;
     double avg_ms = (data.count > 0) ? total_ms / static_cast<double>(data.count) : 0.0;
-    
+
     oss << std::left << std::setw(static_cast<int>(max_name_width)) << name
         << std::right << std::setw(12) << total_ms
         << std::setw(10) << data.count
@@ -159,7 +159,7 @@ ParserTimer* ParserProfiler::GetTimer(const std::string& parser_name) {
 std::string ParserProfiler::GenerateReport() const {
   MutexLockGuard lock(mu_);
   std::ostringstream oss;
-  oss << "TinyUSDZ Parser Profiling Report\n";
+  oss << "LightUSD Parser Profiling Report\n";
   oss << "================================\n\n";
 
   if (timers_.empty()) {
@@ -182,4 +182,4 @@ void ParserProfiler::ClearAll() {
   }
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

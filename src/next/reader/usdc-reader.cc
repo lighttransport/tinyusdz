@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Reader implementation
+// LightUSD Next - USDC Reader implementation
 
 #include "usdc-reader.hh"
 #include "../strfmt.hh"
 
 #include <fstream>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -89,4 +89,4 @@ USDCLoadResult LoadUSDCFromMemoryOwned(std::string&& data, const USDCLoadOptions
 // Note: IsUSDCFile and IsUSDCData are defined in crate-reader.cc
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

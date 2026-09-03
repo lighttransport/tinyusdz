@@ -7,60 +7,60 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 #find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
 
-option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
-option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
-option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
-option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
-option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
-set(TINYUSDZ_WASM_PRODUCT "legacy" CACHE STRING
+option(LIGHTUSD_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
+option(LIGHTUSD_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
+option(LIGHTUSD_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
+option(LIGHTUSD_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
+option(LIGHTUSD_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
+set(LIGHTUSD_WASM_PRODUCT "legacy" CACHE STRING
     "WASM product to build: legacy, next, or combined (combined is compatibility-only)")
-set_property(CACHE TINYUSDZ_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
+set_property(CACHE LIGHTUSD_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
 
 # Keep the historical switches as compatibility aliases for existing build
 # scripts. New callers should select the product explicitly.
-option(TINYUSDZ_WASM_NEXT_ONLY "Deprecated alias for TINYUSDZ_WASM_PRODUCT=next" OFF)
-option(TINYUSDZ_WASM_LEGACY_ONLY "Deprecated alias for TINYUSDZ_WASM_PRODUCT=legacy" OFF)
-if (TINYUSDZ_WASM_NEXT_ONLY)
-  set(TINYUSDZ_WASM_PRODUCT "next")
-  message(DEPRECATION "TINYUSDZ_WASM_NEXT_ONLY is deprecated; use -DTINYUSDZ_WASM_PRODUCT=next")
-elseif (TINYUSDZ_WASM_LEGACY_ONLY)
-  set(TINYUSDZ_WASM_PRODUCT "legacy")
-  message(DEPRECATION "TINYUSDZ_WASM_LEGACY_ONLY is deprecated; use -DTINYUSDZ_WASM_PRODUCT=legacy")
+option(LIGHTUSD_WASM_NEXT_ONLY "Deprecated alias for LIGHTUSD_WASM_PRODUCT=next" OFF)
+option(LIGHTUSD_WASM_LEGACY_ONLY "Deprecated alias for LIGHTUSD_WASM_PRODUCT=legacy" OFF)
+if (LIGHTUSD_WASM_NEXT_ONLY)
+  set(LIGHTUSD_WASM_PRODUCT "next")
+  message(DEPRECATION "LIGHTUSD_WASM_NEXT_ONLY is deprecated; use -DLIGHTUSD_WASM_PRODUCT=next")
+elseif (LIGHTUSD_WASM_LEGACY_ONLY)
+  set(LIGHTUSD_WASM_PRODUCT "legacy")
+  message(DEPRECATION "LIGHTUSD_WASM_LEGACY_ONLY is deprecated; use -DLIGHTUSD_WASM_PRODUCT=legacy")
 endif()
 
-if (NOT TINYUSDZ_WASM_PRODUCT STREQUAL "legacy" AND
-    NOT TINYUSDZ_WASM_PRODUCT STREQUAL "next" AND
-    NOT TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
+if (NOT LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" AND
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "next" AND
+    NOT LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   message(FATAL_ERROR
-    "TINYUSDZ_WASM_PRODUCT must be legacy, next, or combined (got '${TINYUSDZ_WASM_PRODUCT}')")
+    "LIGHTUSD_WASM_PRODUCT must be legacy, next, or combined (got '${LIGHTUSD_WASM_PRODUCT}')")
 endif()
 
-if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
-  if (TINYUSDZ_WASM64)
-    set(BUILD_TARGET "tinyusdz_next_64")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+  if (LIGHTUSD_WASM64)
+    set(BUILD_TARGET "lightusd_next_64")
   else()
-    set(BUILD_TARGET "tinyusdz_next")
+    set(BUILD_TARGET "lightusd_next")
   endif()
-elseif (TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
-  if (TINYUSDZ_WASM64)
-    set(BUILD_TARGET "tinyusdz_combined_64")
+elseif (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  if (LIGHTUSD_WASM64)
+    set(BUILD_TARGET "lightusd_combined_64")
   else()
-    set(BUILD_TARGET "tinyusdz_combined")
+    set(BUILD_TARGET "lightusd_combined")
   endif()
-elseif (TINYUSDZ_WASM64)
-  set(BUILD_TARGET "tinyusdz_64")
+elseif (LIGHTUSD_WASM64)
+  set(BUILD_TARGET "lightusd_64")
 else()
-  set(BUILD_TARGET "tinyusdz")
+  set(BUILD_TARGET "lightusd")
 endif()
 
 project(${BUILD_TARGET} CXX C)
 
 include(CTest)
-option(TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS
+option(LIGHTUSD_WASM_BROWSER_REGRESSION_TESTS
        "Register host-browser WASM regression tests with CTest" ON)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  message(STATUS "TinyUSDZ WASM: CMAKE_BUILD_TYPE not set; defaulting to MinSizeRel.")
+  message(STATUS "LightUSD WASM: CMAKE_BUILD_TYPE not set; defaulting to MinSizeRel.")
   set(CMAKE_BUILD_TYPE "MinSizeRel" CACHE STRING
       "Build type (Debug|Release|RelWithDebInfo|MinSizeRel)" FORCE)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
@@ -76,50 +76,50 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # SIMD configuration
 # WebAssembly SIMD is widely supported (Chrome 91+, Firefox 89+, Safari 16.4+, Edge 91+)
 # See: https://caniuse.com/wasm-simd
-set(TINYUSDZ_SIMD_FLAGS "")
-if (TINYUSDZ_WASM_SIMD)
-  message(STATUS "TinyUSDZ WASM: SIMD enabled (-msimd128)")
-  set(TINYUSDZ_SIMD_FLAGS "-msimd128")
-  if (TINYUSDZ_WASM_RELAXED_SIMD)
-    message(STATUS "TinyUSDZ WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
-    set(TINYUSDZ_SIMD_FLAGS "${TINYUSDZ_SIMD_FLAGS} -mrelaxed-simd")
+set(LIGHTUSD_SIMD_FLAGS "")
+if (LIGHTUSD_WASM_SIMD)
+  message(STATUS "LightUSD WASM: SIMD enabled (-msimd128)")
+  set(LIGHTUSD_SIMD_FLAGS "-msimd128")
+  if (LIGHTUSD_WASM_RELAXED_SIMD)
+    message(STATUS "LightUSD WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
+    set(LIGHTUSD_SIMD_FLAGS "${LIGHTUSD_SIMD_FLAGS} -mrelaxed-simd")
   endif()
 else()
   # No wasm SIMD: also force the next parser's scanner onto its scalar path so
   # Backend() honestly reports "scalar" (the SSE2/NEON gates are inert on wasm
   # anyway, but keep one SIMD knob coherent across the build).
-  add_compile_definitions(TINYUSDZ_DISABLE_SIMD)
+  add_compile_definitions(LIGHTUSD_DISABLE_SIMD)
 endif()
 
-set(TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "")
-if (TINYUSDZ_SIMD_FLAGS)
-  separate_arguments(TINYUSDZ_SIMD_OPTIONS NATIVE_COMMAND "${TINYUSDZ_SIMD_FLAGS}")
-  list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS ${TINYUSDZ_SIMD_OPTIONS})
+set(LIGHTUSD_WASM_COMMON_COMPILE_OPTIONS "")
+if (LIGHTUSD_SIMD_FLAGS)
+  separate_arguments(LIGHTUSD_SIMD_OPTIONS NATIVE_COMMAND "${LIGHTUSD_SIMD_FLAGS}")
+  list(APPEND LIGHTUSD_WASM_COMMON_COMPILE_OPTIONS ${LIGHTUSD_SIMD_OPTIONS})
 endif()
 
-if (TINYUSDZ_WASM64)
-  list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "-sMEMORY64=1")
+if (LIGHTUSD_WASM64)
+  list(APPEND LIGHTUSD_WASM_COMMON_COMPILE_OPTIONS "-sMEMORY64=1")
 endif()
 
 # The OpenPBR visual parity test requires the combined module because it renders
 # every fixture through both the legacy and next backends. It is a host-side
 # Node/Puppeteer test even though this project is configured through emcmake.
-if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
-    TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
-  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
-  find_program(TINYUSDZ_CHROME_EXECUTABLE
+if (BUILD_TESTING AND LIGHTUSD_WASM_BROWSER_REGRESSION_TESTS AND
+    LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  find_program(LIGHTUSD_NODE_EXECUTABLE NAMES node nodejs)
+  find_program(LIGHTUSD_CHROME_EXECUTABLE
                NAMES google-chrome-stable google-chrome chromium chromium-browser)
-  set(TINYUSDZ_OPENPBR_VISUAL_DIFF
+  set(LIGHTUSD_OPENPBR_VISUAL_DIFF
       "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
-  set(TINYUSDZ_NEXT_WASM_JS
-      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz_next.js")
-  set(TINYUSDZ_NEXT_WASM_BINARY
-      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz_next.wasm")
-  if (TINYUSDZ_NODE_EXECUTABLE AND EXISTS "${TINYUSDZ_OPENPBR_VISUAL_DIFF}" AND
-      EXISTS "${TINYUSDZ_NEXT_WASM_JS}" AND EXISTS "${TINYUSDZ_NEXT_WASM_BINARY}")
+  set(LIGHTUSD_NEXT_WASM_JS
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_next.js")
+  set(LIGHTUSD_NEXT_WASM_BINARY
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd_next.wasm")
+  if (LIGHTUSD_NODE_EXECUTABLE AND EXISTS "${LIGHTUSD_OPENPBR_VISUAL_DIFF}" AND
+      EXISTS "${LIGHTUSD_NEXT_WASM_JS}" AND EXISTS "${LIGHTUSD_NEXT_WASM_BINARY}")
     add_test(
       NAME wasm-regression-openpbr-visual-diff
-      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_OPENPBR_VISUAL_DIFF}"
+      COMMAND "${LIGHTUSD_NODE_EXECUTABLE}" "${LIGHTUSD_OPENPBR_VISUAL_DIFF}"
               --sw --dump-images --dump-composite
               --out "${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/openpbr-visual-diff")
     set_tests_properties(
@@ -129,7 +129,7 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
         TIMEOUT 300
         RUN_SERIAL TRUE
         LABELS "wasm;browser;regression")
-    if (TINYUSDZ_CHROME_EXECUTABLE)
+    if (LIGHTUSD_CHROME_EXECUTABLE)
       # npm installs used by CI may intentionally skip Puppeteer's browser
       # download. Prefer an installed browser when one is available so a plain
       # `ctest` invocation remains self-contained.
@@ -137,35 +137,35 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
         wasm-regression-openpbr-visual-diff
         PROPERTIES
           ENVIRONMENT
-            "PUPPETEER_EXECUTABLE_PATH=${TINYUSDZ_CHROME_EXECUTABLE}")
+            "PUPPETEER_EXECUTABLE_PATH=${LIGHTUSD_CHROME_EXECUTABLE}")
     endif()
   else()
     message(STATUS
-      "TinyUSDZ WASM: skipping OpenPBR browser regression registration "
+      "LightUSD WASM: skipping OpenPBR browser regression registration "
       "(Node, visual-diff CLI, or prebuilt next-only WASM module not found)")
   endif()
 
   # Color management has two complementary gates: direct legacy/next WASM
   # value parity, and float render-target pixel readback in a headless browser.
   # The browser runner starts its own loopback Vite server when no URL is given.
-  set(TINYUSDZ_COLORSPACE_BACKEND_TEST
+  set(LIGHTUSD_COLORSPACE_BACKEND_TEST
       "${PROJECT_SOURCE_DIR}/js/tests/colorspace-backend-parity.mjs")
-  set(TINYUSDZ_COLORSPACE_PIXEL_TEST
+  set(LIGHTUSD_COLORSPACE_PIXEL_TEST
       "${PROJECT_SOURCE_DIR}/js/tests/colorspace-render-batch.mjs")
-  set(TINYUSDZ_LEGACY_WASM_JS
-      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz.js")
-  set(TINYUSDZ_LEGACY_WASM_BINARY
-      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz.wasm")
-  if (TINYUSDZ_NODE_EXECUTABLE AND
-      EXISTS "${TINYUSDZ_COLORSPACE_BACKEND_TEST}" AND
-      EXISTS "${TINYUSDZ_LEGACY_WASM_JS}" AND
-      EXISTS "${TINYUSDZ_LEGACY_WASM_BINARY}" AND
-      EXISTS "${TINYUSDZ_NEXT_WASM_JS}" AND
-      EXISTS "${TINYUSDZ_NEXT_WASM_BINARY}")
+  set(LIGHTUSD_LEGACY_WASM_JS
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd.js")
+  set(LIGHTUSD_LEGACY_WASM_BINARY
+      "${PROJECT_SOURCE_DIR}/js/src/lightusd/lightusd.wasm")
+  if (LIGHTUSD_NODE_EXECUTABLE AND
+      EXISTS "${LIGHTUSD_COLORSPACE_BACKEND_TEST}" AND
+      EXISTS "${LIGHTUSD_LEGACY_WASM_JS}" AND
+      EXISTS "${LIGHTUSD_LEGACY_WASM_BINARY}" AND
+      EXISTS "${LIGHTUSD_NEXT_WASM_JS}" AND
+      EXISTS "${LIGHTUSD_NEXT_WASM_BINARY}")
     add_test(
       NAME wasm-regression-colorspace-backend-parity
-      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
-              "${TINYUSDZ_COLORSPACE_BACKEND_TEST}")
+      COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
+              "${LIGHTUSD_COLORSPACE_BACKEND_TEST}")
     set_tests_properties(
       wasm-regression-colorspace-backend-parity
       PROPERTIES
@@ -173,19 +173,19 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
         TIMEOUT 90
         LABELS "wasm;colorspace;regression")
 
-    if (TINYUSDZ_CHROME_EXECUTABLE AND
-        EXISTS "${TINYUSDZ_COLORSPACE_PIXEL_TEST}" AND
+    if (LIGHTUSD_CHROME_EXECUTABLE AND
+        EXISTS "${LIGHTUSD_COLORSPACE_PIXEL_TEST}" AND
         EXISTS "${PROJECT_SOURCE_DIR}/js/node_modules/puppeteer/package.json" AND
         EXISTS "${PROJECT_SOURCE_DIR}/js/node_modules/vite/bin/vite.js")
       add_test(
         NAME wasm-regression-colorspace-pixel-readback
-        COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
-                "${TINYUSDZ_COLORSPACE_PIXEL_TEST}")
+        COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
+                "${LIGHTUSD_COLORSPACE_PIXEL_TEST}")
       set_tests_properties(
         wasm-regression-colorspace-pixel-readback
         PROPERTIES
           ENVIRONMENT
-            "PUPPETEER_EXECUTABLE_PATH=${TINYUSDZ_CHROME_EXECUTABLE};TINYUSDZ_COLORSPACE_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/colorspace"
+            "PUPPETEER_EXECUTABLE_PATH=${LIGHTUSD_CHROME_EXECUTABLE};LIGHTUSD_COLORSPACE_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/colorspace"
           WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
           TIMEOUT 120
           RUN_SERIAL TRUE
@@ -193,16 +193,16 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
     endif()
   endif()
 
-  if (TINYUSDZ_NODE_EXECUTABLE)
+  if (LIGHTUSD_NODE_EXECUTABLE)
     # Keep the complete web gate in web/js so npm and CTest exercise the same
     # ordered procedure.  The Menagerie checkout is intentionally external;
     # run setup-mujoco-menagerie.sh before invoking this test.
-    set(TINYUSDZ_WEB_REGRESSION_RUNNER
+    set(LIGHTUSD_WEB_REGRESSION_RUNNER
         "${PROJECT_SOURCE_DIR}/js/tests/run-regression.mjs")
-    if (EXISTS "${TINYUSDZ_WEB_REGRESSION_RUNNER}")
+    if (EXISTS "${LIGHTUSD_WEB_REGRESSION_RUNNER}")
       add_test(
         NAME wasm-regression-full
-        COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_WEB_REGRESSION_RUNNER}"
+        COMMAND "${LIGHTUSD_NODE_EXECUTABLE}" "${LIGHTUSD_WEB_REGRESSION_RUNNER}"
                 --profile full)
       set_tests_properties(
         wasm-regression-full
@@ -215,26 +215,26 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
 
     add_test(
       NAME wasm-js-loader-texture-compression
-      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+      COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/js/tests/loader-utils-texture-compression.mjs")
     add_test(
       NAME wasm-texture-compression-abi
-      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+      COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/js/tests/texture-compression-wasm.mjs")
     add_test(
       NAME wasm-js-loader-basis-ktx2
-      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+      COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/js/tests/loader-utils-basis-ktx2.mjs")
-    if (TINYUSDZ_CHROME_EXECUTABLE)
+    if (LIGHTUSD_CHROME_EXECUTABLE)
       add_test(
         NAME wasm-texture-compression-three-ktx2
-        COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+        COMMAND "${LIGHTUSD_NODE_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/js/tests/texture-compression-three-ktx2.mjs")
       set_tests_properties(
         wasm-texture-compression-three-ktx2
         PROPERTIES
           ENVIRONMENT
-            "PUPPETEER_EXECUTABLE_PATH=${TINYUSDZ_CHROME_EXECUTABLE}"
+            "PUPPETEER_EXECUTABLE_PATH=${LIGHTUSD_CHROME_EXECUTABLE}"
           WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
           TIMEOUT 90
           LABELS "wasm;texture;browser;regression")
@@ -251,29 +251,29 @@ endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 
-  if (TINYUSDZ_WASM_DEBUG)
+  if (LIGHTUSD_WASM_DEBUG)
     # Enhanced debug mode with source maps
-    if (TINYUSDZ_WASM64)
-      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+    if (LIGHTUSD_WASM64)
+      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map -sMEMORY64 ${LIGHTUSD_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map -sMEMORY64 ${LIGHTUSD_SIMD_FLAGS}")
     else()
-      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map ${TINYUSDZ_SIMD_FLAGS}")
-      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map ${TINYUSDZ_SIMD_FLAGS}")
+      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map ${LIGHTUSD_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map ${LIGHTUSD_SIMD_FLAGS}")
     endif()
   else()
     # Standard debug mode
-    if (TINYUSDZ_WASM64)
-      set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
-      set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+    if (LIGHTUSD_WASM64)
+      set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64 ${LIGHTUSD_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64 ${LIGHTUSD_SIMD_FLAGS}")
     else()
-      set(CMAKE_CXX_FLAGS_DEBUG "-g4 ${TINYUSDZ_SIMD_FLAGS}")
-      set(CMAKE_C_FLAGS_DEBUG "-g4 ${TINYUSDZ_SIMD_FLAGS}")
+      set(CMAKE_CXX_FLAGS_DEBUG "-g4 ${LIGHTUSD_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g4 ${LIGHTUSD_SIMD_FLAGS}")
     endif()
   endif()
 
 else()
 
-  add_compile_options(${TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS})
+  add_compile_options(${LIGHTUSD_WASM_COMMON_COMPILE_OPTIONS})
 
   if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
     # Keep CMake's default MinSizeRel flags off the command line. CMake uses
@@ -291,27 +291,27 @@ if (NOT EMSCRIPTEN)
 endif()
 
 
-option(TINYUSDZ_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/tinyusdz." OFF)
-if (TINYUSDZ_WASM_DEMODEV)
+option(LIGHTUSD_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/lightusd." OFF)
+if (LIGHTUSD_WASM_DEMODEV)
   message(STATUS "demodev build")
 endif()
 
 # WASM/browser builds intentionally keep C++ threading disabled by default. Do
 # not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
 # browser-threading build option opts into it.
-set(TINYUSDZ_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
 
-if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
-  message(STATUS "TinyUSDZ WASM: building next-core + tydra-next only module")
-  set(TINYUSDZ_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
-  set(TINYUSDZ_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
-  set(TINYUSDZ_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
+  message(STATUS "LightUSD WASM: building next-core + tydra-next only module")
+  set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
+  set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
+  set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
 
-  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next tinyusdz_next_build EXCLUDE_FROM_ALL)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next lightusd_next_build EXCLUDE_FROM_ALL)
 
-  add_executable(tinyusdz_next_wasm binding-next.cc)
+  add_executable(lightusd_next_wasm binding-next.cc)
   # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
-  target_sources(tinyusdz_next_wasm PRIVATE
+  target_sources(lightusd_next_wasm PRIVATE
     ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
     ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
     ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
@@ -324,26 +324,26 @@ if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-refine.cc
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-stream.cc
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-limit.cc)
-  target_link_libraries(tinyusdz_next_wasm PRIVATE tydra_next tinyusdz_next)
-  target_include_directories(tinyusdz_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
-  target_compile_features(tinyusdz_next_wasm PRIVATE cxx_std_17)
-  target_compile_options(tinyusdz_next_wasm
+  target_link_libraries(lightusd_next_wasm PRIVATE tydra_next lightusd_next)
+  target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
+  target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
+  target_compile_options(lightusd_next_wasm
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-  target_compile_definitions(tinyusdz_next_wasm
+  target_compile_definitions(lightusd_next_wasm
                              PRIVATE JSON_NOEXCEPTION=1
-                                     TINYUSDZ_CXX_EXCEPTIONS=0)
-  if (TINYUSDZ_WASM64)
-    target_compile_definitions(tinyusdz_next_wasm PRIVATE TINYUSDZ_WASM_MEMORY64=1)
+                                     LIGHTUSD_CXX_EXCEPTIONS=0)
+  if (LIGHTUSD_WASM64)
+    target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_WASM_MEMORY64=1)
   endif()
 
-  if (TINYUSDZ_WASM_DEMODEV)
-    set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/tinyusdz/)
+  if (LIGHTUSD_WASM_DEMODEV)
+    set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/lightusd/)
   else()
-    set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/tinyusdz/)
+    set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
   endif()
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(TINYUSDZ_NEXT_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
+    set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
      -sMALLOC=emmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
@@ -354,11 +354,11 @@ if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
      -sINVOKE_RUN=0 --bind ")
   else()
     if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-      set(TINYUSDZ_NEXT_EMCC_LINK_OPT_FLAGS "-Oz ")
+      set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "-Oz ")
     else()
-      set(TINYUSDZ_NEXT_EMCC_LINK_OPT_FLAGS "")
+      set(LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS "")
     endif()
-    set(TINYUSDZ_NEXT_EMCC_LINK_FLAGS "${TINYUSDZ_NEXT_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
+    set(LIGHTUSD_NEXT_EMCC_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
      -sMALLOC=emmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
@@ -369,89 +369,89 @@ if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind ")
   endif()
-  if (TINYUSDZ_SIMD_FLAGS)
-    string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " ${TINYUSDZ_SIMD_FLAGS}")
+  if (LIGHTUSD_SIMD_FLAGS)
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
   endif()
-  if (TINYUSDZ_WASM64)
-    string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
+  if (LIGHTUSD_WASM64)
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
   else()
-    string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
+    string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
   endif()
-  string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+  string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
 
   set_target_properties(
-      tinyusdz_next_wasm
+      lightusd_next_wasm
       PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
                  SUFFIX ".js"
                  RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
-                 LINK_FLAGS "${TINYUSDZ_NEXT_EMCC_LINK_FLAGS}")
+                 LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
   return()
 endif()
 
-# [tinyusdz]
-add_subdirectory(../  tinyusdz)
+# [lightusd]
+add_subdirectory(../  lightusd)
 
-# [tinyusdz next] Low-memory lazy-ValueRep flatten pipeline. Compiled directly
+# [lightusd next] Low-memory lazy-ValueRep flatten pipeline. Compiled directly
 # into the WASM module (not the standalone next lib) so it shares the main lib's
 # lz4 (avoids duplicate LZ4_* symbols). Only the sources the flatten pipeline
 # needs are listed; unused code is stripped by wasm-ld DCE.
-set(TINYUSDZ_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src/next")
+set(LIGHTUSD_NEXT_DIR "${PROJECT_SOURCE_DIR}/../src/next")
 list(
   APPEND
   NEXT_SOURCES
-  ${TINYUSDZ_NEXT_DIR}/types/type-info.cc
-  ${TINYUSDZ_NEXT_DIR}/types/value.cc
-  ${TINYUSDZ_NEXT_DIR}/types/spline.cc
-  ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
-  ${TINYUSDZ_NEXT_DIR}/writer/dtoa.cc
+  ${LIGHTUSD_NEXT_DIR}/types/type-info.cc
+  ${LIGHTUSD_NEXT_DIR}/types/value.cc
+  ${LIGHTUSD_NEXT_DIR}/types/spline.cc
+  ${LIGHTUSD_NEXT_DIR}/types/interpolation.cc
+  ${LIGHTUSD_NEXT_DIR}/writer/dtoa.cc
   # value-printer defines next::PrintValue, referenced by the crate
   # reader/writer (spline customData round-trip) — without it wasm-ld fails
   # with an undefined-symbol error on a clean build.
-  ${TINYUSDZ_NEXT_DIR}/writer/value-printer.cc
-  ${TINYUSDZ_NEXT_DIR}/prim/path.cc
-  ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
-  ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
-  ${TINYUSDZ_NEXT_DIR}/layer/array-edit.cc
-  ${TINYUSDZ_NEXT_DIR}/layer/property-index.cc
-  ${TINYUSDZ_NEXT_DIR}/layer/prim-spec.cc
-  ${TINYUSDZ_NEXT_DIR}/layer/layer.cc
-  ${TINYUSDZ_NEXT_DIR}/stage/stage.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-format.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-arrays.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-decode.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-api.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-sections.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-stage.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-unpack.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-vectors.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-writer-types.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
-  ${TINYUSDZ_NEXT_DIR}/crate/variant-holders.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-metadata.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-prim.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-timesamples.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-utils.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-variants.cc
-  ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
-  ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
-  ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
-  ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
-  ${TINYUSDZ_NEXT_DIR}/pcp/layer-registry.cc
-  ${TINYUSDZ_NEXT_DIR}/reader/usda-reader.cc
-  ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
-  ${TINYUSDZ_NEXT_DIR}/reader/usdz-reader.cc
-  ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
-  ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
-  ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
-  ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
-  ${TINYUSDZ_NEXT_DIR}/eval/value-clip.cc
-  ${TINYUSDZ_NEXT_DIR}/schema/schema-registry.cc
+  ${LIGHTUSD_NEXT_DIR}/writer/value-printer.cc
+  ${LIGHTUSD_NEXT_DIR}/prim/path.cc
+  ${LIGHTUSD_NEXT_DIR}/prim/attribute.cc
+  ${LIGHTUSD_NEXT_DIR}/prim/prim.cc
+  ${LIGHTUSD_NEXT_DIR}/layer/array-edit.cc
+  ${LIGHTUSD_NEXT_DIR}/layer/property-index.cc
+  ${LIGHTUSD_NEXT_DIR}/layer/prim-spec.cc
+  ${LIGHTUSD_NEXT_DIR}/layer/layer.cc
+  ${LIGHTUSD_NEXT_DIR}/stage/stage.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-format.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-data-source.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-arrays.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-decode.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-api.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-sections.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-stage.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-unpack.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-reader-vectors.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-writer-types.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/crate-writer.cc
+  ${LIGHTUSD_NEXT_DIR}/crate/variant-holders.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/lexer.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/value-parser.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/value-parser-types.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-metadata.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-prim.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-timesamples.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-utils.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/ascii-parser-variants.cc
+  ${LIGHTUSD_NEXT_DIR}/parser/simd-scan.cc
+  ${LIGHTUSD_NEXT_DIR}/composition/composition.cc
+  ${LIGHTUSD_NEXT_DIR}/resolver/asset-resolver.cc
+  ${LIGHTUSD_NEXT_DIR}/pipeline/flatten.cc
+  ${LIGHTUSD_NEXT_DIR}/pcp/layer-registry.cc
+  ${LIGHTUSD_NEXT_DIR}/reader/usda-reader.cc
+  ${LIGHTUSD_NEXT_DIR}/reader/usdc-reader.cc
+  ${LIGHTUSD_NEXT_DIR}/reader/usdz-reader.cc
+  ${LIGHTUSD_NEXT_DIR}/schema/geom-mesh.cc
+  ${LIGHTUSD_NEXT_DIR}/schema/geom-xform.cc
+  ${LIGHTUSD_NEXT_DIR}/schema/usd-shade.cc
+  ${LIGHTUSD_NEXT_DIR}/eval/attribute-eval.cc
+  ${LIGHTUSD_NEXT_DIR}/eval/value-clip.cc
+  ${LIGHTUSD_NEXT_DIR}/schema/schema-registry.cc
 )
 
 list(
@@ -464,7 +464,7 @@ list(
 )
 # The legacy product deliberately excludes the next core. The combined product
 # remains available for compatibility testing, but is not the shipped default.
-if (TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
   list(APPEND SOURCES ${NEXT_SOURCES})
 endif()
 
@@ -478,51 +478,51 @@ target_compile_options(${BUILD_TARGET}
                                $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
 target_compile_definitions(${BUILD_TARGET}
                            PRIVATE JSON_NOEXCEPTION=1
-                                   TINYUSDZ_CXX_EXCEPTIONS=0
-                                   TINYUSDZ_CXX_RTTI=0
+                                   LIGHTUSD_CXX_EXCEPTIONS=0
+                                   LIGHTUSD_CXX_RTTI=0
                                    EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
-if (TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
-  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_WITH_NEXT=1)
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WASM_WITH_NEXT=1)
 endif()
-if (TINYUSDZ_WASM64)
-  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
+if (LIGHTUSD_WASM64)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WASM_MEMORY64=1)
 endif()
 
 # Pass through compile definitions for feature flags
-if (TINYUSDZ_WITH_EXR)
-  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WITH_EXR=1)
+if (LIGHTUSD_WITH_EXR)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WITH_EXR=1)
 endif()
 
 # C++20 coroutine support for async loading
-if (TINYUSDZ_WASM_COROUTINE)
-  message(STATUS "TinyUSDZ WASM: C++20 coroutine async loading enabled")
-  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_USE_COROUTINE=1)
+if (LIGHTUSD_WASM_COROUTINE)
+  message(STATUS "LightUSD WASM: C++20 coroutine async loading enabled")
+  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_USE_COROUTINE=1)
 endif()
 
-# tinyusdz dir
+# lightusd dir
 target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
 
 
-target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static
+target_link_libraries(${BUILD_TARGET} PRIVATE lightusd::lightusd_static
                                               ${EXT_LIBRARIES} PUBLIC ${CMAKE_DL_LIBS})
 
 # The main WASM module exposes the same Basis-free `uni` scene-texture path as
 # the standalone texcomp demo. Referencing textools directly keeps its public
 # headers visible to binding.cc and prevents the transcoders from being stripped.
-if (TINYUSDZ_WITH_TEXTOOLS)
-  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WITH_TEXTOOLS=1)
-  target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz_textools)
+if (LIGHTUSD_WITH_TEXTOOLS)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE LIGHTUSD_WITH_TEXTOOLS=1)
+  target_link_libraries(${BUILD_TARGET} PRIVATE lightusd_textools)
 endif()
 
 source_group("Source Files" FILES ${SOURCES})
 
 if (EMSCRIPTEN)
 
-    if (TINYUSDZ_WASM_DEMODEV)
-      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/tinyusdz/)
+    if (LIGHTUSD_WASM_DEMODEV)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/lightusd/)
     else()
-      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/tinyusdz/)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/lightusd/)
     endif()
 
     set_target_properties(
@@ -535,15 +535,15 @@ endif()
 
 
 # for debugging
-# --memoryprofiler 
-# --source-map-base http://localhost:8021/ 
+# --memoryprofiler
+# --source-map-base http://localhost:8021/
 
 # flags = try to lower heap memory use
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  if (TINYUSDZ_WASM_DEBUG)
+  if (LIGHTUSD_WASM_DEBUG)
     # Enhanced debug mode with source maps, stack traces, and runtime checks
-    set(TINYUSDZ_EMCC_LINK_FLAGS "-g -gsource-map -sENVIRONMENT='web,worker,node' \
+    set(LIGHTUSD_EMCC_LINK_FLAGS "-g -gsource-map -sENVIRONMENT='web,worker,node' \
      -sMALLOC=emmalloc \
      -sSTACK_SIZE=1024000 \
      -sALLOW_MEMORY_GROWTH=1 \
@@ -557,7 +557,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      --source-map-base http://localhost:5173/ ")
   else()
     # Standard debug mode
-    set(TINYUSDZ_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
+    set(LIGHTUSD_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
      -sMALLOC=emmalloc \
      -sSTACK_SIZE=1024000 \
      -sALLOW_MEMORY_GROWTH=1 \
@@ -570,12 +570,12 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   endif()
 else()
   if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-    set(TINYUSDZ_EMCC_LINK_OPT_FLAGS "-Oz ")
+    set(LIGHTUSD_EMCC_LINK_OPT_FLAGS "-Oz ")
   else()
-    set(TINYUSDZ_EMCC_LINK_OPT_FLAGS "")
+    set(LIGHTUSD_EMCC_LINK_OPT_FLAGS "")
   endif()
 
-  set(TINYUSDZ_EMCC_LINK_FLAGS "${TINYUSDZ_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
+  set(LIGHTUSD_EMCC_LINK_FLAGS "${LIGHTUSD_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
    -sMALLOC=emmalloc \
    -sSTACK_SIZE=512000 \
    -sALLOW_MEMORY_GROWTH=1 \
@@ -586,11 +586,11 @@ else()
    -sINVOKE_RUN=0 --bind ")
 endif()
 
-if (TINYUSDZ_SIMD_FLAGS)
-  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " ${TINYUSDZ_SIMD_FLAGS}")
+if (LIGHTUSD_SIMD_FLAGS)
+  string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " ${LIGHTUSD_SIMD_FLAGS}")
 endif()
 
-if (TINYUSDZ_WASM64)
+if (LIGHTUSD_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
   # MAXIMUM_MEMORY=16GB: only reserves address space (ALLOW_MEMORY_GROWTH grows
   # on demand); the in-heap folder flatten of a multi-GB UE-export scene (e.g.
@@ -599,18 +599,18 @@ if (TINYUSDZ_WASM64)
   # emmalloc_free) once the wasm64 heap grows past ~8 GB; dlmalloc handles the
   # large-heap case. (The later -sMALLOC overrides the emmalloc set in the
   # common flags above.)
-  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
+  string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
 else()
-  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
+  string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
 endif()
 
 # Export heap views for zero-copy streaming and typed pointer descriptors used
 # by the web loader fast path.
-string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
+string(APPEND LIGHTUSD_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
 
-message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
+message(STATUS ${LIGHTUSD_EMCC_LINK_FLAGS})
 
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "${TINYUSDZ_EMCC_LINK_FLAGS}")
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "${LIGHTUSD_EMCC_LINK_FLAGS}")
 
 # ENVIRONMENT=web
 # SINGLE_FILE=1

@@ -9,7 +9,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 
 class Stage;
 
@@ -39,4 +39,4 @@ bool ConvertARToJson(
     const ARJsonExportOptions &options = {});
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

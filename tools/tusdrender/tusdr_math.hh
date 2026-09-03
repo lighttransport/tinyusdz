@@ -39,17 +39,17 @@
 
 namespace tusdr {
 
-using tinyusdz::value::color3f;
-using tinyusdz::value::float3;
-using tinyusdz::value::matrix4d;
+using lightusd::value::color3f;
+using lightusd::value::float3;
+using lightusd::value::matrix4d;
 
 // Memory budget + tracking pool allocator now live in the shared header so
 // examples/tusdquicklook can use them too. These aliases keep every tusdr call
 // site (MemBudget::Get(), PoolAlloc<T>, MemPool::Get()) unchanged.
-using MemBudget = tinyusdz::tydra::next::MemBudget;
-using MemPool = tinyusdz::tydra::next::MemPool;
+using MemBudget = lightusd::tydra::next::MemBudget;
+using MemPool = lightusd::tydra::next::MemPool;
 template <class T>
-using PoolAlloc = tinyusdz::tydra::next::PoolAlloc<T>;
+using PoolAlloc = lightusd::tydra::next::PoolAlloc<T>;
 
 // Conservative estimate of the extra memory LightRT's BVH build adds per
 // triangle (the re-swizzled vertex copy ~36 B + wide-BVH nodes/leaves). Used by
@@ -485,10 +485,10 @@ inline float ClampFloat(float v, float lo, float hi) {
 }
 
 inline Vec3 FromFloat3(const float3 &v) { return Vec3{v[0], v[1], v[2]}; }
-inline Vec3 FromPoint3(const tinyusdz::value::point3f &v) {
+inline Vec3 FromPoint3(const lightusd::value::point3f &v) {
   return Vec3{v[0], v[1], v[2]};
 }
-inline Vec3 FromVector3(const tinyusdz::value::vector3f &v) {
+inline Vec3 FromVector3(const lightusd::value::vector3f &v) {
   return Vec3{v[0], v[1], v[2]};
 }
 

@@ -8,7 +8,7 @@
 #include <map>
 #include "str-util.hh"
 
-#ifdef TINYUSDZ_ENABLE_THREAD
+#ifdef LIGHTUSD_ENABLE_THREAD
 #include <thread>
 #include <vector>
 #endif
@@ -20,7 +20,7 @@
 #include "stream-writer.hh"
 #include "typed-array-core.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Configuration for threaded printing
@@ -34,7 +34,7 @@ struct ThreadedPrintConfig {
 
   /// Get the actual number of threads to use
   unsigned int get_num_threads() const {
-#ifdef TINYUSDZ_ENABLE_THREAD
+#ifdef LIGHTUSD_ENABLE_THREAD
     if (num_threads > 0) {
       return num_threads;
     }
@@ -675,4 +675,4 @@ void set_threaded_print_num_threads(unsigned int num_threads) {
     g_threaded_print_config.num_threads = num_threads;
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

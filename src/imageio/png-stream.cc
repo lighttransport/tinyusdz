@@ -18,7 +18,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace imageio {
 
 namespace {
@@ -659,4 +659,4 @@ bool TranscodePNG(const uint8_t *data, size_t size, std::vector<uint8_t> &out) {
 }
 
 }  // namespace imageio
-}  // namespace tinyusdz
+}  // namespace lightusd

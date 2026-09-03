@@ -30,9 +30,9 @@
 #include <cstdint>
 #include <memory>
 
-#define USD_API 
+#define USD_API
 //PXR_NAMESPACE_OPEN_SCOPE
-namespace tinyusdz {
+namespace lightusd {
 
 class Usd_IntegerCompression
 {
@@ -139,6 +139,6 @@ public:
 };
 
 //PXR_NAMESPACE_CLOSE_SCOPE
-} // namespace tinyusdz
+} // namespace lightusd
 
 #endif // USD_INTEGERCODING_H

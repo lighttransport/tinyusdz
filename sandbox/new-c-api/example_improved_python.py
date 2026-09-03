@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example showcasing the improved Python bindings for TinyUSDZ
+Example showcasing the improved Python bindings for LightUSD
 
 This example demonstrates the enhanced ergonomic features:
   • Context managers for automatic cleanup
@@ -14,16 +14,16 @@ This example demonstrates the enhanced ergonomic features:
 import sys
 from pathlib import Path
 
-# Note: Adjust this import based on where tinyusdz_improved.py is located
+# Note: Adjust this import based on where lightusd_improved.py is located
 try:
-    from tinyusdz_improved import (
-        TinyUSDZ, PrimType, ValueType, Format,
-        TinyUSDZLoadError, TinyUSDZNotFoundError
+    from lightusd_improved import (
+        LightUSD, PrimType, ValueType, Format,
+        LightUSDLoadError, LightUSDNotFoundError
     )
 except (ImportError, Exception) as e:
     # Library might not be built, but we can still show features
     print(f"Note: Library not available ({type(e).__name__}), showing API examples only")
-    TinyUSDZ = None
+    LightUSD = None
     PrimType = None
     ValueType = None
     Format = None
@@ -37,7 +37,7 @@ def example_1_context_manager():
 
     print("""
     # Old way (manual cleanup):
-    tz = TinyUSDZ()
+    tz = LightUSD()
     try:
         stage = tz.load_file("model.usd")
         # ... do work ...
@@ -45,7 +45,7 @@ def example_1_context_manager():
         tz.shutdown()
 
     # New way (automatic cleanup):
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
         # ... do work ...
         # cleanup happens automatically on exit
@@ -62,7 +62,7 @@ def example_2_type_hints():
     print("""
     # All functions have type hints:
     def load_and_analyze(filepath: str) -> Dict[str, int]:
-        with TinyUSDZ() as tz:
+        with LightUSD() as tz:
             stage: Stage = tz.load_file(filepath)
             stats: Dict[str, Any] = stage.get_statistics()
             return stats
@@ -86,23 +86,23 @@ def example_3_custom_exceptions():
     # Specific exception types for better error handling:
 
     try:
-        with TinyUSDZ() as tz:
+        with LightUSD() as tz:
             stage = tz.load_file("missing.usd")
-    except TinyUSDZLoadError as e:
+    except LightUSDLoadError as e:
         print(f"Failed to load: {e}")  # File not found, parse error, etc
-    except TinyUSDZNotFoundError as e:
+    except LightUSDNotFoundError as e:
         print(f"Prim not found: {e}")
-    except TinyUSDZTypeError as e:
+    except LightUSDTypeError as e:
         print(f"Type mismatch: {e}")
-    except TinyUSDZError as e:
-        print(f"Other TinyUSDZ error: {e}")
+    except LightUSDError as e:
+        print(f"Other LightUSD error: {e}")
 
     Exceptions:
-    • TinyUSDZError - Base exception
-    • TinyUSDZLoadError - Loading/parsing errors
-    • TinyUSDZTypeError - Type conversion errors
-    • TinyUSDZValueError - Invalid values
-    • TinyUSDZNotFoundError - Prim/property not found
+    • LightUSDError - Base exception
+    • LightUSDLoadError - Loading/parsing errors
+    • LightUSDTypeError - Type conversion errors
+    • LightUSDValueError - Invalid values
+    • LightUSDNotFoundError - Prim/property not found
     """)
     print("✓ Custom exception hierarchy for better error handling")
 
@@ -115,7 +115,7 @@ def example_4_iteration():
 
     print("""
     # Depth-first iteration (memory efficient via generators):
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
 
         for prim in stage.iter_all_prims():
@@ -152,7 +152,7 @@ def example_5_query_api():
     print("="*70)
 
     print("""
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
 
         # Find by name (exact match):
@@ -189,7 +189,7 @@ def example_6_enhanced_data_structures():
     print("="*70)
 
     print("""
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
 
         for mesh in stage.iter_all_meshes():
@@ -225,7 +225,7 @@ def example_7_type_checking():
     print("="*70)
 
     print("""
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
 
         for prim in stage.iter_all_prims():
@@ -251,7 +251,7 @@ def example_8_statistics():
     print("="*70)
 
     print("""
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
 
         # Get comprehensive statistics:
@@ -277,7 +277,7 @@ def example_9_auto_type_conversion():
     print("="*70)
 
     print("""
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("model.usd")
 
         for prim in stage.iter_all_prims():
@@ -311,8 +311,8 @@ def example_10_logging():
     # Enable detailed logging:
     logging.basicConfig(level=logging.DEBUG)
 
-    # Now use TinyUSDZ with logging enabled:
-    with TinyUSDZ(enable_logging=True) as tz:
+    # Now use LightUSD with logging enabled:
+    with LightUSD(enable_logging=True) as tz:
         stage = tz.load_file("model.usd")
 
         # All operations log detailed information:
@@ -329,7 +329,7 @@ def main():
     """Run all examples"""
     print("\n")
     print("╔" + "="*68 + "╗")
-    print("║" + " "*20 + "TinyUSDZ Improved Python Bindings" + " "*15 + "║")
+    print("║" + " "*20 + "LightUSD Improved Python Bindings" + " "*15 + "║")
     print("║" + " "*22 + "Feature Showcase & Examples" + " "*19 + "║")
     print("╚" + "="*68 + "╝")
 
@@ -372,7 +372,7 @@ def main():
     print("For actual usage with a real USD file:")
     print("="*70)
     print("""
-    with TinyUSDZ() as tz:
+    with LightUSD() as tz:
         stage = tz.load_file("your_model.usd")
         stage.print_info()
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This benchmark tests the array pre-allocation optimization implemented in the TinyUSDZ pprint system. The optimization pre-allocates buffer space based on the formula:
+This benchmark tests the array pre-allocation optimization implemented in the LightUSD pprint system. The optimization pre-allocates buffer space based on the formula:
 
 ```
 reserve_size = (array_len / 2) * 4 * vec_len
@@ -18,7 +18,7 @@ Where:
 - **Platform**: Linux x86_64
 - **Compiler**: Clang++ with -O3 optimization
 - **C++ Standard**: C++14
-- **Library**: TinyUSDZ with StreamWriter pre-allocation optimization
+- **Library**: LightUSD with StreamWriter pre-allocation optimization
 
 ## Benchmark Results
 

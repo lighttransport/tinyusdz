@@ -19,13 +19,13 @@
 #include "next/stage/stage.hh"
 #include "next/execution.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 class AssetResolver;
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -162,7 +162,7 @@ struct AnimationConfig {
   // avoid per-prim time-sample scans when animations are not needed.
   bool enabled = true;
   using ClipStageLoader = std::function<bool(
-      const std::string& asset_path, ::tinyusdz::next::Stage* stage,
+      const std::string& asset_path, ::lightusd::next::Stage* stage,
       std::string* warn, std::string* err)>;
   ClipStageLoader clip_stage_loader;
 
@@ -195,7 +195,7 @@ struct ConverterConfig {
 
   // Unified execution policy. max_threads == -1 preserves
   // max_worker_threads above; otherwise 0=auto, 1=serial, >1=fixed.
-  ::tinyusdz::next::ExecutionOptions execution;
+  ::lightusd::next::ExecutionOptions execution;
 
   // Time code for evaluation
   double time_code = 0.0;
@@ -208,7 +208,7 @@ struct ConverterConfig {
   // Optional next-core AssetResolver (non-owning). When set it takes over
   // texture asset-path resolution (anchor/working-dir/search paths +
   // suffix fallback) instead of the plain asset_base_dir prefix above.
-  const ::tinyusdz::next::AssetResolver* asset_resolver = nullptr;
+  const ::lightusd::next::AssetResolver* asset_resolver = nullptr;
 
   // Progress callback
   using ProgressCallback = std::function<void(float progress, const std::string& message)>;
@@ -296,13 +296,13 @@ class RenderSceneConverter {
   // Main conversion entry point
   /// Read-only retained conversion. This never evicts values from `stage`, so
   /// it is safe to use with an immutable StageSnapshot.
-  ConvertResult Convert(const ::tinyusdz::next::Stage& stage);
+  ConvertResult Convert(const ::lightusd::next::Stage& stage);
 
   // Low-memory, destructive conversion entry point. Only one converted
   // geometry prim is live outside the destination sink at a time. Static
   // source arrays may be evicted as their last consumer completes, hence the
   // deliberately mutable Stage reference.
-  StreamConvertResult ConvertToSink(::tinyusdz::next::Stage& stage,
+  StreamConvertResult ConvertToSink(::lightusd::next::Stage& stage,
                                     SceneSink* sink);
 
   // Cheap preflight and extent-only conversion for application-managed
@@ -321,15 +321,15 @@ class RenderSceneConverter {
                      RenderPoints* out);
   bool ConvertCurves(const UsdPrim& prim, RenderCurves* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
-  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
-  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
+  bool ConvertMaterial(const ::lightusd::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
+  bool ConvertMaterial(const ::lightusd::next::Stage& stage,
                        const UsdPrim& prim, RenderMaterial* out,
                        RenderScene* scene);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
-  bool ConvertCamera(const ::tinyusdz::next::Stage& stage,
+  bool ConvertCamera(const ::lightusd::next::Stage& stage,
                      const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
-  bool ConvertAnimation(const ::tinyusdz::next::Stage& stage,
+  bool ConvertAnimation(const ::lightusd::next::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out);
 
   // Robustly triangulate an already-populated RenderMesh. Custom/lazy
@@ -349,11 +349,11 @@ class RenderSceneConverter {
  private:
   // Build scene hierarchy
   void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
-  void ExtractPhysicsAnnotations(const ::tinyusdz::next::Stage& stage,
+  void ExtractPhysicsAnnotations(const ::lightusd::next::Stage& stage,
                                  RenderScene* scene);
-  void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
+  void AssignMaterialBindings(const ::lightusd::next::Stage& stage,
                               RenderScene* scene);
-  void AssignMeshMaterialBinding(const ::tinyusdz::next::Stage& stage,
+  void AssignMeshMaterialBinding(const ::lightusd::next::Stage& stage,
                                  const RenderScene& scene,
                                  RenderMesh* mesh);
 
@@ -392,7 +392,7 @@ class RenderSceneConverter {
   std::string ResolveAssetPath(const std::string& file,
                                uint32_t asset_anchor_id = 0) const;
   /// The anchor stamped on `prim`'s spec (0 when it has none).
-  static uint32_t AssetAnchorOf(const ::tinyusdz::next::UsdPrim& prim);
+  static uint32_t AssetAnchorOf(const ::lightusd::next::UsdPrim& prim);
   /// Find-or-create an image record for `file`; returns its id (-1 on empty).
   int32_t ResolveImageId(RenderScene* scene, const std::string& file,
                          ColorSpace color_space, uint32_t asset_anchor_id = 0);
@@ -428,19 +428,19 @@ class RenderSceneConverter {
   bool budget_exceeded_ = false;
 
   // Material extraction
-  bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
+  bool ExtractPreviewSurface(const ::lightusd::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              PreviewSurfaceShader* out,
                              RenderScene* scene);
-  bool ExtractStandardSurfaceAsOpenPBR(const ::tinyusdz::next::Stage& stage,
-                                       const ::tinyusdz::next::UsdPrim& shader_prim,
+  bool ExtractStandardSurfaceAsOpenPBR(const ::lightusd::next::Stage& stage,
+                                       const ::lightusd::next::UsdPrim& shader_prim,
                                        OpenPBRSurfaceShader* out,
                                        RenderScene* scene);
-  bool ExtractOpenPBRSurface(const ::tinyusdz::next::Stage& stage,
+  bool ExtractOpenPBRSurface(const ::lightusd::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              OpenPBRSurfaceShader* out,
                              RenderScene* scene);
-  bool ExtractShaderParam(const ::tinyusdz::next::Stage& stage,
+  bool ExtractShaderParam(const ::lightusd::next::Stage& stage,
                           const UsdPrim& shader_prim,
                           const std::string& param_name,
                           ShaderParam* out,
@@ -503,4 +503,4 @@ class RenderSceneConverter {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

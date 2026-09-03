@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "layer.hh"
 
 namespace comp_graph_dump {
@@ -63,7 +63,7 @@ struct CompGraphDump {
 };
 
 // Extract composition graph from a single loaded Layer
-bool ExtractCompGraph(const tinyusdz::Layer &layer,
+bool ExtractCompGraph(const lightusd::Layer &layer,
                       const std::string &file_path,
                       CompGraphDump *out, std::string *err);
 

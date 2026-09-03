@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<title>TinyUSDZ Three.js Subdivision Surface Demo</title>
+		<title>LightUSD Three.js Subdivision Surface Demo</title>
 		<style>
 			body {
 				margin: 0;
@@ -70,7 +70,7 @@
 	</head>
 	<body>
 		<div id="info">
-			<h3>TinyUSDZ Subdivision Surface Demo</h3>
+			<h3>LightUSD Subdivision Surface Demo</h3>
 			<p>
 				Interactive demo showing <span class="highlight">Catmull-Clark</span>,
 				<span class="highlight">Loop</span>, and <span class="highlight">Bilinear</span>
@@ -119,7 +119,7 @@
 			<div class="section" style="font-size: 11px; color: #aaa;">
 				<p>
 					Subdivision runs in <span class="highlight">WebAssembly</span> using
-					tinyusdz's <code>tinysubdiv</code> (the OpenSubdiv-verified C++ library),
+					lightusd's <code>tinysubdiv</code> (the OpenSubdiv-verified C++ library),
 					in a <span class="highlight">streaming</span> mode: the refined surface
 					is emitted to JavaScript in bounded batches, so the wasm heap never holds
 					the full level-N mesh at once. Toggle <strong>Streaming</strong> off in the

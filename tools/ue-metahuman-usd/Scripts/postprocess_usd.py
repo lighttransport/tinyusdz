@@ -196,14 +196,14 @@ def Xform "MetaHuman"
 {{
     def Xform "Body" (prepend references = @{body_name}@)
     {{
-        over "TinyUSDZ_DefaultHuman_Body"
+        over "LightUSD_DefaultHuman_Body"
         {{
             rel material:binding = </MetaHuman/Materials/Skin>
         }}
     }}
     def Xform "Head" (prepend references = @{head_name}@)
     {{
-        over "TinyUSDZ_DefaultHuman_Head"
+        over "LightUSD_DefaultHuman_Head"
         {{
             rel material:binding = </MetaHuman/Materials/Skin>
             over "Section0" {{ rel material:binding = </MetaHuman/Materials/Skin> }}
@@ -242,7 +242,7 @@ def Xform "MetaHuman"
         def Material "Hair" (prepend apiSchemas = ["MaterialXConfigAPI"])
         {{
             string config:mtlx:version = "1.38"
-            custom string tinyusdz:referenceBsdf = "chiang_hair_bsdf"
+            custom string lightusd:referenceBsdf = "chiang_hair_bsdf"
             token outputs:mtlx:surface.connect = </MetaHuman/Materials/Hair/OpenPBR.outputs:out>
             def Shader "OpenPBR"
             {{
@@ -277,14 +277,14 @@ def main():
     groom_path = os.path.join(output_dir, "MetaHuman_GroomStrands.usda")
     if not os.path.exists(groom_path):
         groom_path = ""
-    layer = build_layer("TinyUSDZ_DefaultHuman_Head.usdc",
-                        "TinyUSDZ_DefaultHuman_Body.usdc", args.strands, groom_path)
+    layer = build_layer("LightUSD_DefaultHuman_Head.usdc",
+                        "LightUSD_DefaultHuman_Body.usdc", args.strands, groom_path)
     destination = os.path.join(output_dir, "MetaHuman_Hero.usda")
     with open(destination, "w", encoding="utf-8") as stream:
         stream.write(layer)
     rig_manifest = os.path.join(output_dir, "MetaHuman_Rig.usda")
-    head_dna = os.path.exists(os.path.join(output_dir, "TinyUSDZ_DefaultHuman_Head.dna"))
-    head_asset = ('custom asset unreal:headDNA = @TinyUSDZ_DefaultHuman_Head.dna@'
+    head_dna = os.path.exists(os.path.join(output_dir, "LightUSD_DefaultHuman_Head.dna"))
+    head_asset = ('custom asset unreal:headDNA = @LightUSD_DefaultHuman_Head.dna@'
                   if head_dna else
                   'custom string unreal:headDNAStatus = "missing: offline preset requires UE cloud auto-rigging"')
     with open(rig_manifest, "w", encoding="utf-8") as stream:
@@ -298,7 +298,7 @@ def main():
 def Scope "MetaHumanRig"
 {{
     {head_asset}
-    custom asset unreal:bodyDNA = @TinyUSDZ_DefaultHuman_Body.dna@
+    custom asset unreal:bodyDNA = @LightUSD_DefaultHuman_Body.dna@
     custom string unreal:rigFormat = "MetaHuman DNA / RigLogic"
     custom string unreal:usdDeformation = "UsdSkel skeleton, bind transforms, joint indices and joint weights"
     custom string unreal:facialDeformation = "DNA blend-shape targets, GUI controls, PSD controls and animated maps"

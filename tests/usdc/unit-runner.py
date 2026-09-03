@@ -3,19 +3,19 @@ import sys
 import glob
 import subprocess
 
-# Default configuration Assume running this script from <tinyusdz> root directory
+# Default configuration Assume running this script from <lightusd> root directory
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--basedir", type=str, default="tests/usdc")
-    parser.add_argument("--app", type=str, default="./build/test_tinyusdz")
+    parser.add_argument("--app", type=str, default="./build/test_lightusd")
     args = parser.parse_args()
 
-    app = args.app    
+    app = args.app
 
     failed = []
     #false_negatives = []
-    
+
     print("Basedir: ", args.basedir)
     print("App: ", args.app)
 
@@ -40,7 +40,7 @@ if __name__ == '__main__':
             failed.append(fname)
 
         cnt += 1
-         
+
     print("=================================")
 
     if len(failed) > 0:

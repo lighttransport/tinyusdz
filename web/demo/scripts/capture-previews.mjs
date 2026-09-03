@@ -14,9 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const demoRoot = path.resolve(__dirname, '..');
 const previewDir = path.join(demoRoot, 'public', 'assets', 'previews');
 const configPath = path.join(demoRoot, 'src', 'demo-configs.js');
-const width = Number(process.env.TINYUSDZ_PREVIEW_WIDTH || 1280);
-const height = Number(process.env.TINYUSDZ_PREVIEW_HEIGHT || 820);
-const waitMs = Number(process.env.TINYUSDZ_PREVIEW_WAIT_MS || 90000);
+const width = Number(process.env.LIGHTUSD_PREVIEW_WIDTH || 1280);
+const height = Number(process.env.LIGHTUSD_PREVIEW_HEIGHT || 820);
+const waitMs = Number(process.env.LIGHTUSD_PREVIEW_WAIT_MS || 90000);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -69,7 +69,7 @@ function startProcess(command, args, options = {}) {
   child.stdout.on('data', (chunk) => process.stdout.write(chunk));
   child.stderr.on('data', (chunk) => process.stderr.write(chunk));
   child.on('exit', (code, signal) => {
-    if (child.__tinyusdzStopping) return;
+    if (child.__lightusdStopping) return;
     if (code !== 0 && signal !== 'SIGTERM') {
       console.error(`${path.basename(command)} exited with ${code ?? signal}`);
     }
@@ -79,7 +79,7 @@ function startProcess(command, args, options = {}) {
 
 async function stopProcess(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  child.__tinyusdzStopping = true;
+  child.__lightusdStopping = true;
   const exited = new Promise((resolve) => child.once('exit', resolve));
   const killTarget = process.platform === 'win32' ? child.pid : -child.pid;
   try {
@@ -162,9 +162,9 @@ async function startChrome(debugPort) {
   ]);
   if (!chrome) throw new Error('Could not find google-chrome or chromium in PATH.');
 
-  const userDataDir = path.join(os.tmpdir(), `tinyusdz-demo-previews-${process.pid}`);
+  const userDataDir = path.join(os.tmpdir(), `lightusd-demo-previews-${process.pid}`);
   const xvfb = findExecutable(['xvfb-run']);
-  const useXvfb = !!xvfb && process.env.TINYUSDZ_PREVIEW_NO_XVFB !== '1';
+  const useXvfb = !!xvfb && process.env.LIGHTUSD_PREVIEW_NO_XVFB !== '1';
   const chromeArgs = [
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
@@ -248,7 +248,7 @@ async function waitForDemoReady(client, demo) {
       const rect = viewport?.getBoundingClientRect();
       return {
         status,
-        hasApp: !!window.__tinyusdzDemoApp,
+        hasApp: !!window.__lightusdDemoApp,
         hasCanvas: !!canvas,
         canvasWidth: canvas?.width || 0,
         canvasHeight: canvas?.height || 0,
@@ -282,7 +282,7 @@ async function captureDemo(client, baseUrl, demo) {
   await navigate(client, url);
   await waitForDemoReady(client, demo);
   await evaluate(client, `(() => {
-    const app = window.__tinyusdzDemoApp;
+    const app = window.__lightusdDemoApp;
     app?.fitScene?.();
     app?.render?.();
     const status = document.querySelector('#status');
@@ -341,8 +341,8 @@ async function updateDemoConfig() {
 
 async function main() {
   await fs.mkdir(previewDir, { recursive: true });
-  const vitePort = Number(process.env.TINYUSDZ_PREVIEW_VITE_PORT) || await findFreePort();
-  const debugPort = Number(process.env.TINYUSDZ_PREVIEW_CHROME_PORT) || await findFreePort();
+  const vitePort = Number(process.env.LIGHTUSD_PREVIEW_VITE_PORT) || await findFreePort();
+  const debugPort = Number(process.env.LIGHTUSD_PREVIEW_CHROME_PORT) || await findFreePort();
   const vite = await startVite(vitePort);
   const chrome = await startChrome(debugPort);
   let client = null;

@@ -1,6 +1,6 @@
-import ctinyusdz
+import clightusd
 
-pvar = ctinyusdz.PrimVar()
+pvar = clightusd.PrimVar()
 pvar.set(1.0)
 print(pvar.dtype)
 pvar.set(2)
@@ -19,10 +19,10 @@ def prim_traverse(prim, depth: int = 0):
     for child in prim.children():
         prim_traverse(child, depth+1)
 
-xform_prim = ctinyusdz.Prim("xform")
+xform_prim = clightusd.Prim("xform")
 print(xform_prim)
 
-stage = ctinyusdz.load_usd("../../models/texture-cat-plane.usda")
+stage = clightusd.load_usd("../../models/texture-cat-plane.usda")
 
 print(stage)
 print(stage.metas)

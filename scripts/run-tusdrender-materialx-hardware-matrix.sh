@@ -18,13 +18,13 @@ run_gate() {
     ctest --test-dir "${build_dir}" \
       -R '^tool-tusdrender-materialx-openpbr-parity$' \
       --output-on-failure
-  TINYUSDZ_MTLX_FLAKE_CUDA=1 \
-  TINYUSDZ_MTLX_FLAKE_HIP=1 \
+  LIGHTUSD_MTLX_FLAKE_CUDA=1 \
+  LIGHTUSD_MTLX_FLAKE_HIP=1 \
     ctest --test-dir "${build_dir}" \
       -R '^tool-tusdrender-materialx-flake-parity$' \
       --output-on-failure
-  TINYUSDZ_MTLX_PROJECTION_CUDA=1 \
-  TINYUSDZ_MTLX_PROJECTION_HIP=1 \
+  LIGHTUSD_MTLX_PROJECTION_CUDA=1 \
+  LIGHTUSD_MTLX_PROJECTION_HIP=1 \
     ctest --test-dir "${build_dir}" \
       -R '^tool-tusdrender-materialx-projection-parity$' \
       --output-on-failure

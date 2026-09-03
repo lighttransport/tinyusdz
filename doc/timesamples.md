@@ -1,6 +1,6 @@
 # USD TimeSamples Evaluation
 
-How OpenUSD (and TinyUSDZ) evaluates time-sampled attributes.
+How OpenUSD (and LightUSD) evaluates time-sampled attributes.
 
 ## Basic Evaluation Rules
 
@@ -8,7 +8,7 @@ How OpenUSD (and TinyUSDZ) evaluates time-sampled attributes.
 
 With one sample at t=0, value (0.1, 0.2, 0.3):
 - All numeric time codes return (0.1, 0.2, 0.3) - held constant
-- `TimeCode::Default()`: with no explicit default value authored, TinyUSDZ
+- `TimeCode::Default()`: with no explicit default value authored, LightUSD
   returns the **first time sample** (here (0.1, 0.2, 0.3)). An empty (no-sample)
   TimeSamples with no default returns no value.
 
@@ -52,9 +52,9 @@ def Xform "Example"
 - **Animation**: Store as time samples
 - **Switching**: Query `TimeCode::Default()` for static, numeric for animated
 
-## TinyUSDZ Compatibility
+## LightUSD Compatibility
 
-TinyUSDZ matches OpenUSD behavior for:
+LightUSD matches OpenUSD behavior for:
 
 1. Single time sample held constant
 2. `TimeCode::Default()` returns the authored default value even when time
@@ -72,7 +72,7 @@ falls back to the first time sample (OpenUSD returns no value instead).
 Unit tests: `tests/unit/unit-timesamples.cc` (function `timesamples_test()`)
 
 ```bash
-./build/unit-test-tinyusdz timesamples_test
+./build/unit-test-lightusd timesamples_test
 ```
 
 ## Time-sampled value deduplication

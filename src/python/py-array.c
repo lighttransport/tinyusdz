@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0
- * tinyusdz._core — Array type (zero-copy view) and value conversion helpers.
+ * lightusd._core — Array type (zero-copy view) and value conversion helpers.
  */
 
 #include "py-internal.h"
@@ -352,7 +352,7 @@ static PyType_Slot Array_slots[] = {
 };
 
 static PyType_Spec Array_spec = {
-    .name = "tinyusdz._core.Array",
+    .name = "lightusd._core.Array",
     .basicsize = sizeof(TusdArray),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE

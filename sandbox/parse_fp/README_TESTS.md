@@ -203,11 +203,11 @@ A test passes if:
 ## Requirements
 
 - C++17 or later (for std::from_chars with float support)
-- fast_float library (included in TinyUSDZ)
+- fast_float library (included in LightUSD)
 - POSIX threads support
 - At least 1GB RAM
 - For full exhaustive test: 4+ CPU cores recommended
 
 ## License
 
-Part of the TinyUSDZ project. See main project LICENSE for details.
+Part of the LightUSD project. See main project LICENSE for details.

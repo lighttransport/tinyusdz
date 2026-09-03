@@ -27,7 +27,7 @@
 #define optional_OPTIONAL_NONSTD   1
 #define optional_OPTIONAL_STD      2
 
-// TinyUSDZ mod. Force use nonstd implementation even on C++17 to avoid possible linkage issue.
+// LightUSD mod. Force use nonstd implementation even on C++17 to avoid possible linkage issue.
 #if defined( optional_CONFIG_SELECT_OPTIONAL )
 #undef optional_CONFIG_SELECT_OPTIONAL
 #endif
@@ -53,7 +53,7 @@
 
 // Control presence of exception handling (try and auto discover):
 
-// TinyUSDZ mod. Force disable exception.
+// LightUSD mod. Force disable exception.
 #if defined( optional_CONFIG_NO_EXCEPTIONS )
 #undef optional_CONFIG_NO_EXCEPTIONS
 #define optional_CONFIG_NO_EXCEPTIONS 1

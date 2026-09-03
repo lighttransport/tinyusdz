@@ -64,21 +64,21 @@
 #include "typed-array-core.hh"
 
 // forward decls defined below or in lower-level typed-array headers.
-namespace tinyusdz {
+namespace lightusd {
 template <typename T>
 class ChunkedTypedArray;
 namespace value {
 class any_value;
 }
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace value {
 
 // Identifier is the one used in USDA(Ascii)
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
-// NOTE: There are some TinyUSDZ specific types(e.g., short, char)
+// NOTE: There are some LightUSD specific types(e.g., short, char)
 constexpr auto kToken = "token";
 constexpr auto kString = "string";
 constexpr auto kPath =
@@ -190,7 +190,7 @@ constexpr auto kRelationship = "rel";
 
 inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
-using token = tinyusdz::Token;
+using token = lightusd::Token;
 
 // single or triple-quoted('"""' or ''') string
 struct StringData {
@@ -236,11 +236,11 @@ class AssetPath {
     return false;
   }
 
-  const std::string &GetAssetPath() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &GetAssetPath() const LIGHTUSD_LIFETIMEBOUND {
     return asset_path_;
   }
 
-  const std::string &GetResolvedPath() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &GetResolvedPath() const LIGHTUSD_LIFETIMEBOUND {
     return resolved_path_;
   }
 
@@ -298,7 +298,7 @@ class PathExpression {
   explicit PathExpression(const std::string &text) : text_(text) {}
   explicit PathExpression(std::string &&text) : text_(std::move(text)) {}
 
-  const std::string &GetText() const TINYUSDZ_LIFETIMEBOUND { return text_; }
+  const std::string &GetText() const LIGHTUSD_LIFETIMEBOUND { return text_; }
   void SetText(const std::string &text) { text_ = text; }
 
   bool empty() const { return text_.empty(); }
@@ -1638,15 +1638,15 @@ bool IsRoleType(const uint32_t tyid);
 bool IsReasonableValueVectorSize(size_t size);
 
 }  // namespace value
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-namespace tinyusdz {
+namespace lightusd {
 namespace value {
 
 ///
 /// any_value — Purpose-built type-erased container for USD value types.
 ///
-/// Replaces linb::any with a design tailored for TinyUSDZ:
+/// Replaces linb::any with a design tailored for LightUSD:
 /// - 16-byte SBO buffer: scalars/float3 and smaller stay inline; everything
 ///   bigger (strings, vectors, matrices) lives in a refcounted heap holder
 ///   shared copy-on-write between copies — sizeof(any_value) = 24, and
@@ -2248,8 +2248,8 @@ class Value {
   }
 
 
-  const any_value &get_raw() const TINYUSDZ_LIFETIMEBOUND { return v_; }
-  any_value &get_raw_mutable() TINYUSDZ_LIFETIMEBOUND { return v_; }
+  const any_value &get_raw() const LIGHTUSD_LIFETIMEBOUND { return v_; }
+  any_value &get_raw_mutable() LIGHTUSD_LIFETIMEBOUND { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
@@ -2971,4 +2971,4 @@ static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -8,35 +8,35 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
 import {
-	createConfiguredTinyUSDZLoader,
+	createConfiguredLightUSDLoader,
 	getAssetUriFromURL,
 	getBackendFromURL,
 	loadUSDSceneFromURL,
 	makeStaticNextParseOptions,
 	mountBackendSelector,
 	parseUSDSceneFromArrayBuffer
-} from 'tinyusdz/LoaderConfigUtils.js';
+} from 'lightusd/LoaderConfigUtils.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
 	readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
-import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
-import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
-import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
-import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
-import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
-import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
+} from 'lightusd/NextRenderSceneUtils.js';
+import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
+import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
+import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
+import { applyUSDSceneSkinningPipeline } from 'lightusd/USDSceneSkinningPipeline.js';
+import { buildNodeIndexMap } from 'lightusd/USDAnimationConverter.js';
+import { extractUSDSceneAnimations } from 'lightusd/USDSceneAnimationPipeline.js';
 import {
 	crossfadeActions,
 	prepareClipsForBlending,
 	soloAction,
 	setActionWeights
-} from 'tinyusdz/AnimClipUtils.js';
-import { raycastSkinnedMeshes, expandBoxByMeshBones } from 'tinyusdz/SkinnedMeshUtils.js';
-import { attachSceneHelpers } from 'tinyusdz/SceneHelpers.js';
+} from 'lightusd/AnimClipUtils.js';
+import { raycastSkinnedMeshes, expandBoxByMeshBones } from 'lightusd/SkinnedMeshUtils.js';
+import { attachSceneHelpers } from 'lightusd/SceneHelpers.js';
 
 // Keep the animation preview at a 1:1 drawing buffer. Large animated meshes
 // already consume substantial GPU buffer memory; a 2x device-pixel ratio
@@ -536,12 +536,12 @@ async function processUSDScene(usdScene, filename, stats = null) {
 
 	// Build Three.js scene graph
 	const usdRootNode = usdScene.getDefaultRootNode();
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	const defaultMtl = LightUSDLoaderUtils.createDefaultMaterial();
 	const buildOptions = {
 		overrideMaterial: false,
 		textureLoadingManager: new TextureLoadingManager()
 	};
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+	const threeNode = await LightUSDLoaderUtils.buildThreeNode(
 		usdRootNode, defaultMtl, usdScene, buildOptions
 	);
 	// Build node index map before skinning pipeline
@@ -1251,8 +1251,8 @@ function animate() {
 let loader = null;
 
 async function initLoader() {
-	loader = await createConfiguredTinyUSDZLoader();
-	console.log('TinyUSDZ loader initialized');
+	loader = await createConfiguredLightUSDLoader();
+	console.log('LightUSD loader initialized');
 }
 
 // Backend switch reloads the page (the loader binds its WASM module at init).

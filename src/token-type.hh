@@ -9,13 +9,13 @@
 //
 // Unlike pxrUSD, `Token` class does not acquire a lock by default. This means
 // there is a potential hash collision for the hash value of `Token` string, but
-// TinyUSDZ does not require token(string) hashes are unique inside of TinyUSDZ
+// LightUSD does not require token(string) hashes are unique inside of LightUSD
 // library. If you need pxrUSD-like behavior of `Token` class(i.e, you want a
-// token hash with no collision), you can compile TinyUSDZ with
-// TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE.
-// (Also you need to include foonathan/string_id c++ files(Please see <tinyusdz>/CMakeLists.txt) to your project)
+// token hash with no collision), you can compile LightUSD with
+// LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE.
+// (Also you need to include foonathan/string_id c++ files(Please see <lightusd>/CMakeLists.txt) to your project)
 //
-// TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+// LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE
 //   - Use foonathan/string_id to implement Token class.
 //   - database(token storage) is accessed with mutex so an application should
 //   not frequently construct Token class among threads.
@@ -30,7 +30,7 @@
 #include "compiler-features.hh"
 #include "nonstd/optional.hpp"
 
-#if defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
+#if defined(LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -45,13 +45,13 @@
 #pragma clang diagnostic pop
 #endif
 
-#else  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#else  // LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE
 #include <functional>
-#endif  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#endif  // LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE
 
-namespace tinyusdz {
+namespace lightusd {
 
-#if defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
+#if defined(LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE)
 
 namespace sid = foonathan::string_id;
 
@@ -95,7 +95,7 @@ class Token {
   }
 
   Token(Token &&str) = default;
-  
+
 
   explicit Token(const char *str) {
     str_ = sid::string_id(str, TokenStorage::GetInstance());
@@ -130,7 +130,7 @@ class Token {
     if (!str_) {
       return false;
     }
-    
+
     if (str_.value().string().empty()) {
       return false;
     }
@@ -158,7 +158,7 @@ struct TokenKeyEqual {
   }
 };
 
-#else  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#else  // LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE
 
 class Token {
  public:
@@ -172,7 +172,7 @@ class Token {
 
   Token(const char *str, size_t len) : str_(str, len) {}
 
-  const std::string &str() const TINYUSDZ_LIFETIMEBOUND { return str_; }
+  const std::string &str() const LIGHTUSD_LIFETIMEBOUND { return str_; }
 
   const char *c_str() const { return str_.c_str(); }
 
@@ -184,7 +184,7 @@ class Token {
     return true;
   }
 
-  // No string hash for TinyUSDZ
+  // No string hash for LightUSD
 
  private:
   std::string str_;
@@ -202,7 +202,7 @@ struct TokenKeyEqual {
   }
 };
 
-#endif  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#endif  // LIGHTUSD_USE_STRING_ID_FOR_TOKEN_TYPE
 
 inline bool operator==(const Token &lhs, const Token &rhs) {
   return TokenKeyEqual()(lhs, rhs);
@@ -216,4 +216,4 @@ inline bool operator<(const Token &lhs, const Token &rhs) {
   return lhs.str() < rhs.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

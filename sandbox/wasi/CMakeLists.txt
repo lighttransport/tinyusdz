@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 
-project(tinyusdz_wasi C CXX)
-set(PROJECT_NAME tinyusdz_wasi)
+project(lightusd_wasi C CXX)
+set(PROJECT_NAME lightusd_wasi)
 
 set(MAIN_SOURCE main.cc)
 
@@ -19,12 +19,12 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
 #   TODO: Rewrite recursive function call with for-loop to save stack size.
 #   (e.g. ReconstructPrimRecursively))
 # - Initial memory: 128KB(Must be larger than stack size
-set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -z stack-size=65536 -Wl,--initial-memory=131072") 
+set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -z stack-size=65536 -Wl,--initial-memory=131072")
 
 list(
   APPEND
-  TINYUSDZ_SOURCES
-  ../../src/tinyusdz.cc
+  LIGHTUSD_SOURCES
+  ../../src/lightusd.cc
   ../../src/io-util.cc
   ../../src/prim-types.cc
   ../../src/pprinter.cc
@@ -75,7 +75,7 @@ list(
   ../../src/stage.cc
 )
 
-set(TINYUSDZ_DEP_SOURCES
+set(LIGHTUSD_DEP_SOURCES
   ../../src/integerCoding.cpp
   ../../src/lz4-compression.cc
   ../../src/lz4/lz4.c
@@ -91,7 +91,7 @@ set(TINYUSDZ_DEP_SOURCES
 
 
 
-add_executable(${PROJECT_NAME} ${MAIN_SOURCE} ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES})
+add_executable(${PROJECT_NAME} ${MAIN_SOURCE} ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ../../src/external/ryu)
 target_include_directories(${PROJECT_NAME} PRIVATE ../../src/external/fast_float/include)

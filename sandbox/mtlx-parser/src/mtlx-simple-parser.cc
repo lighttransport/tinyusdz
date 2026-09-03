@@ -3,30 +3,30 @@
 #include "../include/mtlx-simple-parser.hh"
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 bool SimpleXMLParser::Parse(const std::string& xml) {
   XMLTokenizer tokenizer;
-  
+
   if (!tokenizer.Initialize(xml.c_str(), xml.size())) {
     error_ = "Failed to initialize tokenizer: " + tokenizer.GetError();
     return false;
   }
-  
+
   std::stack<SimpleXMLNodePtr> node_stack;
   SimpleXMLNodePtr current_node;
   Token token;
-  
+
   while (tokenizer.NextToken(token)) {
     switch (token.type) {
       case TokenType::ProcessingInstruction:
         // Skip XML declaration
         continue;
-        
+
       case TokenType::StartTag: {
         auto new_node = std::make_shared<SimpleXMLNode>(token.name);
-        
+
         // Collect attributes
         Token attr_token;
         while (tokenizer.NextToken(attr_token)) {
@@ -44,12 +44,12 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
             // End of attributes, rewind this token
             // Since we can't rewind, we'll handle it in the next iteration
             // by checking if we have a pending token
-            
+
             // For now, assume end of attributes
             break;
           }
         }
-        
+
         // If not self-closing, push to stack
         if (attr_token.type != TokenType::SelfClosingTag) {
           if (!node_stack.empty()) {
@@ -61,23 +61,23 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
         }
         break;
       }
-      
+
       case TokenType::EndTag: {
         if (node_stack.empty()) {
           error_ = "Unexpected end tag: " + token.name;
           return false;
         }
-        
+
         if (node_stack.top()->name != token.name) {
-          error_ = "Mismatched end tag: expected </" + node_stack.top()->name + 
+          error_ = "Mismatched end tag: expected </" + node_stack.top()->name +
                   "> but got </" + token.name + ">";
           return false;
         }
-        
+
         node_stack.pop();
         break;
       }
-      
+
       case TokenType::Text:
       case TokenType::CDATA: {
         if (!node_stack.empty()) {
@@ -86,34 +86,34 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
         }
         break;
       }
-      
+
       case TokenType::Comment:
         // Ignore comments
         break;
-        
+
       case TokenType::EndOfDocument:
         if (!node_stack.empty()) {
           error_ = "Unclosed tags at end of document";
           return false;
         }
         return true;
-        
+
       case TokenType::Error:
         error_ = "Tokenizer error: " + tokenizer.GetError();
         return false;
-        
+
       default:
         break;
     }
   }
-  
+
   if (!node_stack.empty()) {
     error_ = "Unclosed tags at end of document";
     return false;
   }
-  
+
   return root_ != nullptr;
 }
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

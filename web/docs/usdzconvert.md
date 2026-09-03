@@ -1,6 +1,6 @@
 # usdzconvert (WebAssembly) — browser, Node CLI, and library
 
-TinyUSDZ's WASM `usdzconvert` packages a USD scene (a `.usd`/`.usda`/`.usdc`
+LightUSD's WASM `usdzconvert` packages a USD scene (a `.usd`/`.usda`/`.usdc`
 layer plus textures, or an existing `.usdz`) into a `.usdz` archive — entirely
 in the browser or in Node, no native toolchain required. It is the WebAssembly
 counterpart of the native [`tusdzconvert`](../../doc/tusdzconvert.md).
@@ -20,10 +20,10 @@ There are three entry points, all sharing one library
 ## Build the WASM module
 
 ```bash
-# 32-bit glue (default): web/js/src/tinyusdz/tinyusdz.js
-ninja -C web/build_ninja tinyusdz.js
-# 64-bit glue (MEMORY64): web/js/src/tinyusdz/tinyusdz_64.js
-ninja -C web/build_64_ninja tinyusdz_64.js
+# 32-bit glue (default): web/js/src/lightusd/lightusd.js
+ninja -C web/build_ninja lightusd.js
+# 64-bit glue (MEMORY64): web/js/src/lightusd/lightusd_64.js
+ninja -C web/build_64_ninja lightusd_64.js
 ```
 
 ---
@@ -135,7 +135,7 @@ node cli/usdzconvert.js --repack orm.png -packR ao.png:0 -packG rough.png:0 -pac
 ```js
 import { loadWasm, convertFolderToUSDZ } from './src/usdzconvert.js';
 
-const native = await loadWasm(() => import('./src/tinyusdz/tinyusdz.js'));
+const native = await loadWasm(() => import('./src/lightusd/lightusd.js'));
 
 // assetMap: Map<string, Uint8Array> of every file (USD layers + textures),
 // keyed by relative path. A single self-contained .usdz is one entry.
@@ -226,4 +226,4 @@ committed) for measurements.
 - **Memory:** WASM is bound by the 2 GB wasm32 heap, hence the low-heap paths
   above; native has no such cap.
 - **Texture decode in the browser:** the demo decodes/encodes PNG/JPEG via the
-  canvas API and routes other formats (e.g. EXR) to TinyUSDZ WASM.
+  canvas API and routes other formats (e.g. EXR) to LightUSD WASM.

@@ -6,7 +6,7 @@
 #include <limits>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Simple handle resource manager
@@ -95,4 +95,4 @@ private:
   T counter_{};
 };
 
-} // namespace tinyusdz
+} // namespace lightusd

@@ -1,5 +1,5 @@
-import { StreamingUSDRenderer } from 'tinyusdz-js/streaming.js';
-import { renderHttpUSD } from 'tinyusdz-js/http-asset-resolver.js';
+import { StreamingUSDRenderer } from 'lightusd-js/streaming.js';
+import { renderHttpUSD } from 'lightusd-js/http-asset-resolver.js';
 
 const SAMPLES = [
   { label: 'Normals Texture', url: 'https://raw.githubusercontent.com/usd-wg/assets/main/test_assets/NormalsTextureBiasAndScale/NormalsTextureBiasAndScale.usda' },
@@ -269,7 +269,7 @@ async function loadSample(index) {
     const filename = sample.url.split('/').pop() || 'scene.usd';
 
     const renderer = new StreamingUSDRenderer($id('viz-canvas'));
-    showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+    showLoader("Loading LightUSD WASM...", document.getElementById("viewport"));
     try {
       await renderer.init()
     } finally {

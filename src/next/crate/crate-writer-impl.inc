@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - private CrateWriter implementation body.
+// LightUSD Next - private CrateWriter implementation body.
 // Included by crate-writer.cc; kept separate to make the public wrapper
 // translation unit navigable while the writer internals are being split.
 
@@ -142,7 +142,7 @@ private:
   // Effective worker count: 1 = serial; <=0 = auto (hardware_concurrency capped
   // at 16); >1 = as requested. Always 1 in a non-threaded build.
   int ResolveThreads() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     const int req = options_.num_threads;
     if (req == 1) return 1;
     if (req > 1) return req;
@@ -161,7 +161,7 @@ private:
   template <class Cmp>
   static void ParallelSortIndices(std::vector<uint32_t>& v, Cmp cmp,
                                   int nthreads) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     const size_t N = v.size();
     if (nthreads <= 1 || N < 200000) {
       std::sort(v.begin(), v.end(), cmp);

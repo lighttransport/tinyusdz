@@ -11,7 +11,7 @@
 #include "tiny-format.hh"
 #include "math-util.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 #define PushError(msg) { \
@@ -84,7 +84,7 @@ static bool ExportSkeleton(const SkelHierarchy &skel,
   // Flatten hierachy.
   if (!FlattenSkelNode(skel.root_node, joints, jointNames, bindTransforms, restTransforms, err)) {
     return false;
-  } 
+  }
 
   dst->joints.set_value(joints);
 
@@ -392,7 +392,7 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
       subset.set_materialBinding(mat_rel);
 
       // TODO: backface material
-      
+
       dst_subsets->emplace_back(std::move(subset));
     }
 
@@ -417,7 +417,7 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
 static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path, size_t material_id, Prim *dst, std::string *err) {
 
   const RenderMaterial &rmat = scene.materials[material_id];
-  
+
   // Check if the material has a surface shader
   if (!rmat.surfaceShader.has_value()) {
     // Create a material with default/empty values if no surface shader
@@ -473,7 +473,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::Auto);
     }
     image_tex.sourceColorSpace.set_value(sourceColorSpace);
-    
+
     image_tex.st.set_connection(preaderPath);
     image_tex.st.set_value_empty(); // connection only
 
@@ -516,7 +516,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
         image_tex.outputsRGB.set_authored(true);
       } else if (c == UVTexture::Channel::RGBA) {
         PUSH_ERROR_AND_RETURN("rgba texture is not supported yet.");
-      } 
+      }
     }
 
     UsdTransform2d uv_xform;
@@ -565,7 +565,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     imageTexShader.value = image_tex;
 
     shader_nodes.emplace_back(std::move(imageTexShader));
-    
+
     return true;
   };
 
@@ -583,14 +583,14 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
   mat.name = rmat.name;
 
-  Shader shader;  // root Shader 
+  Shader shader;  // root Shader
   shader.name = "defaultPBR";
 
   std::string abs_mat_path = abs_path + "/" + mat.name;
   std::string abs_shader_path = abs_mat_path + "/" + shader.name;
 
   std::vector<Shader> shader_nodes;
-  
+
   {
     UsdPreviewSurface surfaceShader;  // Concrete Shader node object
 
@@ -614,7 +614,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->diffuseColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'diffuseColor' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->diffuseColor.texture_id)], "diffuseColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'diffuseColor' texture.");
       }
@@ -636,7 +636,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->specularColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'specularColor' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->specularColor.texture_id)], "specularColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'specularColor' texture.");
       }
@@ -657,7 +657,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->emissiveColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'emissiveColor' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->emissiveColor.texture_id)], "emissiveColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'emissiveColor' texture.");
       }
@@ -678,7 +678,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->metallic.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'metallic' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->metallic.texture_id)], "metallic", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'metallic' texture.");
       }
@@ -695,7 +695,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->roughness.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'roughness' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->roughness.texture_id)], "roughness", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'roughness' texture.");
       }
@@ -712,7 +712,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->clearcoat.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoat' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->clearcoat.texture_id)], "clearcoat", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoat' texture.");
       }
@@ -729,7 +729,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->clearcoatRoughness.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoatRoughness' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->clearcoatRoughness.texture_id)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoatRoughness' texture.");
       }
@@ -746,7 +746,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->opacity.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacity' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->opacity.texture_id)], "opacity", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'opacity' texture.");
       }
@@ -763,7 +763,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->opacityThreshold.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacityThreshold' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->opacityThreshold.texture_id)], "opacityThreshold", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'opacityThreshold' texture.");
       }
@@ -780,7 +780,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->ior.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'ior' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->ior.texture_id)], "ior", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'ior' texture.");
       }
@@ -797,7 +797,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->occlusion.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'occlusion' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->occlusion.texture_id)], "occlusion", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'occlusion' texture.");
       }
@@ -814,7 +814,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->normal.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'normal' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->normal.texture_id)], "normal", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'normal' texture.");
       }
@@ -835,7 +835,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       if (size_t(rmat.surfaceShader->displacement.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'displacement' texture.");
       }
-    
+
       if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->displacement.texture_id)], "displacement", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'displacement' texture.");
       }
@@ -843,7 +843,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       Path connPath(abs_mat_path + "/Image_Texture_" + "displacement", "outputs:rgb");
       surfaceShader.displacement.set_connection(connPath);
       surfaceShader.displacement.set_value_empty();
-    
+
     } else {
       surfaceShader.displacement = rmat.surfaceShader->displacement.value;
     }
@@ -869,12 +869,12 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
   for (const auto &node : shader_nodes) {
     Prim shaderNodePrim(node);
-    
+
     if (!matPrim.add_child(std::move(shaderNodePrim), /* rename_primname */false, err)) {
       return false;
-    } 
+    }
   }
-  
+
   (*dst) = std::move(matPrim);
   return true;
 }
@@ -888,7 +888,7 @@ bool export_to_usda(const RenderScene &scene,
 
   Stage stage;
 
-  stage.metas().comment = "Exported from TinyUSDZ Tydra.";
+  stage.metas().comment = "Exported from LightUSD Tydra.";
   if (scene.meta.upAxis == "X") {
     stage.metas().upAxis = Axis::X;
   } else if (scene.meta.upAxis == "Y") {
@@ -898,7 +898,7 @@ bool export_to_usda(const RenderScene &scene,
   }
 
   SkelRoot skelRoot;
-  skelRoot.set_name("skelRoot"); 
+  skelRoot.set_name("skelRoot");
   Prim skelRootPrim(skelRoot);
 
   bool has_skelroot{false};
@@ -1096,14 +1096,14 @@ bool export_to_usda(const RenderScene &scene,
     for (size_t i = 0; i < scene.materials.size(); i++) {
       // init with dummy object(Model Prim)
       Model dummy;
-      Prim matPrim(std::move(dummy));  
+      Prim matPrim(std::move(dummy));
       if (!detail::ToMaterialPrim(scene, "/materials", i, &matPrim, err)) {
         return false;
       }
       if (!matGroupPrim.add_child(std::move(matPrim), /* rename_primname_if_required */false, err)) {
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to add child Prim: {}", err));
       }
-      
+
     }
     stage.add_root_prim(std::move(matGroupPrim));
   }
@@ -1115,4 +1115,4 @@ bool export_to_usda(const RenderScene &scene,
 
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

@@ -29,11 +29,11 @@
 #include "composition.hh"
 #include "layer.hh"
 #include "stage.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::composition_graph;
+using namespace lightusd;
+using namespace lightusd::composition_graph;
 
 // ---------------------------------------------------------------------------
 // Pseudo-random number generator (xoshiro128**, deterministic)
@@ -408,7 +408,7 @@ std::string gen_usda_deep_hierarchy(uint32_t seed, int depth) {
 bool compose_via_graph(const std::string &usda, CompositionGraph &graph_out,
                        std::string &warn, std::string &err) {
   Layer layer;
-  if (!tinyusdz_test::parse_usda_to_layer(usda.c_str(), &layer, &warn, &err)) {
+  if (!lightusd_test::parse_usda_to_layer(usda.c_str(), &layer, &warn, &err)) {
     return false;
   }
 
@@ -428,7 +428,7 @@ bool compose_via_graph(const std::string &usda, CompositionGraph &graph_out,
 /// Helper: parse USDA and compose via the existing iterative pipeline
 bool compose_via_iterative(const std::string &usda, Stage &stage_out,
                            std::string &warn, std::string &err) {
-  return tinyusdz_test::parse_usda_to_stage(usda.c_str(), &stage_out,
+  return lightusd_test::parse_usda_to_stage(usda.c_str(), &stage_out,
                                              &warn, &err);
 }
 
@@ -886,7 +886,7 @@ def Xform "InstanceB" (
   opts.detect_instances = true;
 
   Layer layer;
-  TEST_CHECK(tinyusdz_test::parse_usda_to_layer(usda, &layer, &warn, &err));
+  TEST_CHECK(lightusd_test::parse_usda_to_layer(usda, &layer, &warn, &err));
 
   AssetResolutionResolver resolver;
   auto result = CompositionGraph::Compose(resolver, layer, opts);
@@ -933,7 +933,7 @@ def Xform "InstB" (
 
   std::string warn, err;
   Layer layer;
-  TEST_CHECK(tinyusdz_test::parse_usda_to_layer(usda, &layer, &warn, &err));
+  TEST_CHECK(lightusd_test::parse_usda_to_layer(usda, &layer, &warn, &err));
 
   AssetResolutionResolver resolver;
   CompositionGraphOptions opts;
@@ -973,7 +973,7 @@ def Xform "Consumer" (
 
   std::string warn, err;
   Layer layer;
-  TEST_CHECK(tinyusdz_test::parse_usda_to_layer(usda, &layer, &warn, &err));
+  TEST_CHECK(lightusd_test::parse_usda_to_layer(usda, &layer, &warn, &err));
 
   AssetResolutionResolver resolver;
   CompositionGraphOptions opts;
@@ -1137,23 +1137,23 @@ def Xform "Root"
 
 void compgraph_validate_no_duplicate_sibling_names_test(void) {
   // Build a minimal layer with duplicate children.
-  tinyusdz::Layer layer;
-  tinyusdz::PrimSpec root(tinyusdz::Specifier::Def, "root");
+  lightusd::Layer layer;
+  lightusd::PrimSpec root(lightusd::Specifier::Def, "root");
 
-  tinyusdz::PrimSpec child_a(tinyusdz::Specifier::Def, "ChildA");
+  lightusd::PrimSpec child_a(lightusd::Specifier::Def, "ChildA");
   root.children().push_back(child_a);
 
-  tinyusdz::PrimSpec child_b(tinyusdz::Specifier::Def, "ChildB");
+  lightusd::PrimSpec child_b(lightusd::Specifier::Def, "ChildB");
   root.children().push_back(child_b);
 
   // First duplicate.
-  tinyusdz::PrimSpec child_a_dup(tinyusdz::Specifier::Def, "ChildA");
+  lightusd::PrimSpec child_a_dup(lightusd::Specifier::Def, "ChildA");
   root.children().push_back(child_a_dup);
 
   TEST_CHECK(layer.add_primspec("root", root));
 
   std::string warn, err;
-  bool valid = tinyusdz::composition_graph::ValidateNoDuplicateSiblingNames(
+  bool valid = lightusd::composition_graph::ValidateNoDuplicateSiblingNames(
       layer, &warn, &err);
   TEST_CHECK_(!valid, "ValidateNoDuplicateSiblingNames must reject duplicate "
               "sibling names");
@@ -1161,13 +1161,13 @@ void compgraph_validate_no_duplicate_sibling_names_test(void) {
               "duplicate");
 
   // Now test a valid layer (no duplicates) must pass.
-  tinyusdz::Layer clean_layer;
+  lightusd::Layer clean_layer;
   root.children().resize(2);  // Remove the duplicate ChildA.
   root.children()[0] = child_a;
   root.children()[1] = child_b;
   clean_layer.add_primspec("root", root);
   std::string cwarn, cerr;
-  bool valid2 = tinyusdz::composition_graph::ValidateNoDuplicateSiblingNames(
+  bool valid2 = lightusd::composition_graph::ValidateNoDuplicateSiblingNames(
       clean_layer, &cwarn, &cerr);
   TEST_CHECK_(valid2, "ValidateNoDuplicateSiblingNames must accept valid "
               "layers without duplicates");

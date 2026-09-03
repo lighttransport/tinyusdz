@@ -317,7 +317,7 @@ For issues or questions:
 - Check documentation in this directory
 - Review test results
 - Examine example code
-- See TinyUSDZ repository for integration context
+- See LightUSD repository for integration context
 
 ## Changelog
 

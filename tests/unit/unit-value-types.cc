@@ -12,7 +12,7 @@
 
 #include <cstring>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void value_types_test(void) {
 

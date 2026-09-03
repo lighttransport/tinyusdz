@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Asset Resolution Implementation
+// LightUSD Next - Asset Resolution Implementation
 
 #include "asset-resolver.hh"
 #include "../safe-file-size.hh"
@@ -24,7 +24,7 @@
 #define ALT_PATH_SEPARATOR '\\'
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -835,4 +835,4 @@ void SetDefaultResolver(std::unique_ptr<AssetResolver> resolver) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

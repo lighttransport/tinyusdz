@@ -6,14 +6,14 @@ import {
 	getBackendFromURL,
 	LOADER_BACKEND_CHOICES,
 	setBackendAndReload
-} from './src/tinyusdz/LoaderConfigUtils.js';
+} from './src/lightusd/LoaderConfigUtils.js';
 
 // WASM module selection: backend=next / wasm=next load the next-only module
 // (both export SubdivStreamer); default stays the legacy module.
-async function importTinyUSDZModule() {
+async function importLightUSDModule() {
 	const params = new URLSearchParams(window.location.search);
 	const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
-	const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+	const glue = useNext ? './src/lightusd/lightusd_next.js' : './src/lightusd/lightusd.js';
 	const module = await import(/* @vite-ignore */ new URL(glue, import.meta.url).href);
 	return module.default;
 }
@@ -519,13 +519,13 @@ window.addEventListener('resize', () => {
 
 async function main() {
 	setStatus('loading wasm…');
-	const initTinyUSDZ = await importTinyUSDZModule();
-	Module = await initTinyUSDZ();
+	const initLightUSD = await importLightUSDModule();
+	Module = await initLightUSD();
 	streamer = new Module.SubdivStreamer();
 	setStatus('ready');
 	updateMesh();
 	animate();
-	console.log('TinyUSDZ streaming subdivision demo loaded');
+	console.log('LightUSD streaming subdivision demo loaded');
 }
 
 main().catch((e) => {

@@ -27,10 +27,10 @@
 #include "value-pprint.hh"
 #include "safe-arithmetic.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // ExpandWithIndices template helpers (GeomMesh::get_normals uses one). Included
-// inside namespace tinyusdz so its unqualified safe::/value:: references resolve,
+// inside namespace lightusd so its unqualified safe::/value:: references resolve,
 // matching usdGeom.cc.
 #include "usdGeom-primvar-impl.inc"
 
@@ -446,7 +446,7 @@ bool ComputeMaskAtTime(const GeomPointInstancer &pi, double time,
 std::vector<value::token> GeomMesh::get_joints() const {
   constexpr auto kSkelJoints = "skel:joints";
   std::vector<value::token> dst;
-  
+
   {
     // lookup `skel:joints` prop
     if (!props.count(kSkelJoints)) {
@@ -842,4 +842,4 @@ bool GeomSubset::ValidateSubsets(
 
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

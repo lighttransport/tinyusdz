@@ -12,7 +12,7 @@
 #include "nonstd/expected.hpp"
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Out-of-line virtual destructor to avoid weak vtables warning
@@ -210,4 +210,4 @@ std::string GetVariantHierarchyPath(const VariantGroup& group,
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

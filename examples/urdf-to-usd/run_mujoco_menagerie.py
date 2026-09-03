@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/tinyusdz-mujoco-menagerie"),
+        default=Path("/tmp/lightusd-mujoco-menagerie"),
         help="Directory for logs, summary JSON, and temporary outputs.",
     )
     parser.add_argument(

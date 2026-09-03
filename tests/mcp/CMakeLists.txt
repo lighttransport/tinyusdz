@@ -1,4 +1,4 @@
-if(TINYUSDZ_WITH_MCP_SERVER)
+if(LIGHTUSD_WITH_MCP_SERVER)
 
 set(TEST_TARGET_NAME mcp-test)
 set(TEST_SOURCES
@@ -18,7 +18,7 @@ add_sanitizers(${TEST_TARGET_NAME})
 add_test(NAME ${TEST_TARGET_NAME} COMMAND "${TEST_TARGET_NAME}"
          WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>)
 
-target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_static ${CMAKE_DL_LIBS})
+target_link_libraries(${TEST_TARGET_NAME} PRIVATE lightusd_static ${CMAKE_DL_LIBS})
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

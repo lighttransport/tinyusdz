@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 TinyUSDZ contributors
+// Copyright 2024 LightUSD contributors
 //
 // C++20 implementation of C++23's std::generator
 // Based on the C++23 standard specification
@@ -53,12 +53,12 @@ public:
     generator_promise_base& operator=(generator_promise_base&&) = default;
 
     std::suspend_always initial_suspend() noexcept { return {}; }
-    
+
     std::suspend_always final_suspend() noexcept { return {}; }
-    
+
     template<typename U = T>
     std::suspend_always yield_value(U&& value) noexcept(
-        std::is_nothrow_constructible_v<value_type, U&&>) 
+        std::is_nothrow_constructible_v<value_type, U&&>)
         requires std::constructible_from<value_type, U&&> {
         if constexpr (std::is_reference_v<T>) {
             value_ = std::addressof(value);
@@ -80,15 +80,15 @@ public:
         struct awaiter {
             generator<U, Alloc> gen_;
             typename generator<U, Alloc>::iterator iter_;
-            
+
             awaiter(generator<U, Alloc>&& g) : gen_(std::move(g)) {}
-            
+
             bool await_ready() noexcept { return false; }
-            
+
             void await_suspend(std::coroutine_handle<>) noexcept {
                 iter_ = gen_.begin();
             }
-            
+
             void await_resume() noexcept {}
         };
         return awaiter{std::move(gen)};
@@ -120,7 +120,7 @@ template<typename T, typename Allocator>
 class generator_promise : public generator_promise_base<T> {
 public:
     using generator_promise_base<T>::generator_promise_base;
-    
+
     generator<T, Allocator> get_return_object() noexcept;
 };
 
@@ -128,13 +128,13 @@ template<typename T>
 class generator_promise<T, void> : public generator_promise_base<T> {
 public:
     using generator_promise_base<T>::generator_promise_base;
-    
+
     generator<T, void> get_return_object() noexcept;
-    
+
     void* operator new(std::size_t size) {
         return ::operator new(size);
     }
-    
+
     void operator delete(void* ptr) noexcept {
         ::operator delete(ptr);
     }
@@ -150,7 +150,7 @@ public:
     using pointer = typename Promise::pointer;
 
     generator_iterator() noexcept = default;
-    
+
     explicit generator_iterator(std::coroutine_handle<Promise> handle) noexcept
         : handle_(handle) {}
 
@@ -186,7 +186,7 @@ public:
         return handle_.promise().value();
     }
 
-    pointer operator->() const noexcept 
+    pointer operator->() const noexcept
         requires (!std::is_reference_v<reference>) {
         return std::addressof(operator*());
     }

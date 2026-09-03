@@ -1,19 +1,19 @@
 // Simple utility to compress a USDA file with zstd
-// Build: g++ -std=c++14 -o compress_usda compress_usda.cc -I../../../src -I../../../src/external ../../../src/external/zstd.c -DTINYUSDZ_WITH_ZSTD_COMPRESSION -DZSTD_DISABLE_ASM=1 -w
+// Build: g++ -std=c++14 -o compress_usda compress_usda.cc -I../../../src -I../../../src/external ../../../src/external/zstd.c -DLIGHTUSD_WITH_ZSTD_COMPRESSION -DZSTD_DISABLE_ASM=1 -w
 
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <cstring>
 
-#define TINYUSDZ_WITH_ZSTD_COMPRESSION
+#define LIGHTUSD_WITH_ZSTD_COMPRESSION
 #include "zstd-compression.hh"
 
 // Include zstd header for the implementation
 #include "external/zstd.h"
 
 // Implement the static members
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr uint8_t ZstdCompression::kZstdMagic[4];
 
@@ -72,7 +72,7 @@ size_t ZstdCompression::GetCompressBound(size_t inputSize) {
   return ZSTD_compressBound(inputSize);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 int main(int argc, char** argv) {
   if (argc < 3) {
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
   // Compress
   std::vector<uint8_t> compressed;
   std::string err;
-  bool ok = tinyusdz::ZstdCompression::Compress(
+  bool ok = lightusd::ZstdCompression::Compress(
       input_data.data(), input_data.size(), &compressed, compression_level, &err);
 
   if (!ok) {

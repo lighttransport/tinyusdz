@@ -8,7 +8,7 @@
 
 #include "next/pcp/load-rules.hh"
 
-using namespace tinyusdz::next::pcp;
+using namespace lightusd::next::pcp;
 using R = LoadRules::Rule;
 using E = LoadRules::Effect;
 

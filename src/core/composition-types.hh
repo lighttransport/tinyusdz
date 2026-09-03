@@ -14,7 +14,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct AssetInfo {
   // builtin fields
@@ -28,7 +28,7 @@ struct AssetInfo {
 };
 
 struct APISchemas {
-  // TinyUSDZ does not allow user-supplied API schema for now
+  // LightUSD does not allow user-supplied API schema for now
   enum class APIName {
     // usdShade
     MaterialBindingAPI,  // "MaterialBindingAPI"
@@ -216,4 +216,4 @@ DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -3,9 +3,9 @@
 
 #include "mjcPhysics.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Currently no non-inline implementations needed.
 // Type trait registrations are in mjcPhysics.hh via DEFINE_TYPE_TRAIT.
 
-}  // namespace tinyusdz
+}  // namespace lightusd

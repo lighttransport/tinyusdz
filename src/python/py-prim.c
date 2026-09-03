@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0
- * tinyusdz._core — Prim, Attribute, Relationship, TimeSamples, VariantSets.
+ * lightusd._core — Prim, Attribute, Relationship, TimeSamples, VariantSets.
  */
 
 #include "py-internal.h"
@@ -216,8 +216,8 @@ static int set_value_common(tusd_state* st, tusd_stage* stage,
                             const double* time_ptr, uint16_t flags) {
   if (!st->normalizer) {
     PyErr_SetString(st->UsdError,
-                    "no value normalizer registered (import tinyusdz, not "
-                    "tinyusdz._core directly)");
+                    "no value normalizer registered (import lightusd, not "
+                    "lightusd._core directly)");
     return -1;
   }
   PyObject* norm = PyObject_CallFunctionObjArgs(
@@ -354,7 +354,7 @@ static PyType_Slot TimeSamples_slots[] = {
 };
 
 static PyType_Spec TimeSamples_spec = {
-    .name = "tinyusdz._core.TimeSamples",
+    .name = "lightusd._core.TimeSamples",
     .basicsize = sizeof(TusdTimeSamples),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -759,7 +759,7 @@ static PyType_Slot Attr_slots[] = {
 };
 
 static PyType_Spec Attr_spec = {
-    .name = "tinyusdz._core.Attribute",
+    .name = "lightusd._core.Attribute",
     .basicsize = sizeof(TusdNamedRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -953,7 +953,7 @@ static PyType_Slot Rel_slots[] = {
 };
 
 static PyType_Spec Rel_spec = {
-    .name = "tinyusdz._core.Relationship",
+    .name = "lightusd._core.Relationship",
     .basicsize = sizeof(TusdNamedRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -1078,7 +1078,7 @@ static PyType_Slot VSet_slots[] = {
 };
 
 static PyType_Spec VSet_spec = {
-    .name = "tinyusdz._core.VariantSet",
+    .name = "lightusd._core.VariantSet",
     .basicsize = sizeof(TusdNamedRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -1217,7 +1217,7 @@ static PyType_Slot VSets_slots[] = {
 };
 
 static PyType_Spec VSets_spec = {
-    .name = "tinyusdz._core.VariantSets",
+    .name = "lightusd._core.VariantSets",
     .basicsize = sizeof(TusdPrimRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -1272,7 +1272,7 @@ static PyType_Slot ChildIter_slots[] = {
 };
 
 static PyType_Spec ChildIter_spec = {
-    .name = "tinyusdz._core._PrimChildIterator",
+    .name = "lightusd._core._PrimChildIterator",
     .basicsize = sizeof(TusdChildIter),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -1963,7 +1963,7 @@ static PyType_Slot Prim_slots[] = {
 };
 
 static PyType_Spec Prim_spec = {
-    .name = "tinyusdz._core.Prim",
+    .name = "lightusd._core.Prim",
     .basicsize = sizeof(TusdPrim),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE

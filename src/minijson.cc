@@ -20,7 +20,7 @@
 
 #include "str-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace minijson {
 
 namespace {
@@ -1046,4 +1046,4 @@ const char *TypeName(Type type) {
 }
 
 }  // namespace minijson
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -21,7 +21,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 enum class SerializationFormat {
@@ -323,4 +323,4 @@ serializeMaterial(const RenderMaterial& material, SerializationFormat format) {
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

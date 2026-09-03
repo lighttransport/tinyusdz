@@ -5,7 +5,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-src_root="$(cd "$here/../.." && pwd)/src"   # tinyusdz src/ (for tiny-string.hh)
+src_root="$(cd "$here/../.." && pwd)/src"   # lightusd src/ (for tiny-string.hh)
 
 # em++ must be on PATH (source emsdk_env.sh), or set EMXX.
 EMXX="${EMXX:-em++}"

@@ -6,7 +6,7 @@ import process from 'node:process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-import createTinyUSDZ from '../src/tinyusdz/tinyusdz.js';
+import createLightUSD from '../src/lightusd/lightusd.js';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const JS_ROOT = path.resolve(TEST_DIR, '..');
@@ -50,7 +50,7 @@ function makeAstcKTX2(blocks, width, height) {
   return data;
 }
 
-const tinyusdz = await createTinyUSDZ();
+const lightusd = await createLightUSD();
 const width = 8;
 const height = 8;
 const rgba = new Uint8Array(width * height * 4);
@@ -63,7 +63,7 @@ for (let y = 0; y < height; ++y) {
     rgba[offset + 3] = 255;
   }
 }
-const uni = tinyusdz.compressTextureToUni(rgba, width, height, false);
+const uni = lightusd.compressTextureToUni(rgba, width, height, false);
 assert.equal(uni.success, true, uni.error);
 const astcBlocks = new Uint8Array(uni.data);
 const ktx2 = makeAstcKTX2(astcBlocks, width, height);
@@ -81,7 +81,7 @@ const html = `<!doctype html>
 <script type="module">
 import * as THREE from 'three';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
-import { TinyUSDZLoaderUtils } from '/src/tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from '/src/lightusd/LightUSDLoaderUtils.js';
 try {
   const renderer = new THREE.WebGLRenderer({canvas: document.querySelector('#canvas')});
   const loader = new KTX2Loader()
@@ -113,7 +113,7 @@ try {
   // Exercise the real scene-texture constructor, not only KTX2Loader. Three
   // requires RGBA_ASTC_4x4_Format here; SRGBColorSpace makes WebGLUtils select
   // COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR at upload.
-  TinyUSDZLoaderUtils.setTinyUSDZ({
+  LightUSDLoaderUtils.setLightUSD({
     compressTextureToUni() {
       return {success: true, data: new Uint8Array(16), byteLength: 16};
     },
@@ -122,13 +122,13 @@ try {
       return {success: true, data, byteLength: data.byteLength};
     }
   });
-  TinyUSDZLoaderUtils.detectTextureCompressionTarget = () => ({
+  LightUSDLoaderUtils.detectTextureCompressionTarget = () => ({
     target: 'astc4x4',
     linearFormat: THREE.RGBA_ASTC_4x4_Format,
     srgbFormat: 0x93d0,
     name: 'ASTC 4x4'
   });
-  const sceneTexture = await TinyUSDZLoaderUtils.getTextureFromUSD({
+  const sceneTexture = await LightUSDLoaderUtils.getTextureFromUSD({
     getTexture() {
       return {textureImageId: 0, wrapS: 'repeat', wrapT: 'repeat',
         hasTransform2d: false, isUDIM: false};

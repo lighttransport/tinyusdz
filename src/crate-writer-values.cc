@@ -37,7 +37,7 @@
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 namespace {
@@ -1114,7 +1114,7 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   // D. Quaternions. Crate wire layout is [x, y, z, w] = (imag.x,
   // imag.y, imag.z, real). See value-types.hh:957 — note that USDA
   // (ASCII) uses the opposite [w, x, y, z] order at the textual layer.
-  // tinyusdz's `value::quat{f,d}` struct matches the Crate layout
+  // lightusd's `value::quat{f,d}` struct matches the Crate layout
   // (`{imag, real}`), so emit imag first, then real.
 #define WRITE_QUAT_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
@@ -1492,7 +1492,7 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
     }
   }
   // Phase 2: Dictionary serialization
-  // Dictionary format (recursive offset pattern as expected by TinyUSDZ reader):
+  // Dictionary format (recursive offset pattern as expected by LightUSD reader):
   // uint64_t count + for each: (StringIndex key, int64_t offset, ValueRep)
   // The offset is relative to the position after reading the offset field.
   // offset=8 means ValueRep immediately follows the offset field.
@@ -2344,7 +2344,7 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
       // payload is a count of zero -- so do the same.
       //
       // Found only by cross-checking against pxr: our reader and writer agreed
-      // with each other, so every tinyusdz-only test passed.
+      // with each other, so every lightusd-only test passed.
       const int64_t times_offset = value_data_end_offset_;
       if (!Seek(times_offset)) {
         if (err) *err = "Failed to seek to write empty times array";
@@ -2598,7 +2598,7 @@ crate::ValueRep CrateWriter::PackLayerOffsetVectorValue(
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

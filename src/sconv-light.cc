@@ -14,7 +14,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 // ============================================================================
@@ -502,7 +502,7 @@ bool CrateWriter::AddLightFilterSpecs(
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

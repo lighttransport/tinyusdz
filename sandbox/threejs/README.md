@@ -1,6 +1,6 @@
 # USDZ Loader for three.js experiment
 
-## Status 
+## Status
 
 Very early stage. cli nodejs execution is getting working.
 
@@ -14,7 +14,7 @@ See `bootstrap-emscripten-linux.sh` for details.
 
 We use `bun` + TypeScript.
 
-Copy `tinyusdz.js` and `tinyusdz.wasm`, and USD files to `simple` folder.
+Copy `lightusd.js` and `lightusd.wasm`, and USD files to `simple` folder.
 Then in `simple` folder,
 
 ```

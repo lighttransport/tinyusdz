@@ -16,7 +16,7 @@
 #include "layer.hh"
 #include "security-policy.hh"
 #include "str-util.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "uuid-gen.hh"
 #include "value-to-json.hh"
 #include "common-macros.inc"
@@ -32,7 +32,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -78,7 +78,7 @@ inline bool decode_data(const std::string &data, std::string *binary,
 // ---------------------------------------------------------------------------
 static std::string FindUUID(
     const std::string &name,
-    const tinyusdz::HashMap<std::string, USDLayer> &layers) {
+    const lightusd::HashMap<std::string, USDLayer> &layers) {
   for (const auto &it : layers) {
     if (it.second.name == name) {
       return it.first;
@@ -134,10 +134,10 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
 // ===========================================================================
 
 bool GetVersion(nlohmann::json &result) {
-  std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
-                        std::to_string(tinyusdz::version_minor) + "." +
-                        std::to_string(tinyusdz::version_micro);
-  std::string rev = tinyusdz::version_rev;
+  std::string ver_str = std::to_string(lightusd::version_major) + "." +
+                        std::to_string(lightusd::version_minor) + "." +
+                        std::to_string(lightusd::version_micro);
+  std::string rev = lightusd::version_rev;
 
   if (rev.size()) {
     ver_str += "." + rev;
@@ -998,7 +998,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    add_tool("get_version", "Get TinyUSDZ MCP server version", schema);
+    add_tool("get_version", "Get LightUSD MCP server version", schema);
   }
 
   // =========================================================================
@@ -1333,12 +1333,12 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"]["script"] =
-        str_prop("JavaScript code to execute (uses tinyusdz.* API)");
+        str_prop("JavaScript code to execute (uses lightusd.* API)");
     schema["required"] = nlohmann::json::array({"script"});
     add_tool("run_script",
              "Execute JavaScript code against the session stage. "
-             "Use tinyusdz.stage, tinyusdz.prim, tinyusdz.query etc. "
-             "When a diff is loaded, tinyusdz.diff.{summary,paths,prim} are also "
+             "Use lightusd.stage, lightusd.prim, lightusd.query etc. "
+             "When a diff is loaded, lightusd.diff.{summary,paths,prim} are also "
              "available for efficient ad-hoc diff queries.",
              schema);
   }
@@ -1375,7 +1375,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
              "flattened, with ULP-tolerant float compare. Caches the result in "
              "the session and returns a summary (counts + reason tally). Drill "
              "down with diff_paths / diff_prim, or query via run_script "
-             "(tinyusdz.diff.*).",
+             "(lightusd.diff.*).",
              schema);
   }
   {
@@ -1830,4 +1830,4 @@ bool CallTool(Context &ctx, const std::string &tool_name,
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

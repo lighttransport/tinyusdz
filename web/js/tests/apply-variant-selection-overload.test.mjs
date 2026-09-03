@@ -1,4 +1,4 @@
-// Regression for TinyUSDZLoaderNative.applyVariantSelection embind overloads.
+// Regression for LightUSDLoaderNative.applyVariantSelection embind overloads.
 //   node web/js/tests/apply-variant-selection-overload.test.mjs
 
 import assert from 'node:assert/strict';
@@ -20,12 +20,12 @@ async function testAsync(name, fn) {
 const fixtureUrl = new URL('../../../tests/usda/variantSet-apply-selection-overload.usda', import.meta.url);
 const fixtureBytes = new Uint8Array(fs.readFileSync(fixtureUrl));
 
-const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
-const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
+const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
+const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
 
 function withLoadedLayer(fn) {
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   try {
     assert.ok(
       usd.loadAsLayerFromBinary(fixtureBytes, 'variantSet-apply-selection-overload.usda'),

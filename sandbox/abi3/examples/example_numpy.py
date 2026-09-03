@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NumPy integration example for TinyUSDZ ABI3 binding
+NumPy integration example for LightUSD ABI3 binding
 
 This example demonstrates:
 1. Buffer protocol for zero-copy array access
@@ -22,9 +22,9 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import tinyusdz_abi3 as tusd
+    import lightusd_abi3 as tusd
 except ImportError as e:
-    print(f"Error: Could not import tinyusdz_abi3: {e}")
+    print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
     print("  python3 setup.py build_ext --inplace")
     sys.exit(1)
@@ -41,7 +41,7 @@ def example_buffer_protocol():
     # For this example, we'll demonstrate the concept
 
     print("Buffer protocol allows zero-copy array access")
-    print("This means NumPy can directly access TinyUSDZ array data")
+    print("This means NumPy can directly access LightUSD array data")
     print("without copying, making it very efficient.")
     print()
 
@@ -114,7 +114,7 @@ def example_type_formats():
     print("Example: Array Type Formats")
     print("=" * 60)
 
-    print("TinyUSDZ supports various value types with buffer protocol:")
+    print("LightUSD supports various value types with buffer protocol:")
     print()
 
     formats = [
@@ -158,7 +158,7 @@ def example_performance():
 
     # Zero-copy scenario
     print("With buffer protocol (zero-copy):")
-    print("  1. TinyUSDZ returns ValueArray")
+    print("  1. LightUSD returns ValueArray")
     print("  2. np.asarray(array) creates view (no copy)")
     print("  3. NumPy operations work directly on original data")
     print("  => Minimal memory overhead, instant access")
@@ -166,7 +166,7 @@ def example_performance():
 
     # Copy scenario
     print("Without buffer protocol (copying):")
-    print("  1. TinyUSDZ returns data")
+    print("  1. LightUSD returns data")
     print("  2. Python creates intermediate list")
     print("  3. NumPy creates array from list (copy)")
     print("  => 2-3x memory overhead, slow for large data")
@@ -182,7 +182,7 @@ def example_performance():
 
 def main():
     print("\n" + "=" * 60)
-    print("TinyUSDZ ABI3 Binding - NumPy Integration Examples")
+    print("LightUSD ABI3 Binding - NumPy Integration Examples")
     print("=" * 60 + "\n")
 
     # Run all examples

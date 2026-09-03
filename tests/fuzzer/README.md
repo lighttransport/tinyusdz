@@ -37,7 +37,7 @@ $ ninja
 Set input size and run fuzz main.
 
 ```
-$ ./fuzz_tinyusdz -max_len=128m
+$ ./fuzz_lightusd -max_len=128m
 ```
 
 for fuzzing `fuzz_intcoding_decompress`, capping max memory is required(otherwise oom happens).
@@ -59,7 +59,7 @@ They are built from `src/next`, not from the top-level project, and are off by
 default because they require clang:
 
 ```
-$ cmake -S src/next -B build-fuzz -DTINYUSDZ_NEXT_BUILD_FUZZERS=ON \
+$ cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
 $ cmake --build build-fuzz -j

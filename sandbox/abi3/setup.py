@@ -2,7 +2,7 @@
 """
 SPDX-License-Identifier: Apache 2.0
 
-Setup script for TinyUSDZ Python ABI3 binding
+Setup script for LightUSD Python ABI3 binding
 
 This builds a Python extension module using the stable ABI (limited API)
 for Python 3.10+. The resulting wheel is compatible with all Python versions
@@ -47,13 +47,13 @@ class BuildExt(build_ext):
 
 # Paths
 root_dir = Path(__file__).parent.resolve()
-tinyusdz_root = root_dir.parent.parent
-src_dir = tinyusdz_root / "src"
+lightusd_root = root_dir.parent.parent
+src_dir = lightusd_root / "src"
 
-# TinyUSDZ C++ sources (minimal set for basic functionality)
-tinyusdz_sources = [
-    str(src_dir / "c-tinyusd.cc"),
-    str(src_dir / "tinyusdz.cc"),
+# LightUSD C++ sources (minimal set for basic functionality)
+lightusd_sources = [
+    str(src_dir / "c-lightusd.cc"),
+    str(src_dir / "lightusd.cc"),
     str(src_dir / "stage.cc"),
     str(src_dir / "prim-types.cc"),
     str(src_dir / "value-types.cc"),
@@ -79,14 +79,14 @@ include_dirs = [
 # Define macros
 define_macros = [
     ('Py_LIMITED_API', '0x030a0000'),
-    ('TINYUSDZ_PRODUCTION_BUILD', '1'),
+    ('LIGHTUSD_PRODUCTION_BUILD', '1'),
 ]
 
 # Extension module
 ext_modules = [
     Extension(
-        name='tinyusdz_abi3',
-        sources=['src/tinyusdz_abi3.c'] + tinyusdz_sources,
+        name='lightusd_abi3',
+        sources=['src/lightusd_abi3.c'] + lightusd_sources,
         include_dirs=include_dirs,
         define_macros=define_macros,
         py_limited_api=True,  # Enable stable ABI
@@ -101,14 +101,14 @@ if readme_path.exists():
     long_description = readme_path.read_text(encoding='utf-8')
 
 setup(
-    name='tinyusdz-abi3',
+    name='lightusd-abi3',
     version='0.1.0',
-    author='TinyUSDZ Contributors',
+    author='LightUSD Contributors',
     author_email='',
-    description='TinyUSDZ Python bindings using stable ABI (Python 3.10+)',
+    description='LightUSD Python bindings using stable ABI (Python 3.10+)',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/syoyo/tinyusdz',
+    url='https://github.com/syoyo/lightusd',
     license='Apache-2.0',
     classifiers=[
         'Development Status :: 3 - Alpha',

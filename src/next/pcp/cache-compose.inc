@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache opinion composition and lazy prim/index composition.
+// LightUSD Next - PCP Cache opinion composition and lazy prim/index composition.
 // Included inside Cache::Impl.
 
   std::vector<std::string> ComposeInto(const std::vector<Src> &srcs,
@@ -378,7 +378,7 @@
   // Public entry: takes the lock once, then runs the lock-free worker.
   const PrimIndex *ComputePrimIndex(const Path &prim_path, std::string *warn,
                                     std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD) && defined(TINYUSDZ_NEXT_FINE_LOCKS)
+#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_NEXT_FINE_LOCKS)
     // F4 fast path: a shared lock lets cache hits resolve concurrently. On a
     // miss we fall through to the exclusive build; ComputePrimIndex_locked
     // re-checks index_cache under the write lock, so a prim contended by many

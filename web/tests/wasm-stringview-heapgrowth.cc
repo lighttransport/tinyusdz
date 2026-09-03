@@ -1,7 +1,7 @@
 // Regression test: a tstring_view's backing storage survives WASM linear-memory
 // growth.
 //
-// tinyusdz::Path stores its parts as tstring_view slices into a single owning
+// lightusd::Path stores its parts as tstring_view slices into a single owning
 // std::string buffer. Under Emscripten with -sALLOW_MEMORY_GROWTH=1 the heap can
 // grow at any allocation. wasm32 `memory.grow` is APPEND-ONLY: it extends the
 // single linear memory and never relocates existing allocations, so a
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 int main() {
   // Backing std::string, long enough to be heap-allocated (not SSO).

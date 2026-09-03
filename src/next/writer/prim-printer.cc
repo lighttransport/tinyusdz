@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Prim Printer Implementation
+// LightUSD Next - Prim Printer Implementation
 //
 // Debug pretty-printer. Writes through the freestanding StreamWriter sink (no
 // iostream / ostringstream): the string-returning entry points serialize into a
@@ -18,7 +18,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -590,4 +590,4 @@ void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& op
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

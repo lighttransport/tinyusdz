@@ -19,14 +19,14 @@
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // Always-on check: this file's build type is Release for the ctest gate, where
 // assert() is compiled out (-DNDEBUG). New assertions that must genuinely gate
@@ -2210,7 +2210,7 @@ static void test_cross_layer_listops() {
   const char *dirs[] = {"../../tests/usda/composition/",
                         "tests/usda/composition/",
                         "../../../tests/usda/composition/",
-                        TINYUSDZ_TEST_REPO_ROOT "/tests/usda/composition/"};
+                        LIGHTUSD_TEST_REPO_ROOT "/tests/usda/composition/"};
   std::string base;
   for (const char *d : dirs) {
     std::ifstream probe(std::string(d) + "listop-xlayer-delete-000.usda");
@@ -2307,7 +2307,7 @@ static void test_cross_layer_arc_reorder_fixtures() {
   const char *dirs[] = {"../../tests/usda/composition/",
                         "tests/usda/composition/",
                         "../../../tests/usda/composition/",
-                        TINYUSDZ_TEST_REPO_ROOT "/tests/usda/composition/"};
+                        LIGHTUSD_TEST_REPO_ROOT "/tests/usda/composition/"};
   std::string base;
   for (const char *dir : dirs) {
     std::ifstream probe(std::string(dir) +
@@ -2355,7 +2355,7 @@ static void test_authored_arc_fidelity_fixture() {
       "../../tests/usda/composition/authored-arc-fidelity.usda",
       "tests/usda/composition/authored-arc-fidelity.usda",
       "../../../tests/usda/composition/authored-arc-fidelity.usda",
-      TINYUSDZ_TEST_REPO_ROOT
+      LIGHTUSD_TEST_REPO_ROOT
           "/tests/usda/composition/authored-arc-fidelity.usda"};
   std::string text;
   for (const char *path : paths) {
@@ -3104,11 +3104,11 @@ static void test_node_overflow_fails_cleanly() {
   std::cout << "  OK" << std::endl;
 }
 
-// FU9: the Cache is thread-safe (built with TINYUSDZ_ENABLE_THREAD) -- multiple
+// FU9: the Cache is thread-safe (built with LIGHTUSD_ENABLE_THREAD) -- multiple
 // threads may query/compose a shared cache concurrently.
 static void test_concurrent_queries() {
   std::cout << "test_concurrent_queries..." << std::endl;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
@@ -3137,7 +3137,7 @@ static void test_concurrent_queries() {
   for (auto &t : ts) t.join();
   assert(ok.load());
 #else
-  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+  std::cout << "  (skipped: build with -DLIGHTUSD_NEXT_ENABLE_THREAD=ON)\n";
 #endif
   std::cout << "  OK" << std::endl;
 }
@@ -3148,7 +3148,7 @@ static void test_concurrent_queries() {
 // race / no crash (run under build/next-tsan), not a specific composed result.
 static void test_concurrent_payload_edits() {
   std::cout << "test_concurrent_payload_edits..." << std::endl;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
@@ -3184,7 +3184,7 @@ static void test_concurrent_payload_edits() {
   ts.emplace_back(writer);
   for (auto &t : ts) t.join();
 #else
-  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+  std::cout << "  (skipped: build with -DLIGHTUSD_NEXT_ENABLE_THREAD=ON)\n";
 #endif
   std::cout << "  OK" << std::endl;
 }
@@ -3229,7 +3229,7 @@ static std::string CanonInstances(const pcp::Cache &cache) {
 // deterministic input-order merge (incl. ordered prototype assignment).
 static void test_parallel_build_matches_serial() {
   std::cout << "test_parallel_build_matches_serial..." << std::endl;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   const std::vector<std::string> path_strs = {
       "/World",          "/World/A",     "/World/A/Inner", "/World/I",
       "/World/IR",       "/World/SP",    "/World/V",       "/World/VC",
@@ -3273,7 +3273,7 @@ static void test_parallel_build_matches_serial() {
   // prototype; Inst3 is its own), so the ordered-merge path was exercised.
   assert(!parallel.second.empty() && "expected instance groupings");
 #else
-  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+  std::cout << "  (skipped: build with -DLIGHTUSD_NEXT_ENABLE_THREAD=ON)\n";
 #endif
   std::cout << "  OK" << std::endl;
 }

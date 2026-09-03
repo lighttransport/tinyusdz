@@ -14,14 +14,14 @@ namespace tusdview {
 // Generate Maya-like wireframe gizmo lines for all lights in the RenderScene.
 // `lightXforms` maps RenderLight index -> world matrix (std::array<float,16> col-major).
 // Lines are appended to `out` as depth-tested helper line segments.
-void BuildLightGizmos(const tinyusdz::tydra::RenderScene& rs,
+void BuildLightGizmos(const lightusd::tydra::RenderScene& rs,
                       const std::unordered_map<int, std::array<float, 16>>& lightXforms,
                       std::vector<HelperVertex>& out);
 
 // Generate camera frustum wireframe gizmos for all cameras in the RenderScene.
 // `camXforms` maps RenderCamera index -> world matrix (std::array<float,16> col-major).
 // Lines are appended to `out` as depth-tested helper line segments.
-void BuildCameraGizmos(const tinyusdz::tydra::RenderScene& rs,
+void BuildCameraGizmos(const lightusd::tydra::RenderScene& rs,
                        const std::unordered_map<int, std::array<float, 16>>& camXforms,
                        std::vector<HelperVertex>& out);
 
@@ -29,7 +29,7 @@ void BuildCameraGizmos(const tinyusdz::tydra::RenderScene& rs,
 // `lightXforms[i]` is the column-major world matrix for `rs.lights[i]`.
 // `camXforms[i]` is the column-major world matrix for `rs.cameras[i]`.
 void CollectLightCameraTransforms(
-    const tinyusdz::tydra::Node& node,
+    const lightusd::tydra::Node& node,
     std::unordered_map<int, std::array<float, 16>>& lightXforms,
     std::unordered_map<int, std::array<float, 16>>& camXforms);
 

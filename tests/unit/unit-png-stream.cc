@@ -13,18 +13,18 @@
 #include <cstdint>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
 // Build a deterministic test image with `ch` channels (8-bit).
-tinyusdz::Image MakeImage(int w, int h, int ch) {
-  tinyusdz::Image img;
+lightusd::Image MakeImage(int w, int h, int ch) {
+  lightusd::Image img;
   img.width = w;
   img.height = h;
   img.channels = ch;
   img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data.resize((size_t)w * h * ch);
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
@@ -37,10 +37,10 @@ tinyusdz::Image MakeImage(int w, int h, int ch) {
   return img;
 }
 
-std::vector<uint8_t> EncodePNG(const tinyusdz::Image &img) {
-  tinyusdz::image::WriteOption opt;
-  opt.format = tinyusdz::image::WriteImageFormat::PNG;
-  auto r = tinyusdz::image::WriteImageToMemory(img, opt);
+std::vector<uint8_t> EncodePNG(const lightusd::Image &img) {
+  lightusd::image::WriteOption opt;
+  opt.format = lightusd::image::WriteImageFormat::PNG;
+  auto r = lightusd::image::WriteImageToMemory(img, opt);
   TEST_CHECK(bool(r));
   if (!r) return {};
   return r.value();
@@ -48,8 +48,8 @@ std::vector<uint8_t> EncodePNG(const tinyusdz::Image &img) {
 
 // Decode `png` and compare RGBA-normalized pixels against `ref`.
 void CheckPixelsEqual(const std::vector<uint8_t> &png,
-                      const tinyusdz::Image &ref) {
-  auto dec = tinyusdz::image::LoadImageFromMemory(png.data(), png.size(), "mem");
+                      const lightusd::Image &ref) {
+  auto dec = lightusd::image::LoadImageFromMemory(png.data(), png.size(), "mem");
   TEST_CHECK(bool(dec));
   if (!dec) return;
   const auto &im = dec.value().image;
@@ -74,11 +74,11 @@ void CheckPixelsEqual(const std::vector<uint8_t> &png,
 }
 
 void TranscodeRoundtrip(int w, int h, int ch) {
-  tinyusdz::Image img = MakeImage(w, h, ch);
+  lightusd::Image img = MakeImage(w, h, ch);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 0);
   std::vector<uint8_t> out;
-  bool ok = tinyusdz::imageio::TranscodePNG(png.data(), png.size(), out);
+  bool ok = lightusd::imageio::TranscodePNG(png.data(), png.size(), out);
   TEST_CHECK(ok);
   if (!ok) return;
   TEST_CHECK(out.size() > 0);
@@ -95,13 +95,13 @@ void png_stream_transcode_gray_test(void) { TranscodeRoundtrip(33, 50, 1); }
 // Drive the reader/writer directly (fresh-mode) and confirm a pixel-faithful
 // round-trip — this is the path the resize/colorspace pipeline will use.
 void png_stream_reader_writer_roundtrip_test(void) {
-  tinyusdz::Image img = MakeImage(40, 24, 4);
+  lightusd::Image img = MakeImage(40, 24, 4);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 0);
 
-  tinyusdz::imageio::PngScanlineReader reader;
+  lightusd::imageio::PngScanlineReader reader;
   TEST_CHECK(reader.Open(png.data(), png.size()));
-  tinyusdz::imageio::PngScanlineWriter writer;
+  lightusd::imageio::PngScanlineWriter writer;
   TEST_CHECK(writer.Begin(reader.info()));
 
   std::vector<uint8_t> row(reader.info().row_bytes);
@@ -121,7 +121,7 @@ void png_stream_reject_nonpng_test(void) {
   const uint8_t junk[16] = {0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 4,
                             5,    6,    7,    8,    9, 10, 11, 12};  // JPEG sig
   std::vector<uint8_t> out;
-  bool ok = tinyusdz::imageio::TranscodePNG(junk, sizeof(junk), out);
+  bool ok = lightusd::imageio::TranscodePNG(junk, sizeof(junk), out);
   TEST_CHECK(!ok);  // must reject -> caller falls back to whole-image codec
 }
 
@@ -129,29 +129,29 @@ void png_stream_reject_nonpng_test(void) {
 // + same linear filter) to within rounding.
 static void ResizeParity(int w, int h, int ch, int tw, int th,
                          bool srgb = false) {
-  tinyusdz::Image img = MakeImage(w, h, ch);
+  lightusd::Image img = MakeImage(w, h, ch);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 0);
 
   // Streaming resize -> decode result.
   std::vector<uint8_t> rpng;
-  bool ok = tinyusdz::imageio::ResizePNG(png.data(), png.size(), (uint32_t)tw,
+  bool ok = lightusd::imageio::ResizePNG(png.data(), png.size(), (uint32_t)tw,
                                          (uint32_t)th, srgb, rpng);
   TEST_CHECK(ok);
   if (!ok) return;
-  auto dec = tinyusdz::image::LoadImageFromMemory(rpng.data(), rpng.size(), "m");
+  auto dec = lightusd::image::LoadImageFromMemory(rpng.data(), rpng.size(), "m");
   TEST_CHECK(bool(dec));
   if (!dec) return;
   const auto &streamed = dec.value().image;
   TEST_CHECK(streamed.width == tw && streamed.height == th);
 
   // Whole-image reference.
-  tinyusdz::Image ref;
+  lightusd::Image ref;
   std::string err;
-  bool rok = tinyusdz::tydra::ResizeImage(
+  bool rok = lightusd::tydra::ResizeImage(
       img, tw, th, &ref,
-      srgb ? tinyusdz::tydra::ResizeFilter::SRGB
-           : tinyusdz::tydra::ResizeFilter::Linear,
+      srgb ? lightusd::tydra::ResizeFilter::SRGB
+           : lightusd::tydra::ResizeFilter::Linear,
       &err);
   TEST_CHECK(rok);
   if (!rok) return;
@@ -174,12 +174,12 @@ static void ResizeParity(int w, int h, int ch, int tw, int th,
 // (fresh mode) builds the 16-bit PNG so the test needs no external 16-bit codec.
 void png_stream_transcode_16bit_test(void) {
   const uint32_t W = 50, H = 37;
-  tinyusdz::imageio::PngImageInfo info;
+  lightusd::imageio::PngImageInfo info;
   info.width = W;
   info.height = H;
   info.bit_depth = 16;
   info.color_type = 0;  // grayscale
-  tinyusdz::imageio::PngScanlineWriter w;
+  lightusd::imageio::PngScanlineWriter w;
   TEST_CHECK(w.Begin(info));
   std::vector<std::vector<uint8_t>> rows(H, std::vector<uint8_t>((size_t)W * 2));
   for (uint32_t y = 0; y < H; ++y) {
@@ -194,11 +194,11 @@ void png_stream_transcode_16bit_test(void) {
   TEST_CHECK(w.Finish(png16));
 
   std::vector<uint8_t> out;
-  bool ok = tinyusdz::imageio::TranscodePNG(png16.data(), png16.size(), out);
+  bool ok = lightusd::imageio::TranscodePNG(png16.data(), png16.size(), out);
   TEST_CHECK(ok);
   if (!ok) return;
 
-  tinyusdz::imageio::PngScanlineReader r;
+  lightusd::imageio::PngScanlineReader r;
   TEST_CHECK(r.Open(out.data(), out.size()));
   TEST_CHECK(r.info().bit_depth == 16 && r.info().color_type == 0 &&
              r.info().width == W && r.info().height == H);
@@ -215,12 +215,12 @@ void png_stream_transcode_16bit_test(void) {
 // filter preserves constants) — this also exercises the BE<->native byte swap.
 void png_stream_resize_16bit_test(void) {
   const uint32_t W = 40, H = 30;
-  tinyusdz::imageio::PngImageInfo info;
+  lightusd::imageio::PngImageInfo info;
   info.width = W;
   info.height = H;
   info.bit_depth = 16;
   info.color_type = 0;  // grayscale
-  tinyusdz::imageio::PngScanlineWriter w;
+  lightusd::imageio::PngScanlineWriter w;
   TEST_CHECK(w.Begin(info));
   std::vector<uint8_t> row((size_t)W * 2);
   for (uint32_t x = 0; x < W; ++x) { row[x * 2] = 0xAB; row[x * 2 + 1] = 0xCD; }
@@ -229,11 +229,11 @@ void png_stream_resize_16bit_test(void) {
   TEST_CHECK(w.Finish(png));
 
   std::vector<uint8_t> out;
-  bool ok = tinyusdz::imageio::ResizePNG(png.data(), png.size(), 20, 15,
+  bool ok = lightusd::imageio::ResizePNG(png.data(), png.size(), 20, 15,
                                          /*srgb=*/false, out);
   TEST_CHECK(ok);
   if (!ok) return;
-  tinyusdz::imageio::PngScanlineReader r;
+  lightusd::imageio::PngScanlineReader r;
   TEST_CHECK(r.Open(out.data(), out.size()));
   TEST_CHECK(r.info().bit_depth == 16 && r.info().color_type == 0 &&
              r.info().width == 20 && r.info().height == 15);
@@ -250,12 +250,12 @@ void png_stream_resize_16bit_test(void) {
 // 16-bit grayscale sRGB->linear colorspace conversion must apply the 16-bit LUT.
 void png_stream_colorspace_16bit_test(void) {
   const uint32_t W = 40, H = 24;
-  tinyusdz::imageio::PngImageInfo info;
+  lightusd::imageio::PngImageInfo info;
   info.width = W;
   info.height = H;
   info.bit_depth = 16;
   info.color_type = 0;
-  tinyusdz::imageio::PngScanlineWriter w;
+  lightusd::imageio::PngScanlineWriter w;
   TEST_CHECK(w.Begin(info));
   std::vector<std::vector<uint8_t>> rows(H, std::vector<uint8_t>((size_t)W * 2));
   for (uint32_t y = 0; y < H; ++y) {
@@ -270,8 +270,8 @@ void png_stream_colorspace_16bit_test(void) {
   TEST_CHECK(w.Finish(png));
 
   std::vector<uint8_t> out;
-  bool ok = tinyusdz::imageio::ConvertColorspacePNG(
-      png.data(), png.size(), tinyusdz::imageio::ColorspaceXform::SrgbToLinear,
+  bool ok = lightusd::imageio::ConvertColorspacePNG(
+      png.data(), png.size(), lightusd::imageio::ColorspaceXform::SrgbToLinear,
       out);
   TEST_CHECK(ok);
   if (!ok) return;
@@ -284,7 +284,7 @@ void png_stream_colorspace_16bit_test(void) {
     int v = int(o * 65535.0f + 0.5f);
     lut[i] = (uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : v);
   }
-  tinyusdz::imageio::PngScanlineReader r;
+  lightusd::imageio::PngScanlineReader r;
   TEST_CHECK(r.Open(out.data(), out.size()));
   TEST_CHECK(r.info().bit_depth == 16 && r.info().color_type == 0);
   std::vector<uint8_t> orow(r.info().row_bytes);
@@ -303,7 +303,7 @@ void png_stream_colorspace_16bit_test(void) {
 // A PNG declaring absurd dimensions must be rejected (not overflow/crash) so the
 // caller falls back to the whole-image codec.
 void png_stream_reject_huge_dims_test(void) {
-  tinyusdz::Image img = MakeImage(16, 16, 3);
+  lightusd::Image img = MakeImage(16, 16, 3);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 24);
   if (png.size() <= 24) return;
@@ -311,10 +311,10 @@ void png_stream_reject_huge_dims_test(void) {
   // validate the IHDR CRC, so this reaches the dimension guard).
   png[16] = 0x7F; png[17] = 0xFF; png[18] = 0xFF; png[19] = 0xFF;
   std::vector<uint8_t> out;
-  TEST_CHECK(!tinyusdz::imageio::TranscodePNG(png.data(), png.size(), out));
+  TEST_CHECK(!lightusd::imageio::TranscodePNG(png.data(), png.size(), out));
   TEST_CHECK(
-      !tinyusdz::imageio::ResizePNG(png.data(), png.size(), 8, 8, false, out));
-  tinyusdz::imageio::PngScanlineReader r;
+      !lightusd::imageio::ResizePNG(png.data(), png.size(), 8, 8, false, out));
+  lightusd::imageio::PngScanlineReader r;
   TEST_CHECK(!r.Open(png.data(), png.size()));
 }
 
@@ -322,26 +322,26 @@ void png_stream_reject_huge_dims_test(void) {
 // exercising tydra::ResizeImage's STBIR_TYPE_HALF_FLOAT path. 0x3C00 = half 1.0.
 void png_stream_resize_fp16_test(void) {
   const int W = 40, H = 30, ch = 3;
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = W;
   img.height = H;
   img.channels = ch;
   img.bpp = 16;
-  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.format = lightusd::Image::PixelFormat::Float;
   img.data.resize((size_t)W * H * ch * 2);
   for (size_t i = 0; i < (size_t)W * H * ch; ++i) {
     img.data[i * 2] = 0x00;  // half 1.0 = 0x3C00, little-endian
     img.data[i * 2 + 1] = 0x3C;
   }
-  tinyusdz::Image out;
+  lightusd::Image out;
   std::string err;
-  bool ok = tinyusdz::tydra::ResizeImage(
-      img, 20, 15, &out, tinyusdz::tydra::ResizeFilter::Linear, &err);
+  bool ok = lightusd::tydra::ResizeImage(
+      img, 20, 15, &out, lightusd::tydra::ResizeFilter::Linear, &err);
   TEST_CHECK(ok);
   if (!ok) return;
   TEST_CHECK(out.width == 20 && out.height == 15 && out.bpp == 16 &&
              out.channels == ch &&
-             out.format == tinyusdz::Image::PixelFormat::Float);
+             out.format == lightusd::Image::PixelFormat::Float);
   bool good = out.data.size() == (size_t)20 * 15 * ch * 2;
   for (size_t i = 0; good && i < (size_t)20 * 15 * ch; ++i)
     if (out.data[i * 2] != 0x00 || out.data[i * 2 + 1] != 0x3C) good = false;
@@ -353,33 +353,33 @@ void png_stream_resize_fp16_test(void) {
 // (EXR ZIP is lossless; half->half has no conversion).
 void png_stream_exr_fp16_roundtrip_test(void) {
   const int W = 24, H = 18, ch = 4;
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = W;
   img.height = H;
   img.channels = ch;
   img.bpp = 16;
-  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.format = lightusd::Image::PixelFormat::Float;
   img.data.resize((size_t)W * H * ch * 2);
   uint16_t *s = reinterpret_cast<uint16_t *>(img.data.data());
   for (size_t i = 0; i < (size_t)W * H * ch; ++i)
     s[i] = (uint16_t)(0x3000 + (i % 0x200));  // finite positive half normals
 
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::EXR;
-  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::EXR;
+  auto enc = lightusd::image::WriteImageToMemory(img, wopt);
   TEST_CHECK(bool(enc));
   if (!enc) return;
 
-  tinyusdz::Image dec;
+  lightusd::Image dec;
   std::string err;
-  bool ok = tinyusdz::image::DecodeImageEXRHalf(enc.value().data(),
+  bool ok = lightusd::image::DecodeImageEXRHalf(enc.value().data(),
                                                 enc.value().size(), "m", &dec,
                                                 &err);
   TEST_CHECK(ok);
   if (!ok) return;
   TEST_CHECK(dec.width == W && dec.height == H && dec.bpp == 16 &&
              dec.channels == 4 &&
-             dec.format == tinyusdz::Image::PixelFormat::Float);
+             dec.format == lightusd::Image::PixelFormat::Float);
   const uint16_t *d = reinterpret_cast<const uint16_t *>(dec.data.data());
   bool good = dec.data.size() == (size_t)W * H * 4 * 2;
   for (size_t i = 0; good && i < (size_t)W * H * ch; ++i)
@@ -392,38 +392,38 @@ void png_stream_exr_fp16_roundtrip_test(void) {
 // exact float equivalents of the stored halfs (0x3C00=1.0, 0x3800=0.5).
 void png_stream_exr_half_float_consistency_test(void) {
   const int W = 8, H = 6, ch = 4;
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = W;
   img.height = H;
   img.channels = ch;
   img.bpp = 16;
-  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.format = lightusd::Image::PixelFormat::Float;
   img.data.resize((size_t)W * H * ch * 2);
   uint16_t *s = reinterpret_cast<uint16_t *>(img.data.data());
   for (size_t i = 0; i < (size_t)W * H * ch; ++i)
     s[i] = (i % 2) ? 0x3800 : 0x3C00;  // 0.5 : 1.0
 
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::EXR;
-  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::EXR;
+  auto enc = lightusd::image::WriteImageToMemory(img, wopt);
   TEST_CHECK(bool(enc));
   if (!enc) return;
 
   // (a) half decode -> 16-bit, 4-channel.
-  tinyusdz::Image half;
+  lightusd::Image half;
   std::string e1;
-  bool okh = tinyusdz::image::DecodeImageEXRHalf(enc.value().data(),
+  bool okh = lightusd::image::DecodeImageEXRHalf(enc.value().data(),
                                                  enc.value().size(), "m", &half,
                                                  &e1);
   TEST_CHECK(okh && half.bpp == 16 && half.channels == 4 && half.width == W);
 
   // (b) fp32 decode via LoadImageFromMemory -> exact float values.
-  auto dec = tinyusdz::image::LoadImageFromMemory(enc.value().data(),
+  auto dec = lightusd::image::LoadImageFromMemory(enc.value().data(),
                                                   enc.value().size(), "m.exr");
   TEST_CHECK(bool(dec));
   if (!dec) return;
   const auto &f = dec.value().image;
-  TEST_CHECK(f.bpp == 32 && f.format == tinyusdz::Image::PixelFormat::Float &&
+  TEST_CHECK(f.bpp == 32 && f.format == lightusd::Image::PixelFormat::Float &&
              f.channels == 4);
   const float *fp = reinterpret_cast<const float *>(f.data.data());
   bool good = f.data.size() >= (size_t)W * H * 4 * sizeof(float);
@@ -436,11 +436,11 @@ void png_stream_exr_half_float_consistency_test(void) {
 
 // GetImageInfoFromMemory reports correct dimensions without a full decode.
 void image_get_info_test(void) {
-  tinyusdz::Image img = MakeImage(40, 24, 3);
+  lightusd::Image img = MakeImage(40, 24, 3);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 0);
   auto info =
-      tinyusdz::image::GetImageInfoFromMemory(png.data(), png.size(), "m.png");
+      lightusd::image::GetImageInfoFromMemory(png.data(), png.size(), "m.png");
   TEST_CHECK(bool(info));
   if (!info) return;
   TEST_CHECK(info.value().width == 40 && info.value().height == 24);
@@ -453,17 +453,17 @@ void png_stream_resize_srgb_test(void) { ResizeParity(128, 96, 3, 40, 33, true);
 
 void png_stream_colorspace_test(void) {
   const int w = 64, h = 48, ch = 4;  // RGBA: convert RGB, preserve alpha
-  tinyusdz::Image img = MakeImage(w, h, ch);
+  lightusd::Image img = MakeImage(w, h, ch);
   std::vector<uint8_t> png = EncodePNG(img);
   TEST_CHECK(png.size() > 0);
 
   std::vector<uint8_t> out;
-  bool ok = tinyusdz::imageio::ConvertColorspacePNG(
-      png.data(), png.size(), tinyusdz::imageio::ColorspaceXform::SrgbToLinear,
+  bool ok = lightusd::imageio::ConvertColorspacePNG(
+      png.data(), png.size(), lightusd::imageio::ColorspaceXform::SrgbToLinear,
       out);
   TEST_CHECK(ok);
   if (!ok) return;
-  auto dec = tinyusdz::image::LoadImageFromMemory(out.data(), out.size(), "m");
+  auto dec = lightusd::image::LoadImageFromMemory(out.data(), out.size(), "m");
   TEST_CHECK(bool(dec));
   if (!dec) return;
   const auto &res = dec.value().image;

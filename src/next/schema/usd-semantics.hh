@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool HasSemanticsLabelsAPI(const UsdPrim& prim,
@@ -19,4 +19,4 @@ bool GetSemanticsLabels(const Stage& stage, const UsdPrim& prim,
                         double time = 0.0);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

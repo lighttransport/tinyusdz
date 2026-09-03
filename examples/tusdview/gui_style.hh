@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdview - ImGui color style (Maya-like dark theme).
-// Adapted from tinyusdview (gui_style.cc) / https://gist.github.com/meshula
+// Adapted from lightusdview (gui_style.cc) / https://gist.github.com/meshula
 #pragma once
 
 namespace tusdview {

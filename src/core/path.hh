@@ -13,7 +13,7 @@
 #include "value-types.hh"
 #include "tiny-string.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Return false when invalid character(e.g. '%') exists in a given string.
 // This function only validates `elementName` of a Prim(e.g. "dora", "xform1").
@@ -395,7 +395,7 @@ class Path {
   }
 
   // Strip '/'
-  Path &make_relative() TINYUSDZ_LIFETIMEBOUND {
+  Path &make_relative() LIGHTUSD_LIFETIMEBOUND {
     if (is_absolute_path() && (_prim_len > 1)) {
       // Remove leading '/' from the single buffer and shift offsets left by 1.
       _full.erase(0, 1);
@@ -467,7 +467,7 @@ class Path {
     std::string part;       // e.g. `variantColor` for {variantColor=green}
     std::string selection;  // e.g. `green`; could be empty.
   };
-  VariantTokens &mutable_variant() TINYUSDZ_LIFETIMEBOUND {
+  VariantTokens &mutable_variant() LIGHTUSD_LIFETIMEBOUND {
     if (!_variant) {
       _variant.reset(new VariantTokens());
     }
@@ -512,4 +512,4 @@ DEFINE_TYPE_TRAIT(SdfRelocates, "Relocates", TYPE_ID_RELOCATES, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

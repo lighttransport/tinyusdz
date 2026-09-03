@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "tinyusdz": {
+    "lightusd": {
       "command": "bun",
       "args": ["run", "server.ts"],
-      "cwd": "/path/to/tinyusdz/web/mcp-server"
+      "cwd": "/path/to/lightusd/web/mcp-server"
     }
   }
 }

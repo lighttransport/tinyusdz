@@ -32,14 +32,14 @@ Curently we only support connecting MCP through developer config(Stdio transport
 
 Install nodejs(20.x or later).
 Install `mcp-remote` package. https://www.npmjs.com/package/mcp-remote
-(`npx mcp-remote`) 
+(`npx mcp-remote`)
 
-Then, edit `claude_desktop_config.json` (Through `Settings` -> `Developer` -> `Edit Config`) to route 
+Then, edit `claude_desktop_config.json` (Through `Settings` -> `Developer` -> `Edit Config`) to route
 
 ```
 {
   "mcpServers": {
-    "tinyusdz": {
+    "lightusd": {
       "command": "npx",
       "args": [
         "mcp-remote",
@@ -78,4 +78,4 @@ trusted client per server process until per-session isolation lands.
 
 ## TODO
 
-* Run MCP server in a browser(service worker or 
+* Run MCP server in a browser(service worker or

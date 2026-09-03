@@ -8,7 +8,7 @@
 #include "tydra/render-data-pprint.hh"
 #include "tydra/render-data.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -699,4 +699,4 @@ float SpectralEmission::evaluate(float wavelength_nm) const {
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

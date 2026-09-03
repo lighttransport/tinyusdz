@@ -84,7 +84,7 @@
 #include "unit-rb-dynamics.h"
 #include "unit-string-pool.h"
 
-#if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
+#if defined(LIGHTUSD_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
 #endif
 
@@ -1175,7 +1175,7 @@ TEST_LIST = {
   { "rb_stacking_sleep_test", rb_stacking_sleep_test },
   { "rb_phys_world_memory_limit_test", rb_phys_world_memory_limit_test },
   { "rb_phys_world_transform_sync_test", rb_phys_world_transform_sync_test },
-#if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
+#if defined(LIGHTUSD_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
   // StringPool tests

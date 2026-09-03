@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
 //
-// Unit tests for MaterialX support in TinyUSDZ
+// Unit tests for MaterialX support in LightUSD
 
 #ifdef _MSC_VER
 #define NOMINMAX
@@ -34,10 +34,10 @@
 #include "asset-resolution.hh"
 #include "mtlx-xml-parser.hh"
 #include "value-types.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "math-util.inc"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void materialx_139_version_test(void) {
   mtlx::MaterialXParser parser;
@@ -718,7 +718,7 @@ def Shader "PreviewShader"
   }
 }
 
-// Regression: UsdUVTexture `inputs:uv_set` / `inputs:uv_set_name` (tinyusdz
+// Regression: UsdUVTexture `inputs:uv_set` / `inputs:uv_set_name` (lightusd
 // extensions) must reconstruct into the typed fields, not be left in the
 // generic props bag.
 void usduvtexture_uvset_test(void) {

@@ -14,7 +14,7 @@
 #include "animatable.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Collection API
 ///
@@ -87,7 +87,7 @@ class Collection
   }
 
   CollectionInstance &get_or_add_instance(const std::string &name)
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _instances.get_or_add(name);
   }
 
@@ -226,4 +226,4 @@ DEFINE_TYPE_TRAIT(ColorSpaceAPI, "ColorSpaceAPI", TYPE_ID_COLOR_SPACE_API, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

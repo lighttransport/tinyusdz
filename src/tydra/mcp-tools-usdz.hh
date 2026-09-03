@@ -11,7 +11,7 @@
 
 #include "mcp-context.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -45,4 +45,4 @@ bool TextureRepack(Context &ctx, const nlohmann::json &args,
 
 }  // namespace mcp
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -16,7 +16,7 @@
 
 #include "string-pool.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void string_pool_intern_test(void) {
   StringPool &pool = StringPool::instance();
@@ -112,7 +112,7 @@ void string_pool_pre_intern_common_test(void) {
 }
 
 void string_pool_concurrent_test(void) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   StringPool &pool = StringPool::instance();
 
   const int kThreads = 8;
@@ -153,7 +153,7 @@ void string_pool_concurrent_test(void) {
   }
   TEST_MSG("Concurrent intern/lookup should be race-free and deduplicated");
 #else
-  TEST_MSG("Skipped: built without TINYUSDZ_ENABLE_THREAD");
+  TEST_MSG("Skipped: built without LIGHTUSD_ENABLE_THREAD");
 #endif
 }
 

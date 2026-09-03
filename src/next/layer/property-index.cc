@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Property Index Implementation
+// LightUSD Next - Property Index Implementation
 
 #include "property-index.hh"
 #include <algorithm>
 #include <cstring>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <mutex>
 #include <shared_mutex>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -22,7 +22,7 @@ PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 namespace {
 // Order the snapshot by the pointed-to name.
 struct FrozenLess {
@@ -81,7 +81,7 @@ bool PropNameTable::is_frozen() const { return false; }
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Frozen fast path: the common compose-time intern is a HIT (every property
   // name was interned at parse), so answer it lock-free from the snapshot.
   // A MISS falls through to the locked path below and inserts into the live
@@ -130,7 +130,7 @@ PropNameId PropNameTable::intern(const char* name) {
 
 const std::string& PropNameTable::get(PropNameId id) const {
   static const std::string empty;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Lock-free when the id is covered by the published snapshot. The deque
   // elements it points at never relocate, so the reference stays valid even if
   // another thread interns concurrently.
@@ -150,7 +150,7 @@ const std::string& PropNameTable::get(PropNameId id) const {
 }
 
 PropNameId PropNameTable::find(const std::string& name) const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Lock-free hit against the immutable snapshot -- this is what removes the
   // rwlock cache-line contention that dominated multi-thread rendering. A miss
   // still has to consult the live map (a name may have been interned after the
@@ -189,7 +189,7 @@ PropNameId PropNameTable::find(std::string_view name) const {
     }
     return PropNameId{};
   };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
                                FrozenLess{});
@@ -467,4 +467,4 @@ void PropIndex::sort() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

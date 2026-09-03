@@ -1,4 +1,4 @@
-#ifdef TINYUSDZ_WITH_WAMR
+#ifdef LIGHTUSD_WITH_WAMR
 
 #include "wasm-runtime.hh"
 
@@ -8,7 +8,7 @@
 // WAMR includes
 #include "wasm_export.h"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 class WasmRuntime::Impl {
@@ -16,7 +16,7 @@ public:
   wasm_module_t module = nullptr;
   wasm_module_inst_t module_inst = nullptr;
   wasm_exec_env_t exec_env = nullptr;
-  
+
   static const uint32_t STACK_SIZE = 8092;
   static const uint32_t HEAP_SIZE = 8092;
 };
@@ -70,9 +70,9 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasm(
     const std::vector<uint8_t>& wasm_binary,
     const std::string& function_name,
     const std::vector<uint8_t>& input_data) {
-  
+
   WasmExecutionResult result;
-  
+
   if (!initialized_) {
     result.error_message = "WASM runtime not initialized";
     return result;
@@ -84,15 +84,15 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasm(
   }
 
   char error_buf[128];
-  
+
   // Load WASM module
   impl_->module = wasm_runtime_load(
-    const_cast<uint8_t*>(wasm_binary.data()), 
-    wasm_binary.size(), 
-    error_buf, 
+    const_cast<uint8_t*>(wasm_binary.data()),
+    wasm_binary.size(),
+    error_buf,
     sizeof(error_buf)
   );
-  
+
   if (!impl_->module) {
     result.error_message = std::string("Failed to load WASM module: ") + error_buf;
     return result;
@@ -106,7 +106,7 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasm(
     error_buf,
     sizeof(error_buf)
   );
-  
+
   if (!impl_->module_inst) {
     result.error_message = std::string("Failed to instantiate WASM module: ") + error_buf;
     wasm_runtime_unload(impl_->module);
@@ -127,10 +127,10 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasm(
 
   // Find the function to call
   wasm_function_inst_t func = wasm_runtime_lookup_function(
-    impl_->module_inst, 
+    impl_->module_inst,
     function_name.c_str()
   );
-  
+
   if (!func) {
     result.error_message = std::string("Function '") + function_name + "' not found in WASM module";
     return result;
@@ -138,7 +138,7 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasm(
 
   // Prepare arguments (simplified - no arguments for now)
   uint32_t argv[1] = {0};
-  
+
   // Execute the function
   bool success = wasm_runtime_call_wasm(
     impl_->exec_env,
@@ -149,7 +149,7 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasm(
 
   if (!success) {
     const char* exception = wasm_runtime_get_exception(impl_->module_inst);
-    result.error_message = std::string("WASM execution failed: ") + 
+    result.error_message = std::string("WASM execution failed: ") +
                           (exception ? exception : "Unknown error");
     return result;
   }
@@ -162,9 +162,9 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasmFromFile(
     const std::string& wasm_file_path,
     const std::string& function_name,
     const std::vector<uint8_t>& input_data) {
-  
+
   WasmExecutionResult result;
-  
+
   // Read WASM file
   std::ifstream file(wasm_file_path, std::ios::binary | std::ios::ate);
   if (!file) {
@@ -185,6 +185,6 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasmFromFile(
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 
-#endif // TINYUSDZ_WITH_WAMR
+#endif // LIGHTUSD_WITH_WAMR

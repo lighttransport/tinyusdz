@@ -1,6 +1,6 @@
 #include "pxr-compat.hh"
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 namespace pxr {
 

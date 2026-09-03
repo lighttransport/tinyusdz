@@ -131,7 +131,7 @@ static void x11_sync_configured_size(lui_window_x11_t *xw)
 {
     XEvent xe;
 
-    /* tinyusdz-local patch: this must never block.
+    /* lightusd-local patch: this must never block.
      *
      * The original loop called XNextEvent until it saw a ConfigureNotify. That
      * assumes a reparenting window manager, which always reconfigures a newly

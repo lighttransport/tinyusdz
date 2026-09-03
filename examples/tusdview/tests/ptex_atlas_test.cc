@@ -197,9 +197,9 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
 
 void RunType(uint32_t type, uint16_t channels = 1) {
   const std::vector<uint8_t> bytes = SyntheticPtex(type, channels);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxFaceEdge = 4;
@@ -322,9 +322,9 @@ void RunType(uint32_t type, uint16_t channels = 1) {
 
 void RunOrientation() {
   const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, true);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxAtlasEdge = 64;
@@ -346,9 +346,9 @@ void RunOrientation() {
 void RunEncoding(uint32_t encoding) {
   const std::vector<uint8_t> bytes =
       SyntheticPtex(0, 1, true, encoding, false);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxAtlasEdge = 64;
@@ -368,9 +368,9 @@ void RunEncoding(uint32_t encoding) {
 
 void RunConstantFace() {
   const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1, true);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxAtlasEdge = 64;
@@ -393,9 +393,9 @@ void RunConstantFace() {
 void RunConstantTiles() {
   const std::vector<uint8_t> bytes =
       SyntheticPtex(0, 3, false, 3, false, true, false);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxAtlasEdge = 64;
@@ -413,9 +413,9 @@ void RunConstantTiles() {
 void RunMalformedTileTable() {
   const std::vector<uint8_t> bytes =
       SyntheticPtex(0, 1, false, 3, false, false, true);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxAtlasEdge = 64;
@@ -428,9 +428,9 @@ void RunMalformedTileTable() {
 
 void RunPhysicalCacheReservation() {
   const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxFaceEdge = 8;
@@ -477,9 +477,9 @@ void RunPhysicalCacheReservation() {
 
 void RunPhysicalCacheCannotStarveFallback() {
   const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions baseline;
   baseline.maxFaceEdge = 8;
@@ -505,9 +505,9 @@ void RunPhysicalCacheCannotStarveFallback() {
 
 void RunVirtualFallbackDownsample() {
   const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1);
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+  CHECK(lightusd::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
                                           &error));
   tusdview::PtexAtlasOptions options;
   options.maxFaceEdge = 4;

@@ -15,7 +15,7 @@
 # Back view (-Z), BackUnlessDoubleSided culling: only ExplicitDoubleSided is
 # visible.
 #
-# The TinyUSDZ next renderer intentionally treats an unauthored planar opacity
+# The LightUSD next renderer intentionally treats an unauthored planar opacity
 # card as effectively double-sided for compatibility with DCC exporters that
 # omit the opinion. That inference is renderer policy, not composed USD state;
 # an explicitly authored false must still win.

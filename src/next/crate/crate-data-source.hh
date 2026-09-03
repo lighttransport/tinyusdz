@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Crate data source (retained USDC buffer)
+// LightUSD Next - Crate data source (retained USDC buffer)
 //
 // Owns the raw bytes of one loaded crate (USDC) plus the structural tables
 // needed to interpret ValueReps lazily (tokens / string indices). One per
@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 class StreamReader;
@@ -138,7 +138,7 @@ class CrateDataSource : public LazyArraySource {
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
   const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
   size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
-#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                         \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
   void* mmap_addr_ = nullptr;           // region to munmap in the destructor
@@ -197,4 +197,4 @@ TypeId CrateArrayValueType(CrateTypeId id);
 bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

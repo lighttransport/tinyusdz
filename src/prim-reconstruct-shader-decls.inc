@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Forward declarations of ReconstructShader<T> explicit specializations, defined
 // in prim-reconstruct-shader2.cc (Mtlx/OpenPBR) and prim-reconstruct-shader3.cc
-// (Usd* nodes + primvar readers). #included INSIDE namespace tinyusdz::prim by the
+// (Usd* nodes + primvar readers). #included INSIDE namespace lightusd::prim by the
 // dispatcher prim-reconstruct-shader.cc so ReconstructPrim<Shader>'s calls bind to
 // those out-of-TU specializations instead of implicitly instantiating the
 // (undefined) primary template.

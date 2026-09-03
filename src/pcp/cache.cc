@@ -9,7 +9,7 @@
 #include <functional>
 #include <set>
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
@@ -21,7 +21,7 @@
 #include "security-policy.hh"
 #include "stage.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pcp {
 
 namespace {
@@ -65,7 +65,7 @@ std::vector<std::string> GatherComposedChildNames(
 }
 
 int ResolveThreadCount(int requested) {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   if (requested < 0) {
     unsigned int hw = std::thread::hardware_concurrency();
     return (hw > 0) ? static_cast<int>(hw) : 4;
@@ -248,7 +248,7 @@ nonstd::expected<bool, std::string> Cache::Impl::PrewarmPrimIndices(
   (void)err;
   const int nthreads = ResolveThreadCount(opts.num_threads);
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   if (nthreads > 1 && paths.size() >= opts.min_paths_for_parallel) {
     return BuildParallel(paths, static_cast<size_t>(nthreads), warn, err);
   }
@@ -639,4 +639,4 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
 }
 
 }  // namespace pcp
-}  // namespace tinyusdz
+}  // namespace lightusd

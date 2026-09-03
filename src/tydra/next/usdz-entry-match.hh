@@ -10,7 +10,7 @@
 #include <cstring>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -71,4 +71,4 @@ inline std::string UsdzAssetBaseKey(const std::string& asset) {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

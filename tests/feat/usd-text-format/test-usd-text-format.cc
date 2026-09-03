@@ -3,7 +3,7 @@
 //
 // Regression: opt-in OpenUSD-compatible USDA text layout (SetUSDTextFormat).
 //
-// usdcat lays out a PrimSpec differently from tinyusdz's default:
+// usdcat lays out a PrimSpec differently from lightusd's default:
 //   - the prim-metadata opening paren sits on the `def` line: `def M "n" (`
 //     (default: the `(` goes on its own line);
 //   - `apiSchemas` is emitted FIRST in the metadata block (default: later);
@@ -16,10 +16,10 @@
 #include <iostream>
 #include <string>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "pprinter.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 int g_failures = 0;

@@ -4,17 +4,17 @@
 
 #include <chrono>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace performance {
 
 double now() {
   auto t = std::chrono::system_clock::now();
 
   // to milliseconds.
-  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()); 
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch());
 
   return double(ms.count());
 }
 
 } // namespace performance
-} // namespace tinyusdz
+} // namespace lightusd

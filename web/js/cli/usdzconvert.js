@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// usdzconvert CLI — TinyUSDZ WASM
+// usdzconvert CLI — LightUSD WASM
 //
 // Convert a USD file (plus its textures) or a whole folder into a USDZ, with
 // optional texture resize / re-encode. Also a standalone channel-repack mode.
@@ -13,22 +13,22 @@ import path from 'node:path';
 import { convertFolderToUSDZ, convertSourceToUSDZStreaming, loadWasm, parseByteSize } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
-// CLI runs with plain `node`. TINYUSDZ_WASM64=1 selects the 64-bit (8 GB) glue
+// CLI runs with plain `node`. LIGHTUSD_WASM64=1 selects the 64-bit (8 GB) glue
 // — used as a fallback for scenes that overflow the wasm32 2 GB ceiling. Falls
 // back to the 32-bit glue if the 64-bit build is not present.
 function selectWasmGlue() {
-  if (process.env.TINYUSDZ_WASM64 === '1') {
-    const url64 = new URL('../src/tinyusdz/tinyusdz_64.js', import.meta.url);
+  if (process.env.LIGHTUSD_WASM64 === '1') {
+    const url64 = new URL('../src/lightusd/lightusd_64.js', import.meta.url);
     if (fs.existsSync(url64)) return url64.href;
-    console.error('[usdzconvert] TINYUSDZ_WASM64=1 but tinyusdz_64.js not found; using wasm32.');
+    console.error('[usdzconvert] LIGHTUSD_WASM64=1 but lightusd_64.js not found; using wasm32.');
   }
-  return new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+  return new URL('../src/lightusd/lightusd.js', import.meta.url).href;
 }
 const wasmGlue = selectWasmGlue();
 
 function printHelp() {
   console.log(`
-usdzconvert CLI — TinyUSDZ WASM
+usdzconvert CLI — LightUSD WASM
 
 Usage:
   vite-node cli/usdzconvert.js <input-dir|input.usd> [options]
@@ -73,7 +73,7 @@ Convert options:
                            (USDC layers only; supports texture rename remaps
                            for --texture-format png/jpeg/exr); falls back to
                            the legacy stream compose when the input doesn't
-                           qualify. Also via TINYUSDZ_PIPELINE env.
+                           qualify. Also via LIGHTUSD_PIPELINE env.
   --include-unused-textures
                            With --pipeline stream-next, convert/package texture
                            files from the input folder even when the next-composed
@@ -97,7 +97,7 @@ Convert options:
                            or in JS. Byte-identical output; roughly halves peak
                            RSS on large scenes. Engages when writing to a file
                            (-o); falls back to buffering otherwise.
-  --no-stream-write        Force the buffered root path (TINYUSDZ_STREAM_WRITE=0).
+  --no-stream-write        Force the buffered root path (LIGHTUSD_STREAM_WRITE=0).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
   --texture-codec <auto|best|wasm|js>
                            Texture pipeline: auto (default), best, wasm, or js.
@@ -154,25 +154,25 @@ function parseArgs() {
     flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
     maxUsdcMb: 0, maxMemMb: 0,
-    wasmHeapLimitBytes: process.env.TINYUSDZ_MAX_WASM_HEAP ?
-      parseByteSize(process.env.TINYUSDZ_MAX_WASM_HEAP) : 0,
-    pipeline: process.env.TINYUSDZ_PIPELINE || 'legacy',
+    wasmHeapLimitBytes: process.env.LIGHTUSD_MAX_WASM_HEAP ?
+      parseByteSize(process.env.LIGHTUSD_MAX_WASM_HEAP) : 0,
+    pipeline: process.env.LIGHTUSD_PIPELINE || 'legacy',
     // undefined => auto (stream textures for a single .usdz keep-format re-encode,
     // the low-memory default); true => force; false => force the in-heap path.
     streamTextures: undefined,
     // Stream the flattened root crate straight into the .usdz (next pipeline only)
     // instead of buffering it — keeps the output crate out of the WASM heap and JS.
-    // Default ON for --pipeline next when writing to a file; TINYUSDZ_STREAM_WRITE=0
+    // Default ON for --pipeline next when writing to a file; LIGHTUSD_STREAM_WRITE=0
     // (or --no-stream-write) disables it.
-    streamWrite: process.env.TINYUSDZ_STREAM_WRITE !== '0',
+    streamWrite: process.env.LIGHTUSD_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
     // 'auto' (default): choose low-memory WASM or a small JS worker pool for
     // large PNG resize jobs. 'wasm': single-threaded convertImage. 'js': PNG
     // work runs on a worker_threads pool; non-PNG still falls back to WASM.
-    textureCodec: process.env.TINYUSDZ_TEXTURE_CODEC || 'auto',
+    textureCodec: process.env.LIGHTUSD_TEXTURE_CODEC || 'auto',
     textureJobs: 0,  // 0 = cpu count - 1; 'best' = estimate from budget
-    textureMemoryBudget: process.env.TINYUSDZ_TEXTURE_MEMORY_BUDGET ?
-      parseByteSize(process.env.TINYUSDZ_TEXTURE_MEMORY_BUDGET) : 0,
+    textureMemoryBudget: process.env.LIGHTUSD_TEXTURE_MEMORY_BUDGET ?
+      parseByteSize(process.env.LIGHTUSD_TEXTURE_MEMORY_BUDGET) : 0,
     optimizeMaterials: 'off',
     materialAtlasSize: 4096,
     materialAtlasTileSize: 512,

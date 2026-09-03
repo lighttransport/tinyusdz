@@ -1,7 +1,7 @@
-# tinyusdz vs OpenUSD benchmark harness
+# lightusd vs OpenUSD benchmark harness
 
 Compares parse, write (USDA/USDC), and composition performance between
-tinyusdz and Pixar OpenUSD on the same input files.
+lightusd and Pixar OpenUSD on the same input files.
 
 ## Prerequisites
 
@@ -25,8 +25,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-If `pxr_DIR` is omitted (or OpenUSD is not found), only `bench_tinyusdz`
-is built and the runner reports tinyusdz numbers alone.
+If `pxr_DIR` is omitted (or OpenUSD is not found), only `bench_lightusd`
+is built and the runner reports lightusd numbers alone.
 
 ## Run
 
@@ -35,12 +35,12 @@ python3 runner.py                  # default model set from ../../models
 python3 runner.py path/to/scene.usdc --iters 20
 ```
 
-Output is a per-file table of median times plus the OpenUSD/tinyusdz ratio
-(>1 means tinyusdz is faster).
+Output is a per-file table of median times plus the OpenUSD/lightusd ratio
+(>1 means lightusd is faster).
 
 ## What is measured
 
-| op         | tinyusdz                                            | OpenUSD                              |
+| op         | lightusd                                            | OpenUSD                              |
 |------------|-----------------------------------------------------|--------------------------------------|
 | parse      | `LoadUSDFromFile` → `Stage`                         | `SdfLayer::FindOrOpen` / `Reload(force)` (single layer, no composition) |
 | write_usda | `usda::SaveAsUSDA`                                  | root layer `Export(*.usda)`          |
@@ -50,10 +50,10 @@ Output is a per-file table of median times plus the OpenUSD/tinyusdz ratio
 Caveats:
 
 - The two libraries do different amounts of work per op (e.g. OpenUSD
-  USDC "parse" is mostly mmap + lazy decode; tinyusdz fully decodes).
+  USDC "parse" is mostly mmap + lazy decode; lightusd fully decodes).
   Treat numbers as end-to-end workload comparisons, not parser microbenchmarks.
-- tinyusdz writes USDC to memory (no file I/O); OpenUSD `Export` writes to disk.
-- Requires the `pcp-2026` branch (or newer) of tinyusdz for crate write and
-  the rvalue `LayerToStage` API; the harness builds tinyusdz as C++17.
+- lightusd writes USDC to memory (no file I/O); OpenUSD `Export` writes to disk.
+- Requires the `pcp-2026` branch (or newer) of lightusd for crate write and
+  the rvalue `LayerToStage` API; the harness builds lightusd as C++17.
 - OpenUSD `Flatten` composes all arcs (variants, inherits, ...); the
-  tinyusdz path composes sublayers/references/payload only.
+  lightusd path composes sublayers/references/payload only.

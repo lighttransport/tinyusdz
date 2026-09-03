@@ -1,4 +1,4 @@
-import { mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
+import { mountBackendSelector } from './src/lightusd/LoaderConfigUtils.js';
 
 const samples = [
   {
@@ -448,7 +448,7 @@ async function initWasm() {
     // validateFromBinary free function shares the legacy JSON contract).
     const params = new URLSearchParams(window.location.search);
     const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
-    const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+    const glue = useNext ? './src/lightusd/lightusd_next.js' : './src/lightusd/lightusd.js';
     const factory = (await import(/* @vite-ignore */ new URL(glue, import.meta.url).href)).default;
     state.nativeModule = await factory();
     setStatus('Ready');
@@ -475,9 +475,9 @@ function loadSample(index) {
 
 function validateCurrentInput() {
   if (!state.nativeModule || !state.currentBytes) return;
-  // Legacy module: TinyUSDZLoaderNative member; next-only module: free function.
-  const native = typeof state.nativeModule.TinyUSDZLoaderNative === 'function'
-    ? new state.nativeModule.TinyUSDZLoaderNative() : null;
+  // Legacy module: LightUSDLoaderNative member; next-only module: free function.
+  const native = typeof state.nativeModule.LightUSDLoaderNative === 'function'
+    ? new state.nativeModule.LightUSDLoaderNative() : null;
   try {
     setStatus('Validating...');
     const options = JSON.stringify({ groups: selectedGroups() });

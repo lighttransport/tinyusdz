@@ -34,7 +34,7 @@
 // __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 [[maybe_unused]] constexpr auto kInputsVarname = "inputs:varname";
@@ -525,4 +525,4 @@ bool ReconstructShader<OpenPBRSurface>(
 
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

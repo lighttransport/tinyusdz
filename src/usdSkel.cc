@@ -16,7 +16,7 @@
 #include "core/prim.hh"
 #include "path-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace {
 
 struct FNV1StringHash {
@@ -227,23 +227,23 @@ bool BuildSkelTopology(
       }
       return false;
     }
-    
+
     paths[i] = p;
   }
 
   // path name <-> index map
-  tinyusdz::HashMap<std::string, size_t, FNV1StringHash> pathMap;
+  lightusd::HashMap<std::string, size_t, FNV1StringHash> pathMap;
   pathMap.reserve(paths.size());
   for (size_t i = 0; i < paths.size(); i++) {
     pathMap[paths[i].prim_part()] = i;
   }
 
-  auto GetParentIndex = [](const tinyusdz::HashMap<std::string, size_t, FNV1StringHash> &_pathMap,
+  auto GetParentIndex = [](const lightusd::HashMap<std::string, size_t, FNV1StringHash> &_pathMap,
                            const Path &path) -> int {
     if (path.is_root_path()) {
       return -1;
     }
-  
+
     // from pxrUSD's comment...
     //
     // Recurse over all ancestor paths, not just the direct parent.
@@ -251,7 +251,7 @@ bool BuildSkelTopology(
     // 'a' will be treated as the parent of 'a/b/c'.
     //
     Path parentPath = path.get_parent_prim_path();
-     
+
     uint32_t kMaxRec = 1024 * 128; // to avoid infinite loop.
 
     uint32_t depth = 0;
@@ -268,7 +268,7 @@ bool BuildSkelTopology(
       if (depth >= kMaxRec) {
         // TODO: Report error
         return -1;
-      } 
+      }
     }
 
     return -1;
@@ -334,4 +334,4 @@ bool SkelValidateTopology(
   return true;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

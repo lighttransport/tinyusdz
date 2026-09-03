@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP cache local utility helpers.
+// LightUSD Next - PCP cache local utility helpers.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -36,4 +36,4 @@ inline bool IsPathAtOrUnder(const std::string& child,
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

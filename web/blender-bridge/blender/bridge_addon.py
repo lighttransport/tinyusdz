@@ -2,11 +2,11 @@
 # Uses msgbus for UI changes, depsgraph for transforms, timer only for viewport camera
 
 bl_info = {
-    "name": "TinyUSDZ Bridge",
-    "author": "TinyUSDZ",
+    "name": "LightUSD Bridge",
+    "author": "LightUSD",
     "version": (1, 0, 0),
     "blender": (4, 0, 0),
-    "location": "View3D > Sidebar > TinyUSDZ",
+    "location": "View3D > Sidebar > LightUSD",
     "description": "Real-time sync with browser viewer via WebSocket",
     "category": "Import-Export",
 }
@@ -360,7 +360,7 @@ class DepsgraphMonitor:
 
 class ViewportCameraOperator(bpy.types.Operator):
     """Modal operator for viewport camera sync (timer-based)"""
-    bl_idname = "tinyusdz.viewport_camera_sync"
+    bl_idname = "lightusd.viewport_camera_sync"
     bl_label = "Sync Viewport Camera"
     bl_options = {'INTERNAL'}
 
@@ -449,7 +449,7 @@ class BlenderBridge:
         self.depsgraph_monitor.start()
 
         # Start viewport camera sync
-        bpy.ops.tinyusdz.viewport_camera_sync('INVOKE_DEFAULT')
+        bpy.ops.lightusd.viewport_camera_sync('INVOKE_DEFAULT')
 
         return True
 
@@ -549,13 +549,13 @@ def get_bridge():
 # UI Panel
 # ============================================================================
 
-class TINYUSDZ_PT_bridge_panel(bpy.types.Panel):
-    """TinyUSDZ Bridge Panel"""
-    bl_label = "TinyUSDZ Bridge"
-    bl_idname = "TINYUSDZ_PT_bridge_panel"
+class LIGHTUSD_PT_bridge_panel(bpy.types.Panel):
+    """LightUSD Bridge Panel"""
+    bl_label = "LightUSD Bridge"
+    bl_idname = "LIGHTUSD_PT_bridge_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'TinyUSDZ'
+    bl_category = 'LightUSD'
 
     def draw(self, context):
         layout = self.layout
@@ -569,18 +569,18 @@ class TINYUSDZ_PT_bridge_panel(bpy.types.Panel):
         if bridge and bridge.is_connected():
             layout.label(text="Connected", icon='CHECKMARK')
             layout.label(text=f"Session: {bridge.get_session_id()[:8]}...")
-            layout.operator("tinyusdz.disconnect", text="Disconnect")
+            layout.operator("lightusd.disconnect", text="Disconnect")
             layout.separator()
-            layout.operator("tinyusdz.export_and_upload", text="Upload Scene")
+            layout.operator("lightusd.export_and_upload", text="Upload Scene")
         else:
             layout.label(text="Disconnected", icon='X')
-            layout.prop(context.scene, "tinyusdz_server_url")
-            layout.operator("tinyusdz.connect", text="Connect")
+            layout.prop(context.scene, "lightusd_server_url")
+            layout.operator("lightusd.connect", text="Connect")
 
 
-class TINYUSDZ_OT_connect(bpy.types.Operator):
-    """Connect to TinyUSDZ Bridge"""
-    bl_idname = "tinyusdz.connect"
+class LIGHTUSD_OT_connect(bpy.types.Operator):
+    """Connect to LightUSD Bridge"""
+    bl_idname = "lightusd.connect"
     bl_label = "Connect to Bridge"
 
     def execute(self, context):
@@ -589,7 +589,7 @@ class TINYUSDZ_OT_connect(bpy.types.Operator):
         if _bridge is None:
             _bridge = BlenderBridge()
 
-        url = context.scene.tinyusdz_server_url
+        url = context.scene.lightusd_server_url
         if _bridge.connect(url):
             self.report({'INFO'}, f"Connected to {url}")
         else:
@@ -598,9 +598,9 @@ class TINYUSDZ_OT_connect(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class TINYUSDZ_OT_disconnect(bpy.types.Operator):
-    """Disconnect from TinyUSDZ Bridge"""
-    bl_idname = "tinyusdz.disconnect"
+class LIGHTUSD_OT_disconnect(bpy.types.Operator):
+    """Disconnect from LightUSD Bridge"""
+    bl_idname = "lightusd.disconnect"
     bl_label = "Disconnect"
 
     def execute(self, context):
@@ -613,9 +613,9 @@ class TINYUSDZ_OT_disconnect(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class TINYUSDZ_OT_export_and_upload(bpy.types.Operator):
+class LIGHTUSD_OT_export_and_upload(bpy.types.Operator):
     """Export scene as USDZ and upload to bridge"""
-    bl_idname = "tinyusdz.export_and_upload"
+    bl_idname = "lightusd.export_and_upload"
     bl_label = "Export and Upload"
 
     def execute(self, context):
@@ -651,20 +651,20 @@ class TINYUSDZ_OT_export_and_upload(bpy.types.Operator):
 
 classes = (
     ViewportCameraOperator,
-    TINYUSDZ_PT_bridge_panel,
-    TINYUSDZ_OT_connect,
-    TINYUSDZ_OT_disconnect,
-    TINYUSDZ_OT_export_and_upload,
+    LIGHTUSD_PT_bridge_panel,
+    LIGHTUSD_OT_connect,
+    LIGHTUSD_OT_disconnect,
+    LIGHTUSD_OT_export_and_upload,
 )
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    bpy.types.Scene.tinyusdz_server_url = bpy.props.StringProperty(
+    bpy.types.Scene.lightusd_server_url = bpy.props.StringProperty(
         name="Server URL",
         default="ws://localhost:8090",
-        description="TinyUSDZ Bridge server URL"
+        description="LightUSD Bridge server URL"
     )
 
 def unregister():
@@ -677,7 +677,7 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    del bpy.types.Scene.tinyusdz_server_url
+    del bpy.types.Scene.lightusd_server_url
 
 if __name__ == "__main__":
     register()

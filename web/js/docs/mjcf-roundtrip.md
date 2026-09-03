@@ -1,7 +1,7 @@
 # MJCF → USD → MJCF roundtrip
 
 Verifies that a MuJoCo model (MJCF) survives a trip through USD Physics and back,
-using the TinyUSDZ WASM build. The pipeline drives two Node CLIs plus a runner:
+using the LightUSD WASM build. The pipeline drives two Node CLIs plus a runner:
 
 ```
 MJCF  ──cli/urdf-to-usd.js──▶  USD (PhysicsScene + Mjc* + Newton* schemas)

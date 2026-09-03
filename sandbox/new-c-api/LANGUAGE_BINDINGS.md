@@ -1,16 +1,16 @@
-# TinyUSDZ Language Bindings Matrix
+# LightUSD Language Bindings Matrix
 
-Complete overview of all language bindings for the TinyUSDZ C99 API.
+Complete overview of all language bindings for the LightUSD C99 API.
 
 ## Summary
 
 | Language | Status | Type | Build | File | Notes |
 |----------|--------|------|-------|------|-------|
-| C/C++ | ✅ Ready | Native | Yes | `tinyusdz_c.h` / `.cpp` | Full production implementation |
-| Python | ✅ Complete | ctypes | No | `tinyusdz_complete.py` | All 70+ functions wrapped |
+| C/C++ | ✅ Ready | Native | Yes | `lightusd_c.h` / `.cpp` | Full production implementation |
+| Python | ✅ Complete | ctypes | No | `lightusd_complete.py` | All 70+ functions wrapped |
 | Rust | ✅ Ready | FFI | Yes | `lib.rs` | Safe wrapper, Cargo-compatible |
-| C# | ✅ Ready | P/Invoke | No | `TinyUSDZ.cs` | Full .NET integration |
-| TypeScript | ✅ Ready | Declarations | No | `tinyusdz.d.ts` | Definitions for Node.js bindings |
+| C# | ✅ Ready | P/Invoke | No | `LightUSD.cs` | Full .NET integration |
+| TypeScript | ✅ Ready | Declarations | No | `lightusd.d.ts` | Definitions for Node.js bindings |
 | JavaScript | ⏱️ Future | WASM/node-gyp | Yes | - | Can be built from C API |
 | Go | ⏱️ Future | CGO | Yes | - | CGO bindings needed |
 | Ruby | ⏱️ Future | FFI | No | - | ruby-ffi compatible |
@@ -19,7 +19,7 @@ Complete overview of all language bindings for the TinyUSDZ C99 API.
 
 ### C/C++ ✅ PRODUCTION READY
 
-**File:** `tinyusdz_c.h` + `tinyusdz_c.cpp`
+**File:** `lightusd_c.h` + `lightusd_c.cpp`
 
 **Status:** Complete and production-ready
 
@@ -40,7 +40,7 @@ sudo make install
 
 **Usage:**
 ```c
-#include <tinyusdz_c.h>
+#include <lightusd_c.h>
 tusdz_init();
 tusdz_stage stage = NULL;
 tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
@@ -54,7 +54,7 @@ tusdz_shutdown();
 
 ### Python ✅ COMPLETE
 
-**File:** `tinyusdz_complete.py`
+**File:** `lightusd_complete.py`
 
 **Status:** Feature-complete with all functions wrapped
 
@@ -78,10 +78,10 @@ tusdz_shutdown();
 
 **Usage:**
 ```python
-import tinyusdz_complete as tinyusdz
+import lightusd_complete as lightusd
 
-tinyusdz.init()
-stage = tinyusdz.load_from_file("model.usd")
+lightusd.init()
+stage = lightusd.load_from_file("model.usd")
 root = stage.root_prim
 
 for child in root.get_children():
@@ -92,7 +92,7 @@ for child in root.get_children():
         print(f"  Vertices: {mesh_data.vertex_count}")
         print(f"  Faces: {mesh_data.face_count}")
 
-tinyusdz.shutdown()
+lightusd.shutdown()
 ```
 
 **API Coverage:** 100% - All functions wrapped with Pythonic API
@@ -129,7 +129,7 @@ tinyusdz.shutdown()
 
 **Usage:**
 ```rust
-use tinyusdz::{init, shutdown, load_from_file, PrimType};
+use lightusd::{init, shutdown, load_from_file, PrimType};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init()?;
@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 **Cargo.toml Setup:**
 ```toml
 [dependencies]
-tinyusdz = { path = "sandbox/new-c-api" }
+lightusd = { path = "sandbox/new-c-api" }
 ```
 
 **Building:**
@@ -171,7 +171,7 @@ cargo build --release
 
 ### C# ✅ PRODUCTION READY
 
-**File:** `TinyUSDZ.cs`
+**File:** `LightUSD.cs`
 
 **Status:** Feature-complete with P/Invoke
 
@@ -183,10 +183,10 @@ cargo build --release
 - Exception-based error handling
 
 **Included Classes:**
-- `TinyUSDZ` - Static API functions
-- `TinyUSDZ.Stage` - Stage wrapper
-- `TinyUSDZ.Prim` - Prim wrapper
-- `TinyUSDZ.Value` - Value wrapper
+- `LightUSD` - Static API functions
+- `LightUSD.Stage` - Stage wrapper
+- `LightUSD.Prim` - Prim wrapper
+- `LightUSD.Value` - Value wrapper
 - Enums for all types
 
 **Usage:**
@@ -197,9 +197,9 @@ class Program
 {
     static void Main(string[] args)
     {
-        TinyUSDZ.Init();
+        LightUSD.Init();
 
-        using (var stage = TinyUSDZ.LoadFromFile("model.usd"))
+        using (var stage = LightUSD.LoadFromFile("model.usd"))
         {
             var root = stage.RootPrim;
             Console.WriteLine($"Root: {root.Name} [{root.TypeName}]");
@@ -215,14 +215,14 @@ class Program
             }
         }
 
-        TinyUSDZ.Shutdown();
+        LightUSD.Shutdown();
     }
 }
 ```
 
 **Building:**
 ```bash
-csc TinyUSDZ.cs /target:library
+csc LightUSD.cs /target:library
 ```
 
 **API Coverage:** 95% - Core operations implemented
@@ -231,7 +231,7 @@ csc TinyUSDZ.cs /target:library
 
 ### TypeScript/JavaScript ✅ TYPE DEFINITIONS
 
-**File:** `tinyusdz.d.ts`
+**File:** `lightusd.d.ts`
 
 **Status:** TypeScript definitions ready (requires Node.js native binding)
 
@@ -247,11 +247,11 @@ csc TinyUSDZ.cs /target:library
 
 **Example .d.ts Usage:**
 ```typescript
-import tinyusdz from './tinyusdz.js';
+import lightusd from './lightusd.js';
 
-tinyusdz.init();
+lightusd.init();
 
-const stage = tinyusdz.loadFromFile("model.usd");
+const stage = lightusd.loadFromFile("model.usd");
 const root = stage.rootPrim;
 
 if (root) {
@@ -263,7 +263,7 @@ if (root) {
     }
 }
 
-tinyusdz.shutdown();
+lightusd.shutdown();
 ```
 
 **API Coverage:** 100% - All types defined
@@ -299,7 +299,7 @@ tinyusdz.shutdown();
 
 **Features:**
 ```go
-package tinyusdz
+package lightusd
 
 import "C"
 
@@ -321,9 +321,9 @@ func (p *Prim) Children() []*Prim { ... }
 ```ruby
 require 'ffi'
 
-module TinyUSDZ
+module LightUSD
   extend FFI::Library
-  ffi_lib 'tinyusdz_c'
+  ffi_lib 'lightusd_c'
 
   attach_function :tusdz_init, [], :int
   # ...
@@ -423,15 +423,15 @@ end
 ### Python (No build needed)
 ```bash
 # Just copy the file and import
-cp tinyusdz_complete.py /path/to/project/
-import tinyusdz_complete
+cp lightusd_complete.py /path/to/project/
+import lightusd_complete
 ```
 
 ### Rust
 ```bash
 # Create package
-cargo new --lib tinyusdz-rs
-cp lib.rs tinyusdz-rs/src/lib.rs
+cargo new --lib lightusd-rs
+cp lib.rs lightusd-rs/src/lib.rs
 
 # Build
 cargo build --release
@@ -440,7 +440,7 @@ cargo build --release
 ### C#
 ```bash
 # Compile
-csc TinyUSDZ.cs /target:library /out:TinyUSDZ.dll
+csc LightUSD.cs /target:library /out:LightUSD.dll
 
 # Or in Visual Studio
 # Add as reference to your project
@@ -449,7 +449,7 @@ csc TinyUSDZ.cs /target:library /out:TinyUSDZ.dll
 ### JavaScript/Node.js (Once implemented)
 ```bash
 # Install from npm
-npm install tinyusdz
+npm install lightusd
 
 # Or build from source
 npm install
@@ -473,8 +473,8 @@ cargo test
 ### C#
 ```bash
 # Create test project
-dotnet new xunit -n TinyUSDZTests
-# Add TinyUSDZ.cs
+dotnet new xunit -n LightUSDTests
+# Add LightUSD.cs
 dotnet test
 ```
 
@@ -493,7 +493,7 @@ make test
 ```python
 # Blender addon
 import bpy
-import tinyusdz_complete as tusdz
+import lightusd_complete as tusdz
 
 def import_usd(filename):
     tusdz.init()
@@ -506,7 +506,7 @@ def import_usd(filename):
 ```rust
 #[tauri::command]
 fn load_usd(path: String) -> Result<StageInfo, String> {
-    let stage = tinyusdz::load_from_file(&path, None)?;
+    let stage = lightusd::load_from_file(&path, None)?;
     // ... return stage data to frontend ...
 }
 ```
@@ -522,7 +522,7 @@ public class USDImporter
     public static void ImportUSD()
     {
         string path = EditorUtility.OpenFilePanel("Select USD file", "", "usd,usda,usdz");
-        using (var stage = TinyUSDZ.LoadFromFile(path))
+        using (var stage = LightUSD.LoadFromFile(path))
         {
             // ... create GameObjects ...
         }
@@ -554,4 +554,4 @@ To add a new binding:
 
 ## License
 
-All bindings are under the same MIT License as TinyUSDZ.
+All bindings are under the same MIT License as LightUSD.

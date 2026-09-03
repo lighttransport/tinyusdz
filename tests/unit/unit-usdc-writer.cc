@@ -12,14 +12,14 @@
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdc-writer.hh"
 #include "usdGeom.hh"
 #include "usdSkel.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -4749,7 +4749,7 @@ def Xform "x" {
 // Quaternion wire-format coverage (fences pxr-compat fix)
 //
 // The Crate wire layout is [x, y, z, w] = (imag, real); see
-// value-types.hh:957. tinyusdz used to emit (real, imag) per element on
+// value-types.hh:957. lightusd used to emit (real, imag) per element on
 // arrays while the reader memcpy'd raw bytes into the {imag, real}
 // struct, silently shifting components by one position per element.
 // =========================================================================

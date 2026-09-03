@@ -1,9 +1,9 @@
 ///
 /// @file mcp.hh
-/// @brief MCP (Model Context Protocol) integration for TinyUSDZ
+/// @brief MCP (Model Context Protocol) integration for LightUSD
 ///
 /// Provides basic data structures for MCP server functionality,
-/// allowing TinyUSDZ to act as an MCP server for USD scene manipulation
+/// allowing LightUSD to act as an MCP server for USD scene manipulation
 /// and querying through language model interfaces.
 ///
 /// MCP enables AI assistants to interact with USD scenes through
@@ -13,7 +13,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -29,4 +29,4 @@ struct MCPCommand
 
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

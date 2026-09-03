@@ -708,7 +708,7 @@ export function replaceExt(name, ext) {
 }
 
 // Instantiate the Emscripten module. `importer` returns the dynamic import of
-// the compiled glue (e.g. () => import('./src/tinyusdz/tinyusdz.js')).
+// the compiled glue (e.g. () => import('./src/lightusd/lightusd.js')).
 export async function loadWasm(importer, options = {}) {
   const mod = await importer();
   return await mod.default(options);
@@ -777,7 +777,7 @@ export function rootUsdFromMap(assetMap, preferred) {
 }
 
 function hasLegacyConverter(native) {
-  return !!native && typeof native.TinyUSDZLoaderNative === 'function';
+  return !!native && typeof native.LightUSDLoaderNative === 'function';
 }
 
 function hasNextOnlyConverter(native) {
@@ -1166,7 +1166,7 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
   };
 
   let rootUSDC = null;
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
@@ -1237,7 +1237,7 @@ function nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log) {
 // with the next low-memory lazy-ValueRep pipeline. Returns
 // { data: Uint8Array, stats } or null if the next pipeline is unavailable or
 // declines (so the caller can fall back to the legacy path). `native` is the
-// Emscripten Module (exposes HEAPU8); `usd` is a TinyUSDZLoaderNative instance.
+// Emscripten Module (exposes HEAPU8); `usd` is a LightUSDLoaderNative instance.
 export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, lazy = true,
                                         maxBufferBytes = 0, remap = undefined,
                                         variantSelections = undefined) {
@@ -1320,7 +1320,7 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
   const canStreamWrite = opts.streamWrite !== false && sink && typeof sink === 'object' &&
     typeof sink.patch === 'function' && typeof sink.write === 'function';
 
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   let r = null;
   let stats = null;
   try {
@@ -1428,7 +1428,7 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
 
   // 1) Flatten the root layer low-heap. Textures are NOT registered in WASM.
   let rootUSDC = null;
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
@@ -1712,7 +1712,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     reportProgress('flatten', 4, 4, 'Root layer ready', rootPath);
   };
 
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     // Raise the USDC writer resource limits when requested (0 = keep the
@@ -1944,7 +1944,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     arkitCompatible: false, streaming: true,
   };
 
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&

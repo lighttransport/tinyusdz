@@ -1,6 +1,6 @@
-# WINE + clang-cl build of pure Win32/Win64 TinyUSDZ library
+# WINE + clang-cl build of pure Win32/Win64 LightUSD library
 
-TinyUSDZ can be compiled with clang-cl + the MSVC SDK on Linux, and the
+LightUSD can be compiled with clang-cl + the MSVC SDK on Linux, and the
 resulting pure-Windows binaries can be run on top of WINE — a Windows C/C++
 build without a Windows machine.
 
@@ -36,7 +36,7 @@ https://github.com/mstorsjo/msvc-wine
 We recommend `msvc-wine`: it automates downloading and unpacking the MSVC SDK
 and the Windows SDK. Note that recent `msvc-wine` lowercases folder/file names.
 
-## Cross compile TinyUSDZ with clang-cl
+## Cross compile LightUSD with clang-cl
 
 See `scripts/bootstrap-clang-cl-wsl.sh`. The toolchain invocation looks like:
 

@@ -24,7 +24,7 @@
 #include "value-types.hh"
 #include "xform.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdz {
 namespace {
 
@@ -701,7 +701,7 @@ std::string MakeGroupKey(const MeshFragment &fragment) {
 }
 
 std::string MakeUniqueRootName(const Layer &layer) {
-  const char *base = "__TinyUSDZ_MeshMerge";
+  const char *base = "__LightUSD_MeshMerge";
   if (!layer.has_primspec(base)) {
     return std::string(base);
   }
@@ -1048,4 +1048,4 @@ bool OptimizeGeometryInLayer(const UsdzConvertOptions &options, Layer *layer,
 }
 
 }  // namespace usdz
-}  // namespace tinyusdz
+}  // namespace lightusd

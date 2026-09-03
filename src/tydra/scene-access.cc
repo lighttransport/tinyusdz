@@ -38,7 +38,7 @@
 #endif
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 constexpr auto kInfoId = "info:id";
@@ -83,7 +83,7 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
 // Optimized iterative shader traversal using explicit stack
 // Avoids recursion and reuses path buffer to minimize string allocations
 
-bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
+bool ListSceneNamesRec(const lightusd::Prim &root, uint32_t depth,
                        std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames) {
     return false;
@@ -110,11 +110,11 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
 
 #include "tydra/scene-access-traverse-impl.inc"
 
-const Prim *GetParentPrim(const tinyusdz::Stage &stage,
-                          const tinyusdz::Path &path, std::string *err) {
+const Prim *GetParentPrim(const lightusd::Stage &stage,
+                          const lightusd::Path &path, std::string *err) {
   if (!path.is_valid()) {
     if (err) {
-      (*err) = "Input Path " + tinyusdz::to_string(path) + " is invalid.\n";
+      (*err) = "Input Path " + lightusd::to_string(path) + " is invalid.\n";
     }
     return nullptr;
   }
@@ -140,7 +140,7 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
     return nullptr;
   }
 
-  tinyusdz::Path parentPath = path.get_parent_prim_path();
+  lightusd::Path parentPath = path.get_parent_prim_path();
 
   nonstd::expected<const Prim *, std::string> ret =
       stage.GetPrimAtPath(parentPath);
@@ -149,7 +149,7 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
   } else {
     if (err) {
       (*err) += "Failed to get parent Prim from Path " +
-                tinyusdz::to_string(path) + ". Reason = " + ret.error() + "\n";
+                lightusd::to_string(path) + ". Reason = " + ret.error() + "\n";
     }
     return nullptr;
   }
@@ -164,20 +164,20 @@ namespace {
 
 // Optimized iterative version of VisitPrimsRec
 // Handles primChildren ordering and early termination
-bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
-                         const tinyusdz::Prim &start_prim, int32_t start_level,
+bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
+                         const lightusd::Prim &start_prim, int32_t start_level,
                          VisitPrimFunction visitor_fun, void *userdata,
                          std::string *err,
                          size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack entry: (prim pointer, ordered children to visit, current child index, level, parent path)
   struct StackEntry {
-    const tinyusdz::Prim *prim;
-    std::vector<const tinyusdz::Prim *> ordered_children;
+    const lightusd::Prim *prim;
+    std::vector<const lightusd::Prim *> ordered_children;
     size_t child_idx;
     int32_t level;
-    tinyusdz::Path abs_path;
+    lightusd::Path abs_path;
 
-    StackEntry(const tinyusdz::Prim *p, int32_t lvl, tinyusdz::Path path)
+    StackEntry(const lightusd::Prim *p, int32_t lvl, lightusd::Path path)
         : prim(p), child_idx(0), level(lvl), abs_path(std::move(path)) {}
   };
 
@@ -185,9 +185,9 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
   stack.reserve(64);
 
   // Helper to get ordered children list
-  auto get_ordered_children = [err](const tinyusdz::Prim &prim)
-      -> std::pair<bool, std::vector<const tinyusdz::Prim *>> {
-    std::vector<const tinyusdz::Prim *> result;
+  auto get_ordered_children = [err](const lightusd::Prim &prim)
+      -> std::pair<bool, std::vector<const lightusd::Prim *>> {
+    std::vector<const lightusd::Prim *> result;
 
     if (prim.children().empty()) {
       return {true, result};
@@ -195,7 +195,7 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
 
     // If primChildren metadata matches children count, use it for ordering
     if (prim.metas().primChildren.size() == prim.children().size()) {
-      std::unordered_map<std::string, const tinyusdz::Prim *, FNV1StringHash>
+      std::unordered_map<std::string, const lightusd::Prim *, FNV1StringHash>
           primNameTable;
       primNameTable.reserve(prim.children().size());
       for (size_t i = 0; i < prim.children().size(); i++) {
@@ -247,7 +247,7 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
   }
 
   // Get ordered children for start prim
-  std::pair<bool, std::vector<const tinyusdz::Prim *>> start_result =
+  std::pair<bool, std::vector<const lightusd::Prim *>> start_result =
       get_ordered_children(start_prim);
   if (!start_result.first) {
     return false;
@@ -276,11 +276,11 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
       continue;
     }
 
-    const tinyusdz::Prim *child = top.ordered_children[top.child_idx];
+    const lightusd::Prim *child = top.ordered_children[top.child_idx];
     ++top.child_idx;
 
     // Build path for this child
-    tinyusdz::Path child_abs_path = top.abs_path.AppendPrim(child->element_name());
+    lightusd::Path child_abs_path = top.abs_path.AppendPrim(child->element_name());
     int32_t child_level = top.level + 1;
 
     // Call visitor
@@ -300,7 +300,7 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
     }
 
     // Get ordered children for this child
-    std::pair<bool, std::vector<const tinyusdz::Prim *>> child_result =
+    std::pair<bool, std::vector<const lightusd::Prim *>> child_result =
         get_ordered_children(*child);
     if (!child_result.first) {
       return false;
@@ -383,7 +383,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
   }
 
   if (input.has_connections()) {
-    
+
 
     attr.set_connections(input.get_connections());
   }
@@ -2934,7 +2934,7 @@ bool GetPrimPropertyNamesImpl(const Shader &shader,
 
 }  // namespace
 
-bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
+bool VisitPrims(const lightusd::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata, std::string *err) {
   // if `primChildren` is available, use it
   if (stage.metas().primChildren.size() == stage.root_prims().size()) {
@@ -2978,7 +2978,7 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
   return true;
 }
 
-bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
+bool GetProperty(const lightusd::Prim &prim, const std::string &attr_name,
                  Property *out_prop, std::string *err) {
 #define GET_PRIM_PROPERTY(__ty)                                         \
   if (prim.is<__ty>()) {                                                \
@@ -3024,7 +3024,7 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
   return true;
 }
 
-bool GetPropertyNames(const tinyusdz::Prim &prim,
+bool GetPropertyNames(const lightusd::Prim &prim,
                       std::vector<std::string> *out_prop_names,
                       std::string *err) {
 #define GET_PRIM_PROPERTY_NAMES(__ty)                                     \
@@ -3068,7 +3068,7 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   return true;
 }
 
-bool GetAttributeNames(const tinyusdz::Prim &prim,
+bool GetAttributeNames(const lightusd::Prim &prim,
                        std::vector<std::string> *out_attr_names,
                        std::string *err) {
 #define GET_PRIM_ATTRIBUTE_NAMES(__ty)                                       \
@@ -3111,7 +3111,7 @@ bool GetAttributeNames(const tinyusdz::Prim &prim,
   return true;
 }
 
-bool GetRelationshipNames(const tinyusdz::Prim &prim,
+bool GetRelationshipNames(const lightusd::Prim &prim,
                           std::vector<std::string> *out_rel_names,
                           std::string *err) {
 #define GET_PRIM_RELATIONSHIP_NAMES(__ty)                                 \
@@ -3155,7 +3155,7 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   return true;
 }
 
-bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
+bool GetAttribute(const lightusd::Prim &prim, const std::string &attr_name,
                   Attribute *out_attr, std::string *err) {
   if (!out_attr) {
     PUSH_ERROR_AND_RETURN("`out_attr` argument is nullptr.");
@@ -3175,7 +3175,7 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Attribute.", attr_name));
 }
 
-bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
+bool GetRelationship(const lightusd::Prim &prim, const std::string &rel_name,
                      Relationship *out_rel, std::string *err) {
   if (!out_rel) {
     PUSH_ERROR_AND_RETURN("`out_rel` argument is nullptr.");
@@ -3197,7 +3197,7 @@ bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
   return true;
 }
 
-bool ListSceneNames(const tinyusdz::Prim &root,
+bool ListSceneNames(const lightusd::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames) {
     return false;
@@ -3230,7 +3230,7 @@ namespace {
 static void ComputeXformNodeProperties(
     const Prim *prim, const Path &parent_abs_path,
     const value::matrix4d &parent_world_mat, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp,
+    const lightusd::value::TimeSampleInterpolationType tinterp,
     XformNode &node) {
 
   node.element_name = prim->element_name();
@@ -3275,10 +3275,10 @@ static void ComputeXformNodeProperties(
 
 // Iterative version of BuildXformNodeFromStage using explicit stack
 bool BuildXformNodeFromStageIterative(
-    const tinyusdz::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
+    const lightusd::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
     XformNode *nodeOut, /* out */
     value::matrix4d rootMat, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp,
+    const lightusd::value::TimeSampleInterpolationType tinterp,
     size_t max_iter = kMaxDefaultTraversalLimit) {
 
   (void)stage;  // Currently unused
@@ -3405,9 +3405,9 @@ std::string DumpXformNodeIterative(const XformNode &root,
 }  // namespace local
 
 bool BuildXformNodeFromStage(
-    const tinyusdz::Stage &stage, XformNode *rootNode, /* out */
+    const lightusd::Stage &stage, XformNode *rootNode, /* out */
     const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::value::TimeSampleInterpolationType tinterp) {
   if (!rootNode) {
     return false;
   }
@@ -3546,8 +3546,8 @@ bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps,
 }
 
 std::vector<const GeomSubset *> GetGeomSubsets(
-    const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path,
-    const tinyusdz::value::token &familyName, bool prim_must_be_geommesh) {
+    const lightusd::Stage &stage, const lightusd::Path &prim_path,
+    const lightusd::value::token &familyName, bool prim_must_be_geommesh) {
   std::vector<const GeomSubset *> result;
 
   const Prim *pprim{nullptr};
@@ -3590,7 +3590,7 @@ std::vector<const GeomSubset *> GetGeomSubsets(
 }
 
 std::vector<const GeomSubset *> GetGeomSubsetChildren(
-    const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName,
+    const lightusd::Prim &prim, const lightusd::value::token &familyName,
     bool prim_must_be_geommesh) {
   std::vector<const GeomSubset *> result;
 
@@ -3899,10 +3899,10 @@ CollectionMembershipQuery BuildCollectionMembershipQuery(
   return q;
 }
 
-std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
-GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+std::vector<std::pair<std::string, const lightusd::BlendShape *>>
+GetBlendShapes(const lightusd::Stage &stage, const lightusd::Prim &prim,
                std::string *err) {
-  std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> dst;
+  std::vector<std::pair<std::string, const lightusd::BlendShape *>> dst;
 
   auto *pmesh = prim.as<GeomMesh>();
   if (!pmesh) {
@@ -4079,7 +4079,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   const auto indexIt = gprim->props.find(index_name);
 
   // Primvar indices are only relevant for non-constant interpolation modes
-  bool constant_interpolation = primvar.get_interpolation() == tinyusdz::Interpolation::Constant;
+  bool constant_interpolation = primvar.get_interpolation() == lightusd::Interpolation::Constant;
 
   if (indexIt != gprim->props.end() && !constant_interpolation) {
     if (indexIt->second.is_attribute()) {
@@ -4144,7 +4144,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
           primvar.set_default_indices(indices);
 
         }
-      
+
       } else if (indexAttr.is_blocked()) {
         // Value blocked. e.g. `float2[] primvars:st:indices = None`
         // We can simply skip reading indices.
@@ -4275,8 +4275,8 @@ namespace {
 //
 // visited_paths : To prevent circular referencing of attribute connection.
 //
-bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
-                              const tinyusdz::Prim &prim,
+bool GetTerminalAttributeImpl(const lightusd::Stage &stage,
+                              const lightusd::Prim &prim,
                               const std::string &attr_name, Attribute *value,
                               std::string *err,
                               std::unordered_set<std::string, FNV1StringHash>
@@ -4351,8 +4351,8 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
 
 }  // namespace
 
-bool GetTerminalAttribute(const tinyusdz::Stage &stage,
-                          const tinyusdz::Attribute &attr,
+bool GetTerminalAttribute(const lightusd::Stage &stage,
+                          const lightusd::Attribute &attr,
                           const std::string &attr_name, Attribute *value,
                           std::string *err) {
   if (!value) {
@@ -4525,7 +4525,7 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
                       joints.size(), jointNames.size(), skel.name));
     }
   } else {
-    // Use joints 
+    // Use joints
     jointNames.resize(joints.size());
     for (size_t i = 0; i < joints.size(); i++) {
       jointNames[i] = joints[i];
@@ -5497,7 +5497,7 @@ bool GetPhysicsMeshCollisionAPI(const Prim &prim, PhysicsMeshCollisionAPI *out) 
   return true;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

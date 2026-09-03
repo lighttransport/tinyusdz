@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Layer Implementation
+// LightUSD Next - Layer Implementation
 
 #include "layer.hh"
 #include "../prim/identifier.hh"
 #include <algorithm>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -543,4 +543,4 @@ void LayerBuilder::finalize() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

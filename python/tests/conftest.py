@@ -7,7 +7,7 @@ import pytest
 # Repo test assets (available in the repo / sdist; may be absent when the
 # wheel is tested standalone -- tests then fall back to inline documents).
 _DEFAULT = pathlib.Path(__file__).resolve().parents[2] / "tests" / "usda"
-ASSETS = pathlib.Path(os.environ.get("TINYUSDZ_TEST_ASSETS", _DEFAULT))
+ASSETS = pathlib.Path(os.environ.get("LIGHTUSD_TEST_ASSETS", _DEFAULT))
 
 
 @pytest.fixture
@@ -54,6 +54,6 @@ def Xform "World" (kind = "assembly") {
 
 @pytest.fixture
 def simple_stage():
-    import tinyusdz
+    import lightusd
 
-    return tinyusdz.loads(SIMPLE_USDA)
+    return lightusd.loads(SIMPLE_USDA)

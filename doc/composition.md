@@ -1,6 +1,6 @@
 # Composition in USD: LIVRPS, Instancing, and Variants
 
-How tinyusdz composes a USD scene — LIVRPS arc ordering (compared against
+How lightusd composes a USD scene — LIVRPS arc ordering (compared against
 OpenUSD PCP), instancing, and variants. For the DAG-engine API, see
 [pcp.md](pcp.md).
 
@@ -16,14 +16,14 @@ This document compares two implementations:
 
 1. **OpenUSD PCP** (Prim Cache Population) — the reference implementation,
    a recursive DAG-based algorithm that preserves full opinion provenance.
-2. **tinyusdz** — a progressive, iterative layer-flattening approach designed
+2. **lightusd** — a progressive, iterative layer-flattening approach designed
    for minimal memory, zero dependencies, and security-focused parsing.
 
-The goal is to analyze whether tinyusdz's approach correctly satisfies LIVRPS
+The goal is to analyze whether lightusd's approach correctly satisfies LIVRPS
 ordering, document known limitations, and identify areas for future work.
 
 This document covers the conceptual model plus **Instancing** and **Variants**.
-tinyusdz also ships a parallel **DAG-based** engine that mirrors OpenUSD's PCP
+lightusd also ships a parallel **DAG-based** engine that mirrors OpenUSD's PCP
 design (`src/composition-graph.{hh,cc}`); its detailed API reference lives in
 [pcp.md](pcp.md).
 
@@ -73,16 +73,16 @@ Payload, Specialize — matching the AOUSD LIVERPS ordering.
 > **The full PCP engine model** — the data model, the task-queue algorithm,
 > implied / globally-weak specializes, namespace mapping, instancing, change
 > tracking, the error taxonomy, the AOUSD §10 spec mapping, and the
-> **PCP ↔ AOUSD ↔ tinyusdz correspondence table** — lives in **[pcp.md](pcp.md)**,
-> which also documents tinyusdz's mirroring DAG engine.
+> **PCP ↔ AOUSD ↔ lightusd correspondence table** — lives in **[pcp.md](pcp.md)**,
+> which also documents lightusd's mirroring DAG engine.
 
 ---
 
-## tinyusdz's Progressive Layer-Flattening Approach
+## lightusd's Progressive Layer-Flattening Approach
 
 ### Design Philosophy
 
-tinyusdz takes a fundamentally different approach: instead of building a
+lightusd takes a fundamentally different approach: instead of building a
 composition graph, it **eagerly flattens** opinions from each arc type into a
 single working `Layer` (a tree of `PrimSpec` objects). Each composition phase
 processes the entire PrimSpec tree for one arc type, producing a new flattened
@@ -300,7 +300,7 @@ data as soon as it has been merged into the target.
 
 ## Comparison Table
 
-| Aspect | OpenUSD PCP | tinyusdz |
+| Aspect | OpenUSD PCP | lightusd |
 |--------|------------|----------|
 | **Data structure** | PcpPrimIndex DAG per prim | Flat PrimSpec tree (single working Layer) |
 | **Algorithm** | Recursive, task-queue based | Iterative, phase-by-phase across whole tree |
@@ -324,7 +324,7 @@ data as soon as it has been merged into the target.
 
 ---
 
-## LIVRPS Correctness Analysis for tinyusdz
+## LIVRPS Correctness Analysis for lightusd
 
 ### L (Local/SubLayers): Correct
 
@@ -378,7 +378,7 @@ References correctly use:
 
 Identical semantics to references. Same prepend/append handling, same layer
 offset behavior. The only difference is that payloads are conceptually
-deferrable, but tinyusdz resolves them eagerly.
+deferrable, but lightusd resolves them eagerly.
 
 ### S (Specializes): Correct for Simple Cases
 
@@ -397,14 +397,14 @@ in its DAG-based strength comparator.
 
 ### Relocates: Different Positioning, Functionally Equivalent for Most Cases
 
-tinyusdz applies relocates after all composition arcs as a final namespace
+lightusd applies relocates after all composition arcs as a final namespace
 renaming pass. OpenUSD places Relocate between Variant and Reference in the arc
 type strength enum, giving it a defined position in the DAG.
 
 For most practical cases, the result is the same because relocates primarily
 rename prims rather than contribute property opinions. The difference could
 matter in edge cases where relocate-induced namespace changes affect which prims
-are found by later-evaluated arcs — but since tinyusdz evaluates all arcs before
+are found by later-evaluated arcs — but since lightusd evaluates all arcs before
 applying relocates, the relocation is purely a post-composition rename.
 
 ### Cycle Detection: All Arc Types Covered
@@ -430,7 +430,7 @@ from the final stage.
 
 ### Summary Verdict
 
-tinyusdz's `CompositeAllArcs()` **correctly implements the overall LIVRPS
+lightusd's `CompositeAllArcs()` **correctly implements the overall LIVRPS
 ordering** with full support for: multi-target inherits/specializes, ListEditQual
 handling, cycle detection for all arc types, deferred variant evaluation
 (Spec 10.3.2.5), and `active` prim metadatum filtering.
@@ -516,7 +516,7 @@ def Mesh "DirectMesh" (instanceable = true) {
 }
 ```
 
-### tinyusdz implementation status
+### lightusd implementation status
 
 **Core layer**
 
@@ -582,7 +582,7 @@ for island-sized scenes.
 
 Variants provide multiple mutually-exclusive representations of an asset within
 a single prim — e.g. level-of-detail, material options, or geometry
-configurations. tinyusdz parses and writes variants in both USDA and USDC,
+configurations. lightusd parses and writes variants in both USDA and USDC,
 including nested variant sets, and resolves selections during composition (see
 [Deferred Variant Evaluation](#deferred-variant-evaluation) above, which
 implements Spec 10.3.2.5).
@@ -697,7 +697,7 @@ Remaining items (all Low severity):
   - `pxr/usd/pcp/strengthOrdering.cpp` — node strength comparison
   - `pxr/usd/pcp/types.h` — arc type enum and strength ordering
   - `pxr/usd/pcp/composeSite.cpp` — single-site field composition
-- tinyusdz source:
+- lightusd source:
   - `src/composition.hh` / `.cc` — default flattening pipeline
   - `src/composition-graph.hh` / `.cc` — parallel DAG engine (see [pcp.md](pcp.md))
   - `src/composition-reconstruct.cc` — PrimSpec-to-Prim conversion

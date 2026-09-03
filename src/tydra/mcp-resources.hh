@@ -17,7 +17,7 @@
 #include "mcp-resources.hh"
 #include "mcp-context.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -27,8 +27,8 @@ bool GetResourcesList(
   nlohmann::json &resources);
 
 bool ReadResource(const Context &ctx, const std::string &uri, nlohmann::json &content);
-  
+
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

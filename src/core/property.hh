@@ -16,7 +16,7 @@
 #include "path.hh"
 #include "prim-enums.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
@@ -225,7 +225,7 @@ class Property {
 
   // get_attribute: Returns const reference to stored Attribute
   // Returns empty Attribute if not an attribute
-  const Attribute &get_attribute() const TINYUSDZ_LIFETIMEBOUND {
+  const Attribute &get_attribute() const LIGHTUSD_LIFETIMEBOUND {
     static const Attribute s_empty;
     const Attribute *p = std::get_if<Attribute>(&_data);
     return p ? *p : s_empty;
@@ -233,7 +233,7 @@ class Property {
 
   // attribute: Returns mutable reference to stored Attribute
   // Creates empty Attribute if not currently storing one
-  Attribute &attribute() TINYUSDZ_LIFETIMEBOUND {
+  Attribute &attribute() LIGHTUSD_LIFETIMEBOUND {
     if (!is_attribute()) {
       _data = Attribute();
     }
@@ -241,11 +241,11 @@ class Property {
   }
 
   // Safe accessor - returns nullptr if not an attribute
-  const Attribute* get_attribute_or_null() const TINYUSDZ_LIFETIMEBOUND {
+  const Attribute* get_attribute_or_null() const LIGHTUSD_LIFETIMEBOUND {
     return std::get_if<Attribute>(&_data);
   }
 
-  Attribute* get_attribute_or_null() TINYUSDZ_LIFETIMEBOUND {
+  Attribute* get_attribute_or_null() LIGHTUSD_LIFETIMEBOUND {
     return std::get_if<Attribute>(&_data);
   }
 
@@ -255,7 +255,7 @@ class Property {
 
   // get_relationship: Returns const reference to stored Relationship
   // Returns empty Relationship if not a relationship
-  const Relationship &get_relationship() const TINYUSDZ_LIFETIMEBOUND {
+  const Relationship &get_relationship() const LIGHTUSD_LIFETIMEBOUND {
     static const Relationship s_empty;
     const Relationship *p = std::get_if<Relationship>(&_data);
     return p ? *p : s_empty;
@@ -263,7 +263,7 @@ class Property {
 
   // relationship: Returns mutable reference to stored Relationship
   // Creates empty Relationship if not currently storing one
-  Relationship &relationship() TINYUSDZ_LIFETIMEBOUND {
+  Relationship &relationship() LIGHTUSD_LIFETIMEBOUND {
     if (!is_relationship()) {
       _data = Relationship();
     }
@@ -271,11 +271,11 @@ class Property {
   }
 
   // Safe accessor - returns nullptr if not a relationship
-  const Relationship* get_relationship_or_null() const TINYUSDZ_LIFETIMEBOUND {
+  const Relationship* get_relationship_or_null() const LIGHTUSD_LIFETIMEBOUND {
     return std::get_if<Relationship>(&_data);
   }
 
-  Relationship* get_relationship_or_null() TINYUSDZ_LIFETIMEBOUND {
+  Relationship* get_relationship_or_null() LIGHTUSD_LIFETIMEBOUND {
     return std::get_if<Relationship>(&_data);
   }
 
@@ -341,4 +341,4 @@ class Property {
                             // deprecated though
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

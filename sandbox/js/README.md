@@ -1,3 +1,3 @@
-# TypeScript binding for TinyUSDZ
+# TypeScript binding for LightUSD
 
 Experimental.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - AOUSD Core semantic validation.
+// LightUSD Next - AOUSD Core semantic validation.
 //
 // Port of the legacy validator (src/usd-validation.{hh,cc}) onto the next-core
 // layer model (next::Layer / next::PrimSpec). Rule ids, severities and message
@@ -19,7 +19,7 @@
 
 #include "../layer/layer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 enum class USDValidationSeverity {
@@ -143,7 +143,7 @@ struct ValidationRuleInfo {
 const std::vector<ValidationRuleInfo> &GetValidationRuleTable();
 
 // usdchecker compatibility: OpenUSD reports several of these findings as
-// ERRORS where the tinyusdz defaults use warnings (and the presence rules
+// ERRORS where the lightusd defaults use warnings (and the presence rules
 // default to warnings). Applying this to a result upgrades the mapped rules
 // to usdchecker's severities so exit-code behavior matches
 // `usdchecker <file>`. Idempotent.
@@ -158,4 +158,4 @@ void ValidateStageMetadataPresence(const Layer &layer,
 std::string FormatValidationResult(const USDValidationResult &result);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

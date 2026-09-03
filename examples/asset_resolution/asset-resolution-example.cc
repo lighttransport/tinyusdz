@@ -1,5 +1,5 @@
-// All-in-one TinyUSDZ core
-#include "tinyusdz.hh"
+// All-in-one LightUSD core
+#include "lightusd.hh"
 #include "layer.hh"
 #include "core/prim.hh"
 
@@ -12,7 +12,7 @@
 
 // Tydra is a collection of APIs to access/convert USD Prim data
 // (e.g. Can get Attribute by name)
-// See <tinyusdz>/examples/tydra_api for more Tydra API examples.
+// See <lightusd>/examples/tydra_api for more Tydra API examples.
 #include "tydra/scene-access.hh"
 
 std::map<std::string, std::string> g_map;
@@ -143,9 +143,9 @@ def "dora" {
 
   std::string warn, err;
 
-  tinyusdz::AssetResolutionResolver resolver;
+  lightusd::AssetResolutionResolver resolver;
   // Register filesystem handler for `.my` asset.
-  tinyusdz::AssetResolutionHandler ar_handler;
+  lightusd::AssetResolutionHandler ar_handler;
   ar_handler.resolve_fun = MyARResolve;
   ar_handler.size_fun = MyARSize;
   ar_handler.read_fun = MyARRead;
@@ -153,8 +153,8 @@ def "dora" {
   ar_handler.userdata = nullptr;   // not used in this example;
   resolver.register_asset_resolution_handler("usda", ar_handler);
 
-  tinyusdz::Layer layer;
-  bool ret = tinyusdz::LoadLayerFromAsset(resolver, input_usd_name, &layer,
+  lightusd::Layer layer;
+  bool ret = lightusd::LoadLayerFromAsset(resolver, input_usd_name, &layer,
                                           &warn, &err);
 
   if (warn.size()) {

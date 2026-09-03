@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 //
@@ -72,5 +72,5 @@ bool GetARKitBlendShapeLocationEnumFromString(const std::string &name,
                                               ARKitBlendShapeLocation *loc);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd
 

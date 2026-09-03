@@ -6,9 +6,9 @@
 #include "acutest.h"
 
 #include "unit-ascii-parse.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Helper function to parse a USD string
 static bool parseUSDString(const std::string &usd_content, std::string *err) {

@@ -1,7 +1,7 @@
 # Assume this project is invoked by emcmake.
 cmake_minimum_required(VERSION 3.5.1)
 
-set(BUILD_TARGET "tinyusdz")
+set(BUILD_TARGET "lightusd")
 
 if (NOT EMSCRIPTEN)
   message(FATAL "Must be compiled with emscripten")
@@ -18,8 +18,8 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake)
 #list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
 #find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
-# [tinyusdz]
-add_subdirectory(../../  tinyusdz)
+# [lightusd]
+add_subdirectory(../../  lightusd)
 
 list(
   APPEND
@@ -33,12 +33,12 @@ add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 
-# tinyusdz dir
+# lightusd dir
 target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
 
 
-target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static
+target_link_libraries(${BUILD_TARGET} PRIVATE lightusd::lightusd_static
                                               ${EXT_LIBRARIES} PUBLIC ${CMAKE_DL_LIBS})
 
 source_group("Source Files" FILES ${SOURCES})
@@ -46,7 +46,7 @@ source_group("Source Files" FILES ${SOURCES})
 if (EMSCRIPTEN)
     set_target_properties(
         ${BUILD_TARGET}
-        PROPERTIES OUTPUT_NAME tinyusdz
+        PROPERTIES OUTPUT_NAME lightusd
                    SUFFIX ".js"
                    RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/simple)
     #set(CMAKE_EXECUTABLE_SUFFIX ".html")

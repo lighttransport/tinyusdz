@@ -8,7 +8,7 @@ const {
   resolveAssetPathForCompare,
 } = require('../compare-usda.js');
 
-const anchor = path.resolve('/tmp/tinyusdz-asset-anchor');
+const anchor = path.resolve('/tmp/lightusd-asset-anchor');
 const relative = parseUsda(`#usda 1.0
 def Shader "S"
 {

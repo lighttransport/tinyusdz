@@ -29,9 +29,9 @@
 #include "pprint-enum.hh"  // to_string(APISchemas::APIName)
 #include "stream-reader.hh"
 #include "str-util.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace {
 
 constexpr const char *kLayerLocation = "<layer>";
@@ -5911,4 +5911,4 @@ std::string ValidationOptions::group_summary() const {
   return s;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

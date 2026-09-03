@@ -12,7 +12,7 @@
 #include "../types/type-id.hh"
 #include "../writer/value-printer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -263,4 +263,4 @@ bool ApplyArrayEdit(const ArrayEditData& edit, const Value* base,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

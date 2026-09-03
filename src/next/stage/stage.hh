@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Stage
+// LightUSD Next - Stage
 // Composed scene representation built on top of Layer
 
 #pragma once
@@ -12,7 +12,7 @@
 #include <memory>
 #include <functional>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Stage metadata (derived from root layer)
@@ -451,4 +451,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

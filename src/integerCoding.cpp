@@ -37,7 +37,7 @@
 #include <unordered_map>
 
 //PXR_NAMESPACE_OPEN_SCOPE
-namespace tinyusdz {
+namespace lightusd {
 
 /*
 
@@ -117,7 +117,7 @@ _Signed(Int x)
 
     //TF_FATAL_ERROR("Unsupported C++ integer representation");
     return 0;
-}    
+}
 
 template <class Int>
 inline typename std::enable_if<
@@ -128,7 +128,7 @@ inline typename std::enable_if<
 _Signed(Int x)
 {
     return x;
-}    
+}
 
 template <class Int>
 inline typename std::enable_if<
@@ -194,7 +194,7 @@ struct _SmallTypes
         sizeof(Int) == 4, int8_t, int16_t>::type SmallInt;
     typedef typename std::conditional<
         sizeof(Int) == 4, int16_t, int32_t>::type MediumInt;
-};        
+};
 
 template <int N, class Iterator>
 void _EncodeNHelper(
@@ -214,7 +214,7 @@ void _EncodeNHelper(
     static_assert(1 <= N && N <= 4, "");
 
     enum Code { Common, Small, Medium, Large };
-    
+
     auto getCode = [commonValue](SInt x) {
         std::numeric_limits<SmallInt> smallLimit;
         std::numeric_limits<MediumInt> mediumLimit;
@@ -291,7 +291,7 @@ size_t
 _EncodeIntegers(Int const *begin, size_t numInts, char *output)
 {
     using SInt = typename std::make_signed<Int>::type;
-    
+
     if (numInts == 0)
         return 0;
 
@@ -318,7 +318,7 @@ _EncodeIntegers(Int const *begin, size_t numInts, char *output)
     }
 
     // Now code the values.
-    
+
     // Write most common value.
     char *p = _WriteBits(output, commonValue);
     char *codesOut = p;
@@ -339,7 +339,7 @@ _EncodeIntegers(Int const *begin, size_t numInts, char *output)
     case 3: _EncodeNHelper<3>(cur, commonValue, prevVal, codesOut, vintsOut);
         break;
     };
-    
+
     return vintsOut - output;
 }
 
@@ -380,7 +380,7 @@ _CompressIntegers(Int const *begin, size_t numInts, char *output, std::string *e
     // Working space.
     std::unique_ptr<char[]>
         encodeBuffer(new char[_GetEncodedBufferSize<Int>(numInts)]);
-    
+
     // Encode first.
     size_t encodedSize = _EncodeIntegers(begin, numInts, encodeBuffer.get());
 
@@ -527,5 +527,5 @@ Usd_IntegerCompression64::DecompressFromBuffer(
 
 //PXR_NAMESPACE_CLOSE_SCOPE
 
-} // namespace tinyusdz
+} // namespace lightusd
 

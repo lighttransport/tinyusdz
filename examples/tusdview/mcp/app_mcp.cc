@@ -14,10 +14,10 @@
 
 #include "app.hh"
 #include "light3d/math.h"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
-#include "tydra/mcp-tools.hh"  // tinyusdz::tydra::mcp::CallTool
+#include "tydra/mcp-tools.hh"  // lightusd::tydra::mcp::CallTool
 #include "vchar_control_map.hh"
 #include "../../vchar/autorigger_client.hh"
 
@@ -82,9 +82,9 @@ json openPbrMaterialJson(int id, const DrawMaterialCPU& mat) {
           {"values", openPbrValues(mat.lightRtOpenPBR)}};
 }
 
-json nextValueJson(const tinyusdz::next::Value& value) {
+json nextValueJson(const lightusd::next::Value& value) {
   if (value.is_array()) {
-    return json{{"type", tinyusdz::next::GetTypeName(value.type_id())},
+    return json{{"type", lightusd::next::GetTypeName(value.type_id())},
                 {"count", value.array_size()}};
   }
   if (const bool* v = value.as_bool()) return *v;
@@ -95,7 +95,7 @@ json nextValueJson(const tinyusdz::next::Value& value) {
   if (const std::string* v = value.as_string()) return *v;
   if (const std::string* v = value.as_token()) return *v;
   if (const std::string* v = value.as_asset_path()) return *v;
-  return json{{"type", tinyusdz::next::GetTypeName(value.type_id())}};
+  return json{{"type", lightusd::next::GetTypeName(value.type_id())}};
 }
 
 // Build the focused-prim payload from the current selection + DrawScene.
@@ -230,11 +230,11 @@ json App::mcpSceneInfo(const json&, std::string&) {
     out["deferred_payloads"] = deferred;
   } else if (nextSession_) {
     out["composed"] = nextSession_->IsComposed();
-    const std::vector<tinyusdz::next::Path> deferred =
+    const std::vector<lightusd::next::Path> deferred =
         nextSession_->GetDeferredPayloadPaths();
     out["deferred_payload_count"] = deferred.size();
     json paths = json::array();
-    for (const tinyusdz::next::Path& path : deferred) {
+    for (const lightusd::next::Path& path : deferred) {
       paths.push_back(json{{"prim", path.str()}, {"arc", "payload"}});
     }
     out["deferred_payloads"] = std::move(paths);
@@ -512,7 +512,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     p.sheenColor[0] = 1.0f; p.sheenColor[1] = 0.72f; p.sheenColor[2] = 0.62f;
     p.coatWeight = 0.06f;
     p.coatRoughness = 0.3f;
-    tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+    lightusd::tydra::ClampRealtimePbrMaterial(&p);
     pendingOpenPbrEdit_.materialId = id;
     pendingOpenPbrEdit_.constants = p;
     pendingOpenPbrEdit_.makeConstant = false;
@@ -548,7 +548,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
           }
         }
       }
-      tinyusdz::tydra::FreePhysWorld(&physicsWorld_);
+      lightusd::tydra::FreePhysWorld(&physicsWorld_);
       physicsWorldReady_ = false;
       physicsSceneGen_ = ~std::uint64_t(0);
       gui_.setPhysicsDebugLines({});
@@ -564,17 +564,17 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         err = "vchar_physics requires a loaded USD scene";
         return json::object();
       }
-      if (physicsWorldReady_) tinyusdz::tydra::FreePhysWorld(&physicsWorld_);
-      tinyusdz::tydra::PhysWorldBuildOptions options;
+      if (physicsWorldReady_) lightusd::tydra::FreePhysWorld(&physicsWorld_);
+      lightusd::tydra::PhysWorldBuildOptions options;
       options.max_memory_limit_mb = 64;
-      if (!tinyusdz::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
+      if (!lightusd::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
                                            options)) {
         physicsWorldReady_ = false;
         return json::object();
       }
       physicsWorldReady_ = true;
       physicsSceneGen_ = sceneGen_;
-      physicsInitialStage_ = std::make_unique<tinyusdz::Stage>(loaded_.stage);
+      physicsInitialStage_ = std::make_unique<lightusd::Stage>(loaded_.stage);
     }
     if (op == "step") {
       int steps = args.value("steps", 1);
@@ -587,7 +587,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         physicsWorld_.timestep = std::max(
             1.0e-5f, std::min(0.1f, args["timestep"].get<float>()));
       }
-      if (!tinyusdz::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
+      if (!lightusd::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
                                                  &err)) {
         return json::object();
       }
@@ -597,7 +597,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
           return json::object();
         }
       }
-      if (!tinyusdz::tydra::SyncPhysWorldToStage(physicsWorld_, &loaded_.stage,
+      if (!lightusd::tydra::SyncPhysWorldToStage(physicsWorld_, &loaded_.stage,
                                                   &err)) {
         return json::object();
       }
@@ -861,7 +861,7 @@ json App::mcpOpenPbrMaterial(const json& args, std::string& err) {
         }
       }
     }
-    tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+    lightusd::tydra::ClampRealtimePbrMaterial(&p);
     pendingOpenPbrEdit_.materialId = id;
     pendingOpenPbrEdit_.constants = p;
     pendingOpenPbrEdit_.makeConstant = makeConstant;
@@ -1121,7 +1121,7 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
     }
   } else {
     if (nextSession_) {
-      for (const tinyusdz::next::Path& path :
+      for (const lightusd::next::Path& path :
            nextSession_->GetDeferredPayloadPaths()) {
         add.insert(path.str());
       }
@@ -1455,7 +1455,7 @@ json App::mcpListPrims(const json& args, std::string&) {
   }
   json paths = json::array();
   if (nextSession_) {
-    nextSession_->GetStage().Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+    nextSession_->GetStage().Traverse([&](const lightusd::next::UsdPrim& prim) {
       if (paths.size() >= cap) return false;
       paths.push_back(prim.GetPath().str());
       return true;
@@ -1472,9 +1472,9 @@ json App::mcpListPrims(const json& args, std::string&) {
 json App::mcpCallLibraryTool(const std::string& name, const json& args,
                              std::string& err) {
   if (nextSession_) {
-    const tinyusdz::next::Stage& stage = nextSession_->GetStage();
+    const lightusd::next::Stage& stage = nextSession_->GetStage();
     if (name == "stage_info") {
-      const tinyusdz::next::StageMeta& meta = stage.GetMeta();
+      const lightusd::next::StageMeta& meta = stage.GetMeta();
       return json{{"loaded", true},
                   {"defaultPrim", meta.defaultPrim},
                   {"upAxis", meta.upAxis},
@@ -1491,7 +1491,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       const std::string type = args.value("type", std::string());
       const std::string query = args.value("query", std::string());
       json prims = json::array();
-      stage.Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+      stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
         const std::string path = prim.GetPath().str();
         if (root != "/" && path != root &&
             path.compare(0, root.size() + 1, root + "/") != 0) {
@@ -1516,7 +1516,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       return json::object();
     }
     const std::string path = args["path"].get<std::string>();
-    const tinyusdz::next::UsdPrim prim = stage.GetPrimAtPath(path);
+    const lightusd::next::UsdPrim prim = stage.GetPrimAtPath(path);
     if (!prim.IsValid()) {
       err = "Prim not found: " + path;
       return json::object();
@@ -1533,10 +1533,10 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
     if (name == "attr_list") {
       json attributes = json::array();
       for (const std::string& attr : prim.GetPropertyNames()) {
-        const tinyusdz::next::Value* value = prim.GetPropertyValue(attr);
+        const lightusd::next::Value* value = prim.GetPropertyValue(attr);
         attributes.push_back(
             json{{"name", attr},
-                 {"type", value ? tinyusdz::next::GetTypeName(value->type_id())
+                 {"type", value ? lightusd::next::GetTypeName(value->type_id())
                                 : "unknown"},
                  {"hasValue", value != nullptr}});
       }
@@ -1550,7 +1550,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
         err = "Missing 'attr_name' argument";
         return json::object();
       }
-      const tinyusdz::next::Value* value = prim.GetPropertyValue(attr);
+      const lightusd::next::Value* value = prim.GetPropertyValue(attr);
       if (!value) {
         err = "Attribute not found: " + attr;
         return json::object();
@@ -1561,10 +1561,10 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
     }
     if (name == "variant_list_sets" || name == "variant_get_selection") {
       json sets = json::object();
-      for (const tinyusdz::next::VariantSetData& set :
+      for (const lightusd::next::VariantSetData& set :
            prim.GetMeta().variantSets()) {
         json variants = json::array();
-        for (const tinyusdz::next::VariantData& variant : set.variants) {
+        for (const lightusd::next::VariantData& variant : set.variants) {
           variants.push_back(variant.name);
         }
         sets[set.name] = json{{"selection", set.selected},
@@ -1602,7 +1602,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
   // most once per loaded scene; the viewer's Stage is never disturbed).
   if (loaded_.ok) {
     if (mcpCtxGen_ != sceneGen_ || !mcpCtx_.stage) {
-      mcpCtx_.stage = std::make_unique<tinyusdz::Stage>(loaded_.stage);
+      mcpCtx_.stage = std::make_unique<lightusd::Stage>(loaded_.stage);
       mcpCtx_.stage_loaded = true;
       mcpCtxGen_ = sceneGen_;
     }
@@ -1611,7 +1611,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
     mcpCtx_.stage_loaded = false;
   }
   json result;
-  if (!tinyusdz::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
+  if (!lightusd::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
     if (err.empty()) err = "unknown tool: " + name;
     return json::object();
   }

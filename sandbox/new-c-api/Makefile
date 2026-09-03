@@ -1,4 +1,4 @@
-# Simple Makefile for TinyUSDZ C API
+# Simple Makefile for LightUSD C API
 # For quick building without CMake
 
 CC = gcc
@@ -11,44 +11,44 @@ CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -fPIC
 LDFLAGS = -shared
 
 # Paths
-TINYUSDZ_ROOT = ../..
-TINYUSDZ_SRC = $(TINYUSDZ_ROOT)/src
+LIGHTUSD_ROOT = ../..
+LIGHTUSD_SRC = $(LIGHTUSD_ROOT)/src
 
 # Include paths
-INCLUDES = -I. -I$(TINYUSDZ_SRC) -I$(TINYUSDZ_SRC)/external
+INCLUDES = -I. -I$(LIGHTUSD_SRC) -I$(LIGHTUSD_SRC)/external
 
 # Output files
-LIB_SHARED = libtinyusdz_c.so
-LIB_STATIC = libtinyusdz_c.a
+LIB_SHARED = liblightusd_c.so
+LIB_STATIC = liblightusd_c.a
 
 # Source files
-C_API_SRC = tinyusdz_c.cpp
+C_API_SRC = lightusd_c.cpp
 
-# TinyUSDZ sources (simplified list - add more as needed)
-TINYUSDZ_SRCS = \
-    $(TINYUSDZ_SRC)/tinyusdz.cc \
-    $(TINYUSDZ_SRC)/stage.cc \
-    $(TINYUSDZ_SRC)/prim-types.cc \
-    $(TINYUSDZ_SRC)/value-types.cc \
-    $(TINYUSDZ_SRC)/usdGeom.cc \
-    $(TINYUSDZ_SRC)/usdShade.cc \
-    $(TINYUSDZ_SRC)/usdSkel.cc \
-    $(TINYUSDZ_SRC)/usda-reader.cc \
-    $(TINYUSDZ_SRC)/usdc-reader.cc \
-    $(TINYUSDZ_SRC)/crate-reader.cc \
-    $(TINYUSDZ_SRC)/ascii-parser.cc \
-    $(TINYUSDZ_SRC)/asset-resolution.cc \
-    $(TINYUSDZ_SRC)/composition.cc \
-    $(TINYUSDZ_SRC)/prim-reconstruct.cc \
-    $(TINYUSDZ_SRC)/path.cc \
-    $(TINYUSDZ_SRC)/str-util.cc \
-    $(TINYUSDZ_SRC)/io-util.cc \
-    $(TINYUSDZ_SRC)/math-util.cc \
-    $(TINYUSDZ_SRC)/tiny-format.cc
+# LightUSD sources (simplified list - add more as needed)
+LIGHTUSD_SRCS = \
+    $(LIGHTUSD_SRC)/lightusd.cc \
+    $(LIGHTUSD_SRC)/stage.cc \
+    $(LIGHTUSD_SRC)/prim-types.cc \
+    $(LIGHTUSD_SRC)/value-types.cc \
+    $(LIGHTUSD_SRC)/usdGeom.cc \
+    $(LIGHTUSD_SRC)/usdShade.cc \
+    $(LIGHTUSD_SRC)/usdSkel.cc \
+    $(LIGHTUSD_SRC)/usda-reader.cc \
+    $(LIGHTUSD_SRC)/usdc-reader.cc \
+    $(LIGHTUSD_SRC)/crate-reader.cc \
+    $(LIGHTUSD_SRC)/ascii-parser.cc \
+    $(LIGHTUSD_SRC)/asset-resolution.cc \
+    $(LIGHTUSD_SRC)/composition.cc \
+    $(LIGHTUSD_SRC)/prim-reconstruct.cc \
+    $(LIGHTUSD_SRC)/path.cc \
+    $(LIGHTUSD_SRC)/str-util.cc \
+    $(LIGHTUSD_SRC)/io-util.cc \
+    $(LIGHTUSD_SRC)/math-util.cc \
+    $(LIGHTUSD_SRC)/tiny-format.cc
 
 # Object files
 C_API_OBJ = $(C_API_SRC:.cpp=.o)
-TINYUSDZ_OBJS = $(TINYUSDZ_SRCS:.cc=.o)
+LIGHTUSD_OBJS = $(LIGHTUSD_SRCS:.cc=.o)
 
 # Example programs
 EXAMPLES = example_basic example_mesh
@@ -57,18 +57,18 @@ EXAMPLES = example_basic example_mesh
 all: $(LIB_SHARED) $(LIB_STATIC)
 
 # Build shared library
-$(LIB_SHARED): $(C_API_OBJ) $(TINYUSDZ_OBJS)
+$(LIB_SHARED): $(C_API_OBJ) $(LIGHTUSD_OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 # Build static library
-$(LIB_STATIC): $(C_API_OBJ) $(TINYUSDZ_OBJS)
+$(LIB_STATIC): $(C_API_OBJ) $(LIGHTUSD_OBJS)
 	$(AR) rcs $@ $^
 
 # Build C API implementation
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# Build TinyUSDZ sources
+# Build LightUSD sources
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
@@ -83,7 +83,7 @@ example_mesh: example_mesh.c $(LIB_STATIC)
 
 # Clean
 clean:
-	rm -f $(C_API_OBJ) $(TINYUSDZ_OBJS)
+	rm -f $(C_API_OBJ) $(LIGHTUSD_OBJS)
 	rm -f $(LIB_SHARED) $(LIB_STATIC)
 	rm -f $(EXAMPLES)
 
@@ -91,17 +91,17 @@ clean:
 PREFIX ?= /usr/local
 install: $(LIB_SHARED) $(LIB_STATIC)
 	install -d $(PREFIX)/lib
-	install -d $(PREFIX)/include/tinyusdz
+	install -d $(PREFIX)/include/lightusd
 	install -m 644 $(LIB_SHARED) $(PREFIX)/lib/
 	install -m 644 $(LIB_STATIC) $(PREFIX)/lib/
-	install -m 644 tinyusdz_c.h $(PREFIX)/include/tinyusdz/
+	install -m 644 lightusd_c.h $(PREFIX)/include/lightusd/
 
 # Uninstall
 uninstall:
 	rm -f $(PREFIX)/lib/$(LIB_SHARED)
 	rm -f $(PREFIX)/lib/$(LIB_STATIC)
-	rm -f $(PREFIX)/include/tinyusdz/tinyusdz_c.h
-	rmdir $(PREFIX)/include/tinyusdz 2>/dev/null || true
+	rm -f $(PREFIX)/include/lightusd/lightusd_c.h
+	rmdir $(PREFIX)/include/lightusd 2>/dev/null || true
 
 # Test
 test: examples
@@ -113,7 +113,7 @@ test: examples
 
 # Help
 help:
-	@echo "TinyUSDZ C API Makefile"
+	@echo "LightUSD C API Makefile"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all         - Build shared and static libraries (default)"

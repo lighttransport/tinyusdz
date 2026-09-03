@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdPhysics Collision Schema
+// LightUSD Next - UsdPhysics Collision Schema
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include "../eval/attribute-eval.hh"
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -40,4 +40,4 @@ struct PhysicsContactData {
 };
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

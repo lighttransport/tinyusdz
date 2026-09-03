@@ -2,7 +2,7 @@
 
 /**
  * Tests for USD value clip loading and retime/resampling configuration in
- * TinyUSDZ WebAssembly bindings.
+ * LightUSD WebAssembly bindings.
  *
  * This test validates:
  * - cached clip asset loading via loadFromCachedAsset
@@ -15,10 +15,10 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-function loadTinyUSDZModule() {
+function loadLightUSDModule() {
   const candidates = [
-    '../js/src/tinyusdz/tinyusdz_64.js',
-    '../js/src/tinyusdz/tinyusdz.js',
+    '../js/src/lightusd/lightusd_64.js',
+    '../js/src/lightusd/lightusd.js',
   ];
 
   for (const candidate of candidates) {
@@ -30,10 +30,10 @@ function loadTinyUSDZModule() {
     }
   }
 
-  throw new Error('Failed to load any TinyUSDZ JS module candidate');
+  throw new Error('Failed to load any LightUSD JS module candidate');
 }
 
-const TinyUSDZInit = loadTinyUSDZModule();
+const LightUSDInit = loadLightUSDModule();
 
 const VALUE_CLIP_MAIN = 'tests/feat/value-clip/value_clip_main.usda';
 const CLIP_ASSETS = [
@@ -58,8 +58,8 @@ function almostEqual(a, b, eps = 1e-6) {
   return Math.abs(a - b) <= eps;
 }
 
-async function runEnableAndMetadataTest(tinyusdz) {
-  const loader = new tinyusdz.TinyUSDZLoaderNative();
+async function runEnableAndMetadataTest(lightusd) {
+  const loader = new lightusd.LightUSDLoaderNative();
   loadFixtureFromDisk(loader);
 
   if (typeof loader.setEnableValueClips === 'function') {
@@ -98,13 +98,13 @@ async function runEnableAndMetadataTest(tinyusdz) {
   assert.ok(anim.clipAssetPaths && anim.clipAssetPaths.length === 2, 'animation should keep clip asset paths');
 }
 
-async function runDisableValueClipTest(tinyusdz) {
-  if (typeof tinyusdz.TinyUSDZLoaderNative.prototype.setEnableValueClips !== 'function') {
+async function runDisableValueClipTest(lightusd) {
+  if (typeof lightusd.LightUSDLoaderNative.prototype.setEnableValueClips !== 'function') {
     console.log('⚪ setEnableValueClips is not available in this build; skipping disable test');
     return;
   }
 
-  const loader = new tinyusdz.TinyUSDZLoaderNative();
+  const loader = new lightusd.LightUSDLoaderNative();
   loadFixtureFromDisk(loader);
 
   loader.setEnableValueClips(false);
@@ -115,12 +115,12 @@ async function runDisableValueClipTest(tinyusdz) {
   }
 }
 
-async function runRetimeTest(tinyusdz) {
+async function runRetimeTest(lightusd) {
   const hasRetimeControls = [
     'setValueClipSampleRate',
     'setValueClipUseTimeRange',
     'setValueClipTimeRange',
-  ].every((name) => typeof tinyusdz.TinyUSDZLoaderNative.prototype[name] === 'function');
+  ].every((name) => typeof lightusd.LightUSDLoaderNative.prototype[name] === 'function');
 
   if (!hasRetimeControls) {
     console.log('⚪ Value clip retime controls are not available in this build; skipping retime test');
@@ -128,7 +128,7 @@ async function runRetimeTest(tinyusdz) {
   }
 
   // Baseline with default sample settings
-  const baseline = new tinyusdz.TinyUSDZLoaderNative();
+  const baseline = new lightusd.LightUSDLoaderNative();
   loadFixtureFromDisk(baseline);
   baseline.setEnableValueClips(true);
   baseline.setValueClipSampleRate(0.0);
@@ -145,7 +145,7 @@ async function runRetimeTest(tinyusdz) {
   assert.ok(baselineTimes.length > 0, 'baseline animation should have time samples');
 
   // Retimed clip with explicit time range + sample rate
-  const retime = new tinyusdz.TinyUSDZLoaderNative();
+  const retime = new lightusd.LightUSDLoaderNative();
   loadFixtureFromDisk(retime);
   retime.setEnableValueClips(true);
   retime.setValueClipSampleRate(4.0);
@@ -171,17 +171,17 @@ async function runRetimeTest(tinyusdz) {
 }
 
 async function run() {
-  console.log('Loading TinyUSDZ module...');
-  const tinyusdz = await TinyUSDZInit();
-  console.log('✓ TinyUSDZ module loaded');
+  console.log('Loading LightUSD module...');
+  const lightusd = await LightUSDInit();
+  console.log('✓ LightUSD module loaded');
 
-  if (typeof tinyusdz.TinyUSDZLoaderNative.prototype.setEnableValueClips !== 'function') {
-    throw new Error('Value clip API is not available in loaded TinyUSDZ module');
+  if (typeof lightusd.LightUSDLoaderNative.prototype.setEnableValueClips !== 'function') {
+    throw new Error('Value clip API is not available in loaded LightUSD module');
   }
 
-  await runEnableAndMetadataTest(tinyusdz);
-  await runDisableValueClipTest(tinyusdz);
-  await runRetimeTest(tinyusdz);
+  await runEnableAndMetadataTest(lightusd);
+  await runDisableValueClipTest(lightusd);
+  await runRetimeTest(lightusd);
 
   console.log('\n🎉 Value clip tests passed');
 }

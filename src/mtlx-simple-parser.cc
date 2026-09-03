@@ -3,7 +3,7 @@
 #include "mtlx-simple-parser.hh"
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 bool SimpleXMLParser::Parse(const std::string& xml) {
@@ -72,23 +72,23 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
         }
         break;
       }
-      
+
       case TokenType::EndTag: {
         if (node_stack.empty()) {
           error_ = "Unexpected end tag: " + token.name;
           return false;
         }
-        
+
         if (node_stack.top()->name != token.name) {
-          error_ = "Mismatched end tag: expected </" + node_stack.top()->name + 
+          error_ = "Mismatched end tag: expected </" + node_stack.top()->name +
                   "> but got </" + token.name + ">";
           return false;
         }
-        
+
         node_stack.pop();
         break;
       }
-      
+
       case TokenType::Text:
       case TokenType::CDATA: {
         if (!node_stack.empty()) {
@@ -97,18 +97,18 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
         }
         break;
       }
-      
+
       case TokenType::Comment:
         // Ignore comments
         break;
-        
+
       case TokenType::EndOfDocument:
         if (!node_stack.empty()) {
           error_ = "Unclosed tags at end of document";
           return false;
         }
         return true;
-        
+
       case TokenType::Error:
         error_ = "Tokenizer error: " + tokenizer.GetError();
         return false;
@@ -129,4 +129,4 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
 }
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

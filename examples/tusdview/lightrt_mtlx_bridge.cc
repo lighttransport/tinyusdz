@@ -120,7 +120,7 @@ float Luminance(const float rgb[3]) {
 }
 
 void ClampLightRtParams(tydra::LightRtOpenPBRParams* p) {
-  tinyusdz::tydra::ClampLightRtOpenPBRParams(p);
+  lightusd::tydra::ClampLightRtOpenPBRParams(p);
 }
 
 
@@ -1302,9 +1302,9 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     if (node.textureId < 0) {
       const std::string assetPath = normalizePath(
           isAbsolutePath(wanted) ? wanted : baseDir + "/" + wanted);
-      auto loaded = tinyusdz::image::LoadImageFromFile(assetPath);
+      auto loaded = lightusd::image::LoadImageFromFile(assetPath);
       if (loaded) {
-        const tinyusdz::Image& image = loaded.value().image;
+        const lightusd::Image& image = loaded.value().image;
         if (image.width > 0 && image.height > 0 && image.bpp == 8 &&
             (image.channels == 1 || image.channels == 2 ||
              image.channels == 3 || image.channels == 4) &&
@@ -1502,7 +1502,7 @@ void ApplyOpenPBRMaterialConstants(
   if (!mat || !mat->hasOpenPBRSurface) return;
 
   mat->lightRtOpenPBR = constants;
-  tinyusdz::tydra::ClampRealtimePbrMaterial(&mat->lightRtOpenPBR);
+  lightusd::tydra::ClampRealtimePbrMaterial(&mat->lightRtOpenPBR);
   mat->hasLightRtOpenPBR = true;
   mat->openPbrSpecularModel = true;
   const DrawLightRtOpenPBRCPU& p = mat->lightRtOpenPBR;

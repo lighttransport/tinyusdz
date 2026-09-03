@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Dict (USD dictionary value) unit test
+// LightUSD Next - Dict (USD dictionary value) unit test
 //
 // Covers the O(1) key index on next::Dict: insertion order is preserved (the
 // writer re-emits dicts as authored), set() is last-wins for a repeated key,
@@ -17,7 +17,7 @@
 
 #include "next/types/value.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static void TestSmallDict() {
   Value v = Value::MakeDictionary();
@@ -132,7 +132,7 @@ static void TestLargeDict() {
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Dict index test ===" << std::endl;
+  std::cout << "=== LightUSD Next Dict index test ===" << std::endl;
   TestSmallDict();
   TestValueCowIndex();
   TestMoveIndex();

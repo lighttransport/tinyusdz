@@ -1,12 +1,12 @@
 # USD Instancing (WASM/JS)
 
-USD scene graph instancing support in the TinyUSDZ WASM binding and JavaScript layer.
+USD scene graph instancing support in the LightUSD WASM binding and JavaScript layer.
 
 Per AOUSD Core Spec 11.3.3, a prim is an **instance** when `instanceable = true` and it has at least one composition arc (reference, payload, inherit, specialize, or variantSet). Instances sharing the same composition arc signature share a single **prototype** — composed once, reused across all instances.
 
 ## WASM Native API
 
-### Methods on `TinyUSDZLoaderNative`
+### Methods on `LightUSDLoaderNative`
 
 | Method | Returns | Description |
 |--------|---------|-------------|
@@ -47,7 +47,7 @@ These fields are always present on every node (default: `false`, `-1`, `-1`).
 ### Basic: Query Instances
 
 ```js
-const scene = Module.TinyUSDZLoaderNative();
+const scene = Module.LightUSDLoaderNative();
 await scene.loadFromBinary(buffer, "scene.usda");
 
 const count = scene.numInstances();
@@ -92,7 +92,7 @@ walkNodes(root);
 
 ### Shared Geometry/Material (Current)
 
-When building the THREE.js scene graph via `TinyUSDZLoaderUtils.buildThreeNode()`, instance nodes with `isInstance === true` can share `BufferGeometry` and `Material` objects:
+When building the THREE.js scene graph via `LightUSDLoaderUtils.buildThreeNode()`, instance nodes with `isInstance === true` can share `BufferGeometry` and `Material` objects:
 
 ```js
 const prototypeCache = {};  // prototypeIndex → { geometry, material }
@@ -165,7 +165,7 @@ for (const [protoIdx, instances] of Object.entries(protoInstances)) {
 USD File (.usda/.usdc/.usdz)
   │
   ▼
-TinyUSDZ WASM (C++)
+LightUSD WASM (C++)
   │
   ├─ Stage::BuildInstancePrototypes()
   │    └─ Groups by InstanceKey (128-bit hash of composition arcs)

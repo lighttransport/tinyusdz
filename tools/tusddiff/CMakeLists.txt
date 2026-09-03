@@ -2,7 +2,7 @@
 # Diff two USD(A/C/Z) files at the Layer / PrimSpec / Attribute level
 # (text or JSON output). Files are loaded as Layers (pre-composition).
 #
-# Assume this cmake is called from tinyusdz root via add_subdirectory().
+# Assume this cmake is called from lightusd root via add_subdirectory().
 set(TUSDDIFF_TARGET "tusddiff")
 
 add_executable(${TUSDDIFF_TARGET}
@@ -13,11 +13,11 @@ add_sanitizers(${TUSDDIFF_TARGET})
 target_include_directories(${TUSDDIFF_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR})
-if(NOT TARGET tinyusdz_next)
+if(NOT TARGET lightusd_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
                    ${CMAKE_BINARY_DIR}/tusddiff_next_build)
 endif()
-target_link_libraries(${TUSDDIFF_TARGET} ${TINYUSDZ_TARGET_STATIC} tinyusdz_next)
+target_link_libraries(${TUSDDIFF_TARGET} ${LIGHTUSD_TARGET_STATIC} lightusd_next)
 
 # Warning flags (same policy as the core library)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -30,12 +30,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(TUSDDIFF_CXX_FLAGS "${TUSDDIFF_CXX_FLAGS} -Wno-switch-default")
   endif()
-  if(NOT TINYUSDZ_NO_WERROR)
+  if(NOT LIGHTUSD_NO_WERROR)
     set(TUSDDIFF_CXX_FLAGS "${TUSDDIFF_CXX_FLAGS} -Werror")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   set(TUSDDIFF_CXX_FLAGS "-Wall")
-  if(NOT TINYUSDZ_NO_WERROR)
+  if(NOT LIGHTUSD_NO_WERROR)
     set(TUSDDIFF_CXX_FLAGS "${TUSDDIFF_CXX_FLAGS} -Werror")
   endif()
 endif()
@@ -43,7 +43,7 @@ set_source_files_properties(tusddiff.cc PROPERTIES COMPILE_FLAGS "${TUSDDIFF_CXX
 
 set_target_properties(${TUSDDIFF_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
-if(TINYUSDZ_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS)
   # Keep the CLI regression fixtures hermetic. USD files are ignored globally,
   # so source-tree testdata can silently disappear from clean checkouts.
   set(TUSDDIFF_TESTDATA_DIR "${CMAKE_CURRENT_BINARY_DIR}/testdata")

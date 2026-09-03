@@ -1,20 +1,20 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(TINYUSDZ_TARGET "tinyusdz") # TODO: drop `z`
-set(TINYUSDZ_TARGET_NS "tinyusdz::tinyusdz") # dll lib. may not be built.
-set(TINYUSDZ_TARGET_STATIC_NS "tinyusdz::tinyusdz_static") # static lib is always built.
-set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # alias to ${TINYUSDZ_TARGET_STATIC_NS}
-set(BUILD_TARGET_C "c-tinyusd")
-set(BUILD_TARGET_PY "pytinyusd")
-#set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
-set(TINYUSDZ_TEST_TARGET "test_tinyusdz")
-set(TINYUSDZ_BENCHMARK_TARGET "benchmark_tinyusdz")
+set(LIGHTUSD_TARGET "lightusd") # TODO: drop `z`
+set(LIGHTUSD_TARGET_NS "lightusd::lightusd") # dll lib. may not be built.
+set(LIGHTUSD_TARGET_STATIC_NS "lightusd::lightusd_static") # static lib is always built.
+set(LIGHTUSD_TARGET_STATIC "lightusd_static") # alias to ${LIGHTUSD_TARGET_STATIC_NS}
+set(BUILD_TARGET_C "c-lightusd")
+set(BUILD_TARGET_PY "pylightusd")
+#set(BUILD_TARGET_BLENDER_PY "lightusd_blender")
+set(LIGHTUSD_TEST_TARGET "test_lightusd")
+set(LIGHTUSD_BENCHMARK_TARGET "benchmark_lightusd")
 
-project(${TINYUSDZ_TARGET} C CXX)
+project(${LIGHTUSD_TARGET} C CXX)
 
 # PROJECT_IS_TOP_LEVEL is available from cmake 3.21
 if (CMAKE_VERSION VERSION_LESS 3.21)
-  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${TINYUSDZ_TARGET}")
+  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${LIGHTUSD_TARGET}")
     set(PROJECT_IS_TOP_LEVEL ON)
   endif()
 endif ()
@@ -25,7 +25,7 @@ endif ()
 # binaries that are 2-3x slower than expected (observed: tusdcat parsing
 # went from 3.8s -> 1.3s after switching from the empty default to Release).
 if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  message(STATUS "TinyUSDZ: CMAKE_BUILD_TYPE not set; defaulting to Release.")
+  message(STATUS "LightUSD: CMAKE_BUILD_TYPE not set; defaulting to Release.")
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING
       "Build type (Debug|Release|RelWithDebInfo|MinSizeRel)" FORCE)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
@@ -34,149 +34,149 @@ endif ()
 
 
 if (EMSCRIPTEN)
-  set(TINYUSDZ_DEFAULT_NO_WERROR ON)
-  set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD On)
-  set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
-  set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
-  set(TINYUSDZ_DEFAULT_EXAMPLES Off)
-  set(TINYUSDZ_DEFAULT_WITH_C_API Off)
-  set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API Off)
+  set(LIGHTUSD_DEFAULT_NO_WERROR ON)
+  set(LIGHTUSD_DEFAULT_PRODUCTION_BUILD On)
+  set(LIGHTUSD_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
+  set(LIGHTUSD_DEFAULT_BUILD_TESTS Off)
+  set(LIGHTUSD_DEFAULT_EXAMPLES Off)
+  set(LIGHTUSD_DEFAULT_WITH_C_API Off)
+  set(LIGHTUSD_DEFAULT_WITH_PXR_COMPAT_API Off)
   # TODO: deprecate in next major version
-  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
-  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
-  set(TINYUSDZ_DEFAULT_WITH_COROUTINE On)
-  set(TINYUSDZ_DEFAULT_WITH_MESHOPT On)
+  set(LIGHTUSD_DEFAULT_WITH_USDA_PARSER Off)
+  set(LIGHTUSD_DEFAULT_WITH_USDC_PARSER Off)
+  set(LIGHTUSD_DEFAULT_WITH_COROUTINE On)
+  set(LIGHTUSD_DEFAULT_WITH_MESHOPT On)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
-  # assume tinyusdz is added from add_subdirectory()
+  # assume lightusd is added from add_subdirectory()
   # disable tools, tests and examples build by default.
-  set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
-  set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
-  set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
-  set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
-  set(TINYUSDZ_DEFAULT_EXAMPLES Off)
-  set(TINYUSDZ_DEFAULT_WITH_C_API Off)
-  set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
+  set(LIGHTUSD_DEFAULT_NO_WERROR OFF)
+  set(LIGHTUSD_DEFAULT_PRODUCTION_BUILD Off)
+  set(LIGHTUSD_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
+  set(LIGHTUSD_DEFAULT_BUILD_TESTS Off)
+  set(LIGHTUSD_DEFAULT_EXAMPLES Off)
+  set(LIGHTUSD_DEFAULT_WITH_C_API Off)
+  set(LIGHTUSD_DEFAULT_WITH_PXR_COMPAT_API On)
   # TODO: deprecate in next major version
-  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
-  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
-  set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
-  set(TINYUSDZ_DEFAULT_WITH_MESHOPT Off)
+  set(LIGHTUSD_DEFAULT_WITH_USDA_PARSER Off)
+  set(LIGHTUSD_DEFAULT_WITH_USDC_PARSER Off)
+  set(LIGHTUSD_DEFAULT_WITH_COROUTINE Off)
+  set(LIGHTUSD_DEFAULT_WITH_MESHOPT Off)
 else()
-  set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
-  set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
-  set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
-  set(TINYUSDZ_DEFAULT_BUILD_TESTS On)
-  set(TINYUSDZ_DEFAULT_BUILD_EXAMPLES On)
-  set(TINYUSDZ_DEFAULT_WITH_C_API Off)
-  set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
+  set(LIGHTUSD_DEFAULT_NO_WERROR OFF)
+  set(LIGHTUSD_DEFAULT_PRODUCTION_BUILD Off)
+  set(LIGHTUSD_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
+  set(LIGHTUSD_DEFAULT_BUILD_TESTS On)
+  set(LIGHTUSD_DEFAULT_BUILD_EXAMPLES On)
+  set(LIGHTUSD_DEFAULT_WITH_C_API Off)
+  set(LIGHTUSD_DEFAULT_WITH_PXR_COMPAT_API On)
   # TODO: deprecate in next major version
-  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
-  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
-  set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
-  set(TINYUSDZ_DEFAULT_WITH_MESHOPT Off)
+  set(LIGHTUSD_DEFAULT_WITH_USDA_PARSER Off)
+  set(LIGHTUSD_DEFAULT_WITH_USDC_PARSER Off)
+  set(LIGHTUSD_DEFAULT_WITH_COROUTINE Off)
+  set(LIGHTUSD_DEFAULT_WITH_MESHOPT Off)
 
   # For Visual Studio
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endif ()
 
 # options
-option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
+option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
 # NOTE: Measured to NOT help (and slightly hurt codegen) on this codebase: the
 # compile cost is dominated by template *instantiation* and -O3 codegen, not by
 # header parsing, which is all a PCH can cache. Kept as an opt-in knob; default OFF.
-option(TINYUSDZ_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
-option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
-option(TINYUSDZ_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
-option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
-option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
-option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
-set(TINYUSDZ_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH
+option(LIGHTUSD_USE_PCH "Use a precompiled header (does not help this codebase; opt-in)." OFF)
+option(LIGHTUSD_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
+option(LIGHTUSD_ENABLE_THREAD "Enable optional std::thread parallel paths (default OFF; keep OFF for default WASM/browser builds)" OFF)
+option(LIGHTUSD_MSAN "Build with MSAN support(for developer only)" OFF)
+option(LIGHTUSD_WITH_C_API "Enable C API." ${LIGHTUSD_DEFAULT_WITH_C_API})
+option(LIGHTUSD_BUILD_TESTS "Build tests" ${LIGHTUSD_DEFAULT_BUILD_TESTS})
+set(LIGHTUSD_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH
     "Root directory used to resolve relative C++ test fixtures")
 # Default external USD asset corpus for regression tests.  The repository-local
 # symlink is intentionally the default so a checkout with `usd-assets` present
 # exercises the asset gates without machine-specific paths; callers can point
-# this at another corpus with -DTINYUSDZ_USD_ASSETS_ROOT=... .
-set(_tinyusdz_default_usd_assets_root "${PROJECT_SOURCE_DIR}/usd-assets")
-if(IS_DIRECTORY "${_tinyusdz_default_usd_assets_root}")
-  get_filename_component(_tinyusdz_default_usd_assets_root
-                         "${_tinyusdz_default_usd_assets_root}" REALPATH)
+# this at another corpus with -DLIGHTUSD_USD_ASSETS_ROOT=... .
+set(_lightusd_default_usd_assets_root "${PROJECT_SOURCE_DIR}/usd-assets")
+if(IS_DIRECTORY "${_lightusd_default_usd_assets_root}")
+  get_filename_component(_lightusd_default_usd_assets_root
+                         "${_lightusd_default_usd_assets_root}" REALPATH)
 endif()
-set(TINYUSDZ_USD_ASSETS_ROOT "${_tinyusdz_default_usd_assets_root}" CACHE PATH
+set(LIGHTUSD_USD_ASSETS_ROOT "${_lightusd_default_usd_assets_root}" CACHE PATH
     "Root directory for tusdview/tusdrender USD asset regressions")
-unset(_tinyusdz_default_usd_assets_root)
-option(TINYUSDZ_BUILD_BENCHMARKS
+unset(_lightusd_default_usd_assets_root)
+option(LIGHTUSD_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
-option(TINYUSDZ_BUILD_EXAMPLES
+option(LIGHTUSD_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
-       ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
-option(TINYUSDZ_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
+       ${LIGHTUSD_DEFAULT_BUILD_EXAMPLES})
+option(LIGHTUSD_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
 # Link a drop-in allocator into the CLI example tools (tusdcat,
 # tydra_to_renderscene). The legacy flatten/compose path is allocation-heavy
 # (~20% of a large-scene `tusdcat -f` is glibc malloc/free/consolidate);
 # jemalloc cut representative large-scene runs by 14-17% at ~+4% RSS with
 # byte-identical output. Tools only -- the library
 # never forces an allocator (apps choose). Same ranking as src/next
-# (TINYUSDZ_NEXT_WITH_TCMALLOC): jemalloc > tcmalloc_minimal > mimalloc.
+# (LIGHTUSD_NEXT_WITH_TCMALLOC): jemalloc > tcmalloc_minimal > mimalloc.
 # NOTE: unlike src/next tools, no `malloc_conf` no-purge baking here -- the
 # decay-purge stall does not show on this path (measured a wash, +5% RSS).
-option(TINYUSDZ_WITH_TCMALLOC
+option(LIGHTUSD_WITH_TCMALLOC
        "Link a drop-in allocator (jemalloc/tcmalloc/mimalloc) into CLI example tools (faster flatten/compose on large scenes)" OFF)
-option(TINYUSDZ_BUILD_GUI_VIEWER
+option(LIGHTUSD_BUILD_GUI_VIEWER
        "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
        OFF)
-option(TINYUSDZ_BUILD_TEXTURE_GPU_BENCH
+option(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH
        "Build the standalone headless Vulkan/CUDA/HIP texture processing benchmark"
        OFF)
-option(TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD
+option(LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD
        "Apply NVIDIA PRIME/GLVND offload variables to tusdview CTest cases when the NVIDIA device is visible"
        OFF)
-option(TINYUSDZ_BUILD_QUICKLOOK
+option(LIGHTUSD_BUILD_QUICKLOOK
        "Build the minimal portable USD Quick Look viewer 'tusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
        OFF)
-option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
+option(LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
-       ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
-option(TINYUSDZ_WITH_TYDRA
+       ${LIGHTUSD_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
+option(LIGHTUSD_WITH_TYDRA
        "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
        ON)
-option(TINYUSDZ_WITH_PCP
+option(LIGHTUSD_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
-option(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
-       "Use stable next::pcp::Cache backend for LargeSceneLoader (links tinyusdz_next)."
+option(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
+       "Use stable next::pcp::Cache backend for LargeSceneLoader (links lightusd_next)."
        OFF)
-option(TINYUSDZ_ENABLE_SIMD
+option(LIGHTUSD_ENABLE_SIMD
        "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."
        ON)
-option(TINYUSDZ_WITH_MCP_SERVER
+option(LIGHTUSD_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
-option(TINYUSDZ_WITH_FPNGE
-       "Build with fpnge(veluca93) fast PNG encoder. When ON, PNG encoding uses fpnge by default(SIMD path selected by TINYUSDZ_FPNGE_SIMD)."
+option(LIGHTUSD_WITH_FPNGE
+       "Build with fpnge(veluca93) fast PNG encoder. When ON, PNG encoding uses fpnge by default(SIMD path selected by LIGHTUSD_FPNGE_SIMD)."
        OFF)
 # fpnge SIMD path, selected at compile time: avx2 | sse41 | sse2 | scalar.
 # avx2/sse41 compile fpnge with the matching ISA. sse2/scalar do NOT compile
 # fpnge(upstream requires SSE4.1 minimum) and PNG encoding falls back to fpng.
-set(TINYUSDZ_FPNGE_SIMD "avx2" CACHE STRING "fpnge SIMD path: avx2, sse41, sse2 or scalar")
-set_property(CACHE TINYUSDZ_FPNGE_SIMD PROPERTY STRINGS avx2 sse41 sse2 scalar)
-option(TINYUSDZ_WITH_QJS
+set(LIGHTUSD_FPNGE_SIMD "avx2" CACHE STRING "fpnge SIMD path: avx2, sse41, sse2 or scalar")
+set_property(CACHE LIGHTUSD_FPNGE_SIMD PROPERTY STRINGS avx2 sse41 sse2 scalar)
+option(LIGHTUSD_WITH_QJS
        "Build with QuickJS(JavaScript) support."
        OFF)
 
-option(TINYUSDZ_WITH_GEOGRAM
+option(LIGHTUSD_WITH_GEOGRAM
        "Build with Geogram library support for advanced geometry processing."
        OFF)
 
-option(TINYUSDZ_WITH_WAMR
+option(LIGHTUSD_WITH_WAMR
        "Build with WAMR (WebAssembly Micro Runtime) support for executing WASM in Tydra."
        OFF)
 
-option(TINYUSDZ_WITH_COROUTINE
+option(LIGHTUSD_WITH_COROUTINE
        "Build with C++20 coroutine support."
-       ${TINYUSDZ_DEFAULT_WITH_COROUTINE})
+       ${LIGHTUSD_DEFAULT_WITH_COROUTINE})
 
 
-set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
+set(LIGHTUSD_CXX_EXCEPTIONS_DEFAULT Off)
 
 # Enable /MP flags(multi processor build) for Visual Studio
 # Based on VTK's Cmake
@@ -184,12 +184,12 @@ set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
 if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # default on.
   # disable MP or reduce cores if you have less memory
-  set(TINYUSDZ_CXX_MP_FLAG ON CACHE BOOL "Build with /MP flag enabled")
-  set(TINYUSDZ_PROCESSOR_COUNT "$ENV{NUMBER_OF_PROCESSORS}")
-  set(TINYUSDZ_CXX_MP_NUM_PROCESSORS ${TINYUSDZ_PROCESSOR_COUNT} CACHE STRING "The maximum number of processes for the /MP flag")
+  set(LIGHTUSD_CXX_MP_FLAG ON CACHE BOOL "Build with /MP flag enabled")
+  set(LIGHTUSD_PROCESSOR_COUNT "$ENV{NUMBER_OF_PROCESSORS}")
+  set(LIGHTUSD_CXX_MP_NUM_PROCESSORS ${LIGHTUSD_PROCESSOR_COUNT} CACHE STRING "The maximum number of processes for the /MP flag")
 
 
-  message(STATUS "Use procesors : " ${TINYUSDZ_PROCESSOR_COUNT})
+  message(STATUS "Use procesors : " ${LIGHTUSD_PROCESSOR_COUNT})
 
   # /MP flag is set as target_compile_options, so do not add /MP to global CMAKE_CXX_FLAGS variable.
   #if (CMAKE_CXX_MP_FLAG)
@@ -198,111 +198,111 @@ if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   #endif ()
 endif()
 
-option(TINYUSDZ_CXX_EXCEPTIONS
-       "Enable/Disable C++ exceptions (default: Off; tinyusdz uses no exceptions)"
-       ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
+option(LIGHTUSD_CXX_EXCEPTIONS
+       "Enable/Disable C++ exceptions (default: Off; lightusd uses no exceptions)"
+       ${LIGHTUSD_CXX_EXCEPTIONS_DEFAULT})
 
-# tinyusdz (and the vendored tinyvdb) use no RTTI (no dynamic_cast / typeid), so
+# lightusd (and the vendored tinyvdb) use no RTTI (no dynamic_cast / typeid), so
 # disable it by default. This both shrinks the binary and enforces that no RTTI
 # creeps in.
-option(TINYUSDZ_CXX_RTTI
-       "Enable/Disable C++ RTTI (default: Off; tinyusdz uses no RTTI)"
+option(LIGHTUSD_CXX_RTTI
+       "Enable/Disable C++ RTTI (default: Off; lightusd uses no RTTI)"
        Off)
 
-option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
-option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
-option(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT
+option(LIGHTUSD_WITH_USDMTLX "Build with MaterialX support" ON)
+option(LIGHTUSD_WITH_JSON "Build with JSON support" ON)
+option(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT
        "Build deprecated nlohmann::json object overloads for JSON APIs" ON)
-option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
-option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
+option(LIGHTUSD_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
+option(LIGHTUSD_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
-option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
+option(LIGHTUSD_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
         OFF)
-option(TINYUSDZ_WITH_USDVOX
+option(LIGHTUSD_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
-option(TINYUSDZ_WITH_USDVOL
+option(LIGHTUSD_WITH_USDVOL
        "Build with usdVol support(import OpenVDB .vdb via tinyvdb)" ON)
 
 # Subdivision surfaces: tinysubdiv (src/tsd) is always built (dependency-free).
 # Optional verification of tsd against an OpenSubdiv source checkout:
-option(TINYUSDZ_TSD_VERIFY_WITH_OSD
+option(LIGHTUSD_TSD_VERIFY_WITH_OSD
        "Build tsd vs OpenSubdiv verification test (requires OpenSubdiv_ROOT)" OFF)
 set(OpenSubdiv_ROOT "" CACHE PATH "Path to OpenSubdiv source checkout (no pre-build required)")
 
-option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
-option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
+option(LIGHTUSD_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
+option(LIGHTUSD_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 
-option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
+option(LIGHTUSD_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
-if (TINYUSDZ_WITH_PYTHON)
+if (LIGHTUSD_WITH_PYTHON)
   # force enable Tydra C API + DLL build
-  set(TINYUSDZ_WITH_TYDRA ON CACHE INTERNAL "" FORCE)
-  set(TINYUSDZ_WITH_C_API ON CACHE INTERNAL "" FORCE)
-  set(TINYUSDZ_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
+  set(LIGHTUSD_WITH_TYDRA ON CACHE INTERNAL "" FORCE)
+  set(LIGHTUSD_WITH_C_API ON CACHE INTERNAL "" FORCE)
+  set(LIGHTUSD_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
 endif()
 
 
 option(
-  TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION
+  LIGHTUSD_PREFER_LOCAL_PYTHON_INSTALLATION
   "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option"
   OFF)
 
-option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API})
+option(LIGHTUSD_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${LIGHTUSD_DEFAULT_WITH_PXR_COMPAT_API})
 
 # C API requires Tydra
-if (NOT TINYUSDZ_WITH_TYDRA AND TINYUSDZ_WITH_C_API)
-  message(WARNING "C API requires Tydra enabled, so disable C API build. Please do not set TINYUSDZ_WITH_TYDRA Off if you need C API library")
-  set(TINYUSDZ_WITH_C_API Off CACHE INTERNAL "" FORCE)
+if (NOT LIGHTUSD_WITH_TYDRA AND LIGHTUSD_WITH_C_API)
+  message(WARNING "C API requires Tydra enabled, so disable C API build. Please do not set LIGHTUSD_WITH_TYDRA Off if you need C API library")
+  set(LIGHTUSD_WITH_C_API Off CACHE INTERNAL "" FORCE)
 endif ()
 
 # deprecated. to be removed
 #option(
-#  TINYUSDZ_WITH_BLENDER_ADDON
-#  "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON"
+#  LIGHTUSD_WITH_BLENDER_ADDON
+#  "Build with Python module for Blender(`LIGHTUSD_WITH_PYTHON` is force set to ON"
 #  OFF)
 
-option(TINYUSDZ_USE_SYSTEM_ZLIB
+option(LIGHTUSD_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
 
 # -- Zstd compression --
-option(TINYUSDZ_WITH_ZSTD_COMPRESSION
+option(LIGHTUSD_WITH_ZSTD_COMPRESSION
        "Enable zstd compression for USD files" ON)
-option(TINYUSDZ_USE_SYSTEM_ZSTD
+option(LIGHTUSD_USE_SYSTEM_ZSTD
        "Use system's zstd instead of bundled version" OFF)
 
 option(
-  TINYUSDZ_PRODUCTION_BUILD
+  LIGHTUSD_PRODUCTION_BUILD
   "Build for production release(e.g. disables debug print, do not include full filepath in error messages)"
   OFF)
 
 
 option(
-  TINYUSDZ_DEBUG_PRINT
-  "Enable debug print(For debugging). Disabled when `TINYUSDZ_PRODUCTION_BUILD` is On"
+  LIGHTUSD_DEBUG_PRINT
+  "Enable debug print(For debugging). Disabled when `LIGHTUSD_PRODUCTION_BUILD` is On"
   OFF)
 
 # -- modules --
-option(TINYUSDZ_WITH_MODULE_USDA_READER "Build with USDA reader feature" ON)
-option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
+option(LIGHTUSD_WITH_MODULE_USDA_READER "Build with USDA reader feature" ON)
+option(LIGHTUSD_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
 
 # USDC(Crate binary) reader is mandatory in most situation, so this option is primarily for developer build.
-option(TINYUSDZ_WITH_MODULE_USDC_READER "Build with USDC reader feature" ON)
-option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
+option(LIGHTUSD_WITH_MODULE_USDC_READER "Build with USDC reader feature" ON)
+option(LIGHTUSD_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 # -------------
 
 # -- STB --
 
 #
-# In default TinyUSDZ embeds stb_image and stb_image_write to load/save JPG/PNG/BMP images.
-# (When TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER is set On)
+# In default LightUSD embeds stb_image and stb_image_write to load/save JPG/PNG/BMP images.
+# (When LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER is set On)
 #
 
-# Set ON if you use stb_image implementation outside of TinyUSDZ library to avoid multiple symbol def error.
-option(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
+# Set ON if you use stb_image implementation outside of LightUSD library to avoid multiple symbol def error.
+option(LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION
        "Do not define STB_IMAGE_IMPLEMENTATION" OFF)
 
-# Set ON if you use stb_image_write implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
-option(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
+# Set ON if you use stb_image_write implementation outside of LightUSD library in your app to avoid multiple symbol def error.
+option(LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION
        "Do not define STB_IMAGE_WRITGE_IMPLEMENTATION" OFF)
 # ----------
 
@@ -312,7 +312,7 @@ option(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
 # Use wuffs to decode jpeg/png/bmp instead of using stb_image.
 # (wuffs is well(I guess) fuzz tested image decoder, so has better security than stb_image)
 #
-option(TINYUSDZ_USE_WUFFS_IMAGE_LOADER
+option(LIGHTUSD_USE_WUFFS_IMAGE_LOADER
        "Use wuffs to load jpg/png/bmp images" OFF)
 
 # -- nanoimage --
@@ -321,73 +321,73 @@ option(TINYUSDZ_USE_WUFFS_IMAGE_LOADER
 # nanoimage is a fuzz-tested, memory-safe C image decoder.
 # When enabled, replaces the stb_image backend for common image formats.
 #
-option(TINYUSDZ_WITH_NANOIMAGE
+option(LIGHTUSD_WITH_NANOIMAGE
        "Use nanoimage to load jpg/png/bmp/tga images (replaces stb_image for these formats)" ON)
 # -----------
 
-# Set ON if you use wuffs implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
-option(TINYUSDZ_NO_WUFFS_IMPLEMENTATION
+# Set ON if you use wuffs implementation outside of LightUSD library in your app to avoid multiple symbol def error.
+option(LIGHTUSD_NO_WUFFS_IMPLEMENTATION
        "Do not define WUFFS_IMPLEMENTATION" OFF)
 # -----------
 
 #
 
 # -- TIFF --
-option(TINYUSDZ_WITH_TIFF
+option(LIGHTUSD_WITH_TIFF
        "Build with TIFF texture(includes 32bit floating point TIFF) support"
        ON)
 # ----------
 
 # -- EXR --
-option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
-option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
+option(LIGHTUSD_WITH_EXR "Build with EXR HDR texture support" ON)
+option(LIGHTUSD_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
-option(TINYUSDZ_WITH_TEXTOOLS
+option(LIGHTUSD_WITH_TEXTOOLS
        "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
-option(TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS
+option(LIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS
        "Build vendored tir/texcomp/texpipe/envmap texture tools in quicklook-only builds" OFF)
 
-if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+if(LIGHTUSD_BUILD_QUICKLOOK AND NOT LIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS)
   # Quicklook is intentionally a minimal, dependency-light path. Disabling
-  # texture-tools here avoids building tinyusdz_textools unless explicitly
+  # texture-tools here avoids building lightusd_textools unless explicitly
   # requested.
-  if (TINYUSDZ_WITH_TEXTOOLS)
-    message(STATUS "tinyusdz: disabling TINYUSDZ_WITH_TEXTOOLS for quicklook-only build "
-                   "(set -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to force)")
+  if (LIGHTUSD_WITH_TEXTOOLS)
+    message(STATUS "lightusd: disabling LIGHTUSD_WITH_TEXTOOLS for quicklook-only build "
+                   "(set -DLIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to force)")
   endif()
-  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+  set(LIGHTUSD_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
 endif()
 
 # Vendored textools/tinyexr upstream self-tests are disabled by default: they
-# exercise third-party code (not TinyUSDZ), and changes to that vendored copy
-# are not part of the TinyUSDZ regression gate. Re-enable with -D
-# TINYUSDZ_BUILD_TEXTOOLS_TESTS=ON when validating an upstream sync.
-option(TINYUSDZ_BUILD_TEXTOOLS_TESTS
+# exercise third-party code (not LightUSD), and changes to that vendored copy
+# are not part of the LightUSD regression gate. Re-enable with -D
+# LIGHTUSD_BUILD_TEXTOOLS_TESTS=ON when validating an upstream sync.
+option(LIGHTUSD_BUILD_TEXTOOLS_TESTS
        "Build vendored textools (tir/texcomp/texpipe/envmap) upstream self-tests"
        OFF)
 
 # -- ColorIO --
-option(TINYUSDZ_WITH_COLORIO
+option(LIGHTUSD_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
 
-option(TINYUSDZ_WITH_MESHOPT
-       "Build with meshoptimizer support for mesh optimization" ${TINYUSDZ_DEFAULT_WITH_MESHOPT})
+option(LIGHTUSD_WITH_MESHOPT
+       "Build with meshoptimizer support for mesh optimization" ${LIGHTUSD_DEFAULT_WITH_MESHOPT})
 
-option(TINYUSDZ_WITH_REMOTERY
+option(LIGHTUSD_WITH_REMOTERY
        "Build with Remotery profiling support" OFF)
 # ---------
 
 # -- optional tool --
 # TODO: deperecate. Use tusdcat
-option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
-option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
+option(LIGHTUSD_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
+option(LIGHTUSD_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
 # --------------
 
 # -- For developers --
-option(TINYUSDZ_COMPILE_TIME_TRACE
+option(LIGHTUSD_COMPILE_TIME_TRACE
        "Add -ftime-trace to profile compilation time(clang only)" OFF)
-option(TINYUSDZ_CUSTOM_COMPILE_FLAGS
+option(LIGHTUSD_CUSTOM_COMPILE_FLAGS
        "Use hard-coded custom compile flags(described in CMakeLists.txt). For Developer only)" OFF)
 # ---
 
@@ -399,7 +399,7 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 # When ASan is enabled, propagate the runtime link flag to ALL
 # executables. add_sanitizers() (from FindSanitizers.cmake) sets
 # LINK_FLAGS as a private target property; any exe target that links
-# the asan-instrumented tinyusdz_static.a but forgets to call
+# the asan-instrumented lightusd_static.a but forgets to call
 # add_sanitizers() ends up with undefined references to
 # __asan_report_load*, __asan_memcpy, etc. Setting CMAKE_EXE_LINKER_FLAGS
 # globally avoids that footgun across examples/, tests/feat/,
@@ -411,38 +411,38 @@ if(SANITIZE_ADDRESS)
 endif()
 
 # [cifuzz]
-option(TINYUSDZ_TEST_CIFUZZ "Run cifuzz test" OFF)
+option(LIGHTUSD_TEST_CIFUZZ "Run cifuzz test" OFF)
 
-if (TINYUSDZ_TEST_CIFUZZ)
+if (LIGHTUSD_TEST_CIFUZZ)
   find_package(cifuzz NO_SYSTEM_ENVIRONMENT_PATH)
   enable_fuzz_testing()
 endif()
 
-if (TINYUSDZ_ENABLE_THREAD)
+if (LIGHTUSD_ENABLE_THREAD)
   find_package(Threads REQUIRED)
   # prefer adding "-pthread" compile flag
   set(THREADS_PREFER_PTHREAD_FLAG ON)
 endif()
 
-if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
-  if(TINYUSDZ_USE_SYSTEM_ZLIB)
+if(LIGHTUSD_WITH_EXR OR LIGHTUSD_WITH_TIFF)
+  if(LIGHTUSD_USE_SYSTEM_ZLIB)
     find_package(ZLIB REQUIRED)
   endif()
 endif()
 
 
-# Currently TinyUSDZ does not claim CXX version when TinyUSDZ is added as add_subdirectory()
+# Currently LightUSD does not claim CXX version when LightUSD is added as add_subdirectory()
 # of toplevel(root) project.
 # TODO: Property inherit CXX compiler settings from toplevel(root) project.
 
 
 if (PROJECT_IS_TOP_LEVEL)
-  message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
-  if(TINYUSDZ_WITH_COROUTINE)
+  message(STATUS "LightUSD is being built as toplevel project so set CXX standard here.")
+  if(LIGHTUSD_WITH_COROUTINE)
     message(STATUS "Use C++20 for c++20 coroutine.")
     # Coroutine support requires C++20
     set(CMAKE_CXX_STANDARD 20)
-  elseif(TINYUSDZ_WITH_PYTHON)
+  elseif(LIGHTUSD_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
@@ -469,7 +469,7 @@ if(MSVC)
 endif()
 
 # [ccache]
-if(TINYUSDZ_USE_CCACHE)
+if(LIGHTUSD_USE_CCACHE)
   if(MSVC)
     # No ccache support
   else()
@@ -482,7 +482,7 @@ if(TINYUSDZ_USE_CCACHE)
       # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
       # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
       set(CCACHE_LAUNCHER "${CCACHE_EXE}")
-      if(TINYUSDZ_USE_PCH AND CMAKE_HOST_UNIX)
+      if(LIGHTUSD_USE_PCH AND CMAKE_HOST_UNIX)
         set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
       endif()
 
@@ -506,18 +506,18 @@ if(TINYUSDZ_USE_CCACHE)
 endif()
 
 
-if (TINYUSDZ_WITH_MCP_SERVER)
-  set(TINYUSDZ_WITH_JSON On)
+if (LIGHTUSD_WITH_MCP_SERVER)
+  set(LIGHTUSD_WITH_JSON On)
 endif()
 
-if(TINYUSDZ_WITH_PYTHON)
+if(LIGHTUSD_WITH_PYTHON)
 
   # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
   # We may switch to nanobind at some point(probably around 2024?)
 
-  # We build monolithic python module, so build libtinyusdz as a static library
+  # We build monolithic python module, so build liblightusd as a static library
   # with PIC enabled.
-  # NOTE: TinyUSDZ now builds static lib with PIC enabled by default, so commented out here.
+  # NOTE: LightUSD now builds static lib with PIC enabled by default, so commented out here.
   # set(CMAKE_POSITION_INDEPENDENT_CODE On)
 
   #[nanobind]
@@ -530,7 +530,7 @@ if(TINYUSDZ_WITH_PYTHON)
 
   # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
   # and use `FindPython3`, not `FindPython`
-  if(TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION)
+  if(LIGHTUSD_PREFER_LOCAL_PYTHON_INSTALLATION)
     #message(STATUS "Local Python")
     set(Python3_FIND_FRAMEWORK NEVER) # Do not search framework python
     set(Python3_FIND_STRATEGY LOCATION)
@@ -553,13 +553,13 @@ if(TINYUSDZ_WITH_PYTHON)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
-set(TINYUSDZ_SOURCES
+set(LIGHTUSD_SOURCES
     # Crate path utilities (path sorting/tree encoding for USDC writer)
     ${PROJECT_SOURCE_DIR}/src/crate-path-utils/path_sort.cc
     ${PROJECT_SOURCE_DIR}/src/crate-path-utils/tree_encode.cc
     ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
-    ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
+    ${PROJECT_SOURCE_DIR}/src/lightusd.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
     ${PROJECT_SOURCE_DIR}/src/performance.cc
     ${PROJECT_SOURCE_DIR}/src/spline-binary.cc
@@ -720,8 +720,8 @@ set(TINYUSDZ_SOURCES
 
     )
 
-if (TINYUSDZ_WITH_PCP)
-    list(APPEND TINYUSDZ_SOURCES
+if (LIGHTUSD_WITH_PCP)
+    list(APPEND LIGHTUSD_SOURCES
         ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.cc
         ${PROJECT_SOURCE_DIR}/src/pcp/layer-registry.hh
         ${PROJECT_SOURCE_DIR}/src/pcp/cache.cc
@@ -731,8 +731,8 @@ if (TINYUSDZ_WITH_PCP)
     )
 endif()
 
-if (TINYUSDZ_WITH_TYDRA)
-    list(APPEND TINYUSDZ_SOURCES
+if (LIGHTUSD_WITH_TYDRA)
+    list(APPEND LIGHTUSD_SOURCES
         ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/facial.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
@@ -837,27 +837,27 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
         )
-    
-    if(TINYUSDZ_WITH_WAMR)
-        list(APPEND TINYUSDZ_SOURCES
+
+    if(LIGHTUSD_WITH_WAMR)
+        list(APPEND LIGHTUSD_SOURCES
             ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.cc
             ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.hh
         )
-    endif(TINYUSDZ_WITH_WAMR)
-endif (TINYUSDZ_WITH_TYDRA)
+    endif(LIGHTUSD_WITH_WAMR)
+endif (LIGHTUSD_WITH_TYDRA)
 
 # Variant extraction utilities handled via variant-support.hh/cc in Tydra section
 
-if(TINYUSDZ_WITH_PXR_COMPAT_API)
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
+if(LIGHTUSD_WITH_PXR_COMPAT_API)
+  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
 endif()
 
-set(TINYUSDZ_C_API_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc
-    ${PROJECT_SOURCE_DIR}/src/c-tinyusd-helpers.cc
-    ${PROJECT_SOURCE_DIR}/src/c-tinyusd-tydra.cc)
+set(LIGHTUSD_C_API_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/c-lightusd.cc
+    ${PROJECT_SOURCE_DIR}/src/c-lightusd-helpers.cc
+    ${PROJECT_SOURCE_DIR}/src/c-lightusd-tydra.cc)
 
-set(TINYUSDZ_DEP_SOURCES
+set(LIGHTUSD_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
@@ -865,14 +865,14 @@ set(TINYUSDZ_DEP_SOURCES
 )
 
 # MikkTSpace tangent computation (zlib license, by Morten S. Mikkelsen)
-if(TINYUSDZ_WITH_TYDRA)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
+if(LIGHTUSD_WITH_TYDRA)
+  list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
 endif()
 
-set(TINYUSDZ_FPNG_ENABLED OFF)
-if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
-  set(TINYUSDZ_FPNG_ENABLED ON)
-  list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
+set(LIGHTUSD_FPNG_ENABLED OFF)
+if (LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER)
+  set(LIGHTUSD_FPNG_ENABLED ON)
+  list(APPEND LIGHTUSD_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
   # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
   set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
                               PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
@@ -895,7 +895,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # Keep sanitizer builds useful without reporting implementation techniques in
-# vendored image codecs as TinyUSDZ failures. fpng has a portable unaligned-I/O
+# vendored image codecs as LightUSD failures. fpng has a portable unaligned-I/O
 # path, so select it under UBSan. stb_image_resize2 and stb_image_write embed
 # their implementations in our wrapper TUs and intentionally use unaligned
 # wide copies / signed bit-buffer shifts; disable only those checks for those
@@ -915,12 +915,12 @@ endif()
 # fpnge: fast PNG encoder. Upstream requires SSE4.1 minimum(AVX2 preferred);
 # there is no SSE2/scalar code path, so for sse2/scalar we skip compiling fpnge
 # and let PNG encoding fall back to the portable fpng encoder.
-set(TINYUSDZ_FPNGE_ENABLED OFF)
-if (TINYUSDZ_WITH_FPNGE)
-  string(TOLOWER "${TINYUSDZ_FPNGE_SIMD}" _fpnge_simd)
+set(LIGHTUSD_FPNGE_ENABLED OFF)
+if (LIGHTUSD_WITH_FPNGE)
+  string(TOLOWER "${LIGHTUSD_FPNGE_SIMD}" _fpnge_simd)
   if (_fpnge_simd STREQUAL "avx2" OR _fpnge_simd STREQUAL "sse41")
-    set(TINYUSDZ_FPNGE_ENABLED ON)
-    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc)
+    set(LIGHTUSD_FPNGE_ENABLED ON)
+    list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc)
     if (MSVC)
       if (_fpnge_simd STREQUAL "avx2")
         set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpnge/fpnge.cc
@@ -947,70 +947,70 @@ endif()
 # (target_clones + ifunc) to dispatch SSE2/SSE4.1/AVX/AVX2 at runtime. Off, or
 # on non-x86 / non-ELF / MSVC, a single auto-vectorized build is used. (WASM
 # auto-vectorizes via -msimd128 regardless; see web/CMakeLists.txt.)
-option(TINYUSDZ_ENABLE_NATIVE_SIMD "Runtime-dispatched native SIMD for image kernels" ON)
+option(LIGHTUSD_ENABLE_NATIVE_SIMD "Runtime-dispatched native SIMD for image kernels" ON)
 # Disable FP contraction so vectorized kernels match the scalar reference bit-for-bit.
 if (NOT MSVC)
   set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
                               PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
-if (TINYUSDZ_ENABLE_NATIVE_SIMD AND NOT EMSCRIPTEN AND NOT MSVC AND
+if (LIGHTUSD_ENABLE_NATIVE_SIMD AND NOT EMSCRIPTEN AND NOT MSVC AND
     (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86" OR
      CMAKE_SYSTEM_PROCESSOR STREQUAL ""))
   set_source_files_properties(${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
-                              PROPERTIES COMPILE_DEFINITIONS TINYUSDZ_IMAGEPROC_MULTIVERSION)
+                              PROPERTIES COMPILE_DEFINITIONS LIGHTUSD_IMAGEPROC_MULTIVERSION)
   message(STATUS "imageproc: native SIMD multi-versioning enabled (sse2/sse4.1/avx/avx2 runtime dispatch)")
 else()
   message(STATUS "imageproc: native SIMD multi-versioning disabled (single auto-vectorized build)")
 endif()
 
-if(TINYUSDZ_WITH_USDMTLX)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
+if(LIGHTUSD_WITH_USDMTLX)
+  list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
 endif()
 
-if(TINYUSDZ_WITH_JSON)
-  list(APPEND TINYUSDZ_SOURCES
+if(LIGHTUSD_WITH_JSON)
+  list(APPEND LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/minijson.cc
     ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
     ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     ${PROJECT_SOURCE_DIR}/src/json-writer.cc
     ${PROJECT_SOURCE_DIR}/src/json-util.cc)
 
-  list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
+  list(APPEND LIGHTUSD_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
 endif()
 
-if(TINYUSDZ_WITH_USDFBX)
-  list(APPEND TINYUSDZ_SOURCES
+if(LIGHTUSD_WITH_USDFBX)
+  list(APPEND LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdFbx.cc
   )
-  list(APPEND TINYUSDZ_DEP_SOURCES
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/OpenFBX/src/ofbx.cpp)
 endif()
 
-if(TINYUSDZ_WITH_USDOBJ)
-  list(APPEND TINYUSDZ_DEP_SOURCES
+if(LIGHTUSD_WITH_USDOBJ)
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
 endif()
 
-if(TINYUSDZ_WITH_USDVOX)
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
+if(LIGHTUSD_WITH_USDVOX)
+  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
 endif()
 
-if(TINYUSDZ_WITH_USDVOL)
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES
+if(LIGHTUSD_WITH_USDVOL)
+  list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tinyvdb/tinyvdb_io.c)
 endif()
 
-set(TINYUSDZ_PYTHON_BINDING_SOURCES
+set(LIGHTUSD_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/python-bindings.cc)
 
-#set(TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES
+#set(LIGHTUSD_BLENDER_PYTHON_BINDING_SOURCES
 #    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
 
-if(TINYUSDZ_WITH_TIFF)
-  list(APPEND TINYUSDZ_DEP_SOURCES
+if(LIGHTUSD_WITH_TIFF)
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc)
-  if(TINYUSDZ_USE_SYSTEM_ZLIB)
+  if(LIGHTUSD_USE_SYSTEM_ZLIB)
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc
       PROPERTIES COMPILE_DEFINITIONS "TINY_DNG_LOADER_ENABLE_ZIP=1;TINY_DNG_LOADER_USE_SYSTEM_ZLIB=1")
@@ -1022,17 +1022,17 @@ if(TINYUSDZ_WITH_TIFF)
   endif()
 
   # NOTE: tiny_dng_loader doesn't depend on tinyexr,
-  # tinyexr is now added separately in the TINYUSDZ_WITH_EXR section
-endif(TINYUSDZ_WITH_TIFF)
+  # tinyexr is now added separately in the LIGHTUSD_WITH_EXR section
+endif(LIGHTUSD_WITH_TIFF)
 
-if(TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_USE_TINYEXR_V3)
+if(LIGHTUSD_WITH_EXR)
+  if(LIGHTUSD_USE_TINYEXR_V3)
     # TinyEXR v3 C API (pure-C11 reader/writer; upstream `include/exr.h`).
     # The vendored src/external/tinyexr/src/ holds only the minimal codec set:
     # HTJ2K (EXR_NO_JPH) and ZSTD (EXR_NO_ZSTD) are compiled out for a small
     # footprint. The v3 C core is self-contained (its own DEFLATE via fpnge), so
     # it depends on neither miniz nor zlib.
-    message(STATUS "TinyUSDZ: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
+    message(STATUS "LightUSD: Using TinyEXR v3 C API (pure-C11, minimal codecs)")
 
     file(GLOB TINYEXR_V3_SOURCES
          ${PROJECT_SOURCE_DIR}/src/external/tinyexr/src/*.c)
@@ -1041,13 +1041,13 @@ if(TINYUSDZ_WITH_EXR)
       INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/src/external/tinyexr/src"
       COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
 
-    list(APPEND TINYUSDZ_DEP_SOURCES ${TINYEXR_V3_SOURCES})
+    list(APPEND LIGHTUSD_DEP_SOURCES ${TINYEXR_V3_SOURCES})
 
   else()
-    # TinyEXR v1 API (legacy; deprecated, kept behind TINYUSDZ_USE_TINYEXR_V3=OFF).
-    message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
+    # TinyEXR v1 API (legacy; deprecated, kept behind LIGHTUSD_USE_TINYEXR_V3=OFF).
+    message(STATUS "LightUSD: Using TinyEXR v1 API (legacy)")
 
-    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+    if(LIGHTUSD_USE_SYSTEM_ZLIB)
       set_source_files_properties(
         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
         PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
@@ -1057,22 +1057,22 @@ if(TINYUSDZ_WITH_EXR)
         PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
     endif()
 
-    list(APPEND TINYUSDZ_DEP_SOURCES
+    list(APPEND LIGHTUSD_DEP_SOURCES
          ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
   endif()
-endif(TINYUSDZ_WITH_EXR)
+endif(LIGHTUSD_WITH_EXR)
 
-# TinyUSDZ's PTEX reader and nanoimage backend use miniz directly. Keep this
+# LightUSD's PTEX reader and nanoimage backend use miniz directly. Keep this
 # bundled dependency even when TinyDNG itself is configured to use system zlib.
-list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
 set_source_files_properties(
   ${PROJECT_SOURCE_DIR}/src/external/miniz.c
   PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
 
 # -- Zstd compression --
-if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
-  if(NOT TINYUSDZ_USE_SYSTEM_ZSTD)
-    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
+  if(NOT LIGHTUSD_USE_SYSTEM_ZSTD)
+    list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
     # Disable ASM to avoid linker issues, suppress warnings for third-party code
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/zstd.c
@@ -1081,26 +1081,26 @@ if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
   else()
     find_package(zstd REQUIRED)
   endif()
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+  list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
 endif()
 
 # Vendored pure-C11 texture processing stack used by tusdview/tusdrender.
-if(TINYUSDZ_WITH_TEXTOOLS)
+if(LIGHTUSD_WITH_TEXTOOLS)
   set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
   file(GLOB TEXTOOLS_SOURCES CONFIGURE_DEPENDS
        ${TEXTOOLS_DIR}/resize/src/*.c
        ${TEXTOOLS_DIR}/texcomp/src/*.c
        ${TEXTOOLS_DIR}/texpipe/src/*.c
        ${TEXTOOLS_DIR}/envmap/src/*.c)
-  add_library(tinyusdz_textools STATIC ${TEXTOOLS_SOURCES})
-  target_include_directories(tinyusdz_textools PUBLIC
+  add_library(lightusd_textools STATIC ${TEXTOOLS_SOURCES})
+  target_include_directories(lightusd_textools PUBLIC
       ${TEXTOOLS_DIR}/resize/include
       ${TEXTOOLS_DIR}/texcomp/include
       ${TEXTOOLS_DIR}/texpipe/include
       ${TEXTOOLS_DIR}/envmap/include)
-  target_compile_features(tinyusdz_textools PRIVATE c_std_11)
+  target_compile_features(lightusd_textools PRIVATE c_std_11)
   if(NOT MSVC)
-    target_compile_options(tinyusdz_textools PRIVATE -w)
+    target_compile_options(lightusd_textools PRIVATE -w)
   endif()
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64" AND NOT MSVC)
     include(CheckCCompilerFlag)
@@ -1112,18 +1112,18 @@ if(TINYUSDZ_WITH_TEXTOOLS)
     endif()
   endif()
   if(UNIX AND NOT EMSCRIPTEN)
-    target_compile_definitions(tinyusdz_textools PRIVATE
+    target_compile_definitions(lightusd_textools PRIVATE
         TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
     find_package(Threads REQUIRED)
-    target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
+    target_link_libraries(lightusd_textools PUBLIC Threads::Threads)
   endif()
   if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-    target_link_libraries(tinyusdz_textools PUBLIC m)
+    target_link_libraries(lightusd_textools PUBLIC m)
   endif()
 endif()
 
 # -- nanoimage --
-if(TINYUSDZ_WITH_NANOIMAGE)
+if(LIGHTUSD_WITH_NANOIMAGE)
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_alloc.c
     ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_bmp.c
@@ -1136,7 +1136,7 @@ if(TINYUSDZ_WITH_NANOIMAGE)
     ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c
     PROPERTIES COMPILE_FLAGS "-w" COMPILE_DEFINITIONS "NI_USE_MINIZ"
                INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-  list(APPEND TINYUSDZ_DEP_SOURCES
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_alloc.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_bmp.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_jpeg.c
@@ -1145,8 +1145,8 @@ if(TINYUSDZ_WITH_NANOIMAGE)
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c)
 endif()
 
-if(TINYUSDZ_WITH_ALAC_AUDIO)
-  list(APPEND TINYUSDZ_DEP_SOURCES
+if(LIGHTUSD_WITH_ALAC_AUDIO)
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/EndianPortable.c
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ALACBitUtilities.c
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ALACDecoder.cpp
@@ -1158,28 +1158,28 @@ if(TINYUSDZ_WITH_ALAC_AUDIO)
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/matrix_dec.c
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/matrix_enc.c
   )
-endif(TINYUSDZ_WITH_ALAC_AUDIO)
+endif(LIGHTUSD_WITH_ALAC_AUDIO)
 
-if(TINYUSDZ_WITH_MCP_SERVER)
+if(LIGHTUSD_WITH_MCP_SERVER)
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
   )
-endif(TINYUSDZ_WITH_MCP_SERVER)
+endif(LIGHTUSD_WITH_MCP_SERVER)
 
-if(TINYUSDZ_WITH_QJS)
+if(LIGHTUSD_WITH_QJS)
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
+  list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/cutils.c
        ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/libregexp.c
        ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/libunicode.c
        ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/quickjs.c
        ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/xsum.c
   )
-endif(TINYUSDZ_WITH_QJS)
+endif(LIGHTUSD_WITH_QJS)
 
 # tinysubdiv (tsd): dependency-free subdivision surface library, always built.
-list(APPEND TINYUSDZ_SOURCES
+list(APPEND LIGHTUSD_SOURCES
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-validate.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-topology.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-bilinear.cc
@@ -1189,10 +1189,10 @@ list(APPEND TINYUSDZ_SOURCES
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-refine.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-stream.cc
   ${PROJECT_SOURCE_DIR}/src/tsd/tsd-limit.cc
-  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-tinyusdz.cc
+  ${PROJECT_SOURCE_DIR}/src/tsd/tsd-lightusd.cc
 )
 
-if(TINYUSDZ_WITH_GEOGRAM)
+if(LIGHTUSD_WITH_GEOGRAM)
   # Geogram basic core files (header-only minimal set)
   set(GEOGRAM_BASIC_SOURCES
     # Start with empty list - headers are included via include directories
@@ -1221,8 +1221,8 @@ if(TINYUSDZ_WITH_GEOGRAM)
     ${GEOGRAM_THIRD_PARTY_SOURCES}
   )
 
-  # Add Geogram sources to TinyUSDZ
-  list(APPEND TINYUSDZ_DEP_SOURCES ${GEOGRAM_ALL_SOURCES})
+  # Add Geogram sources to LightUSD
+  list(APPEND LIGHTUSD_DEP_SOURCES ${GEOGRAM_ALL_SOURCES})
 
   # Add Geogram include directory
   set(GEOGRAM_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/src/external/geogram)
@@ -1231,9 +1231,9 @@ if(TINYUSDZ_WITH_GEOGRAM)
   set_source_files_properties(${GEOGRAM_ALL_SOURCES}
                               PROPERTIES COMPILE_DEFINITIONS "GEO_STATIC_LIBS;GEOGRAM_WITH_LEGACY_NUMERICS")
 
-endif(TINYUSDZ_WITH_GEOGRAM)
+endif(LIGHTUSD_WITH_GEOGRAM)
 
-if(TINYUSDZ_WITH_WAMR)
+if(LIGHTUSD_WITH_WAMR)
   # WAMR core sources (minimal runtime for WebAssembly execution)
   set(WAMR_CORE_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_runtime_common.c
@@ -1270,8 +1270,8 @@ if(TINYUSDZ_WITH_WAMR)
     )
   endif()
 
-  # Add WAMR sources to TinyUSDZ
-  list(APPEND TINYUSDZ_DEP_SOURCES ${WAMR_CORE_SOURCES})
+  # Add WAMR sources to LightUSD
+  list(APPEND LIGHTUSD_DEP_SOURCES ${WAMR_CORE_SOURCES})
 
   # Add WAMR include directories
   set(WAMR_INCLUDE_DIRS
@@ -1282,7 +1282,7 @@ if(TINYUSDZ_WITH_WAMR)
     ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc
     ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/include
   )
-  
+
   # Add platform-specific include directory
   if(WIN32)
     list(APPEND WAMR_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/windows)
@@ -1299,9 +1299,9 @@ if(TINYUSDZ_WITH_WAMR)
                                 PROPERTIES COMPILE_DEFINITIONS "BH_PLATFORM_LINUX=1")
   endif()
 
-endif(TINYUSDZ_WITH_WAMR)
+endif(LIGHTUSD_WITH_WAMR)
 
-if(TINYUSDZ_WITH_MESHOPT)
+if(LIGHTUSD_WITH_MESHOPT)
   # meshoptimizer source files
   set(MESHOPTIMIZER_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/allocator.cpp
@@ -1322,23 +1322,23 @@ if(TINYUSDZ_WITH_MESHOPT)
     ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vfetchoptimizer.cpp
   )
 
-  list(APPEND TINYUSDZ_DEP_SOURCES ${MESHOPTIMIZER_SOURCES})
-endif(TINYUSDZ_WITH_MESHOPT)
+  list(APPEND LIGHTUSD_DEP_SOURCES ${MESHOPTIMIZER_SOURCES})
+endif(LIGHTUSD_WITH_MESHOPT)
 
-if(TINYUSDZ_WITH_REMOTERY)
+if(LIGHTUSD_WITH_REMOTERY)
   # Remotery source files
   set(REMOTERY_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/Remotery/Remotery.c
   )
-  
-  list(APPEND TINYUSDZ_DEP_SOURCES ${REMOTERY_SOURCES})
-  
+
+  list(APPEND LIGHTUSD_DEP_SOURCES ${REMOTERY_SOURCES})
+
   # Add Remotery include directory
-  list(APPEND TINYUSDZ_DEP_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/Remotery)
-  
+  list(APPEND LIGHTUSD_DEP_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/Remotery)
+
   # Define RMT_ENABLED to enable Remotery
   add_definitions(-DRMT_ENABLED=1)
-  
+
   # Platform-specific definitions for Remotery
   if(WIN32)
     add_definitions(-DRMT_USE_D3D11=0)
@@ -1347,11 +1347,11 @@ if(TINYUSDZ_WITH_REMOTERY)
   elseif(UNIX)
     add_definitions(-DRMT_USE_OPENGL=0)
   endif()
-endif(TINYUSDZ_WITH_REMOTERY)
+endif(LIGHTUSD_WITH_REMOTERY)
 
-if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_USE_SYSTEM_ZLIB)
-    list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
+if(LIGHTUSD_WITH_TIFF OR LIGHTUSD_WITH_EXR)
+  if(LIGHTUSD_USE_SYSTEM_ZLIB)
+    list(APPEND LIGHTUSD_EXT_LIBRARIES ZLIB::ZLIB)
   endif()
 endif()
 
@@ -1367,8 +1367,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-#pragma-messages")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-#pragma-messages")
 
-  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
-  if (NOT TINYUSDZ_NO_WERROR)
+  option(LIGHTUSD_NO_WERROR "Don't set -Werror when building the lightusd library" ${LIGHTUSD_DEFAULT_NO_WERROR})
+  if (NOT LIGHTUSD_NO_WERROR)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
   endif()
 
@@ -1390,24 +1390,24 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # clang 21+ (e.g. llvm-mingw clang 22) also tightens
   # -Wthread-safety-negative under -Weverything. Suppress it when supported
   # rather than requiring negative-capability annotations throughout the code.
-  check_cxx_compiler_flag("-Wthread-safety-negative" TINYUSDZ_HAS_WTHREAD_SAFETY_NEGATIVE)
-  if (TINYUSDZ_HAS_WTHREAD_SAFETY_NEGATIVE)
+  check_cxx_compiler_flag("-Wthread-safety-negative" LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
+  if (LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-thread-safety-negative")
   endif()
 
-  if(TINYUSDZ_COMPILE_TIME_TRACE)
+  if(LIGHTUSD_COMPILE_TIME_TRACE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
   endif()
 
-  set_source_files_properties(${TINYUSDZ_SOURCES}
+  set_source_files_properties(${LIGHTUSD_SOURCES}
                               PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
 
   # nlohmann/json is vendored third-party code. Clang 21's -Weverything emits
   # diagnostics from its header during template instantiation, so suppress only
   # those third-party warning classes on translation units that include it.
-  set(TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS
+  set(LIGHTUSD_NLOHMANN_JSON_WARNING_FLAGS
       " -Wno-covered-switch-default -Wno-weak-vtables")
-  set(TINYUSDZ_NLOHMANN_JSON_SOURCES
+  set(LIGHTUSD_NLOHMANN_JSON_SOURCES
       ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-js-bridge.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
@@ -1422,14 +1422,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       ${PROJECT_SOURCE_DIR}/src/tydra/urdf-to-usd.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/value-to-json.cc
       ${PROJECT_SOURCE_DIR}/src/tydra/js-script-persistent.cc)
-  foreach(TINYUSDZ_NLOHMANN_JSON_SOURCE ${TINYUSDZ_NLOHMANN_JSON_SOURCES})
-    set_property(SOURCE ${TINYUSDZ_NLOHMANN_JSON_SOURCE}
+  foreach(LIGHTUSD_NLOHMANN_JSON_SOURCE ${LIGHTUSD_NLOHMANN_JSON_SOURCES})
+    set_property(SOURCE ${LIGHTUSD_NLOHMANN_JSON_SOURCE}
                  APPEND_STRING PROPERTY COMPILE_FLAGS
-                 ${TINYUSDZ_NLOHMANN_JSON_WARNING_FLAGS})
+                 ${LIGHTUSD_NLOHMANN_JSON_WARNING_FLAGS})
   endforeach()
 
-  if (TINYUSDZ_WITH_C_API)
-    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+  if (LIGHTUSD_WITH_C_API)
+    set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
                                 PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
   endif()
 
@@ -1440,32 +1440,32 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
       "-Wall "
   )
 
-  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
-  if (NOT TINYUSDZ_NO_WERROR)
+  option(LIGHTUSD_NO_WERROR "Don't set -Werror when building the lightusd library" ${LIGHTUSD_DEFAULT_NO_WERROR})
+  if (NOT LIGHTUSD_NO_WERROR)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
   endif()
 
-  set_source_files_properties(${TINYUSDZ_SOURCES}
+  set_source_files_properties(${LIGHTUSD_SOURCES}
                               PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
 
-  if (TINYUSDZ_WITH_C_API)
-    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+  if (LIGHTUSD_WITH_C_API)
+    set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
                                 PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
   endif()
 endif()
 
-if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
+if(LIGHTUSD_CUSTOM_COMPILE_FLAGS)
   #
   # Overwrite existing TUSDZ_COMPILE_FLAGS
   #
 
   #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
-    set_source_files_properties(${TINYUSDZ_SOURCES}
+    set_source_files_properties(${LIGHTUSD_SOURCES}
                               PROPERTIES COMPILE_FLAGS "${TUSDZ_CUSTOM_COMPILE_FLAGS}")
 
-    if (TINYUSDZ_WITH_C_API)
-      set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+    if (LIGHTUSD_WITH_C_API)
+      set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
                                   PROPERTIES COMPILE_FLAGS "${TUSDZ_CUSTOM_COMPILE_FLAGS}")
     endif()
   #endif()
@@ -1481,175 +1481,175 @@ endif()
 ## NOTE: Static lib is always being built with PIC enabled.
 ##
 ##
-#add_library(tinyusdz_object OBJECT ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-#set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
-#set_target_properties(tinyusdz_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
+#add_library(lightusd_object OBJECT ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+#set_target_properties(lightusd_object PROPERTIES FOLDER "lightusd")
+#set_target_properties(lightusd_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# TinyUSDZ should compile well without /bigobj flag.
+# LightUSD should compile well without /bigobj flag.
 # Uncommend if you encounter the following errror: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
 #if(MSVC)
-#  target_compile_options(tinyusdz_object PRIVATE /bigobj)
+#  target_compile_options(lightusd_object PRIVATE /bigobj)
 #elif(WIN32)
 #  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 #    # guess mingw-gcc
-#    target_compile_options(tinyusdz_object PRIVATE "-Wa, -mbig-obj")
+#    target_compile_options(lightusd_object PRIVATE "-Wa, -mbig-obj")
 #  endif()
 #endif()
 
 #if (MSVC)
-#  if (TINYUSDZ_CXX_MP_FLAG)
-#    target_compile_options(tinyusdz_object PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+#  if (LIGHTUSD_CXX_MP_FLAG)
+#    target_compile_options(lightusd_object PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
 #  endif()
 #endif()
 #
-#if(TINYUSDZ_DEBUG_PRINT)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_DEBUG_PRINT")
+#if(LIGHTUSD_DEBUG_PRINT)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_DEBUG_PRINT")
 #endif()
 #
-#if(TINYUSDZ_PRODUCTION_BUILD)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+#if(LIGHTUSD_PRODUCTION_BUILD)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_PRODUCTION_BUILD")
 #endif()
 #
 ## default = enable module, so invert definition
-#if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
+#if(NOT LIGHTUSD_WITH_MODULE_USDA_READER)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_DISABLE_MODULE_USDA_READER")
 #endif()
 #
-#if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
+#if(NOT LIGHTUSD_WITH_MODULE_USDA_WRITER)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_DISABLE_MODULE_USDA_WRITER")
 #endif()
 #
-#if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
+#if(NOT LIGHTUSD_WITH_MODULE_USDC_READER)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_DISABLE_MODULE_USDC_READER")
 #endif()
 #
-#if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
+#if(NOT LIGHTUSD_WITH_MODULE_USDC_WRITER)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_DISABLE_MODULE_USDC_WRITER")
 #endif()
 #
-#if(NOT TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
-#  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_BUILTIN_IMAGE_LOADER")
+#if(NOT LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER)
+#  target_compile_definitions(lightusd_object PRIVATE "LIGHTUSD_NO_BUILTIN_IMAGE_LOADER")
 #endif()
 #
-#if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
-#  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
+#if(LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION)
+#  target_compile_definitions(lightusd_object PRIVATE "LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION")
 #endif()
 #
-#if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
-#  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
+#if(LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
+#  target_compile_definitions(lightusd_object PRIVATE "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
 #endif()
 #
-#target_include_directories(tinyusdz_object
+#target_include_directories(lightusd_object
 #                           PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-#if(TINYUSDZ_WITH_JSON)
+#if(LIGHTUSD_WITH_JSON)
 ##target_include_directories(
-##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+##  ${LIGHTUSD_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
 #  target_include_directories(
-#    ${TINYUSDZ_LIB_TARGET}
+#    ${LIGHTUSD_LIB_TARGET}
 #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
 #endif()
 
-#if(TINYUSDZ_WITH_USDMTLX)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_USE_USDMTLX")
+#if(LIGHTUSD_WITH_USDMTLX)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_USE_USDMTLX")
 #endif()
 #
-#if(TINYUSDZ_WITH_USDFBX)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_USE_USDFBX")
+#if(LIGHTUSD_WITH_USDFBX)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_USE_USDFBX")
 #endif()
 #
-#if(TINYUSDZ_WITH_USDOBJ)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_USE_USDOBJ")
+#if(LIGHTUSD_WITH_USDOBJ)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_USE_USDOBJ")
 #endif()
 #
-#if(TINYUSDZ_WITH_USDVOX)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_USE_USDVOX")
+#if(LIGHTUSD_WITH_USDVOX)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_USE_USDVOX")
 #endif()
 
-#target_link_libraries(tinyusdz_object ${TINYUSDZ_EXT_LIBRARIES}
+#target_link_libraries(lightusd_object ${LIGHTUSD_EXT_LIBRARIES}
 #                      ${CMAKE_DL_LIBS})
 #
-#if (TINYUSDZ_ENABLE_THREAD)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_ENABLE_THREAD")
-#  target_link_libraries(tinyusdz_object Threads::Threads)
+#if (LIGHTUSD_ENABLE_THREAD)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_ENABLE_THREAD")
+#  target_link_libraries(lightusd_object Threads::Threads)
 #endif()
 #
 #
 #if(IOS)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_BUILD_IOS")
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_BUILD_IOS")
 #endif()
 #
-#if(TINYUSDZ_WITH_TIFF)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_TIFF")
-#endif(TINYUSDZ_WITH_TIFF)
+#if(LIGHTUSD_WITH_TIFF)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_WITH_TIFF")
+#endif(LIGHTUSD_WITH_TIFF)
 #
-#if(TINYUSDZ_WITH_EXR)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_EXR")
-#endif(TINYUSDZ_WITH_EXR)
+#if(LIGHTUSD_WITH_EXR)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_WITH_EXR")
+#endif(LIGHTUSD_WITH_EXR)
 #
-#if(TINYUSDZ_WITH_COLORIO)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_COLORIO")
-#endif(TINYUSDZ_WITH_COLORIO)
+#if(LIGHTUSD_WITH_COLORIO)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_WITH_COLORIO")
+#endif(LIGHTUSD_WITH_COLORIO)
 #
-#if(TINYUSDZ_WITH_AUDIO)
-#  target_compile_definitions(tinyusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_AUDIO")
-#endif(TINYUSDZ_WITH_AUDIO)
+#if(LIGHTUSD_WITH_AUDIO)
+#  target_compile_definitions(lightusd_object
+#                             PRIVATE "LIGHTUSD_WITH_AUDIO")
+#endif(LIGHTUSD_WITH_AUDIO)
 #
-#if(TINYUSDZ_WITH_ALAC_AUDIO)
+#if(LIGHTUSD_WITH_ALAC_AUDIO)
 #  target_compile_definitions(tinuusdz_object
-#                             PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
-#endif(TINYUSDZ_WITH_ALAC_AUDIO)
+#                             PRIVATE "LIGHTUSD_WITH_ALAC_AUDIO")
+#endif(LIGHTUSD_WITH_ALAC_AUDIO)
 #
 # TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
-#add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
-#add_sanitizers(${TINYUSDZ_TARGET_STATIC})
+#add_library(${LIGHTUSD_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
+#add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 
-add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-set_target_properties(${TINYUSDZ_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_sanitizers(${TINYUSDZ_TARGET_STATIC})
-#set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
+add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+set_target_properties(${LIGHTUSD_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_sanitizers(${LIGHTUSD_TARGET_STATIC})
+#set_target_properties(lightusd_object PROPERTIES FOLDER "lightusd")
 
 # Target with namespace
-add_library(${TINYUSDZ_TARGET_STATIC_NS} ALIAS ${TINYUSDZ_TARGET_STATIC})
+add_library(${LIGHTUSD_TARGET_STATIC_NS} ALIAS ${LIGHTUSD_TARGET_STATIC})
 
 
-if(TINYUSDZ_BUILD_SHARED_LIBS)
+if(LIGHTUSD_BUILD_SHARED_LIBS)
   #add_library(
-  #  ${TINYUSDZ_TARGET} SHARED $<TARGET_OBJECTS:tinyusdz_object>)
+  #  ${LIGHTUSD_TARGET} SHARED $<TARGET_OBJECTS:lightusd_object>)
   add_library(
-    ${TINYUSDZ_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-  add_sanitizers(${TINYUSDZ_TARGET})
+    ${LIGHTUSD_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+  add_sanitizers(${LIGHTUSD_TARGET})
 
   # for dllexport
-  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
-  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
+  target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "LIGHTUSD_COMPILE_LIBRARY")
+  target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "LIGHTUSD_SHARED_LIBRARY")
 
-  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC} ${TINYUSDZ_TARGET})
+  set(LIGHTUSD_LIBS ${LIGHTUSD_TARGET_STATIC} ${LIGHTUSD_TARGET})
 else()
   # static only
-  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC})
+  set(LIGHTUSD_LIBS ${LIGHTUSD_TARGET_STATIC})
 endif()
 
-if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
-  if(TINYUSDZ_BUILD_SHARED_LIBS)
-    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "PXR_DYNAMIC")
-    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
+if(WIN32 AND LIGHTUSD_WITH_PXR_COMPAT_API)
+  if(LIGHTUSD_BUILD_SHARED_LIBS)
+    target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "PXR_DYNAMIC")
+    target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "USD_EXPORTS")
   endif()
 
 endif()
@@ -1657,8 +1657,8 @@ endif()
 #
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
-if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next tinyusdz_next_build)
+if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next lightusd_next_build)
 endif()
 
 #
@@ -1668,25 +1668,25 @@ endif()
 #
 # -- common target props
 #
-foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
+foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
 
   # Precompiled header to amortize parsing of large, stable headers across the
   # many C++ TUs. Guarded with COMPILE_LANGUAGE:CXX because the library also
   # contains C sources (zstd.c, lz4.c, yyjson.c, ...) which cannot use a C++ PCH.
-  if(TINYUSDZ_USE_PCH)
-    target_precompile_headers(${TINYUSDZ_LIB_TARGET} PRIVATE
-      "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/tinyusdz-pch.hh>")
+  if(LIGHTUSD_USE_PCH)
+    target_precompile_headers(${LIGHTUSD_LIB_TARGET} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/lightusd-pch.hh>")
   endif()
 
-  # Although TinyUSDZ should compile well without /bigobj flag,
+  # Although LightUSD should compile well without /bigobj flag,
   # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
   if(MSVC)
-    target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
+    target_compile_options(${LIGHTUSD_LIB_TARGET} PRIVATE /bigobj)
   endif()
 
   if (MSVC)
-    if (TINYUSDZ_CXX_MP_FLAG)
-      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+    if (LIGHTUSD_CXX_MP_FLAG)
+      target_compile_options(${LIGHTUSD_LIB_TARGET} PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
     endif()
   endif()
 
@@ -1694,279 +1694,279 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   # It defaults to 1MB on MSVC, which is the same as our current JS stack size,
   # so it will overflow and crash otherwise.
   # On MinGW it defaults to 2MB.
-  if (TINYUSDZ_WITH_QJS) 
+  if (LIGHTUSD_WITH_QJS)
     if(WIN32)
        if(MSVC)
-           target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /STACK:8388608)
+           target_compile_options(${LIGHTUSD_LIB_TARGET} PRIVATE /STACK:8388608)
        endif()
     endif()
   endif()
 
-  if(TINYUSDZ_DEBUG_PRINT)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DEBUG_PRINT")
+  if(LIGHTUSD_DEBUG_PRINT)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_DEBUG_PRINT")
   endif()
 
-  if(TINYUSDZ_PRODUCTION_BUILD)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+  if(LIGHTUSD_PRODUCTION_BUILD)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_PRODUCTION_BUILD")
   endif()
 
   # default = enable module, so invert definition
-  if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
+  if(NOT LIGHTUSD_WITH_MODULE_USDA_READER)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_DISABLE_MODULE_USDA_READER")
   endif()
 
-  if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
+  if(NOT LIGHTUSD_WITH_MODULE_USDA_WRITER)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_DISABLE_MODULE_USDA_WRITER")
   endif()
 
-  if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
+  if(NOT LIGHTUSD_WITH_MODULE_USDC_READER)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_DISABLE_MODULE_USDC_READER")
   endif()
 
-  if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
+  if(NOT LIGHTUSD_WITH_MODULE_USDC_WRITER)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_DISABLE_MODULE_USDC_WRITER")
   endif()
 
-  if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
+  if(LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET} PRIVATE "LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION")
   endif()
 
-  if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
+  if(LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET} PRIVATE "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
   endif()
 
-  if(TINYUSDZ_WITH_NANOIMAGE)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_NANOIMAGE")
+  if(LIGHTUSD_WITH_NANOIMAGE)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET} PRIVATE "LIGHTUSD_WITH_NANOIMAGE")
   endif()
 
-  if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_ZSTD_COMPRESSION")
-    if(TINYUSDZ_USE_SYSTEM_ZSTD)
-      target_link_libraries(${TINYUSDZ_LIB_TARGET} PUBLIC zstd::zstd)
+  if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET} PRIVATE "LIGHTUSD_WITH_ZSTD_COMPRESSION")
+    if(LIGHTUSD_USE_SYSTEM_ZSTD)
+      target_link_libraries(${LIGHTUSD_LIB_TARGET} PUBLIC zstd::zstd)
     endif()
   endif()
 
-  target_include_directories(${TINYUSDZ_LIB_TARGET}
+  target_include_directories(${LIGHTUSD_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-  if(TINYUSDZ_WITH_JSON)
+  if(LIGHTUSD_WITH_JSON)
     #target_include_directories(
-    #  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
-    if(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
-      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                                 PUBLIC "TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT")
+    #  ${LIGHTUSD_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET} PRIVATE "LIGHTUSD_WITH_JSON")
+    if(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
+      target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                                 PUBLIC "LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT")
     endif()
   endif()
 
-  if(TINYUSDZ_WITH_USDMTLX)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_USE_USDMTLX")
+  if(LIGHTUSD_WITH_USDMTLX)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_USE_USDMTLX")
   endif()
 
-  if(TINYUSDZ_WITH_USDFBX)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_USE_USDFBX")
+  if(LIGHTUSD_WITH_USDFBX)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_USE_USDFBX")
   endif()
 
-  if(TINYUSDZ_WITH_USDOBJ)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_USE_USDOBJ")
+  if(LIGHTUSD_WITH_USDOBJ)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_USE_USDOBJ")
   endif()
 
-  if(TINYUSDZ_WITH_USDVOX)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_USE_USDVOX")
+  if(LIGHTUSD_WITH_USDVOX)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_USE_USDVOX")
   endif()
 
-  if(TINYUSDZ_WITH_USDVOL)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_USE_USDVOL")
+  if(LIGHTUSD_WITH_USDVOL)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_USE_USDVOL")
   endif()
 
-  if(TINYUSDZ_WITH_PCP)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_PCP")
+  if(LIGHTUSD_WITH_PCP)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_PCP")
   endif()
 
-  if(NOT TINYUSDZ_ENABLE_SIMD)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_SIMD")
+  if(NOT LIGHTUSD_ENABLE_SIMD)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_DISABLE_SIMD")
   endif()
 
-  if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PUBLIC "TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE")
-    target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_next)
+  if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PUBLIC "LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE")
+    target_link_libraries(${LIGHTUSD_LIB_TARGET} lightusd_next)
   endif()
 
-  target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
+  target_link_libraries(${LIGHTUSD_LIB_TARGET} ${LIGHTUSD_EXT_LIBRARIES}
                         ${CMAKE_DL_LIBS})
 
-  if (TINYUSDZ_ENABLE_THREAD)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_ENABLE_THREAD")
-    target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
+  if (LIGHTUSD_ENABLE_THREAD)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_ENABLE_THREAD")
+    target_link_libraries(${LIGHTUSD_LIB_TARGET} Threads::Threads)
   endif()
 
   # On 32-bit systems, 64-bit atomic operations require libatomic
   # (Skip for emscripten as libatomic doesn't exist in wasm environment)
   # (Skip for MSVC as atomics are built into the runtime)
   if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN AND NOT MSVC)
-    target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
+    target_link_libraries(${LIGHTUSD_LIB_TARGET} atomic)
   endif()
 
   if(IOS)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_BUILD_IOS")
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_BUILD_IOS")
   endif()
 
-  if(TINYUSDZ_WITH_TIFF)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_TIFF")
-  endif(TINYUSDZ_WITH_TIFF)
+  if(LIGHTUSD_WITH_TIFF)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_TIFF")
+  endif(LIGHTUSD_WITH_TIFF)
 
-  if(TINYUSDZ_WITH_EXR)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_EXR")
-    if(TINYUSDZ_USE_TINYEXR_V3)
+  if(LIGHTUSD_WITH_EXR)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_EXR")
+    if(LIGHTUSD_USE_TINYEXR_V3)
       # Select the pure-C11 v3 C EXR backend in image-loader.cc / image-writer.cc.
-      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                                 PRIVATE "TINYUSDZ_EXR_V3=1")
+      target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                                 PRIVATE "LIGHTUSD_EXR_V3=1")
     endif()
-  endif(TINYUSDZ_WITH_EXR)
+  endif(LIGHTUSD_WITH_EXR)
 
-  if(TINYUSDZ_WITH_COLORIO)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_COLORIO")
-  endif(TINYUSDZ_WITH_COLORIO)
+  if(LIGHTUSD_WITH_COLORIO)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_COLORIO")
+  endif(LIGHTUSD_WITH_COLORIO)
 
-  if(TINYUSDZ_WITH_TEXTOOLS)
+  if(LIGHTUSD_WITH_TEXTOOLS)
     # KTX2 / GPU-compressed texture decode in image-loader.cc goes through the
     # vendored texpipe/texcomp reader (tp_ktx2_read + tc_*_decompress). Link the
-    # C texture libs into core; the PUBLIC include dirs of tinyusdz_textools
+    # C texture libs into core; the PUBLIC include dirs of lightusd_textools
     # propagate texpipe.h/texcomp.h to the core sources.
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_TEXTOOLS")
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_TEXTOOLS")
     # NOTE: core uses the plain target_link_libraries signature everywhere; keep
     # it plain here so CMake doesn't reject a mixed plain/keyword usage.
-    target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_textools)
-  endif(TINYUSDZ_WITH_TEXTOOLS)
+    target_link_libraries(${LIGHTUSD_LIB_TARGET} lightusd_textools)
+  endif(LIGHTUSD_WITH_TEXTOOLS)
 
-  if(TINYUSDZ_WITH_AUDIO)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_AUDIO")
-  endif(TINYUSDZ_WITH_AUDIO)
+  if(LIGHTUSD_WITH_AUDIO)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_AUDIO")
+  endif(LIGHTUSD_WITH_AUDIO)
 
-  if(TINYUSDZ_WITH_ALAC_AUDIO)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
-  endif(TINYUSDZ_WITH_ALAC_AUDIO)
+  if(LIGHTUSD_WITH_ALAC_AUDIO)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_ALAC_AUDIO")
+  endif(LIGHTUSD_WITH_ALAC_AUDIO)
 
-  if(TINYUSDZ_WITH_MCP_SERVER)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_MCP_SERVER")
+  if(LIGHTUSD_WITH_MCP_SERVER)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_MCP_SERVER")
 
     # use dll for SSL + OPENSSL_API_3.0
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                PRIVATE "OPENSSL_API_3_0")
-  endif(TINYUSDZ_WITH_MCP_SERVER)
+  endif(LIGHTUSD_WITH_MCP_SERVER)
 
-  if(TINYUSDZ_FPNGE_ENABLED)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_HAVE_FPNGE")
-  endif(TINYUSDZ_FPNGE_ENABLED)
+  if(LIGHTUSD_FPNGE_ENABLED)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_HAVE_FPNGE")
+  endif(LIGHTUSD_FPNGE_ENABLED)
 
-  if(TINYUSDZ_FPNG_ENABLED)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_HAVE_FPNG")
-  endif(TINYUSDZ_FPNG_ENABLED)
+  if(LIGHTUSD_FPNG_ENABLED)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_HAVE_FPNG")
+  endif(LIGHTUSD_FPNG_ENABLED)
 
-  if(TINYUSDZ_WITH_QJS)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_QJS")
-  endif(TINYUSDZ_WITH_QJS)
+  if(LIGHTUSD_WITH_QJS)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_QJS")
+  endif(LIGHTUSD_WITH_QJS)
 
-  if(TINYUSDZ_WITH_TYDRA)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_TYDRA")
-  endif(TINYUSDZ_WITH_TYDRA)
+  if(LIGHTUSD_WITH_TYDRA)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_TYDRA")
+  endif(LIGHTUSD_WITH_TYDRA)
 
-  if(TINYUSDZ_WITH_GEOGRAM)
-    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${GEOGRAM_INCLUDE_DIR})
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_GEOGRAM")
+  if(LIGHTUSD_WITH_GEOGRAM)
+    target_include_directories(${LIGHTUSD_LIB_TARGET} PRIVATE ${GEOGRAM_INCLUDE_DIR})
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_GEOGRAM")
     # Geogram-specific definitions
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                PRIVATE "GEO_STATIC_LIBS")
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                PRIVATE "GEOGRAM_WITH_LEGACY_NUMERICS")
-  endif(TINYUSDZ_WITH_GEOGRAM)
+  endif(LIGHTUSD_WITH_GEOGRAM)
 
-  if(TINYUSDZ_WITH_WAMR)
-    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${WAMR_INCLUDE_DIRS})
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_WAMR")
+  if(LIGHTUSD_WITH_WAMR)
+    target_include_directories(${LIGHTUSD_LIB_TARGET} PRIVATE ${WAMR_INCLUDE_DIRS})
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_WAMR")
     # WAMR-specific definitions
     if(WIN32)
-      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+      target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                  PRIVATE "BH_PLATFORM_WINDOWS=1")
     else()
-      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+      target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                  PRIVATE "BH_PLATFORM_LINUX=1")
     endif()
-  endif(TINYUSDZ_WITH_WAMR)
+  endif(LIGHTUSD_WITH_WAMR)
 
-  if(TINYUSDZ_WITH_COROUTINE)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_COROUTINE")
-  endif(TINYUSDZ_WITH_COROUTINE)
+  if(LIGHTUSD_WITH_COROUTINE)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_COROUTINE")
+  endif(LIGHTUSD_WITH_COROUTINE)
 
-  if(TINYUSDZ_WITH_MESHOPT)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_MESHOPT")
-  endif(TINYUSDZ_WITH_MESHOPT)
+  if(LIGHTUSD_WITH_MESHOPT)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE "LIGHTUSD_WITH_MESHOPT")
+  endif(LIGHTUSD_WITH_MESHOPT)
 
-  if(TINYUSDZ_CXX_EXCEPTIONS)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=1)
+  if(LIGHTUSD_CXX_EXCEPTIONS)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE LIGHTUSD_CXX_EXCEPTIONS=1)
   else()
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE TINYUSDZ_CXX_EXCEPTIONS=0 JSON_NOEXCEPTION=1)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE LIGHTUSD_CXX_EXCEPTIONS=0 JSON_NOEXCEPTION=1)
   endif()
 
-  if(TINYUSDZ_CXX_RTTI)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE TINYUSDZ_CXX_RTTI=1)
+  if(LIGHTUSD_CXX_RTTI)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE LIGHTUSD_CXX_RTTI=1)
   else()
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE TINYUSDZ_CXX_RTTI=0)
+    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
+                               PRIVATE LIGHTUSD_CXX_RTTI=0)
   endif()
 
-  if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+  if(NOT LIGHTUSD_CXX_EXCEPTIONS)
     if(MSVC)
-      target_compile_options(${TINYUSDZ_LIB_TARGET}
+      target_compile_options(${LIGHTUSD_LIB_TARGET}
                              PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
     else()
-      target_compile_options(${TINYUSDZ_LIB_TARGET}
+      target_compile_options(${LIGHTUSD_LIB_TARGET}
                              PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
     endif()
   endif()
 
-  if(NOT TINYUSDZ_CXX_RTTI)
+  if(NOT LIGHTUSD_CXX_RTTI)
     if(MSVC)
-      target_compile_options(${TINYUSDZ_LIB_TARGET}
+      target_compile_options(${LIGHTUSD_LIB_TARGET}
                              PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
     else()
       # -fno-rtti is a C++-only flag; scope it so the vendored C sources
       # (lz4.c / miniz.c / zstd.c) do not warn.
-      target_compile_options(${TINYUSDZ_LIB_TARGET}
+      target_compile_options(${LIGHTUSD_LIB_TARGET}
                              PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
     endif()
   endif()
@@ -1976,43 +1976,43 @@ endforeach()
 
 
 
-if(TINYUSDZ_WITH_C_API)
-  if(TINYUSDZ_BUILD_SHARED_LIBS)
-    add_library(${BUILD_TARGET_C} SHARED ${TINYUSDZ_C_API_SOURCES})
-    # Link with static(object) version of libtinyusdz to make dll monolitic
-    # TODO: Build TINYUSDZ_TARGET_STATIC as Object?
-    target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET_STATIC})
-    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
-    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
+if(LIGHTUSD_WITH_C_API)
+  if(LIGHTUSD_BUILD_SHARED_LIBS)
+    add_library(${BUILD_TARGET_C} SHARED ${LIGHTUSD_C_API_SOURCES})
+    # Link with static(object) version of liblightusd to make dll monolitic
+    # TODO: Build LIGHTUSD_TARGET_STATIC as Object?
+    target_link_libraries(${BUILD_TARGET_C} PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "LIGHTUSD_COMPILE_LIBRARY")
+    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "LIGHTUSD_SHARED_LIBRARY")
     target_include_directories(
       ${BUILD_TARGET_C} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  endif() 
+  endif()
 
-  add_library(${BUILD_TARGET_C}_static STATIC ${TINYUSDZ_C_API_SOURCES})
-  target_link_libraries(${BUILD_TARGET_C}_static PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  add_library(${BUILD_TARGET_C}_static STATIC ${LIGHTUSD_C_API_SOURCES})
+  target_link_libraries(${BUILD_TARGET_C}_static PRIVATE ${LIGHTUSD_TARGET_STATIC})
   target_include_directories(
     ${BUILD_TARGET_C}_static PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()
 
-if(TINYUSDZ_WITH_PYTHON)
+if(LIGHTUSD_WITH_PYTHON)
 
   # TODO: Fully Remove pybind11-based python binding
   ## For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
   ## We may switch to nanobind at some point(probably around 2024?)
 
   ## build monolithic .dll
-  ##nanobind_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
+  ##nanobind_add_module(${BUILD_TARGET_PY} ${LIGHTUSD_PYTHON_BINDING_SOURCES})
 
-  #pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
+  #pybind11_add_module(${BUILD_TARGET_PY} ${LIGHTUSD_PYTHON_BINDING_SOURCES})
   #add_sanitizers(${BUILD_TARGET_PY})
   #target_include_directories(
   #  ${BUILD_TARGET_PY} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-  #target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  #target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${LIGHTUSD_TARGET_STATIC})
 
   ## Use 'c' prefix
   ## TODO: Use `cpp` prefix?
-  #set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "ctinyusdz")
+  #set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "clightusd")
 
   ## copy python binding .so file to python/
   ## For developer
@@ -2022,14 +2022,14 @@ if(TINYUSDZ_WITH_PYTHON)
   #  TARGET ${BUILD_TARGET_PY}
   #  POST_BUILD
   #  COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_PY}>"
-  #          "${CMAKE_SOURCE_DIR}/python/tinyusdz/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
-  #  COMMENT "copying python module file to python/tinyusdz"
+  #          "${CMAKE_SOURCE_DIR}/python/lightusd/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
+  #  COMMENT "copying python module file to python/lightusd"
   #  VERBATIM)
   ## For pypi packaging
-  #install(TARGETS ${BUILD_TARGET_PY} LIBRARY DESTINATION tinyusdz)
+  #install(TARGETS ${BUILD_TARGET_PY} LIBRARY DESTINATION lightusd)
 
 
-  # copy C tinyusd .so file to python/tinyusdz/
+  # copy C lightusd .so file to python/lightusd/
   # For developer
   # NOTE: `POST_BUILD` command is not triggered when building python module using
   # `python setup.py build`
@@ -2037,8 +2037,8 @@ if(TINYUSDZ_WITH_PYTHON)
     TARGET ${BUILD_TARGET_C}
     POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_C}>"
-            "${CMAKE_SOURCE_DIR}/python/tinyusdz/$<TARGET_FILE_NAME:${BUILD_TARGET_C}>"
-    COMMENT "Copying libc-tinyusd.so/c-tinyusd.dll file to <tinyusdz>/python/tinyusdz"
+            "${CMAKE_SOURCE_DIR}/python/lightusd/$<TARGET_FILE_NAME:${BUILD_TARGET_C}>"
+    COMMENT "Copying libc-lightusd.so/c-lightusd.dll file to <lightusd>/python/lightusd"
     VERBATIM)
 
   # TODO: Run ctypesgen?
@@ -2048,40 +2048,40 @@ if(TINYUSDZ_WITH_PYTHON)
   # TODO: Use custom target and supply `cmake_install_target` in setup.py?
   # https://scikit-build.readthedocs.io/en/latest/usage.html#scikit-build-options
   #
-  install(TARGETS ${BUILD_TARGET_C} LIBRARY DESTINATION tinyusdz)
+  install(TARGETS ${BUILD_TARGET_C} LIBRARY DESTINATION lightusd)
 
 
 endif()
 
 # TODO: deprecate in next major version
-if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
+if(LIGHTUSD_WITH_TOOL_USDA_PARSER AND LIGHTUSD_WITH_MODULE_USDA_READER)
   add_executable(
     usda_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
   add_sanitizers(usda_parser)
-  if(TINYUSDZ_PRODUCTION_BUILD)
+  if(LIGHTUSD_PRODUCTION_BUILD)
     target_compile_definitions(usda_parser
-                               PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+                               PRIVATE "LIGHTUSD_PRODUCTION_BUILD")
   endif()
   target_include_directories(usda_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usda_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_link_libraries(usda_parser PRIVATE ${LIGHTUSD_TARGET_STATIC})
 endif()
 
 # TODO: deprecate in next major version
-if(TINYUSDZ_WITH_TOOL_USDC_PARSER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+if(LIGHTUSD_WITH_TOOL_USDC_PARSER AND LIGHTUSD_WITH_MODULE_USDC_READER)
   add_executable(
     usdc_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdc_parser/usdc-parser-main.cc)
   add_sanitizers(usdc_parser)
-  if(TINYUSDZ_PRODUCTION_BUILD)
+  if(LIGHTUSD_PRODUCTION_BUILD)
     target_compile_definitions(usdc_parser
-                               PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+                               PRIVATE "LIGHTUSD_PRODUCTION_BUILD")
   endif()
   target_include_directories(usdc_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usdc_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_link_libraries(usdc_parser PRIVATE ${LIGHTUSD_TARGET_STATIC})
 endif()
 
-#if(TINYUSDZ_WITH_BLENDER_ADDON)
+#if(LIGHTUSD_WITH_BLENDER_ADDON)
 #  pybind11_add_module(${BUILD_TARGET_BLENDER_PY}
-#                      ${TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES})
+#                      ${LIGHTUSD_BLENDER_PYTHON_BINDING_SOURCES})
 #  add_sanitizers(${BUILD_TARGET_BLENDER_PY})
 #
 #  # For Python.h header files. Assume Blender 2.93 LTS(Python 3.9)
@@ -2093,70 +2093,70 @@ endif()
 
 # Enable CTest before the example subdirectories are added, so a subdirectory
 # (e.g. examples/tusdview) can register its own tests with add_test(). The
-# main enable_testing() inside the TINYUSDZ_BUILD_TESTS block below runs after
+# main enable_testing() inside the LIGHTUSD_BUILD_TESTS block below runs after
 # these add_subdirectory() calls, which is too late for the subdirectory's own
 # add_test() to take effect. Calling it twice is harmless.
-if(TINYUSDZ_BUILD_TESTS OR (TINYUSDZ_BUILD_TEXTURE_GPU_BENCH AND BUILD_TESTING))
+if(LIGHTUSD_BUILD_TESTS OR (LIGHTUSD_BUILD_TEXTURE_GPU_BENCH AND BUILD_TESTING))
   enable_testing()
 endif()
 
-set(TINYUSDZ_TOOLS_ALLOCATOR_LIB "")
-if(TINYUSDZ_WITH_TCMALLOC)
-  find_library(TINYUSDZ_ALLOC_JEMALLOC NAMES jemalloc)
-  if(TINYUSDZ_ALLOC_JEMALLOC)
-    set(TINYUSDZ_TOOLS_ALLOCATOR_LIB "${TINYUSDZ_ALLOC_JEMALLOC}")
+set(LIGHTUSD_TOOLS_ALLOCATOR_LIB "")
+if(LIGHTUSD_WITH_TCMALLOC)
+  find_library(LIGHTUSD_ALLOC_JEMALLOC NAMES jemalloc)
+  if(LIGHTUSD_ALLOC_JEMALLOC)
+    set(LIGHTUSD_TOOLS_ALLOCATOR_LIB "${LIGHTUSD_ALLOC_JEMALLOC}")
   else()
-    find_library(TINYUSDZ_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
-    if(NOT TINYUSDZ_ALLOC_TCMALLOC)
+    find_library(LIGHTUSD_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
+    if(NOT LIGHTUSD_ALLOC_TCMALLOC)
       # Runtime-only installs often lack the -dev `.so` symlink.
-      find_file(TINYUSDZ_ALLOC_TCMALLOC
+      find_file(LIGHTUSD_ALLOC_TCMALLOC
         NAMES libtcmalloc_minimal.so.4 libtcmalloc.so.4
         PATHS /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib)
     endif()
-    if(TINYUSDZ_ALLOC_TCMALLOC)
-      set(TINYUSDZ_TOOLS_ALLOCATOR_LIB "${TINYUSDZ_ALLOC_TCMALLOC}")
+    if(LIGHTUSD_ALLOC_TCMALLOC)
+      set(LIGHTUSD_TOOLS_ALLOCATOR_LIB "${LIGHTUSD_ALLOC_TCMALLOC}")
     else()
-      find_library(TINYUSDZ_ALLOC_MIMALLOC NAMES mimalloc)
-      if(TINYUSDZ_ALLOC_MIMALLOC)
-        set(TINYUSDZ_TOOLS_ALLOCATOR_LIB "${TINYUSDZ_ALLOC_MIMALLOC}")
+      find_library(LIGHTUSD_ALLOC_MIMALLOC NAMES mimalloc)
+      if(LIGHTUSD_ALLOC_MIMALLOC)
+        set(LIGHTUSD_TOOLS_ALLOCATOR_LIB "${LIGHTUSD_ALLOC_MIMALLOC}")
       endif()
     endif()
   endif()
-  if(TINYUSDZ_TOOLS_ALLOCATOR_LIB)
-    message(STATUS "tinyusdz: linking allocator ${TINYUSDZ_TOOLS_ALLOCATOR_LIB} into CLI example tools")
+  if(LIGHTUSD_TOOLS_ALLOCATOR_LIB)
+    message(STATUS "lightusd: linking allocator ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} into CLI example tools")
   else()
-    message(WARNING "TINYUSDZ_WITH_TCMALLOC=ON but no jemalloc/tcmalloc/mimalloc found; using system malloc")
+    message(WARNING "LIGHTUSD_WITH_TCMALLOC=ON but no jemalloc/tcmalloc/mimalloc found; using system malloc")
   endif()
 endif()
 
-if(TINYUSDZ_BUILD_EXAMPLES)
+if(LIGHTUSD_BUILD_EXAMPLES)
   add_subdirectory(examples/tusdcat)
-  if(TINYUSDZ_WITH_TEXTOOLS)
+  if(LIGHTUSD_WITH_TEXTOOLS)
     # Authors .ktx2 texture companions + the legacy-safe customData hints.
     add_subdirectory(examples/usd-texcomp)
   endif()
-  if (TINYUSDZ_WITH_TYDRA)
+  if (LIGHTUSD_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
     add_subdirectory(examples/variant-lister)
     add_subdirectory(examples/variant-analyzer)
     add_subdirectory(examples/urdf-to-usd)
 
-    if (TINYUSDZ_BUILD_GUI_VIEWER)
+    if (LIGHTUSD_BUILD_GUI_VIEWER)
       add_subdirectory(examples/tusdview)
     endif()
 
-    # Independent of TINYUSDZ_BUILD_GUI_VIEWER on purpose: tusdquicklook shares
+    # Independent of LIGHTUSD_BUILD_GUI_VIEWER on purpose: tusdquicklook shares
     # no code with tusdview and needs no window-system or GPU dependency.
-    if (TINYUSDZ_BUILD_QUICKLOOK)
+    if (LIGHTUSD_BUILD_QUICKLOOK)
       add_subdirectory(examples/tusdquicklook)
     endif()
 
-    if (TINYUSDZ_WITH_MCP_SERVER)
+    if (LIGHTUSD_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
     endif()
 
-    if (TINYUSDZ_WITH_QJS)
+    if (LIGHTUSD_WITH_QJS)
       add_subdirectory(examples/js-script)
     endif()
   endif ()
@@ -2166,42 +2166,42 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/asset_resolution)
   add_subdirectory(examples/progressive_composition)
   add_subdirectory(examples/large-scene-load)
-  #if (TINYUSDZ_WITH_JSON)
+  #if (LIGHTUSD_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
-  #if (TINYUSDZ_WITH_USD_TO_GLTF)
+  #if (LIGHTUSD_WITH_USD_TO_GLTF)
   #  add_subdirectory(examples/usd_to_gltf)
   #endif()
-  if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
+  if(LIGHTUSD_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
-  if(TINYUSDZ_WITH_C_API)
+  if(LIGHTUSD_WITH_C_API)
     add_subdirectory(examples/c_api_example)
   endif()
-endif(TINYUSDZ_BUILD_EXAMPLES)
+endif(LIGHTUSD_BUILD_EXAMPLES)
 
-if(TINYUSDZ_BUILD_TEXTURE_GPU_BENCH)
-  if(TINYUSDZ_WITH_TEXTOOLS)
+if(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH)
+  if(LIGHTUSD_WITH_TEXTOOLS)
     add_subdirectory(tools/tusdview-texture-bench)
   else()
-    message(WARNING "TINYUSDZ_BUILD_TEXTURE_GPU_BENCH requires TINYUSDZ_WITH_TEXTOOLS=ON")
+    message(WARNING "LIGHTUSD_BUILD_TEXTURE_GPU_BENCH requires LIGHTUSD_WITH_TEXTOOLS=ON")
   endif()
 endif()
 
 # Register tool-local tests added below as part of the top-level test tree.
-if(TINYUSDZ_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS)
   enable_testing()
 endif()
 
 # Tools
-if(TINYUSDZ_BUILD_TOOLS)
+if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
   add_subdirectory(tools/tusdzconvert)
   add_subdirectory(tools/tusdchecker)
   # tusddiff uses the Tydra diff-and-compare API.
-  if(TINYUSDZ_WITH_TYDRA)
+  if(LIGHTUSD_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
-    # examples/tusdview (added earlier when TINYUSDZ_BUILD_GUI_VIEWER is also
+    # examples/tusdview (added earlier when LIGHTUSD_BUILD_GUI_VIEWER is also
     # ON) may have already pulled this in for its lightrt_c CPU RT backend.
     if(NOT TARGET tusdrender)
       add_subdirectory(tools/tusdrender)
@@ -2209,46 +2209,46 @@ if(TINYUSDZ_BUILD_TOOLS)
   endif()
 endif()
 
-if(TINYUSDZ_BUILD_BENCHMARKS)
+if(LIGHTUSD_BUILD_BENCHMARKS)
 
   #
   # Standalone benchmark exe.
   #
-  set(TINYUSDZ_BENCH_SOURCES ${PROJECT_SOURCE_DIR}/benchmarks/benchmark-main.cc)
+  set(LIGHTUSD_BENCH_SOURCES ${PROJECT_SOURCE_DIR}/benchmarks/benchmark-main.cc)
 
-  add_executable(${TINYUSDZ_BENCHMARK_TARGET} ${TINYUSDZ_BENCH_SOURCES})
-  add_sanitizers(${TINYUSDZ_BENCHMARK_TARGET})
+  add_executable(${LIGHTUSD_BENCHMARK_TARGET} ${LIGHTUSD_BENCH_SOURCES})
+  add_sanitizers(${LIGHTUSD_BENCHMARK_TARGET})
 
   target_include_directories(
-    ${TINYUSDZ_BENCHMARK_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+    ${LIGHTUSD_BENCHMARK_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
                                          ${PROJECT_SOURCE_DIR}/bencharks)
-  target_link_libraries(${TINYUSDZ_BENCHMARK_TARGET}
-                        PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_link_libraries(${LIGHTUSD_BENCHMARK_TARGET}
+                        PRIVATE ${LIGHTUSD_TARGET_STATIC})
 
-endif(TINYUSDZ_BUILD_BENCHMARKS)
+endif(LIGHTUSD_BUILD_BENCHMARKS)
 
 # [VisualStudio]
 if(WIN32)
-  # Set ${TINYUSDZ_TARGET_STATIC} as a startup project for VS IDE
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${TINYUSDZ_TARGET_STATIC})
+  # Set ${LIGHTUSD_TARGET_STATIC} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${LIGHTUSD_TARGET_STATIC})
 
   # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
-  # directory to ${TINYUSDZ_TARGET_STATIC} git repo root.
+  # directory to ${LIGHTUSD_TARGET_STATIC} git repo root.
   if(CMAKE_VERSION VERSION_GREATER 3.8.0)
     set_target_properties(
-      ${TINYUSDZ_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+      ${LIGHTUSD_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                            "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
 endif()
 
-if(TINYUSDZ_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS)
   #
   # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
   # Plain-C main() programs, no GPU/display needed. Disabled by default
-  # (TINYUSDZ_BUILD_TEXTOOLS_TESTS=OFF): these test vendored third-party code,
-  # not TinyUSDZ. Enable explicitly when validating a textools sync.
+  # (LIGHTUSD_BUILD_TEXTOOLS_TESTS=OFF): these test vendored third-party code,
+  # not LightUSD. Enable explicitly when validating a textools sync.
   #
-  if(TINYUSDZ_WITH_TEXTOOLS AND TINYUSDZ_BUILD_TEXTOOLS_TESTS)
+  if(LIGHTUSD_WITH_TEXTOOLS AND LIGHTUSD_BUILD_TEXTOOLS_TESTS)
     set(TEXTOOLS_TEST_PROGRAMS
       "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
       "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
@@ -2262,7 +2262,7 @@ if(TINYUSDZ_BUILD_TESTS)
       list(GET entry 1 tt_source)
       list(GET entry 2 tt_name)
       add_executable(${tt_target} ${tt_source})
-      target_link_libraries(${tt_target} PRIVATE tinyusdz_textools)
+      target_link_libraries(${tt_target} PRIVATE lightusd_textools)
       # Some tests poke library internals (tir_internal.h / texcomp_internal.h).
       target_include_directories(${tt_target} PRIVATE
         ${TEXTOOLS_DIR}/resize/src ${TEXTOOLS_DIR}/texcomp/src)
@@ -2283,16 +2283,16 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # Standalone tester
   #
-  set(TINYUSDZ_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
+  set(LIGHTUSD_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
 
-  add_executable(${TINYUSDZ_TEST_TARGET} ${TINYUSDZ_TEST_SOURCES})
-  add_sanitizers(${TINYUSDZ_TEST_TARGET})
+  add_executable(${LIGHTUSD_TEST_TARGET} ${LIGHTUSD_TEST_SOURCES})
+  add_sanitizers(${LIGHTUSD_TEST_TARGET})
 
   target_include_directories(
-    ${TINYUSDZ_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+    ${LIGHTUSD_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
                                     ${PROJECT_SOURCE_DIR}/tests)
-  target_link_libraries(${TINYUSDZ_TEST_TARGET}
-                        PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_link_libraries(${LIGHTUSD_TEST_TARGET}
+                        PRIVATE ${LIGHTUSD_TARGET_STATIC})
 
   #
   # unit tester
@@ -2306,7 +2306,7 @@ if(TINYUSDZ_BUILD_TESTS)
 
   #
   # Compression tester
-  # (its not involved with tinyusdz codes, and well tested now. so disabled. will be removed in future release)
+  # (its not involved with lightusd codes, and well tested now. so disabled. will be removed in future release)
   #
   # add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
 
@@ -2507,11 +2507,11 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # USDA parser tester
   #
-  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+  if(LIGHTUSD_WITH_MODULE_USDA_READER)
     add_test(
       NAME usda-parser-unit-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
-              "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+              "$<TARGET_FILE:test_lightusd>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
   endif()
 
@@ -2528,16 +2528,16 @@ if(TINYUSDZ_BUILD_TESTS)
   # limitation for this binary, not a toolchain bug. The validation logic
   # itself is correct on 32-bit (verified with a non-ASan i386 build: full suite
   # passes) and is exercised by every 64-bit job, and ASan coverage of the core
-  # library is still provided by unit-test-tinyusdz (which runs fine under
+  # library is still provided by unit-test-lightusd (which runs fine under
   # 32-bit ASan). So skip just these tusdcat-driven E2E tests in the 32-bit+ASan
   # configuration.
-  set(_tinyusdz_tusdcat_e2e_ok TRUE)
+  set(_lightusd_tusdcat_e2e_ok TRUE)
   if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND SANITIZE_ADDRESS)
-    set(_tinyusdz_tusdcat_e2e_ok FALSE)
-    message(STATUS "tinyusdz: skipping tusdcat E2E validation tests on 32-bit + ASan (i386 ASan runtime cannot reserve enough address space for tusdcat)")
+    set(_lightusd_tusdcat_e2e_ok FALSE)
+    message(STATUS "lightusd: skipping tusdcat E2E validation tests on 32-bit + ASan (i386 ASan runtime cannot reserve enough address space for tusdcat)")
   endif()
 
-  if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
+  if(TARGET tusdcat AND _lightusd_tusdcat_e2e_ok)
     # Crate-writer round-trip pins. Every check here is a fix for authored USD
     # data that the .usdc writer silently DROPPED or INVENTED: schema fallbacks
     # written for declaration-only attributes, prim/attribute metadata blocks,
@@ -2579,17 +2579,17 @@ if(TINYUSDZ_BUILD_TESTS)
               "${PROJECT_SOURCE_DIR}/models/texture-cat-plane.usdz"
       )
 
-    find_program(TINYUSDZ_NODE_EXECUTABLE node)
-    if(TINYUSDZ_NODE_EXECUTABLE
-       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.js"
-       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz/tinyusdz.wasm")
+    find_program(LIGHTUSD_NODE_EXECUTABLE node)
+    if(LIGHTUSD_NODE_EXECUTABLE
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/lightusd/lightusd.js"
+       AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/lightusd/lightusd.wasm")
       add_test(
         NAME web-validation-parity-test
         COMMAND ${CMAKE_COMMAND} -E env
                 "TUSDCAT_PATH=$<TARGET_FILE:tusdcat>"
-                "TINYUSDZ_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/tinyusdz"
-                "TINYUSDZ_PARITY_SKIP_STALE_WASM=1"
-                "${TINYUSDZ_NODE_EXECUTABLE}"
+                "LIGHTUSD_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/lightusd"
+                "LIGHTUSD_PARITY_SKIP_STALE_WASM=1"
+                "${LIGHTUSD_NODE_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/web/js/tests/validation-parity.mjs"
         )
     endif()
@@ -2829,41 +2829,41 @@ if(TINYUSDZ_BUILD_TESTS)
     # time and propagate it to tusdview tests.  Preserve any caller-supplied
     # LD_LIBRARY_PATH after the discovered directory; this also supports
     # versioned installations such as /opt/rocm/core-7.14/lib.
-    set(_tinyusdz_hip_library_dirs)
-    foreach(_tinyusdz_rocm_root IN ITEMS
+    set(_lightusd_hip_library_dirs)
+    foreach(_lightusd_rocm_root IN ITEMS
             "/opt/rocm" "$ENV{ROCM_PATH}" "$ENV{ROCM_HOME}")
-      if(_tinyusdz_rocm_root AND IS_DIRECTORY "${_tinyusdz_rocm_root}")
-        list(APPEND _tinyusdz_hip_library_dirs
-             "${_tinyusdz_rocm_root}/lib")
-        file(GLOB _tinyusdz_rocm_versioned_dirs LIST_DIRECTORIES true
-             "${_tinyusdz_rocm_root}/core-*/lib")
-        list(APPEND _tinyusdz_hip_library_dirs
-             ${_tinyusdz_rocm_versioned_dirs})
+      if(_lightusd_rocm_root AND IS_DIRECTORY "${_lightusd_rocm_root}")
+        list(APPEND _lightusd_hip_library_dirs
+             "${_lightusd_rocm_root}/lib")
+        file(GLOB _lightusd_rocm_versioned_dirs LIST_DIRECTORIES true
+             "${_lightusd_rocm_root}/core-*/lib")
+        list(APPEND _lightusd_hip_library_dirs
+             ${_lightusd_rocm_versioned_dirs})
       endif()
     endforeach()
-    find_library(_tinyusdz_hip_runtime
+    find_library(_lightusd_hip_runtime
                  NAMES amdhip64 libamdhip64.so
-                 PATHS ${_tinyusdz_hip_library_dirs}
+                 PATHS ${_lightusd_hip_library_dirs}
                  NO_DEFAULT_PATH)
-    if(_tinyusdz_hip_runtime)
-      get_filename_component(_tinyusdz_hip_runtime_dir
-                             "${_tinyusdz_hip_runtime}" DIRECTORY)
+    if(_lightusd_hip_runtime)
+      get_filename_component(_lightusd_hip_runtime_dir
+                             "${_lightusd_hip_runtime}" DIRECTORY)
       if(DEFINED ENV{LD_LIBRARY_PATH} AND
          NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
-        set(_tinyusdz_hip_ld_library_path
-            "${_tinyusdz_hip_runtime_dir}:$ENV{LD_LIBRARY_PATH}")
+        set(_lightusd_hip_ld_library_path
+            "${_lightusd_hip_runtime_dir}:$ENV{LD_LIBRARY_PATH}")
       else()
-        set(_tinyusdz_hip_ld_library_path
-            "${_tinyusdz_hip_runtime_dir}")
+        set(_lightusd_hip_ld_library_path
+            "${_lightusd_hip_runtime_dir}")
       endif()
-      message(STATUS "tinyusdz: HIP CTest runtime path: ${_tinyusdz_hip_runtime_dir}")
+      message(STATUS "lightusd: HIP CTest runtime path: ${_lightusd_hip_runtime_dir}")
     else()
-      set(_tinyusdz_hip_ld_library_path)
-      message(STATUS "tinyusdz: HIP runtime not found; HIP CTest cases will self-skip")
+      set(_lightusd_hip_ld_library_path)
+      message(STATUS "lightusd: HIP runtime not found; HIP CTest cases will self-skip")
     endif()
 
-    find_program(TINYUSDZ_XVFB_RUN xvfb-run)
-    if(TINYUSDZ_XVFB_RUN)
+    find_program(LIGHTUSD_XVFB_RUN xvfb-run)
+    if(LIGHTUSD_XVFB_RUN)
       add_test(
         NAME tusdview-skinning-screenshot-diff
         COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/tusdview/compare-skinning-screenshots.py
@@ -2873,7 +2873,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 --backend gl
                 --frames 4
                 --time 12
-                --xvfb-run "${TINYUSDZ_XVFB_RUN}"
+                --xvfb-run "${LIGHTUSD_XVFB_RUN}"
         )
       set_tests_properties(tusdview-skinning-screenshot-diff
                            PROPERTIES SKIP_RETURN_CODE 77)
@@ -2886,7 +2886,7 @@ if(TINYUSDZ_BUILD_TESTS)
         NAME tusdview-hip-bvh-refit
         COMMAND python3
                 ${PROJECT_SOURCE_DIR}/tests/tusdview/check-hip-bvh-refit.py
-                "${TINYUSDZ_XVFB_RUN}"
+                "${LIGHTUSD_XVFB_RUN}"
                 "$<TARGET_FILE:tusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-hip-bvh-refit"
@@ -3161,7 +3161,7 @@ if(TINYUSDZ_BUILD_TESTS)
       set_tests_properties(tusdview-legacy-double-deform
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 420)
     else()
-      message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
+      message(STATUS "lightusd: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
   endif()
 
@@ -3484,8 +3484,8 @@ if(TINYUSDZ_BUILD_TESTS)
     # packing chain. Split the backend matrix so each CTest case reports useful
     # progress and a slow backend cannot hide the others behind one silent
     # aggregate test.
-    set(_tinyusdz_semantic_backends gl vk-raster vk-rt cuda hip)
-    foreach(_backend IN LISTS _tinyusdz_semantic_backends)
+    set(_lightusd_semantic_backends gl vk-raster vk-rt cuda hip)
+    foreach(_backend IN LISTS _lightusd_semantic_backends)
       set(_test_name "tusdview-texture-semantic-aov-${_backend}")
       set(_semantic_timeout_env)
       if(_backend STREQUAL "gl")
@@ -3541,8 +3541,8 @@ if(TINYUSDZ_BUILD_TESTS)
     # external, UDIM, and USDZ resolution through both loaders and compares the
     # resulting images, while reducing this shard from ~162 viewer launches to
     # six.
-    set(_tinyusdz_semantic_rt_backends vk-rt cuda hip)
-    foreach(_backend IN LISTS _tinyusdz_semantic_rt_backends)
+    set(_lightusd_semantic_rt_backends vk-rt cuda hip)
+    foreach(_backend IN LISTS _lightusd_semantic_rt_backends)
       set(_test_name "tusdview-texture-semantic-rt-loader-parity-${_backend}")
       set(_semantic_rt_timeout_env)
       if(_backend STREQUAL "vk-rt")
@@ -3609,7 +3609,7 @@ if(TINYUSDZ_BUILD_TESTS)
     # DomeLight IBL baking is provided by the optional vendored textools
     # dependency. Do not register a pixel-regression that can never exercise
     # its feature when that dependency is intentionally disabled.
-    if(TINYUSDZ_WITH_TEXTOOLS)
+    if(LIGHTUSD_WITH_TEXTOOLS)
       add_test(
         NAME tusdview-dome-orientation
         COMMAND ${CMAKE_COMMAND} -E env
@@ -3802,7 +3802,7 @@ if(TINYUSDZ_BUILD_TESTS)
               "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN"
               "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch,unexpected_degradation,expectation_mismatch"
               bash "${PROJECT_SOURCE_DIR}/tests/tusdview/run-usd-assets-batch.sh"
-                   --root "${TINYUSDZ_USD_ASSETS_ROOT}"
+                   --root "${LIGHTUSD_USD_ASSETS_ROOT}"
                    --golden-kind coverage
                    --golden "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/usd-assets-goldens.tsv"
       )
@@ -3835,7 +3835,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_BROAD"
                 "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh"
-                     --root "${TINYUSDZ_USD_ASSETS_ROOT}"
+                     --root "${LIGHTUSD_USD_ASSETS_ROOT}"
                      --profile usd-assets-broad
                      --require-profile-complete
                      --modes vk-raster,vk-rt,tusdr-cpu,tusdr-vk
@@ -3852,7 +3852,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 "TUSDRENDER=$<TARGET_FILE:tusdrender>"
                 "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_ANIMATION"
                 "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
-                "USD_ASSETS_ROOT=${TINYUSDZ_USD_ASSETS_ROOT}"
+                "USD_ASSETS_ROOT=${LIGHTUSD_USD_ASSETS_ROOT}"
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-animation-smoke.sh"
         )
       set_tests_properties(tusdview-usd-assets-animation-smoke PROPERTIES
@@ -3890,10 +3890,10 @@ if(TINYUSDZ_BUILD_TESTS)
   add_test(
     NAME openusd-capability-ledger
     COMMAND python3
-            ${PROJECT_SOURCE_DIR}/scripts/generate-tinyusdz-capability-ledger.py
+            ${PROJECT_SOURCE_DIR}/scripts/generate-lightusd-capability-ledger.py
             --check
             --manifest ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
-            --output ${PROJECT_SOURCE_DIR}/doc/generated/tinyusdz-capabilities-openusd-26.08.json
+            --output ${PROJECT_SOURCE_DIR}/doc/generated/lightusd-capabilities-openusd-26.08.json
     )
 
   add_test(
@@ -3901,7 +3901,7 @@ if(TINYUSDZ_BUILD_TESTS)
     COMMAND python3
             ${PROJECT_SOURCE_DIR}/scripts/generate-openusd-supported-schema-fixture.py
             --check
-            --ledger ${PROJECT_SOURCE_DIR}/doc/generated/tinyusdz-capabilities-openusd-26.08.json
+            --ledger ${PROJECT_SOURCE_DIR}/doc/generated/lightusd-capabilities-openusd-26.08.json
             --output ${PROJECT_SOURCE_DIR}/tests/usda/generated/openusd-supported-schema-26.08.usda
             --registry-output ${PROJECT_SOURCE_DIR}/src/next/schema/generated/openusd-supported-schema-names.inc
     )
@@ -3909,14 +3909,14 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # USDA roundtrip tester
   #
-  if(TINYUSDZ_WITH_MODULE_USDA_READER)
-    set(TINYUSDZ_ROUNDTRIP_TARGET "usda_roundtrip")
-    add_executable(${TINYUSDZ_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usda-roundtrip.cc)
-    add_sanitizers(${TINYUSDZ_ROUNDTRIP_TARGET})
-    target_include_directories(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
-    if(TINYUSDZ_WITH_JSON)
-      target_compile_definitions(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+  if(LIGHTUSD_WITH_MODULE_USDA_READER)
+    set(LIGHTUSD_ROUNDTRIP_TARGET "usda_roundtrip")
+    add_executable(${LIGHTUSD_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usda-roundtrip.cc)
+    add_sanitizers(${LIGHTUSD_ROUNDTRIP_TARGET})
+    target_include_directories(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    if(LIGHTUSD_WITH_JSON)
+      target_compile_definitions(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE "LIGHTUSD_WITH_JSON")
     endif()
 
     add_test(
@@ -3929,14 +3929,14 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # USDC roundtrip tester (USDA -> USDC -> reparse -> compare)
   #
-  if(TINYUSDZ_WITH_MODULE_USDA_READER AND TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
-    set(TINYUSDZ_USDC_ROUNDTRIP_TARGET "usdc_roundtrip")
-    add_executable(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usdc-roundtrip.cc)
-    add_sanitizers(${TINYUSDZ_USDC_ROUNDTRIP_TARGET})
-    target_include_directories(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
-    if(TINYUSDZ_WITH_JSON)
-      target_compile_definitions(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+  if(LIGHTUSD_WITH_MODULE_USDA_READER AND LIGHTUSD_WITH_MODULE_USDC_WRITER AND LIGHTUSD_WITH_MODULE_USDC_READER)
+    set(LIGHTUSD_USDC_ROUNDTRIP_TARGET "usdc_roundtrip")
+    add_executable(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usdc-roundtrip.cc)
+    add_sanitizers(${LIGHTUSD_USDC_ROUNDTRIP_TARGET})
+    target_include_directories(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    if(LIGHTUSD_WITH_JSON)
+      target_compile_definitions(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE "LIGHTUSD_WITH_JSON")
     endif()
 
     add_test(
@@ -3949,7 +3949,7 @@ if(TINYUSDZ_BUILD_TESTS)
     # Uses --report-only so it does not fail the suite (informational baseline).
     # Run without --report-only for strict validation:
     #   python3 tests/usdc-writer/usdc-writer-runner.py --tusdcat ./build/tusdcat --tusddiff ./build/tusddiff --basedir tests/usda --verbose
-    # tusddiff now lives under tools/ (TINYUSDZ_BUILD_TOOLS); skip if not built.
+    # tusddiff now lives under tools/ (LIGHTUSD_BUILD_TOOLS); skip if not built.
     if(TARGET tusddiff)
       add_test(
         NAME usdc-writer-diff-test
@@ -3970,11 +3970,11 @@ if(TINYUSDZ_BUILD_TESTS)
   # verification harness supplies its prepared corpus explicitly. --max-fail
   # 0 gates on the load baseline.
   #
-  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
-  if(TINYUSDZ_NODE_EXECUTABLE AND TARGET tusdcat)
+  find_program(LIGHTUSD_NODE_EXECUTABLE NAMES node nodejs)
+  if(LIGHTUSD_NODE_EXECUTABLE AND TARGET tusdcat)
     add_test(
       NAME corpus-parse-native
-      COMMAND ${TINYUSDZ_NODE_EXECUTABLE}
+      COMMAND ${LIGHTUSD_NODE_EXECUTABLE}
               ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
               --optional-assets
               --mode load
@@ -3988,35 +3988,35 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # USDA parser tester
   #
-  if(TINYUSDZ_WITH_MODULE_USDC_READER)
+  if(LIGHTUSD_WITH_MODULE_USDC_READER)
     add_test(
       NAME usdc-parser-unit-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
-              "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
+              "$<TARGET_FILE:test_lightusd>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
       )
     # usdc-parser-unit-test globs all *.usdc in tests/usdc/, including
-    # *-runtime.usdc files that are generated by unit-test-tinyusdz.
+    # *-runtime.usdc files that are generated by unit-test-lightusd.
     # Must run after unit tests to avoid reading partially-written files.
     set_tests_properties(usdc-parser-unit-test PROPERTIES
-      DEPENDS unit-test-tinyusdz)
+      DEPENDS unit-test-lightusd)
   endif()
 
   #
   # Feature tests as CTest targets (Phase 0B)
   #
-  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+  if(LIGHTUSD_WITH_MODULE_USDA_READER)
     add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
     add_sanitizers(feat-value-clip)
-    target_link_libraries(feat-value-clip PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-value-clip COMMAND feat-value-clip
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # tydra value-level diff API (ULP tolerance, metadata reasons, value display)
-    if(TINYUSDZ_WITH_TYDRA)
+    if(LIGHTUSD_WITH_TYDRA)
       add_executable(feat-diff tests/feat/diff/test-diff.cc)
       add_sanitizers(feat-diff)
-      target_link_libraries(feat-diff PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_link_libraries(feat-diff PRIVATE ${LIGHTUSD_TARGET_STATIC})
       target_include_directories(feat-diff PRIVATE ${PROJECT_SOURCE_DIR}/src)
       add_test(NAME feat-diff COMMAND feat-diff
                WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4027,7 +4027,7 @@ if(TINYUSDZ_BUILD_TESTS)
     # dst-only children).
     add_executable(feat-localchild tests/feat/composition-localchild/test-localchild.cc)
     add_sanitizers(feat-localchild)
-    target_link_libraries(feat-localchild PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-localchild PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-localchild PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-localchild COMMAND feat-localchild
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4041,7 +4041,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-variant-payload-chain
                    tests/feat/variant-payload-chain/test-variant-payload-chain.cc)
     add_sanitizers(feat-variant-payload-chain)
-    target_link_libraries(feat-variant-payload-chain PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-variant-payload-chain PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-variant-payload-chain PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4052,7 +4052,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-usdc-specifier
                    tests/feat/usdc-specifier/test-usdc-specifier.cc)
     add_sanitizers(feat-usdc-specifier)
-    target_link_libraries(feat-usdc-specifier PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-usdc-specifier PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-usdc-specifier PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-usdc-specifier COMMAND feat-usdc-specifier
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4066,7 +4066,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-flatten-apischemas
                    tests/feat/flatten-apischemas/test-flatten-apischemas.cc)
     add_sanitizers(feat-flatten-apischemas)
-    target_link_libraries(feat-flatten-apischemas PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-flatten-apischemas PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-flatten-apischemas PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-flatten-apischemas COMMAND feat-flatten-apischemas
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4080,17 +4080,17 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-variant-local-override
                    tests/feat/variant-local-override/test-variant-local-override.cc)
     add_sanitizers(feat-variant-local-override)
-    target_link_libraries(feat-variant-local-override PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-variant-local-override PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-variant-local-override PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-local-override COMMAND feat-variant-local-override
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-    # OpenUSD inserts variant-selected children BEFORE local children; tinyusdz
+    # OpenUSD inserts variant-selected children BEFORE local children; lightusd
     # used to append them. Regresses CompositeVariant prepend + primChildren sync.
     add_executable(feat-variant-child-order
                    tests/feat/variant-child-order/test-variant-child-order.cc)
     add_sanitizers(feat-variant-child-order)
-    target_link_libraries(feat-variant-child-order PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-variant-child-order PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-variant-child-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-child-order COMMAND feat-variant-child-order
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4103,18 +4103,18 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-preserve-order
                    tests/feat/preserve-order/test-preserve-order.cc)
     add_sanitizers(feat-preserve-order)
-    target_link_libraries(feat-preserve-order PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-preserve-order PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-preserve-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-preserve-order COMMAND feat-preserve-order
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Opt-in OpenUSD-compatible float notation (SetUSDFloatFormat): fixed for
     # decimal exponents in [-6,15), unpadded/sign-less exponent outside -- matches
-    # usdcat. Default stays tinyusdz's shortest-&-robust notation.
+    # usdcat. Default stays lightusd's shortest-&-robust notation.
     add_executable(feat-usd-float-format
                    tests/feat/usd-float-format/test-usd-float-format.cc)
     add_sanitizers(feat-usd-float-format)
-    target_link_libraries(feat-usd-float-format PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-usd-float-format PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-usd-float-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-usd-float-format COMMAND feat-usd-float-format
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4124,7 +4124,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-usd-text-format
                    tests/feat/usd-text-format/test-usd-text-format.cc)
     add_sanitizers(feat-usd-text-format)
-    target_link_libraries(feat-usd-text-format PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-usd-text-format PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-usd-text-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-usd-text-format COMMAND feat-usd-text-format
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4135,7 +4135,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-asset-path-normalize
                    tests/feat/asset-path-normalize/test-asset-path-normalize.cc)
     add_sanitizers(feat-asset-path-normalize)
-    target_link_libraries(feat-asset-path-normalize PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-asset-path-normalize PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-asset-path-normalize PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-asset-path-normalize COMMAND feat-asset-path-normalize
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4178,7 +4178,7 @@ if(TINYUSDZ_BUILD_TESTS)
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
     add_sanitizers(feat-instancing)
-    target_link_libraries(feat-instancing PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-instancing PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-instancing COMMAND feat-instancing
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4186,15 +4186,15 @@ if(TINYUSDZ_BUILD_TESTS)
     # Cross-directory cwp anchoring (composition) via LargeSceneLoader
     add_executable(feat-large-scene tests/feat/large-scene/test-large-scene.cc)
     add_sanitizers(feat-large-scene)
-    target_link_libraries(feat-large-scene PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-large-scene PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-large-scene PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-large-scene COMMAND feat-large-scene
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-    if(TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+    if(LIGHTUSD_WITH_MODULE_USDC_WRITER AND LIGHTUSD_WITH_MODULE_USDC_READER)
       add_executable(feat-dedp tests/feat/dedp/test-dedp.cc)
       add_sanitizers(feat-dedp)
-      target_link_libraries(feat-dedp PRIVATE ${TINYUSDZ_TARGET_STATIC})
+      target_link_libraries(feat-dedp PRIVATE ${LIGHTUSD_TARGET_STATIC})
       target_include_directories(feat-dedp PRIVATE ${PROJECT_SOURCE_DIR}/src)
       add_test(NAME feat-dedp COMMAND feat-dedp
                WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4203,43 +4203,43 @@ if(TINYUSDZ_BUILD_TESTS)
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
     add_sanitizers(feat-mtlx-parse)
-    target_link_libraries(feat-mtlx-parse PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-parse PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-mtlx-parse PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-parse COMMAND feat-mtlx-parse
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_executable(feat-mtlx-import tests/feat/mtlx/test_mtlx_import.cc)
     add_sanitizers(feat-mtlx-import)
-    target_link_libraries(feat-mtlx-import PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-import PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-mtlx-import PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-import COMMAND feat-mtlx-import)
 
     add_executable(feat-mtlx-export tests/feat/mtlx/test_mtlx_export.cc)
     add_sanitizers(feat-mtlx-export)
-    target_link_libraries(feat-mtlx-export PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-export PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-mtlx-export PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-export COMMAND feat-mtlx-export)
 
     # Variant tests
     add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
     add_sanitizers(feat-variant-converter)
-    target_link_libraries(feat-variant-converter PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-variant-converter PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-converter COMMAND feat-variant-converter
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
     add_sanitizers(feat-variant-applier)
-    target_link_libraries(feat-variant-applier PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-variant-applier PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-variant-applier COMMAND feat-variant-applier
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   endif()
 
-  if(TINYUSDZ_WITH_JSON)
+  if(LIGHTUSD_WITH_JSON)
     add_executable(feat-mtlx-grouped-params tests/feat/mtlx/test_grouped_params.cc)
     add_sanitizers(feat-mtlx-grouped-params)
-    target_link_libraries(feat-mtlx-grouped-params PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-grouped-params PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-mtlx-grouped-params PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-grouped-params COMMAND feat-mtlx-grouped-params)
   endif()
@@ -4247,10 +4247,10 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # Benchmarks as CTest targets (Phase 0C) - excluded from default run
   #
-  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+  if(LIGHTUSD_WITH_MODULE_USDA_READER)
     add_executable(bench-parse-opt tests/feat/parse-opt/test-parse-opt.cc)
     add_sanitizers(bench-parse-opt)
-    target_link_libraries(bench-parse-opt PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(bench-parse-opt PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
     set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
@@ -4262,16 +4262,16 @@ if(TINYUSDZ_BUILD_TESTS)
     # measures the tydra::next pipeline on the same input.
     add_executable(bench-render-convert tests/feat/render-convert/perf-render-convert.cc)
     add_sanitizers(bench-render-convert)
-    target_link_libraries(bench-render-convert PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
     set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark")
 
-    if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE AND TARGET tinyusdz_next AND TARGET tydra_next)
+    if(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE AND TARGET lightusd_next AND TARGET tydra_next)
       add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
       add_sanitizers(bench-render-convert-next)
       target_link_libraries(bench-render-convert-next PRIVATE
-        ${TINYUSDZ_TARGET_STATIC} tinyusdz_next tydra_next)
+        ${LIGHTUSD_TARGET_STATIC} lightusd_next tydra_next)
       target_include_directories(bench-render-convert-next PRIVATE
         ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/next)
       target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_NEXT=1)
@@ -4285,7 +4285,7 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   add_executable(feat-subdiv tests/feat/subdiv/test-subdiv.cc)
   add_sanitizers(feat-subdiv)
-  target_link_libraries(feat-subdiv PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_link_libraries(feat-subdiv PRIVATE ${LIGHTUSD_TARGET_STATIC})
   target_include_directories(feat-subdiv PRIVATE ${PROJECT_SOURCE_DIR}/src)
   add_test(NAME feat-subdiv COMMAND feat-subdiv
            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
@@ -4293,10 +4293,10 @@ if(TINYUSDZ_BUILD_TESTS)
   # Opt-in: verify tsd against an OpenSubdiv source checkout.
   # The required sdc/vtr/far sources are compiled directly from
   # ${OpenSubdiv_ROOT}; no pre-built OpenSubdiv needed.
-  if(TINYUSDZ_TSD_VERIFY_WITH_OSD)
+  if(LIGHTUSD_TSD_VERIFY_WITH_OSD)
     if(NOT OpenSubdiv_ROOT)
       message(FATAL_ERROR
-              "TINYUSDZ_TSD_VERIFY_WITH_OSD requires OpenSubdiv_ROOT to point "
+              "LIGHTUSD_TSD_VERIFY_WITH_OSD requires OpenSubdiv_ROOT to point "
               "to an OpenSubdiv source checkout.")
     endif()
     add_library(tsd_osd_ref STATIC
@@ -4321,7 +4321,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_executable(feat-subdiv-verify tests/feat/subdiv/subdiv-verify-osd.cc)
     add_sanitizers(feat-subdiv-verify)
     target_link_libraries(feat-subdiv-verify PRIVATE
-      tsd_osd_ref ${TINYUSDZ_TARGET_STATIC})
+      tsd_osd_ref ${LIGHTUSD_TARGET_STATIC})
     target_include_directories(feat-subdiv-verify PRIVATE
       ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-subdiv-verify COMMAND feat-subdiv-verify
@@ -4341,39 +4341,39 @@ if(TINYUSDZ_BUILD_TESTS)
   # leaving only llvmpipe. Probe the physical-device list before exporting
   # TUSDVIEW_VK_DEVICE=nvidia; otherwise leave Vulkan on its normal automatic
   # hardware/software selection path.
-  if(TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD AND UNIX AND NOT APPLE AND TARGET tusdview)
+  if(LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD AND UNIX AND NOT APPLE AND TARGET tusdview)
     if(EXISTS "/proc/driver/nvidia/version" AND
        EXISTS "/dev/nvidia0" AND
        EXISTS "/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
-      set(_tinyusdz_nvidia_vulkan_visible FALSE)
-      find_program(_tinyusdz_vulkaninfo NAMES vulkaninfo)
-      if(_tinyusdz_vulkaninfo)
+      set(_lightusd_nvidia_vulkan_visible FALSE)
+      find_program(_lightusd_vulkaninfo NAMES vulkaninfo)
+      if(_lightusd_vulkaninfo)
         execute_process(
           COMMAND "${CMAKE_COMMAND}" -E env
                   "__NV_PRIME_RENDER_OFFLOAD=1"
                   "__GLX_VENDOR_LIBRARY_NAME=nvidia"
                   "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
-                  "${_tinyusdz_vulkaninfo}" --summary
-          RESULT_VARIABLE _tinyusdz_vulkaninfo_rc
-          OUTPUT_VARIABLE _tinyusdz_vulkaninfo_out
-          ERROR_VARIABLE _tinyusdz_vulkaninfo_err
+                  "${_lightusd_vulkaninfo}" --summary
+          RESULT_VARIABLE _lightusd_vulkaninfo_rc
+          OUTPUT_VARIABLE _lightusd_vulkaninfo_out
+          ERROR_VARIABLE _lightusd_vulkaninfo_err
           TIMEOUT 10)
-        if(_tinyusdz_vulkaninfo_rc EQUAL 0)
-          string(CONCAT _tinyusdz_vulkaninfo_text
-                 "${_tinyusdz_vulkaninfo_out}\n${_tinyusdz_vulkaninfo_err}")
+        if(_lightusd_vulkaninfo_rc EQUAL 0)
+          string(CONCAT _lightusd_vulkaninfo_text
+                 "${_lightusd_vulkaninfo_out}\n${_lightusd_vulkaninfo_err}")
           string(REGEX MATCH
                  "deviceName[ \\t]*=[ \\t]*[^\\n]*(NVIDIA|GeForce|RTX|Quadro|Tesla)"
-                 _tinyusdz_nvidia_device_match
-                 "${_tinyusdz_vulkaninfo_text}")
-          if(_tinyusdz_nvidia_device_match)
-            set(_tinyusdz_nvidia_vulkan_visible TRUE)
+                 _lightusd_nvidia_device_match
+                 "${_lightusd_vulkaninfo_text}")
+          if(_lightusd_nvidia_device_match)
+            set(_lightusd_nvidia_vulkan_visible TRUE)
           endif()
         endif()
       endif()
-      get_property(_tinyusdz_tusdview_tests DIRECTORY PROPERTY TESTS)
-      set(_tinyusdz_nvidia_gl_cache
+      get_property(_lightusd_tusdview_tests DIRECTORY PROPERTY TESTS)
+      set(_lightusd_nvidia_gl_cache
           "${CMAKE_BINARY_DIR}/tusdview-nvidia-gl-cache")
-      file(MAKE_DIRECTORY "${_tinyusdz_nvidia_gl_cache}")
+      file(MAKE_DIRECTORY "${_lightusd_nvidia_gl_cache}")
       add_test(
         NAME tusdview-nvidia-gl-warmup
         COMMAND ${CMAKE_COMMAND} -E env
@@ -4385,77 +4385,77 @@ if(TINYUSDZ_BUILD_TESTS)
         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview;opengl"
                    FIXTURES_SETUP tusdview_nvidia_gl_cache
                    RESOURCE_LOCK tusdview_gl_gpu)
-      list(APPEND _tinyusdz_tusdview_tests tusdview-nvidia-gl-warmup)
-      foreach(_tinyusdz_test IN LISTS _tinyusdz_tusdview_tests)
+      list(APPEND _lightusd_tusdview_tests tusdview-nvidia-gl-warmup)
+      foreach(_lightusd_test IN LISTS _lightusd_tusdview_tests)
         # CPU RT uses Vulkan only to provide a windowless presentation shell;
         # it neither needs GL shader warmup nor an NVIDIA device. Keeping these
         # tests automatic lets them run on RADV/llvmpipe when PRIME state or a
         # configure-time Xvfb display later disappears.
-        if(_tinyusdz_test MATCHES "^tusdview-" AND
-           NOT _tinyusdz_test MATCHES "^tusdview-cpu-rt-")
-          get_property(_tinyusdz_test_env TEST "${_tinyusdz_test}"
+        if(_lightusd_test MATCHES "^tusdview-" AND
+           NOT _lightusd_test MATCHES "^tusdview-cpu-rt-")
+          get_property(_lightusd_test_env TEST "${_lightusd_test}"
                        PROPERTY ENVIRONMENT)
-          if(NOT _tinyusdz_test_env)
-            set(_tinyusdz_test_env)
+          if(NOT _lightusd_test_env)
+            set(_lightusd_test_env)
           endif()
-          list(APPEND _tinyusdz_test_env
+          list(APPEND _lightusd_test_env
                "__NV_PRIME_RENDER_OFFLOAD=1"
                "__GLX_VENDOR_LIBRARY_NAME=nvidia"
                "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
                "__GL_SHADER_DISK_CACHE=1"
-               "__GL_SHADER_DISK_CACHE_PATH=${_tinyusdz_nvidia_gl_cache}"
+               "__GL_SHADER_DISK_CACHE_PATH=${_lightusd_nvidia_gl_cache}"
                "TUSDVIEW_NVIDIA_OFFLOAD=1"
                "TUSDVIEW_XVFB=1")
-          if(_tinyusdz_nvidia_vulkan_visible)
-            list(APPEND _tinyusdz_test_env "TUSDVIEW_VK_DEVICE=nvidia")
+          if(_lightusd_nvidia_vulkan_visible)
+            list(APPEND _lightusd_test_env "TUSDVIEW_VK_DEVICE=nvidia")
           endif()
-          set_tests_properties("${_tinyusdz_test}"
-                               PROPERTIES ENVIRONMENT "${_tinyusdz_test_env}")
-          if(NOT _tinyusdz_test STREQUAL "tusdview-nvidia-gl-warmup")
-            set_property(TEST "${_tinyusdz_test}" APPEND PROPERTY
+          set_tests_properties("${_lightusd_test}"
+                               PROPERTIES ENVIRONMENT "${_lightusd_test_env}")
+          if(NOT _lightusd_test STREQUAL "tusdview-nvidia-gl-warmup")
+            set_property(TEST "${_lightusd_test}" APPEND PROPERTY
                          FIXTURES_REQUIRED tusdview_nvidia_gl_cache)
           endif()
         endif()
       endforeach()
-      if(_tinyusdz_nvidia_vulkan_visible)
-        message(STATUS "tinyusdz: NVIDIA offload environment enabled for tusdview CTest cases (Vulkan NVIDIA device confirmed)")
+      if(_lightusd_nvidia_vulkan_visible)
+        message(STATUS "lightusd: NVIDIA offload environment enabled for tusdview CTest cases (Vulkan NVIDIA device confirmed)")
       else()
-        message(STATUS "tinyusdz: NVIDIA GL offload environment enabled; Vulkan NVIDIA device not visible, leaving Vulkan device selection automatic")
+        message(STATUS "lightusd: NVIDIA GL offload environment enabled; Vulkan NVIDIA device not visible, leaving Vulkan device selection automatic")
       endif()
     else()
-      message(STATUS "tinyusdz: NVIDIA offload requested but NVIDIA device/GLVND is not visible; tusdview tests keep their normal environment")
+      message(STATUS "lightusd: NVIDIA offload requested but NVIDIA device/GLVND is not visible; tusdview tests keep their normal environment")
     endif()
   endif()
 
-  if(_tinyusdz_hip_ld_library_path)
-    get_property(_tinyusdz_tusdview_tests DIRECTORY PROPERTY TESTS)
-    foreach(_tinyusdz_test IN LISTS _tinyusdz_tusdview_tests)
-      if(_tinyusdz_test MATCHES "^tusdview-")
-        get_property(_tinyusdz_test_env TEST "${_tinyusdz_test}"
+  if(_lightusd_hip_ld_library_path)
+    get_property(_lightusd_tusdview_tests DIRECTORY PROPERTY TESTS)
+    foreach(_lightusd_test IN LISTS _lightusd_tusdview_tests)
+      if(_lightusd_test MATCHES "^tusdview-")
+        get_property(_lightusd_test_env TEST "${_lightusd_test}"
                      PROPERTY ENVIRONMENT)
-        if(NOT _tinyusdz_test_env)
-          set(_tinyusdz_test_env)
+        if(NOT _lightusd_test_env)
+          set(_lightusd_test_env)
         endif()
-        list(APPEND _tinyusdz_test_env
-             "LD_LIBRARY_PATH=${_tinyusdz_hip_ld_library_path}")
-        set_tests_properties("${_tinyusdz_test}"
-                             PROPERTIES ENVIRONMENT "${_tinyusdz_test_env}")
+        list(APPEND _lightusd_test_env
+             "LD_LIBRARY_PATH=${_lightusd_hip_ld_library_path}")
+        set_tests_properties("${_lightusd_test}"
+                             PROPERTIES ENVIRONMENT "${_lightusd_test_env}")
       endif()
     endforeach()
   endif()
 
-endif(TINYUSDZ_BUILD_TESTS)
+endif(LIGHTUSD_BUILD_TESTS)
 
 # [VisualStudio]
 if(WIN32)
-  # Set ${TINYUSDZ_TARGET_STATIC} as a startup project for VS IDE
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${TINYUSDZ_TARGET_STATIC})
+  # Set ${LIGHTUSD_TARGET_STATIC} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${LIGHTUSD_TARGET_STATIC})
 
   # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
-  # directory to ${TINYUSDZ_TARGET_STATIC} git repo root.
+  # directory to ${LIGHTUSD_TARGET_STATIC} git repo root.
   if(CMAKE_VERSION VERSION_GREATER 3.8.0)
     set_target_properties(
-      ${TINYUSDZ_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+      ${LIGHTUSD_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                            "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
 endif()

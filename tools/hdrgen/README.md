@@ -550,4 +550,4 @@ Contributions welcome! Please ensure:
 
 ## Support
 
-For issues or questions, see: https://github.com/syoyo/tinyusdz
+For issues or questions, see: https://github.com/syoyo/lightusd

@@ -21,7 +21,7 @@
 #include "tydra/texture-util.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -51,7 +51,7 @@ bool SourceImageWithinLimit(const TextureDecodeOptions& opt,
                             const uint8_t* data, size_t size,
                             const std::string& uri) {
   if (opt.max_source_bytes == 0) return true;
-  auto info = ::tinyusdz::image::GetImageInfoFromMemory(data, size, uri);
+  auto info = ::lightusd::image::GetImageInfoFromMemory(data, size, uri);
   if (!info) return false;
   size_t pixels = 0;
   size_t samples = 0;
@@ -68,7 +68,7 @@ bool SourceImageWithinLimit(const TextureDecodeOptions& opt,
 
 bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
                      const std::vector<size_t>* usdz_candidates,
-                     ::tinyusdz::Image* out) {
+                     ::lightusd::Image* out) {
   if (asset.empty()) return false;
   if (opt.usdz && usdz_candidates) {
     // Candidates are in entry order, so the first match is the same entry the
@@ -80,7 +80,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
                                   opt.usdz->EntryName(i))) {
         return false;
       }
-      auto res = ::tinyusdz::image::LoadImageFromMemory(
+      auto res = ::lightusd::image::LoadImageFromMemory(
           opt.usdz->EntryData(i), opt.usdz->EntrySize(i),
           opt.usdz->EntryName(i));
       if (!res) return false;
@@ -89,7 +89,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
     }
   }
   std::string path = asset;
-  if (!::tinyusdz::next::AssetResolver::IsAbsolutePath(path) &&
+  if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {
     path = opt.base_dir + "/" + path;
   }
@@ -103,7 +103,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
         static_cast<uint64_t>(encoded_size) > opt.max_source_bytes) {
       return false;
     }
-    auto info = ::tinyusdz::image::GetImageInfoFromFile(path);
+    auto info = ::lightusd::image::GetImageInfoFromFile(path);
     if (!info) return false;
     size_t pixels = 0;
     size_t samples = 0;
@@ -116,7 +116,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
       return false;
     }
   }
-  auto res = ::tinyusdz::image::LoadImageFromFile(path);
+  auto res = ::lightusd::image::LoadImageFromFile(path);
   if (!res) return false;
   *out = std::move(res.value().image);
   return true;
@@ -139,14 +139,14 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
     }
   }
   std::string path = asset;
-  if (!::tinyusdz::next::AssetResolver::IsAbsolutePath(path) &&
+  if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {
     path = opt.base_dir + "/" + path;
   }
   std::ifstream f(path, std::ios::binary | std::ios::ate);
   if (!f) return false;
   size_t n = 0;
-  if (!::tinyusdz::next::SafeStreamSize(f, 0, &n)) return false;
+  if (!::lightusd::next::SafeStreamSize(f, 0, &n)) return false;
   f.seekg(0, std::ios::beg);
   out->resize(n);
   return bool(f.read(reinterpret_cast<char*>(out->data()),
@@ -155,9 +155,9 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
 
 // Narrow a 16-bit UInt image to 8-bit in place. Loaders hand back 16-bit PNGs
 // as-is, but every consumer downstream wants 8-bit RGBA.
-bool NarrowTo8Bit(::tinyusdz::Image* img) {
+bool NarrowTo8Bit(::lightusd::Image* img) {
   if (img->bpp != 16 ||
-      img->format != ::tinyusdz::Image::PixelFormat::UInt) {
+      img->format != ::lightusd::Image::PixelFormat::UInt) {
     return true;
   }
   if (img->width <= 0 || img->height <= 0 || img->channels <= 0) return false;
@@ -185,12 +185,12 @@ bool NarrowTo8Bit(::tinyusdz::Image* img) {
 // Take 1/2/3/4-channel 8-bit texels. With `force_rgba`, grayscale replicates
 // into RGB and a missing alpha channel becomes opaque; otherwise the source
 // channel count is kept as-is.
-bool ToDecoded(::tinyusdz::Image* src, bool force_rgba,
+bool ToDecoded(::lightusd::Image* src, bool force_rgba,
                DecodedImage* out) {
   if (!src || !out || src->width <= 0 || src->height <= 0) {
     return false;
   }
-  if (src->format == ::tinyusdz::Image::PixelFormat::Float &&
+  if (src->format == ::lightusd::Image::PixelFormat::Float &&
       (src->bpp == 16 || src->bpp == 32)) {
     const size_t ch = static_cast<size_t>(src->channels);
     size_t npix = 0, samples = 0, source_bytes = 0;
@@ -215,9 +215,9 @@ bool ToDecoded(::tinyusdz::Image* src, bool force_rgba,
       }
       uint16_t h = 0;
       std::memcpy(&h, src->data.data() + index * sizeof(uint16_t), sizeof(h));
-      ::tinyusdz::value::half halfValue{};
+      ::lightusd::value::half halfValue{};
       halfValue.value = h;
-      return ::tinyusdz::value::half_to_float(halfValue);
+      return ::lightusd::value::half_to_float(halfValue);
     };
     for (size_t i = 0; i < npix; ++i) {
       const size_t s = i * ch;
@@ -230,7 +230,7 @@ bool ToDecoded(::tinyusdz::Image* src, bool force_rgba,
     }
     return true;
   }
-  if (src->bpp != 8 || src->format != ::tinyusdz::Image::PixelFormat::UInt)
+  if (src->bpp != 8 || src->format != ::lightusd::Image::PixelFormat::UInt)
     return false;
   const size_t ch = static_cast<size_t>(src->channels);
   if (ch < 1 || ch > 4) return false;
@@ -288,15 +288,15 @@ bool ResizeDecoded(DecodedImage* img, uint32_t w, uint32_t h, bool srgb) {
   if (img->width == w && img->height == h) return true;
 
   if (img->hdr) {
-    ::tinyusdz::Image src;
+    ::lightusd::Image src;
     src.width = static_cast<int>(img->width);
     src.height = static_cast<int>(img->height);
     src.channels = 3;
     src.bpp = 32;
-    src.format = ::tinyusdz::Image::PixelFormat::Float;
+    src.format = ::lightusd::Image::PixelFormat::Float;
     src.data.resize(img->float_pixels.size() * sizeof(float));
     std::memcpy(src.data.data(), img->float_pixels.data(), src.data.size());
-    ::tinyusdz::Image dst;
+    ::lightusd::Image dst;
     std::string err;
     if (!ResizeImage(src, static_cast<int>(w), static_cast<int>(h), &dst,
                      ResizeFilter::Linear, &err)) return false;
@@ -308,19 +308,19 @@ bool ResizeDecoded(DecodedImage* img, uint32_t w, uint32_t h, bool srgb) {
     return true;
   }
 
-  ::tinyusdz::Image src;
+  ::lightusd::Image src;
   src.width = static_cast<int>(img->width);
   src.height = static_cast<int>(img->height);
   src.channels = static_cast<int>(img->channels);
   src.bpp = 8;
-  src.format = ::tinyusdz::Image::PixelFormat::UInt;
+  src.format = ::lightusd::Image::PixelFormat::UInt;
   // Move, don't copy: img->pixels is overwritten with dst.data below, so the
   // source buffer is dead the moment ResizeImage returns. Copying held source
   // + copy + destination (~3x an 8K RGBA image = 800 MB) instead of 2x, on
   // exactly the oversized-texture path the budget exists to protect.
   src.data = std::move(img->pixels);
 
-  ::tinyusdz::Image dst;
+  ::lightusd::Image dst;
   const ResizeFilter filter = srgb ? ResizeFilter::SRGB : ResizeFilter::Linear;
   std::string err;
   if (!ResizeImage(src, static_cast<int>(w), static_cast<int>(h), &dst, filter,
@@ -380,7 +380,7 @@ bool TextureDecoder::AttachBudgetLease(DecodedImage* image, bool srgb) {
   if (bytes > max_size) return false;
   if (budget_state_->try_add(bytes)) {
     image->budget_lease =
-        std::make_shared<::tinyusdz::next::TextureBudgetLease>(
+        std::make_shared<::lightusd::next::TextureBudgetLease>(
             budget_state_, bytes);
     return true;
   }
@@ -419,7 +419,7 @@ bool TextureDecoder::AttachBudgetLease(DecodedImage* image, bool srgb) {
     budget_state_->resident.fetch_add(bytes, std::memory_order_relaxed);
   }
   image->budget_lease =
-      std::make_shared<::tinyusdz::next::TextureBudgetLease>(
+      std::make_shared<::lightusd::next::TextureBudgetLease>(
           budget_state_, bytes);
   return true;
 }
@@ -428,7 +428,7 @@ bool TextureDecoder::Decode(const std::string& asset, bool srgb,
                             DecodedImage* out) {
   if (!out) return false;
 
-  ::tinyusdz::Image src;
+  ::lightusd::Image src;
   if (!LoadSourceImage(options_, asset, UsdzCandidates(asset), &src)) return false;
   if (!NarrowTo8Bit(&src)) return false;
 
@@ -468,11 +468,11 @@ bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
 
   std::vector<uint8_t> source;
   if (!ReadAssetBytes(asset, &source)) return false;
-  ::tinyusdz::ptx::Reader reader;
+  ::lightusd::ptx::Reader reader;
   std::string err;
-  if (!::tinyusdz::ptx::Reader::OpenMemory(source.data(), source.size(),
+  if (!::lightusd::ptx::Reader::OpenMemory(source.data(), source.size(),
                                            &reader, &err)) return false;
-  ::tinyusdz::ptx::FaceImage faceImage;
+  ::lightusd::ptx::FaceImage faceImage;
   const uint64_t configured_budget = options_.max_source_bytes
                                          ? options_.max_source_bytes
                                          : options_.budget_bytes;
@@ -482,7 +482,7 @@ bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
                                   configured_budget,
                                   static_cast<uint64_t>((std::numeric_limits<size_t>::max)())));
   if (!reader.ReadFace(face, level, budget, &faceImage, &err) ||
-      faceImage.dataType != ::tinyusdz::ptx::DataType::UInt8 ||
+      faceImage.dataType != ::lightusd::ptx::DataType::UInt8 ||
       faceImage.channels == 0 || faceImage.channels > 4)
     return false;
   size_t pixels = 0;
@@ -553,4 +553,4 @@ std::string ReplaceUdimToken(const std::string& asset, int udim) {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

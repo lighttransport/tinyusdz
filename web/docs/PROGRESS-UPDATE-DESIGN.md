@@ -89,7 +89,7 @@ function createModuleWithProgressCapture(onProgress) {
   };
 }
 
-// Usage in TinyUSDZLoader.js
+// Usage in LightUSDLoader.js
 const Module = createModuleWithProgressCapture((progress) => {
   updateProgressBar(progress.percentage);
   updateMeshStatus(`${progress.current}/${progress.total}: ${progress.name}`);
@@ -102,7 +102,7 @@ const Module = createModuleWithProgressCapture((progress) => {
 // progress-demo.js modification
 async function loadUSDWithProgress(url) {
   // Create loader with progress capture
-  loaderState.loader = new TinyUSDZLoader({
+  loaderState.loader = new LightUSDLoader({
     moduleOverrides: {
       print: (text) => {
         console.log(text);
@@ -251,7 +251,7 @@ function pollProgress() {
 ## Implementation Plan
 
 ### Phase 1: Basic Module.print Override
-1. Modify TinyUSDZLoader.js to accept `moduleOverrides` option
+1. Modify LightUSDLoader.js to accept `moduleOverrides` option
 2. Create progress message parser utility
 3. Connect parser to progress UI in progress-demo.js
 

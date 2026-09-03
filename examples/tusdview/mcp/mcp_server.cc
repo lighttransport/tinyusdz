@@ -7,7 +7,7 @@
 #include "log.hh"
 #include "mcp/mcp_host.hh"
 #include "tydra/js-script.hh"    // complete JSEngineState (held in Context by value)
-#include "tydra/mcp-context.hh"  // tinyusdz::tydra::mcp::Context
+#include "tydra/mcp-context.hh"  // lightusd::tydra::mcp::Context
 #include "tydra/mcp-tools.hh"    // GetToolsList (library tool schemas)
 
 namespace tusdview {
@@ -254,13 +254,13 @@ json MCPServer::buildToolsList() const {
        {"timeout_ms", {{"type", "integer"}, {"minimum", 100}, {"maximum", 600000}}}},
       json::array({"op"})));
 
-  // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
+  // Append the lightusd library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
   // is safe to call here on the transport thread.
   try {
-    tinyusdz::tydra::mcp::Context ctx;
+    lightusd::tydra::mcp::Context ctx;
     json libList;
-    if (tinyusdz::tydra::mcp::GetToolsList(ctx, libList) && libList.contains("tools") &&
+    if (lightusd::tydra::mcp::GetToolsList(ctx, libList) && libList.contains("tools") &&
         libList["tools"].is_array()) {
       for (auto& t : libList["tools"]) tools.push_back(t);
     }
@@ -415,7 +415,7 @@ void MCPServer::drain() {
       } else if (t == "vchar_skin_profile" || t == "vchar_deformer") {
         payload = host_->mcpVirtualHuman(t, cmd->args, err);
       } else {
-        // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
+        // Not a viewer tool -> forward to the lightusd library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);
       }
     } catch (const std::exception& e) {

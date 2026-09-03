@@ -49,13 +49,13 @@
 ///
 /// The conversion process:
 /// ```cpp
-/// tinyusdz::tydra::RenderScene renderScene;
-/// tinyusdz::tydra::RenderSceneConverter converter;
+/// lightusd::tydra::RenderScene renderScene;
+/// lightusd::tydra::RenderSceneConverter converter;
 /// bool success = converter.ConvertToRenderScene(stage, &renderScene);
 /// ```
 ///
 #pragma once
-#define TINYUSDZ_TYDRA_RENDER_DATA_HH_
+#define LIGHTUSD_TYDRA_RENDER_DATA_HH_
 
 #include <algorithm>
 #include <cmath>
@@ -81,7 +81,7 @@
 // Extracted headers
 #include "render-data-shader.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // forward decl
 class Stage;
@@ -182,7 +182,7 @@ using DetailedProgressCallback = std::function<bool(const DetailedProgressInfo &
 // Conditional typedef for ChunkedVectorArray based on TYDRA_USE_CHUNKED_ARRAY
 #ifdef TYDRA_USE_CHUNKED_ARRAY
 template<typename T>
-using ChunkedVectorArray = tinyusdz::ChunkedTypedArray<T>;
+using ChunkedVectorArray = lightusd::ChunkedTypedArray<T>;
 #else
 template<typename T>
 using ChunkedVectorArray = std::vector<T>;
@@ -758,7 +758,7 @@ enum class ColorSpace {
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
   Custom,          // TODO: Custom colorspace
-  Unknown,         // Unknown color space. 
+  Unknown,         // Unknown color space.
 };
 
 
@@ -841,7 +841,7 @@ struct EnvmapLight
     LatLong,  // "latlong"
     Angular,  // "angular"
     // MirroredBall, // TODO: "mirroredBall"
-    Cubemap,  // TinyUSDZ Tydra specific.
+    Cubemap,  // LightUSD Tydra specific.
   };
 
   std::string element_name;
@@ -1439,7 +1439,7 @@ struct RenderMesh {
   }
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
-  
+
   ///
   /// Estimate memory usage of this RenderMesh in bytes
   ///
@@ -1981,7 +1981,7 @@ std::string DumpRenderScene(const RenderScene &scene,
                             const std::string &format = "yaml");
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 // Configs, vertex dedup, TextureImageLoader, RenderSceneConverterEnv,
 // and RenderSceneConverter are now in render-data-converter.hh

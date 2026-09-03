@@ -6,7 +6,7 @@ import {
   MACBETH_COLORCHECKER_AP0,
   linearColorTransformMatrix,
   transformLinearColor
-} from '../src/tinyusdz/ColorCalibrationTestKit.js';
+} from '../src/lightusd/ColorCalibrationTestKit.js';
 
 const matrix = linearColorTransformMatrix('lin_ap0_scene', 'lin_rec709_scene');
 assert.equal(matrix.length, 9);

@@ -22,8 +22,8 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
 
-// tinyusdz
-#include "tinyusdz.hh"
+// lightusd
+#include "lightusd.hh"
 #include "math-util.inc"
 
 #ifdef __clang__
@@ -112,7 +112,7 @@ static void pxrusd_test()
   GfMatrix4d m;
   double kPI = 3.141592653589793;
 
-  
+
   {
     double s = std::sin(45 * kPI / 180.0);
     double c = std::cos(45 * kPI / 180.0);
@@ -120,7 +120,7 @@ static void pxrusd_test()
     Dbl sv, cv;
     sv.f = s;
     cv.f = c;
-    
+
 
     std::cout << "45\n";
     std::cout << "s == c ? " << (sv.u == cv.u) << "\n";
@@ -132,7 +132,7 @@ static void pxrusd_test()
 
     sv.f = s;
     cv.f = c;
-    
+
 
     std::cout << "90\n";
     std::cout << "s == c ? " << (sv.u == cv.u) << "\n";
@@ -179,8 +179,8 @@ static void pxrusd_test()
     std::cout << "s = " << s << "\n"; printf("0x%016lx\n", sval.u);
     std::cout << "c = " << c << "\n"; printf("0x%016lx\n", cval.u);
 
-    double st = tinyusdz::math::sin_pi(45.0/180.0);
-    double ct = tinyusdz::math::cos_pi(45.0/180.0);
+    double st = lightusd::math::sin_pi(45.0/180.0);
+    double ct = lightusd::math::cos_pi(45.0/180.0);
 
     sval.f = st;
     cval.f = ct;
@@ -202,8 +202,8 @@ static void pxrusd_test()
     std::cout << "s = " << s << "\n";
     std::cout << "c = " << c << "\n";
 
-    st = tinyusdz::math::sin_pi(90.0/180.0);
-    ct = tinyusdz::math::cos_pi(90.0/180.0);
+    st = lightusd::math::sin_pi(90.0/180.0);
+    ct = lightusd::math::cos_pi(90.0/180.0);
 
 
     sval.f = st;
@@ -214,7 +214,7 @@ static void pxrusd_test()
     std::cout << "c = " << c << "\n";
 
     sval.f = boost::math::constants::pi<double>() * (45.0 / 180.0);
-    cval.f = tinyusdz::math::constants<double>::pi() * (45.0 / 180.0);
+    cval.f = lightusd::math::constants<double>::pi() * (45.0 / 180.0);
 
     std::cout << "pi\n";
     std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
@@ -225,7 +225,7 @@ static void pxrusd_test()
     std::cout << "0.25 = " << cval.f << "\n"; printf("0x%016lx\n", cval.u);
 
   }
-  
+
 }
 
 int main(int argc, char **argv)

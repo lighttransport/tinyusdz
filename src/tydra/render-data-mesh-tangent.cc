@@ -34,7 +34,7 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
@@ -55,7 +55,7 @@
 // NOTE: HalfEdge is not used atm.
 #include "external/half-edge.hh"
 
-#if defined(TINYUSDZ_WITH_MESHOPT)
+#if defined(LIGHTUSD_WITH_MESHOPT)
 #include "external/meshoptimizer/meshoptimizer.h"
 #endif
 
@@ -90,7 +90,7 @@
 
 #include "tydra/render-data-mesh-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
@@ -979,4 +979,4 @@ bool QuantizeMeshNormals(
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

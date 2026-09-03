@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - CrateWriter::Impl fieldset/spec construction.
+// LightUSD Next - CrateWriter::Impl fieldset/spec construction.
 // Included inside CrateWriter::Impl private section.
 
   // One prim spec + its property specs. Operates on `this` Impl's tables, so a
@@ -362,7 +362,7 @@
       // (`aa = a`, `autoPlay = false`, custom pipeline keys, ...). Serialize the
       // (key, raw-value-text) pairs into a single length-prefixed string field
       // so they survive USDC; a length prefix keeps keys/values that contain
-      // ':' / newlines / quotes exact. Stored under a tinyusdz-private field
+      // ':' / newlines / quotes exact. Stored under a lightusd-private field
       // name so pxr treats it as (harmless) unregistered metadata rather than
       // misreading a phantom typed field.
       if (!prim.meta().unknownMeta().empty()) {
@@ -372,7 +372,7 @@
           blob += std::to_string(um.second.size()) + ":" + um.second;
         }
         CrateField f;
-        f.token_index.value = InternToken("__tinyusdz_unknownMeta");
+        f.token_index.value = InternToken("__lightusd_unknownMeta");
         uint32_t str_idx = InternString(blob);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -702,7 +702,7 @@
           blob += std::to_string(um.second.size()) + ":" + um.second;
         }
         CrateField f;
-        f.token_index.value = InternToken("__tinyusdz_unknownMeta");
+        f.token_index.value = InternToken("__lightusd_unknownMeta");
         uint32_t str_idx = InternString(blob);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -854,7 +854,7 @@
     // owning prim, each variant set's variant names — needed to emit
     // variantSetChildren (on the owning prim) and variantChildren (on each
     // VariantSet spec) so pxrUSD can enumerate the variants of an unflattened
-    // layer (tinyusdz reconstructs them from the paths, but pxr needs these).
+    // layer (lightusd reconstructs them from the paths, but pxr needs these).
     std::unordered_map<std::string,
         std::map<std::string, std::vector<std::string>>> variant_names;
     for (const auto& p : layer.prims()) {

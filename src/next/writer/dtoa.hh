@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - dragonbox-based float-to-string (dtoa)
+// LightUSD Next - dragonbox-based float-to-string (dtoa)
 //
-// Same shortest-round-trippable formatter tinyusdz uses in `src/str-util.cc`
+// Same shortest-round-trippable formatter lightusd uses in `src/str-util.cc`
 // (`dtos`), ported into the standalone next module. Emits OpenUSD-compatible
 // notation (pxr_double_conversion ToShortest/ToShortestSingle): the shortest
 // decimal that round-trips the value, fixed for decimal exponents in [-6, 15)
@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Shortest round-trippable decimal string for a float / double (OpenUSD
@@ -63,4 +63,4 @@ std::string format_g(double v, int precision);
 void format_g_append(std::string& out, double v, int precision);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

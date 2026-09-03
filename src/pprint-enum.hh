@@ -21,7 +21,7 @@
 #include "core/extent.hh"            // Extent
 #include "value-types.hh"            // value:: numeric types
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace pprint {
 
@@ -37,7 +37,7 @@ uint32_t GetPrefixColumns();
 
 // Opt-in: emit prim children and properties in AUTHORED order (recovered from
 // the crate's `primChildren`/`properties` order fields), matching OpenUSD's
-// usdcat. Default false = existing tinyusdz behavior (lexicographical for
+// usdcat. Default false = existing lightusd behavior (lexicographical for
 // flattened crates / sorted property maps). When enabled, the USDC Layer reader
 // records the order metadata and the USDA writers order children/properties by
 // it (entries listed in the order field first, any remainder lexicographically).
@@ -47,7 +47,7 @@ bool GetPreserveAuthoredOrder();
 // Opt-in: emit USDA text laid out like OpenUSD's usdcat -- the prim-metadata
 // opening paren on the same line as the `def`/`over`/`class` (e.g.
 // `def Mesh "M" (`), and plain (non-indented) blank lines between sibling prims.
-// Default false = existing tinyusdz layout (paren on its own line; indented
+// Default false = existing lightusd layout (paren on its own line; indented
 // blank separators). Affects the PrimSpec (Layer) writer.
 void SetUSDTextFormat(bool enable);
 bool GetUSDTextFormat();
@@ -149,7 +149,7 @@ std::string to_string(const CollectionInstance::ExpansionRule rule);
 
 // Forward-declare to_string(string) so the vector<T> template below can find
 // it via unqualified lookup when T = std::string (ADL won't help because
-// std::string lives in namespace std, not tinyusdz).
+// std::string lives in namespace std, not lightusd).
 std::string to_string(const std::string &s);
 
 // --- generic template helpers (inline) ------------------------------------
@@ -189,4 +189,4 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

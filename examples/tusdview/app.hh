@@ -46,12 +46,12 @@
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
 #include "tydra/js-script.hh"    // complete JSEngineState (held in Context)
-#include "tydra/mcp-context.hh"  // tinyusdz::tydra::mcp::Context (library tool bridge)
+#include "tydra/mcp-context.hh"  // lightusd::tydra::mcp::Context (library tool bridge)
 #endif
 
 struct GLFWwindow;
 
-namespace tinyusdz { namespace next { class Stage; class StageSession; } }
+namespace lightusd { namespace next { class Stage; class StageSession; } }
 
 namespace tusdview {
 
@@ -377,7 +377,7 @@ class App
   TydraPhysWorld physicsWorld_{};
   bool physicsWorldReady_{false};
   std::uint64_t physicsSceneGen_{~std::uint64_t(0)};
-  std::unique_ptr<tinyusdz::Stage> physicsInitialStage_;
+  std::unique_ptr<lightusd::Stage> physicsInitialStage_;
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
@@ -555,11 +555,11 @@ class App
   double uploadBudgetMs_{8.0};
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
   // Persistent next document: owns the composed stage, resolver, and PCP cache.
-  std::shared_ptr<tinyusdz::next::StageSession> nextSession_;
-  std::shared_ptr<tinyusdz::next::StageSession> pendingNextSession_;
+  std::shared_ptr<lightusd::next::StageSession> nextSession_;
+  std::shared_ptr<lightusd::next::StageSession> pendingNextSession_;
   // Immutable published stage used by the render/UI thread while a shared
   // StageSession recomposes on the loader thread.
-  std::shared_ptr<const tinyusdz::next::Stage> nextStageSnapshot_;
+  std::shared_ptr<const lightusd::next::Stage> nextStageSnapshot_;
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
@@ -921,7 +921,7 @@ class App
   // Parsed Ptex metadata is immutable and can be reused for every page. Keeping
   // one reader per texture avoids reparsing large face/level tables for each
   // 2 ms refinement slice.
-  std::vector<std::shared_ptr<tinyusdz::ptx::Reader>> ptexReaders_;
+  std::vector<std::shared_ptr<lightusd::ptx::Reader>> ptexReaders_;
   std::future<PtexDecodeResult> ptexDecodeFuture_;
   bool ptexDecodeActive_{false};
   // Bumped whenever draw_'s textures are replaced/freed (scene swap). A decode
@@ -1018,9 +1018,9 @@ class App
 #if defined(TUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
   std::vector<std::filesystem::path> mcpTempFiles_;
-  // Context for the tinyusdz library tools; its Stage is a lazy snapshot of
+  // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.
-  tinyusdz::tydra::mcp::Context mcpCtx_;
+  lightusd::tydra::mcp::Context mcpCtx_;
   std::uint64_t mcpCtxGen_{~std::uint64_t(0)};
 #endif
 };

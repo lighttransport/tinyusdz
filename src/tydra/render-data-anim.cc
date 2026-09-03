@@ -36,7 +36,7 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
@@ -72,7 +72,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -3848,4 +3848,4 @@ size_t ResolveLightLinking(const Stage &stage, RenderScene *scene) {
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

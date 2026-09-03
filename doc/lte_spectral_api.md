@@ -1,6 +1,6 @@
 # LTE SpectralAPI Extension Proposal
 
-> **STATUS: DRAFT PROPOSAL — NOT IMPLEMENTED.** This document specifies a *proposed* USD extension. As of this writing the `wavelength:` USD attributes described below are **not parsed or composed** by the tinyusdz reader/writer, and the standard-illuminant SPD tables do **not** exist. Partial in-memory scaffolding exists in Tydra render-data only (see [Implementation Status](#implementation-status)). Do not rely on this as a shipping feature.
+> **STATUS: DRAFT PROPOSAL — NOT IMPLEMENTED.** This document specifies a *proposed* USD extension. As of this writing the `wavelength:` USD attributes described below are **not parsed or composed** by the lightusd reader/writer, and the standard-illuminant SPD tables do **not** exist. Partial in-memory scaffolding exists in Tydra render-data only (see [Implementation Status](#implementation-status)). Do not rely on this as a shipping feature.
 
 ## Revision History
 
@@ -18,7 +18,7 @@ This proposal introduces spectral data support for USD, enabling physically-base
 
 ## Implementation Status
 
-What exists in tinyusdz source today (data structures only, no USD attribute I/O):
+What exists in lightusd source today (data structures only, no USD attribute I/O):
 
 | Item | Source | State |
 |------|--------|-------|

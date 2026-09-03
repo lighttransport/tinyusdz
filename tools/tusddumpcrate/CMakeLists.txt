@@ -7,7 +7,7 @@ add_executable(tusddumpcrate
 )
 
 target_link_libraries(tusddumpcrate
-  ${TINYUSDZ_TARGET_STATIC}
+  ${LIGHTUSD_TARGET_STATIC}
 )
 
 target_include_directories(tusddumpcrate PRIVATE

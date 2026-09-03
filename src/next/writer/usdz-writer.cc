@@ -5,7 +5,7 @@
 #include <cstring>
 #include <fstream>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -344,4 +344,4 @@ USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

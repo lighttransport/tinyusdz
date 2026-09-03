@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Round-trip fidelity test
+// LightUSD Next - Round-trip fidelity test
 // Verifies that a rich scene survives USDA->write->USDA and USDC->read->USDC
 // round-trips with identical structure, values, metadata, dictionaries and
 // per-property metadata.
@@ -16,7 +16,7 @@
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static const char* kScene = R"USD(#usda 1.0
 (
@@ -25,7 +25,7 @@ static const char* kScene = R"USD(#usda 1.0
     upAxis = "Y"
     framesPerSecond = 24
     customLayerData = {
-        string creator = "tinyusdz"
+        string creator = "lightusd"
         dictionary stats = {
             int prims = 2
         }
@@ -108,7 +108,7 @@ static void CheckMeta(const Stage& s, const char* via) {
   assert(lm.customLayerData.is_dictionary());
   const Dict* cld = lm.customLayerData.as_dictionary();
   assert(cld && cld->find("creator") && cld->find("creator")->as_string() &&
-         *cld->find("creator")->as_string() == "tinyusdz");
+         *cld->find("creator")->as_string() == "lightusd");
   const Value* stats = cld->find("stats");
   assert(stats && stats->is_dictionary() &&
          stats->as_dictionary()->find("prims") &&
@@ -185,7 +185,7 @@ void test_usdc_roundtrip() {
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Round-trip Fidelity Tests ===" << std::endl;
+  std::cout << "=== LightUSD Next Round-trip Fidelity Tests ===" << std::endl;
   std::cout << std::endl;
   try {
     test_usda_roundtrip();

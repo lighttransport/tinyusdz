@@ -14,8 +14,8 @@
  * Memory: The C API does not allocate. Caller provides all buffers.
  * See ik-solver.hh for C++ helpers that build chains from Tydra data.
  */
-#ifndef TINYUSDZ_TYDRA_IK_SOLVER_H_
-#define TINYUSDZ_TYDRA_IK_SOLVER_H_
+#ifndef LIGHTUSD_TYDRA_IK_SOLVER_H_
+#define LIGHTUSD_TYDRA_IK_SOLVER_H_
 
 #include <stdint.h>
 
@@ -159,4 +159,4 @@ TydraIKVec3 tydra_ik_effector_position(const TydraIKChain *chain);
 }  /* extern "C" */
 #endif
 
-#endif /* TINYUSDZ_TYDRA_IK_SOLVER_H_ */
+#endif /* LIGHTUSD_TYDRA_IK_SOLVER_H_ */

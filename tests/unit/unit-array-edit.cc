@@ -9,7 +9,7 @@
 #include "acutest.h"
 
 #include "unit-array-edit.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdc-writer.hh"
 #include "array-edit.hh"
 #include "crate-format.hh"
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void array_edit_crate_roundtrip_test(void) {
   // Build: int[] edited = edit [ write 123 to [1]; append 234; erase [0] ]

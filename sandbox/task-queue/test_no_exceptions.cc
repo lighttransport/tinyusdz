@@ -1,7 +1,7 @@
 #include "task-queue.hh"
 #include <atomic>
 
-using namespace tinyusdz::sandbox;
+using namespace lightusd::sandbox;
 
 void dummy_task(void* data) {
   (void)data;

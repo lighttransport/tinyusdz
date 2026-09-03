@@ -15,7 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace imageproc {
 
 enum class SimdLevel { Scalar, SSE2, SSE41, AVX, AVX2, Wasm };
@@ -47,4 +47,4 @@ void PackChannels8(uint8_t *out, size_t n_pixels, int out_channels,
                    const PackSource *sources);
 
 }  // namespace imageproc
-}  // namespace tinyusdz
+}  // namespace lightusd

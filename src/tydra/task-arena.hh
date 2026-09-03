@@ -3,7 +3,7 @@
 //
 // Minimal persistent worker pool for legacy tydra conversion phases.
 //
-// Self-contained on purpose: the legacy tinyusdz static lib does not link
+// Self-contained on purpose: the legacy lightusd static lib does not link
 // tydra_next, so it cannot reuse next::TaskArena. Run() distributes indices
 // dynamically through an atomic counter (work stealing at index granularity),
 // which keeps all workers busy even when item costs are heavily skewed --
@@ -13,14 +13,14 @@
 // but each task writes only into caller-owned slots indexed by its argument;
 // callers merge slot results in a serial, ordered pass afterwards.
 
-#ifndef TINYUSDZ_TYDRA_TASK_ARENA_HH_
-#define TINYUSDZ_TYDRA_TASK_ARENA_HH_
+#ifndef LIGHTUSD_TYDRA_TASK_ARENA_HH_
+#define LIGHTUSD_TYDRA_TASK_ARENA_HH_
 
-// Worker threads follow the repo-wide TINYUSDZ_ENABLE_THREAD opt-in (default
+// Worker threads follow the repo-wide LIGHTUSD_ENABLE_THREAD opt-in (default
 // OFF so WASM/browser builds need no Emscripten pthreads). Without it, Run()
 // executes tasks inline on the calling thread.
-#if !defined(TINYUSDZ_ENABLE_THREAD)
-#define TINYUSDZ_TYDRA_TASK_ARENA_SERIAL 1
+#if !defined(LIGHTUSD_ENABLE_THREAD)
+#define LIGHTUSD_TYDRA_TASK_ARENA_SERIAL 1
 #endif
 
 #include <algorithm>
@@ -32,7 +32,7 @@
 #include <thread>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Suggested upper bound for auto-detected worker counts.
@@ -45,7 +45,7 @@ class TaskArena {
   // degrades to inline sequential execution.
   explicit TaskArena(size_t max_threads)
       : requested_(max_threads ? max_threads : 1) {
-#if !defined(TINYUSDZ_TYDRA_TASK_ARENA_SERIAL)
+#if !defined(LIGHTUSD_TYDRA_TASK_ARENA_SERIAL)
     const unsigned hw = std::thread::hardware_concurrency();
     size_t n = requested_;
     if (n > kMaxTaskArenaThreads) n = kMaxTaskArenaThreads;
@@ -63,7 +63,7 @@ class TaskArena {
   }
 
   ~TaskArena() {
-#if !defined(TINYUSDZ_TYDRA_TASK_ARENA_SERIAL)
+#if !defined(LIGHTUSD_TYDRA_TASK_ARENA_SERIAL)
     {
       std::unique_lock<std::mutex> lk(mu_);
       stop_ = true;
@@ -85,7 +85,7 @@ class TaskArena {
   void Run(size_t count, const std::function<void(size_t)> &task) {
     if (count == 0) return;
 
-#if defined(TINYUSDZ_TYDRA_TASK_ARENA_SERIAL)
+#if defined(LIGHTUSD_TYDRA_TASK_ARENA_SERIAL)
     for (size_t i = 0; i < count; i++) {
       task(i);
     }
@@ -122,7 +122,7 @@ class TaskArena {
   }
 
  private:
-#if defined(TINYUSDZ_TYDRA_TASK_ARENA_SERIAL)
+#if defined(LIGHTUSD_TYDRA_TASK_ARENA_SERIAL)
   size_t requested_{1};
 #else
   void RunIndices() {
@@ -167,6 +167,6 @@ class TaskArena {
 };
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_TYDRA_TASK_ARENA_HH_
+#endif  // LIGHTUSD_TYDRA_TASK_ARENA_HH_

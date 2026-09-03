@@ -3,8 +3,8 @@
 //
 // tinysubdiv internals. Not a public header.
 
-#ifndef TINYUSDZ_TSD_INTERNAL_HH_
-#define TINYUSDZ_TSD_INTERNAL_HH_
+#ifndef LIGHTUSD_TSD_INTERNAL_HH_
+#define LIGHTUSD_TSD_INTERNAL_HH_
 
 #include <cstdint>
 #include <string>
@@ -12,7 +12,7 @@
 
 #include "tinysubdiv.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 constexpr uint32_t kInvalidIndex = 0xFFFFFFFFu;
@@ -316,6 +316,6 @@ inline void ParallelFor(const Options &opts, uint32_t count, const Body &body) {
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_TSD_INTERNAL_HH_
+#endif  // LIGHTUSD_TSD_INTERNAL_HH_

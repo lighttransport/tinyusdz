@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdGeomXform Schema Implementation
+// LightUSD Next - UsdGeomXform Schema Implementation
 
 #include "geom-xform.hh"
 
@@ -9,7 +9,7 @@
 #include <cstring>
 #include <cmath>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 UsdGeomXform::UsdGeomXform(const UsdPrim& prim) : prim_(prim) {}
@@ -590,4 +590,4 @@ bool IsXform(const UsdPrim& prim) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

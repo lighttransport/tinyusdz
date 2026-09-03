@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 /// String similarity utilities for suggesting fixes
 namespace string_similarity {
@@ -138,4 +138,4 @@ inline std::vector<std::string> FindTopMatches(
 
 }  // namespace string_similarity
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -14,11 +14,11 @@
 #include <iostream>
 #include <string>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/diff-and-compare.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 namespace {
 
@@ -43,8 +43,8 @@ bool LoadMem(const std::string &usda, Layer *layer) {
 }
 
 bool HasDiff(const Layer &a, const Layer &b, const DiffOptions &opts) {
-  tinyusdz::HashMap<std::string, PrimSpecDiff> ps;
-  tinyusdz::HashMap<std::string, PropDiff> pp;
+  lightusd::HashMap<std::string, PrimSpecDiff> ps;
+  lightusd::HashMap<std::string, PropDiff> pp;
   LayerMetaDiff lm;
   Diff(a, b, ps, pp, opts, &lm);
   return !ps.empty() || !pp.empty() || lm.changed();

@@ -7,7 +7,7 @@
 #include <limits>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ZIP local file header signature
@@ -303,4 +303,4 @@ int USDZReader::FindUSDAFile() const {
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

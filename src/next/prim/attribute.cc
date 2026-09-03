@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Attribute implementation
+// LightUSD Next - Attribute implementation
 
 #include "attribute.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 Attribute::Attribute(const std::string& name, TypeId type_id)
@@ -76,4 +76,4 @@ void Attribute::set_connection(const std::string& path) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

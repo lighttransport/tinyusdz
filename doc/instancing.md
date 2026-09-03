@@ -1,8 +1,8 @@
-# Instancing in TinyUSDZ
+# Instancing in LightUSD
 
 This document covers (1) how OpenUSD models instancing, (2) the instancing
 structure of the Moana Island production scene, and (3) the state of instancing
-in TinyUSDZ plus a plan for scaling to island-sized scenes.
+in LightUSD plus a plan for scaling to island-sized scenes.
 
 OpenUSD distinguishes **two independent instancing mechanisms**:
 
@@ -170,7 +170,7 @@ def "bundle" (prepend references = @./xgHibiscus.usd@</bundle>) {
 
 ---
 
-## 3. TinyUSDZ instancing support
+## 3. LightUSD instancing support
 
 ### 3.1 What already existed (parsing/registry)
 
@@ -201,7 +201,7 @@ bool ComputeMaskAtTime(const GeomPointInstancer &pi, double time,
                        std::vector<bool> *out_mask, std::string *err);
 ```
 
-Math (row-vector convention, matching TinyUSDZ `value::Mult`):
+Math (row-vector convention, matching LightUSD `value::Mult`):
 `localXform[i] = Mult(Mult(S, R), T)`, with `S` from `scales`, `R =
 to_matrix(orientations[i])`, `T` from `positions`; optional `proto_xforms[i]` is
 pre-multiplied. `protoIndices.size()` is the instance count; missing optional

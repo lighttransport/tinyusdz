@@ -1,5 +1,5 @@
 rem Build local Python lib
-rem Assume running this batch file at the toplevel directory of TinyUSDZ.
+rem Assume running this batch file at the toplevel directory of LightUSD.
 
 git clone https://github.com/lighttransport/python-cmake-buildsystem ci/python-cmake-buildsystem
 cd ci/python-cmake-buildsystem

@@ -27,14 +27,14 @@ https://github.com/bytecodealliance/wasmtime
 
 https://github.com/bytecodealliance/wasmtime/blob/main/docs/WASI-tutorial.md
 
-Install `wasmtime`, then copy example USD file to `build` folder(where `tinyusdz_wasi` is located. Otherwise add path using `--dir` option)
+Install `wasmtime`, then copy example USD file to `build` folder(where `lightusd_wasi` is located. Otherwise add path using `--dir` option)
 
 ```bash
 $ cp ../../../models/cube-previewsurface.usda .
-$ wasmtime --dir=. tinyusdz_wasi cube-previewsurface.usda
+$ wasmtime --dir=. lightusd_wasi cube-previewsurface.usda
 ```
 
 ## TODO
 
-* [ ] Unify CMakeList.txt with <tinyusdz>/CMakelist.txt
+* [ ] Unify CMakeList.txt with <lightusd>/CMakelist.txt
 * [ ] Write WASI specific AssetResolution/FileSystemHandler example.

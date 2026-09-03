@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Zstd compression wrapper implementation for TinyUSDZ
+// Zstd compression wrapper implementation for LightUSD
 
 #include "zstd-compression.hh"
 
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
 
 #include <cstring>
 #include <limits>
@@ -13,7 +13,7 @@
 // Use amalgamated single-file zstd
 #include "external/zstd.h"
 
-namespace tinyusdz {
+namespace lightusd {
 
 bool ZstdCompression::IsZstdCompressed(const uint8_t *data, size_t length) {
   if (!data || length < 4) {
@@ -86,7 +86,7 @@ bool ZstdCompression::Decompress(const uint8_t *compressed,
   }
 
   // Allocate output buffer
-  // Note: TinyUSDZ has exceptions disabled, so we check capacity instead
+  // Note: LightUSD has exceptions disabled, so we check capacity instead
   output->clear();
   if (decompressedSize > output->max_size()) {
     if (err) *err = "Decompressed size exceeds maximum allocatable size";
@@ -145,7 +145,7 @@ bool ZstdCompression::Compress(const uint8_t *input, size_t inputSize,
   size_t maxCompressedSize = ZSTD_compressBound(inputSize);
 
   // Allocate output buffer
-  // Note: TinyUSDZ has exceptions disabled, so we check capacity instead
+  // Note: LightUSD has exceptions disabled, so we check capacity instead
   output->clear();
   if (maxCompressedSize > output->max_size()) {
     if (err) *err = "Compressed buffer size exceeds maximum allocatable size";
@@ -181,6 +181,6 @@ size_t ZstdCompression::GetCompressBound(size_t inputSize) {
   return ZSTD_compressBound(inputSize);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_WITH_ZSTD_COMPRESSION
+#endif  // LIGHTUSD_WITH_ZSTD_COMPRESSION

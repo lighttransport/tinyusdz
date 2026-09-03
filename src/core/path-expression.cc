@@ -15,7 +15,7 @@
 #endif
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -557,7 +557,7 @@ ParsedPathExpression ParsePathExpression(const value::PathExpression &expr,
   return ParsedPathExpression::Parse(expr.GetText(), err);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

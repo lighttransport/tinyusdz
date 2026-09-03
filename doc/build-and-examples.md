@@ -5,10 +5,10 @@ to live in the top-level README.
 
 ## Native Build
 
-TinyUSDZ uses CMake and requires a C++17 compiler.
+LightUSD uses CMake and requires a C++17 compiler.
 
 ```sh
-cmake -S . -B build -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake -S . -B build -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build --parallel
 ```
 
@@ -25,60 +25,60 @@ cmake --build web/build --parallel
 
 ## CMake Integration
 
-TinyUSDZ can be included directly in another CMake project:
+LightUSD can be included directly in another CMake project:
 
 ```cmake
-add_subdirectory(/path/to/tinyusdz tinyusdz)
+add_subdirectory(/path/to/lightusd lightusd)
 
-target_include_directories(your_app PRIVATE /path/to/tinyusdz/src)
-target_link_libraries(your_app PRIVATE tinyusdz::tinyusdz_static)
+target_include_directories(your_app PRIVATE /path/to/lightusd/src)
+target_link_libraries(your_app PRIVATE lightusd::lightusd_static)
 ```
 
-When TinyUSDZ is added as a subdirectory, tools, tests, and examples are disabled
-by default. The namespaced static target `tinyusdz::tinyusdz_static` is the
-recommended link target. The legacy alias `tinyusdz_static` also exists.
+When LightUSD is added as a subdirectory, tools, tests, and examples are disabled
+by default. The namespaced static target `lightusd::lightusd_static` is the
+recommended link target. The legacy alias `lightusd_static` also exists.
 
-TinyUSDZ does not generate source files before the build. The USDA parser is
+LightUSD does not generate source files before the build. The USDA parser is
 hand-written C++ and does not require Bison, Flex, PEG tools, or code generation.
 
 ## Common Options
 
-- `TINYUSDZ_BUILD_TESTS`: build C++ tests.
-- `TINYUSDZ_BUILD_EXAMPLES`: build configured example applications.
-- `TINYUSDZ_BUILD_TOOLS`: build tools such as low-level crate dumpers.
-- `TINYUSDZ_PRODUCTION_BUILD`: disable debug logging and avoid full path leakage
+- `LIGHTUSD_BUILD_TESTS`: build C++ tests.
+- `LIGHTUSD_BUILD_EXAMPLES`: build configured example applications.
+- `LIGHTUSD_BUILD_TOOLS`: build tools such as low-level crate dumpers.
+- `LIGHTUSD_PRODUCTION_BUILD`: disable debug logging and avoid full path leakage
   in diagnostics.
-- `TINYUSDZ_WITH_TYDRA`: build the renderer-friendly Tydra conversion layer.
-- `TINYUSDZ_WITH_C_API`: build the C API, used by language bindings.
-- `TINYUSDZ_WITH_USDMTLX`: build MaterialX support.
-- `TINYUSDZ_WITH_AUDIO`: build MP3/WAV audio loading support.
-- `TINYUSDZ_WITH_ALAC_AUDIO`: build ALAC/M4A support.
-- `TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER`: build bundled image loaders.
-- `TINYUSDZ_TSD_VERIFY_WITH_OSD`: build the tinysubdiv (src/tsd) vs OpenSubdiv
+- `LIGHTUSD_WITH_TYDRA`: build the renderer-friendly Tydra conversion layer.
+- `LIGHTUSD_WITH_C_API`: build the C API, used by language bindings.
+- `LIGHTUSD_WITH_USDMTLX`: build MaterialX support.
+- `LIGHTUSD_WITH_AUDIO`: build MP3/WAV audio loading support.
+- `LIGHTUSD_WITH_ALAC_AUDIO`: build ALAC/M4A support.
+- `LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER`: build bundled image loaders.
+- `LIGHTUSD_TSD_VERIFY_WITH_OSD`: build the tinysubdiv (src/tsd) vs OpenSubdiv
   verification test. Requires `OpenSubdiv_ROOT` pointing at an OpenSubdiv
   source checkout (no pre-build needed). The subdivision library itself
   (src/tsd) is dependency-free and always built.
-- `TINYUSDZ_WITH_ZSTD_COMPRESSION`: enable zstd compression support.
-- `TINYUSDZ_WITH_COROUTINE`: enable C++20 coroutine support.
-- `TINYUSDZ_WITH_MCP_SERVER`, `TINYUSDZ_WITH_QJS`, `TINYUSDZ_WITH_WAMR`,
-  `TINYUSDZ_WITH_GEOGRAM`: optional experimental or feature-specific modules.
+- `LIGHTUSD_WITH_ZSTD_COMPRESSION`: enable zstd compression support.
+- `LIGHTUSD_WITH_COROUTINE`: enable C++20 coroutine support.
+- `LIGHTUSD_WITH_MCP_SERVER`, `LIGHTUSD_WITH_QJS`, `LIGHTUSD_WITH_WAMR`,
+  `LIGHTUSD_WITH_GEOGRAM`: optional experimental or feature-specific modules.
 
 See [../CMakeLists.txt](../CMakeLists.txt) for the complete option list and
 defaults.
 
 ## Testing
 
-From a build directory configured with `TINYUSDZ_BUILD_TESTS=ON`:
+From a build directory configured with `LIGHTUSD_BUILD_TESTS=ON`:
 
 ```sh
 ctest --test-dir build --output-on-failure
-ctest --test-dir build -R unit-test-tinyusdz --output-on-failure
+ctest --test-dir build -R unit-test-lightusd --output-on-failure
 ```
 
 Direct Acutest invocation is also supported after building:
 
 ```sh
-./build/unit-test-tinyusdz crate_writer_cone_test
+./build/unit-test-lightusd crate_writer_cone_test
 ```
 
 See [testing-cpp.md](testing-cpp.md) for the C++ test layout, fixture policy, and
@@ -122,7 +122,7 @@ some viewer examples have their own setup requirements.
 ## Minimal C++ Load
 
 ```cpp
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 #include <cstdlib>
 #include <iostream>
@@ -131,13 +131,13 @@ some viewer examples have their own setup requirements.
 int main(int argc, char **argv) {
   std::string filename = argc > 1 ? argv[1] : "input.usd";
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
   std::string err;
-  tinyusdz::USDLoadOptions options;
+  lightusd::USDLoadOptions options;
   options.max_memory_limit_in_mb = 512;
 
-  if (!tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err, options)) {
+  if (!lightusd::LoadUSDFromFile(filename, &stage, &warn, &err, options)) {
     if (!warn.empty()) {
       std::cerr << "WARN: " << warn << "\n";
     }
@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
     std::cerr << "WARN: " << warn << "\n";
   }
 
-  for (const tinyusdz::Prim &prim : stage.root_prims()) {
+  for (const lightusd::Prim &prim : stage.root_prims()) {
     std::cout << prim.element_name() << "\n";
   }
 
@@ -161,21 +161,21 @@ int main(int argc, char **argv) {
 
 Include [../src/pprinter.hh](../src/pprinter.hh) and
 [../src/value-pprint.hh](../src/value-pprint.hh) when you need
-`tinyusdz::to_string()` or stream-style pretty-printing.
+`lightusd::to_string()` or stream-style pretty-printing.
 
 ## Writing USDA And USDC
 
 ```cpp
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
 
-tinyusdz::Stage stage;
+lightusd::Stage stage;
 std::string warn;
 std::string err;
 
-tinyusdz::usda::SaveAsUSDA("out.usda", stage, &warn, &err);
-tinyusdz::usdc::SaveAsUSDCToFile("out.usdc", stage, &warn, &err);
+lightusd::usda::SaveAsUSDA("out.usda", stage, &warn, &err);
+lightusd::usdc::SaveAsUSDCToFile("out.usdc", stage, &warn, &err);
 ```
 
 USDA writing is the stable text output path. USDC writing is available for Crate

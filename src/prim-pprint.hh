@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
- 
+
 #pragma once
 
 #include <string>
@@ -10,7 +10,7 @@
 #include "core/prim.hh"       // Prim class (transitively: prim-enums, prim-metas, path)
 #include "core/prim-spec.hh"  // PrimSpec, ReferenceList, PayloadList, LayerOffset
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 template <size_t ChunkSize, size_t Alignment> class ChunkedStreamWriter;
@@ -61,4 +61,4 @@ inline std::string to_string(const PrimSpec &primspec) {
   return prim::print_primspec(primspec);
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

@@ -3,7 +3,7 @@
 //
 // Run with:
 //   clang++ -fsanitize=fuzzer,address -I src -o layer_find_primspec_fuzz \
-//     tests/fuzzer/layer_find_primspec_fuzzmain.cc src/libtinyusdz.a
+//     tests/fuzzer/layer_find_primspec_fuzzmain.cc src/liblightusd.a
 //   ./layer_find_primspec_fuzz corpus/layer_find_primspec/
 //
 #include <cstdint>
@@ -11,9 +11,9 @@
 
 #include "layer.hh"
 #include "prim-types.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Build a layer with same-leaf-name prims at different depths,
 // then exercise find_primspec_at with paths derived from the input bytes.

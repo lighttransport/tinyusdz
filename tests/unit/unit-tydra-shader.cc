@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cstring>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/scene-access.hh"
@@ -21,7 +21,7 @@
 #include "core/prim.hh"
 #include "stage.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

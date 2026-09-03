@@ -13,7 +13,7 @@
 
 #include "tusdr_math.hh"
 #include "color-transform.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-types.hh"
 #include "xform.hh"
 #include "mmap-array-ref.hh"
@@ -22,7 +22,7 @@
 #include "next/schema/geom-mesh.hh"
 #include "next/reader/usdz-reader.hh"
 #include "next/stage/stage.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/types/value.hh"
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/texture-cache.hh"
@@ -32,16 +32,16 @@ extern "C" {
 
 namespace tusdr {
 
-using tinyusdz::value::color3f;
-using tinyusdz::value::float3;
-using tinyusdz::value::matrix4d;
-using tinyusdz::tydra::Node;
-using tinyusdz::tydra::NodeType;
-using tinyusdz::tydra::RenderCamera;
-using tinyusdz::tydra::RenderLight;
-using tinyusdz::tydra::RenderMaterial;
-using tinyusdz::tydra::RenderMesh;
-using tinyusdz::tydra::RenderScene;
+using lightusd::value::color3f;
+using lightusd::value::float3;
+using lightusd::value::matrix4d;
+using lightusd::tydra::Node;
+using lightusd::tydra::NodeType;
+using lightusd::tydra::RenderCamera;
+using lightusd::tydra::RenderLight;
+using lightusd::tydra::RenderMaterial;
+using lightusd::tydra::RenderMesh;
+using lightusd::tydra::RenderScene;
 
 enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
@@ -62,7 +62,7 @@ struct Texture {
   };
   std::vector<Mip> mips;
   // Keep decoder budget reservations alive for retained pixels and mips.
-  std::vector<std::shared_ptr<tinyusdz::next::TextureBudgetLease>>
+  std::vector<std::shared_ptr<lightusd::next::TextureBudgetLease>>
       budget_leases;
   bool is_udim{false};
   std::vector<UdimTile> udim_tiles;
@@ -72,7 +72,7 @@ struct Texture {
   // Full authored color transform for color textures. The destination is
   // tusdrender's display-linear Rec.709 shading space. `srgb` remains as the
   // compatibility fallback for legacy textures that do not carry a transform.
-  tinyusdz::color::ColorTransform color_transform;
+  lightusd::color::ColorTransform color_transform;
   // UsdUVTexture inputs:scale / inputs:bias (applied post-sample by the caller,
   // e.g. (2,2,2)/(-1,-1,-1) to unpack a [0,1] normal map to [-1,1]).
   Vec3 scale{1.0f, 1.0f, 1.0f};
@@ -190,10 +190,10 @@ struct Texture {
 
   static Vec3 ApplyColorTransform(
       Vec3 c, bool srgb,
-      const tinyusdz::color::ColorTransform *color_transform) {
+      const lightusd::color::ColorTransform *color_transform) {
     if (color_transform && !color_transform->bypass) {
       float rgb[3] = {c.x, c.y, c.z};
-      tinyusdz::color::TransformRGB(*color_transform, rgb);
+      lightusd::color::TransformRGB(*color_transform, rgb);
       return Vec3{rgb[0], rgb[1], rgb[2]};
     }
     if (srgb) {
@@ -205,7 +205,7 @@ struct Texture {
   static Vec3 sample_data(const uint8_t *pixels, int width, int height,
                           int channels, const std::vector<Mip> &mips,
                           WrapMode wrap_s, WrapMode wrap_t, bool srgb,
-                          const tinyusdz::color::ColorTransform *color_transform,
+                          const lightusd::color::ColorTransform *color_transform,
                           float u, float v, float lod) {
     if (width <= 0 || height <= 0 || !pixels) return Vec3{0.5f, 0.5f, 0.5f};
     bool su = true, sv = true;
@@ -553,7 +553,7 @@ struct Options {
   Vec3 view_dir{0.0f, 0.0f, 0.0f};
   bool has_view_dir{false};
   uint32_t purpose_mask{kPurposeDefaultMask};
-  double timecode{tinyusdz::value::TimeCode::Default()};
+  double timecode{lightusd::value::TimeCode::Default()};
   int samples{1};
   Vec3 bg{0.0f, 0.0f, 0.0f};
   float ambient{0.05f};
@@ -679,7 +679,7 @@ struct DirectShape {
   matrix4d inv_world{matrix4d::identity()};
   double radius{1.0};
   double height{2.0};
-  tinyusdz::Axis axis{tinyusdz::Axis::Z};
+  lightusd::Axis axis{lightusd::Axis::Z};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
 };
@@ -818,9 +818,9 @@ struct BorrowedArrayView {
 };
 
 struct MeshJob {
-  const tinyusdz::GeomMesh *mesh{nullptr};
+  const lightusd::GeomMesh *mesh{nullptr};
   matrix4d world{matrix4d::identity()};
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  lightusd::Purpose purpose{lightusd::Purpose::Default};
   std::string prim_path;
 };
 
@@ -841,7 +841,7 @@ struct Blas {
   IdxVec indices;
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
-  std::vector<tinyusdz::tydra::LightRtOpenPBRParams> openpbr_table;
+  std::vector<lightusd::tydra::LightRtOpenPBRParams> openpbr_table;
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
   ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
   // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
@@ -931,9 +931,9 @@ struct VolumeData {
 struct ResolvedMat;
 
 struct MeshJobNext {
-  tinyusdz::next::UsdPrim prim;
+  lightusd::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  lightusd::Purpose purpose{lightusd::Purpose::Default};
   // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
   // material-bound per GeomSubset becomes one job per bound subset + a
   // remainder job.
@@ -942,7 +942,7 @@ struct MeshJobNext {
   // material binding instead of the mesh -- GetInheritedBoundMaterialPath on it
   // finds the subset's own binding first, then falls back up the ancestry.
   std::vector<char> subset_faces;
-  tinyusdz::next::UsdPrim bind_prim;
+  lightusd::next::UsdPrim bind_prim;
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
   float roughness{0.55f};                // resolved inputs:roughness
@@ -976,7 +976,7 @@ struct MeshJobNext {
   float displacement{0.0f};              // inputs:displacement constant (scene units)
   ScalarTex displacement_tex;            // inputs:displacement texture + channel
   bool has_openpbr{false};
-  tinyusdz::tydra::LightRtOpenPBRParams openpbr;
+  lightusd::tydra::LightRtOpenPBRParams openpbr;
   std::string materialx_graph_json;
   // Present only for an authored material:binding:back. Shared across copies
   // made while expanding instances/subsets; no per-triangle memory cost.
@@ -987,10 +987,10 @@ struct TextureCache {
   std::vector<Texture> *textures{nullptr};
   std::unordered_map<std::string, int32_t> by_key;
   std::string base_dir;  // directory of the input file, for relative paths
-  const tinyusdz::next::USDZReader *usdz{nullptr};
+  const lightusd::next::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
   // Shared decode + size cap + byte budget (built on first use in tusdr_next).
-  std::shared_ptr<tinyusdz::tydra::next::TextureDecoder> decoder;
+  std::shared_ptr<lightusd::tydra::next::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
   size_t *unsupported_mtlx{nullptr};  // -> RTPreviewStats::unsupported_mtlx
@@ -1029,20 +1029,20 @@ struct ResolvedMat {
   float displacement{0.0f};
   ScalarTex displacement_tex;
   bool has_openpbr{false};
-  tinyusdz::tydra::LightRtOpenPBRParams openpbr;
+  lightusd::tydra::LightRtOpenPBRParams openpbr;
   std::string materialx_graph_json;
 };
 
 struct ProtoBuildReq {
   std::string path;
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  lightusd::Purpose purpose{lightusd::Purpose::Default};
   uint32_t blas_id{0};  // index into RenderContext::blas
 };
 
 struct CurveJobNext {
-  tinyusdz::next::UsdPrim prim;
+  lightusd::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  lightusd::Purpose purpose{lightusd::Purpose::Default};
 };
 
 // One placement of a curve prototype's curve BLAS (deduped curve geometry stored

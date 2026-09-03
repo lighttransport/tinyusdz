@@ -9,7 +9,7 @@
 // authored arcs like `references = @asset_1@</X>` compose without disk I/O.
 // This is the harness that exercises the Phase-1 cycle/recursion hardening.
 //
-// Build (clang): cmake -S src/next -B build-fuzz -DTINYUSDZ_NEXT_BUILD_FUZZERS=ON
+// Build (clang): cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON
 // Seed corpus: tests/fuzzer/next_compose_seeds/.
 
 #include <cstdint>
@@ -24,7 +24,7 @@
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static std::shared_ptr<Layer> ParseChunk(const std::string &chunk) {
   LoadOptions opts;

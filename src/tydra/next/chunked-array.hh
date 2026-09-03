@@ -25,7 +25,7 @@
 #include <memory>
 #include <type_traits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -695,4 +695,4 @@ using Vec4fChunked = ChunkedArray<Vec4f>;
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -5,13 +5,13 @@
  * optimization pipeline with synthetic graphs.  Pure CPU — no GPU needed.
  */
 
-import { MtlxNodeGraphProcessor, MtlxNodeEval } from 'tinyusdz/TinyUSDZOpenPBR_WebGL.js';
+import { MtlxNodeGraphProcessor, MtlxNodeEval } from 'lightusd/LightUSDOpenPBR_WebGL.js';
 import {
     optimizeNodeGraph,
     NodeGraphOptimizationLevel,
     markActiveNodes,
     removeInactiveNodes
-} from 'tinyusdz/TinyUSDZMaterialX.js';
+} from 'lightusd/LightUSDMaterialX.js';
 
 // ============================================================================
 // Graph Builder Helpers

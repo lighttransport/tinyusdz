@@ -3,18 +3,18 @@
 // #include "prim-types.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace math {
 
-// TODO: Set TINYUSDZ_BIG_ENDIAN when compiling TinyUSDZ on Big Endian
+// TODO: Set LIGHTUSD_BIG_ENDIAN when compiling LightUSD on Big Endian
 // architecture(e.g. PowerPC, SPARC)
 union IEEE754Float {
   float f;
   uint32_t ui;
   int32_t i;
   struct {
-#if defined(TINYUSDZ_BIG_ENDIAN)
+#if defined(LIGHTUSD_BIG_ENDIAN)
     uint32_t sign : 1;
     uint32_t exponent : 8;
     uint32_t mantissa : 23;
@@ -31,7 +31,7 @@ union IEEE754Double {
   uint64_t ull;
   int64_t ll;
   struct {
-#if defined(TINYUSD_BIG_ENDIAN)
+#if defined(LIGHTUSD_BIG_ENDIAN)
     uint64_t sign : 1;
     uint64_t exponent : 11;
     uint64_t mantissa : 52;
@@ -194,7 +194,7 @@ inline T sin_pi_imp(T x) {
   // sin of pi*x:
   bool invert{false};
   if (x < T(0.5)) {
-    // [tinyusdz] sin(0.25*pi) still differs with cos(0.25*pi)
+    // [lightusd] sin(0.25*pi) still differs with cos(0.25*pi)
     // (whereas boost is not though(they compute sin/cos in higher bits?)
     if (is_close(x, T(0.25), T(0))) {
       return std::cos(constants<T>::pi() * x);
@@ -228,7 +228,7 @@ inline T sin_pi_imp(T x) {
   if (rem > T(0.5)) rem = 1 - rem;
   if (is_close(rem, T(0.5), T(0.0))) return static_cast<T>(invert ? -1 : 1);
 
-  // [tinyusdz] workaround for -(n * pi/4) and +(n * pi/4) so that it will give
+  // [lightusd] workaround for -(n * pi/4) and +(n * pi/4) so that it will give
   // identical result with cosine.
   if (is_close(rem, T(0.25), T(0))) {
     rem = std::cos(constants<T>::pi() * rem);
@@ -550,4 +550,4 @@ inline bool is_close(const value::ushort4 &a, const value::ushort4 &b) {
 
 }  // namespace math
 
-}  // namespace tinyusdz
+}  // namespace lightusd

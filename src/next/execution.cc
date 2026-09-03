@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct TaskArena::Impl {
@@ -18,7 +18,7 @@ struct TaskArena::Impl {
       : max_threads(std::min<size_t>(
             std::max<size_t>(1, requested),
             static_cast<size_t>(kMaxExecutionThreads))) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     workers.reserve(max_threads - 1);
     for (size_t i = 1; i < max_threads; ++i) {
       workers.emplace_back([this]() { WorkerLoop(); });
@@ -27,7 +27,7 @@ struct TaskArena::Impl {
   }
 
   ~Impl() {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     {
       std::lock_guard<std::mutex> lock(mu);
       stopping = true;
@@ -64,7 +64,7 @@ struct TaskArena::Impl {
 
   void Run(size_t item_count, const std::function<void(size_t)>& fn) {
     if (item_count == 0) return;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (!workers.empty() && item_count > 1) {
       std::unique_lock<std::mutex> run_lock(run_mu);
       {
@@ -111,4 +111,4 @@ void TaskArena::Run(size_t count,
 size_t TaskArena::max_threads() const { return impl_->max_threads; }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

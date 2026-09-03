@@ -1,6 +1,6 @@
-# TinyUSDZ C99 JSON Library
+# LightUSD C99 JSON Library
 
-A pure C99 implementation of JSON parsing, serialization, and USD Layer ↔ JSON conversion for the TinyUSDZ project.
+A pure C99 implementation of JSON parsing, serialization, and USD Layer ↔ JSON conversion for the LightUSD project.
 
 ## Features
 
@@ -14,7 +14,7 @@ A pure C99 implementation of JSON parsing, serialization, and USD Layer ↔ JSON
 
 ### Supported JSON Types
 - `null` - JSON null values
-- `boolean` - true/false values  
+- `boolean` - true/false values
 - `number` - IEEE 754 double precision floating point
 - `string` - UTF-8 strings with escape sequence support
 - `array` - Dynamic arrays with automatic memory management
@@ -94,7 +94,7 @@ gcc -std=c99 -Wall -Wextra -o demo_usd_json demo_usd_json.c tusd_layer.c -lm
 
 ### Core JSON Tests (8/8 PASSED)
 - ✅ JSON Value Creation
-- ✅ JSON Array Operations  
+- ✅ JSON Array Operations
 - ✅ JSON Object Operations
 - ✅ JSON Parser Basic
 - ✅ JSON Parser Complex
@@ -116,7 +116,7 @@ gcc -std=c99 -Wall -Wextra -o demo_usd_json demo_usd_json.c tusd_layer.c -lm
 The demo program creates a sample USD layer and demonstrates:
 
 1. **USD → JSON Conversion**: Converts layer metadata, primspecs, and properties to JSON
-2. **JSON → USD Conversion**: Parses JSON and recreates USD layer structure  
+2. **JSON → USD Conversion**: Parses JSON and recreates USD layer structure
 3. **File I/O**: Saves/loads JSON files with pretty printing
 4. **Type Inference**: Automatically handles USD ↔ JSON type mapping
 
@@ -185,7 +185,7 @@ Example output:
 
 ## Contributing
 
-The implementation follows TinyUSDZ coding standards:
+The implementation follows LightUSD coding standards:
 - Pure C99 code with no external dependencies
 - Comprehensive error checking
 - Memory-safe operations
@@ -194,4 +194,4 @@ The implementation follows TinyUSDZ coding standards:
 
 ## License
 
-This implementation is part of the TinyUSDZ project and follows the same licensing terms.
+This implementation is part of the LightUSD project and follows the same licensing terms.

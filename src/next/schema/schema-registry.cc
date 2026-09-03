@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -60,9 +60,9 @@ bool MatchDefinitionName(const PrimSpec& prim,
 }  // namespace
 
 SchemaRegistry::SchemaRegistry() {
-#define TINYUSDZ_NEXT_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
+#define LIGHTUSD_NEXT_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
 #include "generated/openusd-supported-schema-names.inc"
-#undef TINYUSDZ_NEXT_SUPPORTED_SCHEMA
+#undef LIGHTUSD_NEXT_SUPPORTED_SCHEMA
   parents_ = {
       {"Xform", "Xformable"}, {"Xformable", "Imageable"},
       {"Curves", "PointBased"}, {"BasisCurves", "Curves"},
@@ -573,4 +573,4 @@ const SchemaRegistry& GetSchemaRegistry() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

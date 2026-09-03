@@ -29,7 +29,7 @@ set(TUSDQUICKLOOK_SOURCES
     render/gl_context_egl.cc
 )
 
-# lightrt's CPU BVH kernel (vendored at src/external/lightrt). The tinyusdz-local
+# lightrt's CPU BVH kernel (vendored at src/external/lightrt). The lightusd-local
 # indexed build keeps the indexed data instead of a vertex soup, which is what
 # lets a preview BLAS stay inside the memory budget.
 set(TUSDQUICKLOOK_LIGHTRT_DIR ${PROJECT_SOURCE_DIR}/src/external/lightrt)
@@ -50,11 +50,11 @@ if(TUSDQUICKLOOK_ENABLE_MCP)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
       TUSDQUICKLOOK_HAVE_MCP=1 NO_SSL NO_CGI)
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
-  if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+  if(NOT LIGHTUSD_CXX_EXCEPTIONS AND NOT MSVC)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
         PROPERTIES COMPILE_OPTIONS "-fexceptions")
-  elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+  elseif(NOT LIGHTUSD_CXX_EXCEPTIONS AND MSVC)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
         PROPERTIES COMPILE_OPTIONS "/EHsc")
@@ -80,33 +80,33 @@ if(MSVC)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
-if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
-  # Keep quicklook lightweight by default: avoid building tinyusdz_textools
+if(LIGHTUSD_BUILD_QUICKLOOK AND NOT LIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+  # Keep quicklook lightweight by default: avoid building lightusd_textools
   # unless explicitly requested.
-  if (TINYUSDZ_WITH_TEXTOOLS)
-    message(STATUS "tusdquicklook: forcing TINYUSDZ_WITH_TEXTOOLS OFF (pass -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to enable)")
+  if (LIGHTUSD_WITH_TEXTOOLS)
+    message(STATUS "tusdquicklook: forcing LIGHTUSD_WITH_TEXTOOLS OFF (pass -DLIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to enable)")
   endif()
-  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+  set(LIGHTUSD_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
 endif()
 
 # The `next` lazy loader + tydra_next streaming converter are the whole reason
 # this app can hold a small memory budget. Build them on demand, the same way
 # tools/tusdrender does.
-set(TINYUSDZ_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET tinyusdz_next)
+set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET lightusd_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
                    ${CMAKE_BINARY_DIR}/tusdquicklook_next_build)
 endif()
 
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     lightui
-    ${TINYUSDZ_TOOLS_ALLOCATOR_LIB}
-    tinyusdz_next
+    ${LIGHTUSD_TOOLS_ALLOCATOR_LIB}
+    lightusd_next
     tydra_next
 )
 # tydra_next's lazy image decoding uses symbols from the main static library;
 # keep that archive last so single-pass static linkers resolve it.
-target_link_libraries(${EXAMPLE_TARGET} PRIVATE tinyusdz_static)
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_static)
 
 find_package(Threads REQUIRED)
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
@@ -119,7 +119,7 @@ set_target_properties(${EXAMPLE_TARGET} PROPERTIES
 
 # Headless smoke test. Runs with no display and no GPU (that is the whole point
 # of --screenshot), so it is safe in CI.
-if(TINYUSDZ_BUILD_TESTS AND UNIX)
+if(LIGHTUSD_BUILD_TESTS AND UNIX)
   add_test(NAME example-tusdquicklook-smoke
            COMMAND ${CMAKE_COMMAND} -E env bash
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-quicklook-smoke.sh
@@ -150,11 +150,11 @@ if(TINYUSDZ_BUILD_TESTS AND UNIX)
         NO_SSL NO_CGI)
     target_link_libraries(tusdquicklook-mcp-protocol-test PRIVATE
         ${CMAKE_DL_LIBS} Threads::Threads)
-    if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+    if(NOT LIGHTUSD_CXX_EXCEPTIONS AND NOT MSVC)
       set_source_files_properties(
           tests/mcp_protocol_test.cc mcp/mcp_server.cc mcp/mcp_http.cc
           mcp/mcp_stdio.cc PROPERTIES COMPILE_OPTIONS "-fexceptions")
-    elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+    elseif(NOT LIGHTUSD_CXX_EXCEPTIONS AND MSVC)
       set_source_files_properties(
           tests/mcp_protocol_test.cc mcp/mcp_server.cc mcp/mcp_http.cc
           mcp/mcp_stdio.cc PROPERTIES COMPILE_OPTIONS "/EHsc")

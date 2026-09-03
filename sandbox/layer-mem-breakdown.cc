@@ -8,7 +8,7 @@
 //
 // Build (ad hoc):
 //   clang++ -O2 -std=c++17 -Isrc -Isrc/external sandbox/layer-mem-breakdown.cc \
-//     build/libtinyusdz_static.a -o /tmp/layer-mem-breakdown -fno-exceptions -lpthread
+//     build/liblightusd_static.a -o /tmp/layer-mem-breakdown -fno-exceptions -lpthread
 #include <cstdio>
 #include <map>
 #include <set>
@@ -19,9 +19,9 @@
 #include "core/prim-spec.hh"
 #include "io-util.hh"
 #include "layer.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 struct Tally {
   size_t prims = 0;

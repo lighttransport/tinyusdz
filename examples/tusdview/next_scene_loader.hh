@@ -21,7 +21,7 @@
 #include "scene_loader.hh"   // LoadOptions
 #include "skinning.hh"       // RtSkinnedMeshUpload
 
-namespace tinyusdz { namespace next { class Stage; class StageSession; } }
+namespace lightusd { namespace next { class Stage; class StageSession; } }
 
 namespace tusdview {
 
@@ -35,10 +35,10 @@ namespace tusdview {
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl = nullptr,
-                    std::shared_ptr<tinyusdz::next::StageSession>* out_session = nullptr,
+                    std::shared_ptr<lightusd::next::StageSession>* out_session = nullptr,
                     ProgressiveSceneStream* stream = nullptr);
 
-bool UpdateNextAnimatedMeshWorlds(const tinyusdz::next::Stage& stage,
+bool UpdateNextAnimatedMeshWorlds(const lightusd::next::Stage& stage,
                                   DrawScene* draw, double time);
 
 // Decode one ordinary filesystem texture reserved by the async next-loader.
@@ -77,14 +77,14 @@ struct NextCameraPose {
 // Gather all Camera prims from `stage` and populate `*out` with their world
 // pose and lens properties at `time`. Used to populate the camera record summary
 // for loader-equivalence testing.
-void GatherNextCameras(const tinyusdz::next::Stage& stage, double time,
+void GatherNextCameras(const lightusd::next::Stage& stage, double time,
                        std::vector<DrawCameraCPU>* out);
 
 // Find the Camera prim named (or path-suffixed by) `name` in `stage` and fill
 // `*out` with its world-space pose at `time`. Returns false if no such camera
 // exists. Used to drive the viewer's orbit camera from a scene camera (the
 // auto-fit framing is useless on vast scenes like Caldera).
-bool FindNextCamera(const tinyusdz::next::Stage& stage, const std::string& name,
+bool FindNextCamera(const lightusd::next::Stage& stage, const std::string& name,
                     double time, NextCameraPose* out);
 
 // Same, for the LEGACY loader, which has no next Stage -- only the converted
@@ -93,7 +93,7 @@ bool FindNextCamera(const tinyusdz::next::Stage& stage, const std::string& name,
 // could not be compared frame-to-frame at all. The pose comes from the camera
 // node's world matrix, so it is already evaluated at the load time code (Tydra
 // bakes it); `time` is not re-sampled.
-bool FindLegacyCamera(const tinyusdz::tydra::RenderScene& scene,
+bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
                       const std::string& name, NextCameraPose* out);
 
 // Per-frame GPU-morph coefficients for `--next` instanced prototypes: for each
@@ -103,7 +103,7 @@ bool FindLegacyCamera(const tinyusdz::tydra::RenderScene& scene,
 // shader sums. Emits (meshIndex, coeffs) only for morphed meshes. Mirrors
 // BuildMorphChannelWeights/EvalMorphChannelCoeffs for the next stage.
 void BuildNextMorphWeights(
-    const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
+    const lightusd::next::Stage& stage, const DrawScene& draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<std::pair<int, std::vector<float>>>* out);
 
@@ -120,7 +120,7 @@ void BuildNextMorphWeights(
 // scene box, so that a moving rig never culls itself out of view. The SCENE box is
 // refreshed separately -- see BuildNextPosedSceneBounds.
 // Returns false when the scene has no next-path skinning.
-bool BuildNextSkinningFrame(const tinyusdz::next::Stage& stage, DrawScene* draw,
+bool BuildNextSkinningFrame(const lightusd::next::Stage& stage, DrawScene* draw,
                             double time, SkinningFrameCPU* frame);
 
 // The scene's world box at `time`, with the skeleton posed. The load-time box is
@@ -133,7 +133,7 @@ bool BuildNextSkinningFrame(const tinyusdz::next::Stage& stage, DrawScene* draw,
 // bound would put the grid and the depth ramp somewhere else than those paths do,
 // on identical geometry. Returns false when nothing deformed.
 bool BuildNextPosedSceneBounds(
-    const tinyusdz::next::Stage& stage, DrawScene* draw, double time,
+    const lightusd::next::Stage& stage, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     float outMin[3], float outMax[3]);
 
@@ -149,7 +149,7 @@ bool BuildNextPosedSceneBounds(
 // therefore has to retain it for deformable meshes (see App::freeCpuGeometry).
 // Returns false when nothing deformed.
 bool BuildNextRtDeformedVertices(
-    const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
+    const lightusd::next::Stage& stage, const DrawScene& draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<RtSkinnedMeshUpload>* out);
 

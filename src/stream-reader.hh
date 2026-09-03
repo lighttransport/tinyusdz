@@ -36,7 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstring>
 #include <memory>
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -359,4 +359,4 @@ class StreamReader {
   mutable uint64_t idx_;
 };
 
-} // namespace tinyusdz
+} // namespace lightusd

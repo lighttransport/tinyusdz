@@ -19,7 +19,7 @@
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #endif
 
-#if !defined(TINYUSDZ_NO_STB_IMAGE_RESIZE_IMPLEMENTATION)
+#if !defined(LIGHTUSD_NO_STB_IMAGE_RESIZE_IMPLEMENTATION)
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #endif
 
@@ -41,7 +41,7 @@
 #include "tiny-format.hh"
 #include "imageproc/simd.hh"  // SIMD Mat3MulRGBf row kernel
 
-#if defined(TINYUSDZ_WITH_COLORIO)
+#if defined(LIGHTUSD_WITH_COLORIO)
 #include "external/tiny-color-io.h"
 #endif
 
@@ -62,7 +62,7 @@ inline void ApplyColorMatrix(const std::vector<float> &in,
                              size_t channels, const float m[9],
                              bool clamp_nonneg) {
   if (channels == 3) {
-    tinyusdz::imageproc::Mat3MulRGBf(in.data(), out->data(), n_pixels, m);
+    lightusd::imageproc::Mat3MulRGBf(in.data(), out->data(), n_pixels, m);
     if (clamp_nonneg) {
       float *o = out->data();
       const size_t n = n_pixels * 3;
@@ -349,7 +349,7 @@ uint8_t linearToSrgb8bit(double x) {
 
 } // SrgbTransform
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace detail {
 
@@ -847,7 +847,7 @@ bool linear_sRGB_to_ACEScg(const std::vector<float> &in_img, size_t width,
   out_img->resize(in_img.size());
 
   // sRGB(D65) > XYZ -> D65toD50(Chromatic adaptation) -> ACEScg(AP1, D50)
-  // 
+  //
   // https://www.shadertoy.com/view/WltSRB
   // https://computergraphics.stackexchange.com/questions/9834/how-to-convert-from-xyz-or-srgb-to-acescg-ap1
   // https://gist.github.com/Opioid/442d4975a23eed9a9e129bc3de97ea2a
@@ -898,7 +898,7 @@ bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
   out_img->resize(in_img.size());
 
   // inv(ACEScg_to_lin_sRGB)
-  // 
+  //
   // https://www.shadertoy.com/view/WltSRB
 
   // ACEScg (AP1) -> sRGB (linear), clamped to >= 0.
@@ -1083,7 +1083,7 @@ bool rec2020_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width
 bool linear_f32_to_rec2020_8bit(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
                          std::vector<uint8_t> *out_img, std::string *err) {
-  
+
   if (width == 0) {
     PUSH_ERROR_AND_RETURN("width is zero.");
   }
@@ -1266,20 +1266,20 @@ bool gamma22_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
   out_img->resize(src_size);
 
   const float gamma = 2.2f;
-  
+
   for (size_t y = 0; y < height; y++) {
     for (size_t x = 0; x < width; x++) {
       // Apply gamma 2.2 to linear conversion for specified channels
       for (size_t c = 0; c < channels; c++) {
         float v = in_img[y * width * channel_stride + x * channel_stride + c];
         // Simple power law gamma correction
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           (v <= 0.0f) ? 0.0f : std::pow(v, gamma);
       }
 
       // Copy remaining channels without conversion
       for (size_t c = channels; c < channel_stride; c++) {
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           in_img[y * width * channel_stride + x * channel_stride + c];
       }
     }
@@ -1326,20 +1326,20 @@ bool linear_f32_to_gamma22_f32(const std::vector<float> &in_img, size_t width,
   out_img->resize(src_size);
 
   const float inv_gamma = 1.0f / 2.2f;
-  
+
   for (size_t y = 0; y < height; y++) {
     for (size_t x = 0; x < width; x++) {
       // Apply linear to gamma 2.2 conversion for specified channels
       for (size_t c = 0; c < channels; c++) {
         float L = in_img[y * width * channel_stride + x * channel_stride + c];
         // Simple inverse power law gamma correction
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           (L <= 0.0f) ? 0.0f : std::pow(L, inv_gamma);
       }
 
       // Copy remaining channels without conversion
       for (size_t c = channels; c < channel_stride; c++) {
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           in_img[y * width * channel_stride + x * channel_stride + c];
       }
     }
@@ -1386,20 +1386,20 @@ bool gamma18_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
   out_img->resize(src_size);
 
   const float gamma = 1.8f;
-  
+
   for (size_t y = 0; y < height; y++) {
     for (size_t x = 0; x < width; x++) {
       // Apply gamma 1.8 to linear conversion for specified channels
       for (size_t c = 0; c < channels; c++) {
         float v = in_img[y * width * channel_stride + x * channel_stride + c];
         // Simple power law gamma correction
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           (v <= 0.0f) ? 0.0f : std::pow(v, gamma);
       }
 
       // Copy remaining channels without conversion
       for (size_t c = channels; c < channel_stride; c++) {
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           in_img[y * width * channel_stride + x * channel_stride + c];
       }
     }
@@ -1446,20 +1446,20 @@ bool linear_f32_to_gamma18_f32(const std::vector<float> &in_img, size_t width,
   out_img->resize(src_size);
 
   const float inv_gamma = 1.0f / 1.8f;
-  
+
   for (size_t y = 0; y < height; y++) {
     for (size_t x = 0; x < width; x++) {
       // Apply linear to gamma 1.8 conversion for specified channels
       for (size_t c = 0; c < channels; c++) {
         float L = in_img[y * width * channel_stride + x * channel_stride + c];
         // Simple inverse power law gamma correction
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           (L <= 0.0f) ? 0.0f : std::pow(L, inv_gamma);
       }
 
       // Copy remaining channels without conversion
       for (size_t c = channels; c < channel_stride; c++) {
-        (*out_img)[y * width * channel_stride + x * channel_stride + c] = 
+        (*out_img)[y * width * channel_stride + x * channel_stride + c] =
           in_img[y * width * channel_stride + x * channel_stride + c];
       }
     }
@@ -1556,4 +1556,4 @@ bool ACES2065_1_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
   return true;
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

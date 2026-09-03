@@ -31,7 +31,7 @@
 #pragma GCC diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -66,8 +66,8 @@ bool BuildOcclusionRoughnessMetallicTexture(
 		const size_t metallicImageChannels,
 		const size_t metallicChannel,
 		std::vector<uint8_t> &dst, // RGBA
-    size_t &dstWidth,	
-    size_t &dstHeight)	
+    size_t &dstWidth,
+    size_t &dstHeight)
 {
 	// Validate channel counts only for present images. Empty inputs are allowed
 	// and use the scalar factors below.
@@ -156,7 +156,7 @@ bool BuildOcclusionRoughnessMetallicTexture(
 		}
 	} else {
 		occlusionBuf = occlusionImageData;
-	} 
+	}
 
 	if (!metallicImageData.empty()) {
 		if ((maxImageWidth != metallicImageWidth) || (maxImageHeight != metallicImageHeight)) {
@@ -187,7 +187,7 @@ bool BuildOcclusionRoughnessMetallicTexture(
 		} else {
 			metallicBuf = metallicImageData;
 		}
-	} 
+	}
 
 	if (!roughnessImageData.empty()) {
 		if ((maxImageWidth != roughnessImageWidth) || (maxImageHeight != roughnessImageHeight)) {
@@ -218,7 +218,7 @@ bool BuildOcclusionRoughnessMetallicTexture(
 		} else {
 			roughnessBuf = roughnessImageData;
 		}
-	} 
+	}
 
 	uint8_t occlusionValue = ScalarFactorToByte(occlusionFactor);
 	uint8_t metallicValue = ScalarFactorToByte(metallicFactor);
@@ -772,4 +772,4 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

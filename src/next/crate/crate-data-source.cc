@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Crate data source implementation
+// LightUSD Next - Crate data source implementation
 
 #include "crate-data-source.hh"
 
@@ -18,17 +18,17 @@
 // Posix mmap is used to back a CrateDataSource directly off the file (Phase
 // 8.3). WASM (emscripten/wasi) and non-posix platforms keep the owned-buffer
 // path; MmapFile() then returns nullptr and the reader falls back.
-#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                         \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
-#define TINYUSDZ_NEXT_HAVE_MMAP 1
+#define LIGHTUSD_NEXT_HAVE_MMAP 1
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -57,7 +57,7 @@ std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(std::string&& bytes,
 
 std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
     const std::string& filename) {
-#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
   int fd = ::open(filename.c_str(), O_RDONLY);
   if (fd < 0) return nullptr;
   struct stat st;
@@ -82,7 +82,7 @@ std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
 }
 
 bool CrateDataSource::MappedFileShrank(size_t* current_size) const {
-#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
   if (!mmap_base_ || mmap_path_.empty()) return false;
   struct stat st;
   if (::stat(mmap_path_.c_str(), &st) != 0 || st.st_size < 0) return false;
@@ -96,7 +96,7 @@ bool CrateDataSource::MappedFileShrank(size_t* current_size) const {
 }
 
 CrateDataSource::~CrateDataSource() {
-#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
   if (mmap_addr_) {
     ::munmap(mmap_addr_, mmap_size_);
     mmap_addr_ = nullptr;
@@ -105,7 +105,7 @@ CrateDataSource::~CrateDataSource() {
 }
 
 void CrateDataSource::DiscardRange(uint64_t offset, uint64_t length) const {
-#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+#if defined(LIGHTUSD_NEXT_HAVE_MMAP)
   if (!mmap_addr_ || length == 0 || offset >= mmap_size_) return;
   uint64_t end = offset + length;
   if (end < offset || end > mmap_size_) end = mmap_size_;
@@ -831,4 +831,4 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

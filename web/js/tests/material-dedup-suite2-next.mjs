@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG = path.resolve(HERE, 'fixtures/material-dedup-suite2-cases.json');
@@ -47,7 +47,7 @@ function loadCases(configPath) {
 }
 
 async function parseNext(bytes, filename) {
-  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  const loader = new LightUSDLoader({ suppressNativeInfoLogs: true });
   await loader.init({ useNextOnlyWasm: true });
   return new Promise((resolve, reject) => {
     loader.parse(bytes, filename, resolve, reject, {

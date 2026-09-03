@@ -1,11 +1,11 @@
-//! TinyUSDZ Rust FFI Bindings
+//! LightUSD Rust FFI Bindings
 //!
-//! Safe Rust bindings for the TinyUSDZ C99 API.
+//! Safe Rust bindings for the LightUSD C99 API.
 //!
 //! # Examples
 //!
 //! ```no_run
-//! use tinyusdz::{init, shutdown, load_from_file, PrimType};
+//! use lightusd::{init, shutdown, load_from_file, PrimType};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     init()?;
@@ -34,7 +34,7 @@ use std::path::Path;
 // FFI Bindings
 // ============================================================================
 
-#[link(name = "tinyusdz_c")]
+#[link(name = "lightusd_c")]
 extern "C" {
     // Initialization
     fn tusdz_init() -> c_int;

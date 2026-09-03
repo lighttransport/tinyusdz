@@ -5,18 +5,18 @@ SIMD PNG encoder (originally by Luca Versari / Google).
 
 Files: `fpnge.h`, `fpnge.cc`, `LICENSE` (Apache License 2.0).
 
-## Usage in TinyUSDZ
+## Usage in LightUSD
 
 fpnge is used as the default PNG encoder for the image writer
 (`src/image-writer.cc`) when the library is built with
-`-DTINYUSDZ_WITH_FPNGE=ON`. PNG encoding then prefers fpnge and falls back to
+`-DLIGHTUSD_WITH_FPNGE=ON`. PNG encoding then prefers fpnge and falls back to
 `fpng` (and then `stb_image_write`) for inputs/targets fpnge cannot handle.
 
 ## SIMD code paths
 
 fpnge upstream requires **SSE4.1 minimum** (AVX2 preferred); there is no SSE2 or
 scalar code path (`fpnge.cc` emits `#error Requires SSE4.1 support minimum`).
-The CMake option `TINYUSDZ_FPNGE_SIMD` selects the build behavior:
+The CMake option `LIGHTUSD_FPNGE_SIMD` selects the build behavior:
 
 | value    | behavior |
 |----------|----------|

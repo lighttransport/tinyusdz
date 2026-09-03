@@ -15,7 +15,7 @@
 #include "str-util.hh"  // For dragonbox-based dtos()
 #include "common-macros.inc"  // kMaxDefaultTraversalLimit (recursion depth guard)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Parameter mapping tables
@@ -151,7 +151,7 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
   output = json::object();
   output["metadata"] = {
     {"version", "1.0"},
-    {"generator", "TinyUSDZ/Tydra ThreeJS Exporter"},
+    {"generator", "LightUSD/Tydra ThreeJS Exporter"},
     {"type", "Scene"}
   };
 
@@ -933,7 +933,7 @@ bool ThreeJSSceneExporter::ExportScene(const RenderScene& scene,
   output["metadata"] = {
     {"version", 2},
     {"type", "Object"},
-    {"generator", "TinyUSDZ ThreeJS Exporter"},
+    {"generator", "LightUSD ThreeJS Exporter"},
     {"sourceFile", scene.usd_filename}
   };
 
@@ -1354,4 +1354,4 @@ bool ThreeJSSceneExporter::ExportGLTF(const RenderScene& scene,
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

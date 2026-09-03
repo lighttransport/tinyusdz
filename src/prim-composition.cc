@@ -2,7 +2,7 @@
 // Copyright 2022-Present Light Transport Entertainment Inc.
 #include "composition.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 namespace {
@@ -20,6 +20,6 @@ class DotWriter
 } // namespace local
 
 } // namespace prim
-} // namespace tinyusdz
+} // namespace lightusd
 
 

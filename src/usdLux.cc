@@ -11,7 +11,7 @@
 #include "value-types.hh"
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // Utility functions for DomeLight::TextureFormat
@@ -199,6 +199,6 @@ value::color3f GetEffectiveShadowColor(const ShadowAPI &shadow) {
   return color;
 }
 
-} // namespace tinyusdz
+} // namespace lightusd
 
 

@@ -3,7 +3,7 @@
 
 #include "../eval/attribute-eval.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool HasGeomModelAPI(const UsdPrim& prim) {
@@ -64,4 +64,4 @@ uint32_t ComputeModelCardFaceMask(const Stage& stage, const UsdPrim& prim,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

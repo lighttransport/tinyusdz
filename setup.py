@@ -1,14 +1,14 @@
 """
-Build driver for the tinyusdz PyPI wheel.
+Build driver for the lightusd PyPI wheel.
 
 Flow:
   1. Invoke CMake on the standalone `src/next` project (next-core), building
-     the `tinyusdz_next`, `tydra_next` and `tinyusdz_c` static libraries.
-     The legacy tinyusdz core is NOT built or linked into the Python wheel
+     the `lightusd_next`, `tydra_next` and `lightusd_c` static libraries.
+     The legacy lightusd core is NOT built or linked into the Python wheel
      (v1.0.0 next + tydra-next only, npm preview tag). Native
      (`cmake -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
-     TINYUSDZ_WASM_PRODUCT=legacy/next/combined) still build the legacy path.
-  2. Compile the `src/python/py-*.c` sources into the `tinyusdz._core`
+     LIGHTUSD_WASM_PRODUCT=legacy/next/combined) still build the legacy path.
+  2. Compile the `src/python/py-*.c` sources into the `lightusd._core`
      extension, linking those static archives.
 
 Two build flavors from the same sources:
@@ -39,7 +39,7 @@ PY_LIMITED_API = 0x030A0000  # CPython 3.10 floor for the abi3 wheel
 # The stable ABI cannot be used on free-threaded CPython builds.
 FREE_THREADED = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 USE_LIMITED = (not FREE_THREADED and
-               os.environ.get("TINYUSDZ_PY_LIMITED_API", "1") != "0")
+               os.environ.get("LIGHTUSD_PY_LIMITED_API", "1") != "0")
 
 
 def _cmake_configure_and_build() -> None:
@@ -51,9 +51,9 @@ def _cmake_configure_and_build() -> None:
         "-B", str(CMAKE_BUILD_DIR),
         "-DCMAKE_BUILD_TYPE=MinSizeRel",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-        "-DTINYUSDZ_NEXT_ENABLE_THREAD=ON",
-        "-DTINYUSDZ_NEXT_BUILD_TESTS=OFF",
-        "-DTINYUSDZ_NEXT_BUILD_PYTHON=OFF",
+        "-DLIGHTUSD_NEXT_ENABLE_THREAD=ON",
+        "-DLIGHTUSD_NEXT_BUILD_TESTS=OFF",
+        "-DLIGHTUSD_NEXT_BUILD_PYTHON=OFF",
     ]
     is_windows = platform.system() == "Windows"
 
@@ -65,7 +65,7 @@ def _cmake_configure_and_build() -> None:
     if is_windows:
         cmake_args.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
 
-    extra = os.environ.get("TINYUSDZ_CMAKE_ARGS", "")
+    extra = os.environ.get("LIGHTUSD_CMAKE_ARGS", "")
     if extra:
         cmake_args.extend(extra.split())
 
@@ -75,9 +75,9 @@ def _cmake_configure_and_build() -> None:
     build_args = [
         "cmake", "--build", str(CMAKE_BUILD_DIR),
         "--config", "MinSizeRel",
-        "--target", "tinyusdz_next",
+        "--target", "lightusd_next",
         "--target", "tydra_next",
-        "--target", "tinyusdz_c",
+        "--target", "lightusd_c",
         "--parallel", str(os.cpu_count() or 2),
     ]
     subprocess.check_call(build_args, env=env)
@@ -108,9 +108,9 @@ class CMakeBuildExt(build_ext):
         _cmake_configure_and_build()
 
         # Link order matters for static archives on POSIX: dependents first.
-        c_api = _find_static_lib("tinyusdz_c")
+        c_api = _find_static_lib("lightusd_c")
         tydra = _find_static_lib("tydra_next")
-        core = _find_static_lib("tinyusdz_next")
+        core = _find_static_lib("lightusd_next")
 
         for ext in self.extensions:
             ext.extra_objects = [str(c_api), str(tydra), str(core)] + list(
@@ -141,7 +141,7 @@ if USE_LIMITED:
     define_macros.append(("Py_LIMITED_API", hex(PY_LIMITED_API)))
 
 ext = Extension(
-    name="tinyusdz._core",
+    name="lightusd._core",
     sources=[
         "src/python/py-module.c",
         "src/python/py-array.c",

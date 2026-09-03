@@ -9,25 +9,25 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { getAssetUriFromURL, mountBackendSelector } from 'tinyusdz/LoaderConfigUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { getAssetUriFromURL, mountBackendSelector } from 'lightusd/LoaderConfigUtils.js';
 import {
     buildNextThreeNode,
     isNextScene,
     nextCountsFromScene,
     readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
+} from 'lightusd/NextRenderSceneUtils.js';
 import {
     MtlxNodeGraphProcessor,
     createOpenPBRMaterial,
     DEFAULT_OPENPBR_PARAMS
-} from 'tinyusdz/TinyUSDZOpenPBR_WebGL.js';
+} from 'lightusd/LightUSDOpenPBR_WebGL.js';
 import {
     optimizeNodeGraph,
     NodeGraphOptimizationLevel,
     removeInactiveNodes
-} from 'tinyusdz/TinyUSDZMaterialX.js';
+} from 'lightusd/LightUSDMaterialX.js';
 
 // Import bridge client (uses relative path to blender-bridge)
 let BridgeClient = null;
@@ -2496,7 +2496,7 @@ function onWindowResize() {
 async function initLoader() {
     updateStatus('Initializing USD loader...');
 
-    state.loader = new TinyUSDZLoader();
+    state.loader = new LightUSDLoader();
     await state.loader.init({ useMemory64: false });
     state.loader.setMaxMemoryLimitMB(500);
     state.loader.setSphereSubdivisions(4);
@@ -2954,7 +2954,7 @@ function bakeTextureOps(texture, ops) {
 
 async function loadCachedUSDTexture(nativeLoader, textureId, cache) {
     if (!cache.usdTextures.has(textureId)) {
-        cache.usdTextures.set(textureId, TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, textureId));
+        cache.usdTextures.set(textureId, LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, textureId));
     }
     return cache.usdTextures.get(textureId);
 }
@@ -3404,7 +3404,7 @@ async function buildScene() {
         // appear substantially brighter and more saturated in next.
         clearUSDLights();
         try {
-            const domeLightData = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(
+            const domeLightData = await LightUSDLoaderUtils.loadDomeLightFromUSD(
                 usd, state.pmremGenerator);
             if (domeLightData) {
                 state.domeLightData = domeLightData;
@@ -3510,7 +3510,7 @@ async function buildScene() {
         return material;
     }));
 
-    // Build scene hierarchy using TinyUSDZLoaderUtils
+    // Build scene hierarchy using LightUSDLoaderUtils
     const rootNode = usd.getDefaultRootNode();
     let root;
 
@@ -3520,7 +3520,7 @@ async function buildScene() {
         // mesh metadata can still identify the source material ids.
         const defaultMtl = new THREE.MeshStandardMaterial({ color: 0x888888 });
         const canResolveMaterialIds = typeof usd.getMeshPtr === 'function';
-        root = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMtl, usd, {
+        root = await LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMtl, usd, {
             overrideMaterial: canResolveMaterialIds
         });
 
@@ -3587,7 +3587,7 @@ async function buildScene() {
             }
         });
     } else {
-        // Fallback: flat mesh loop using TinyUSDZLoaderUtils for geometry
+        // Fallback: flat mesh loop using LightUSDLoaderUtils for geometry
         root = new THREE.Group();
         const numMeshes = usd.numMeshes();
 
@@ -3595,7 +3595,7 @@ async function buildScene() {
             const meshData = usd.getMeshCopy(i);
             if (!meshData || !meshData.points || meshData.points.length === 0) continue;
 
-            const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);
+            const geometry = LightUSDLoaderUtils.convertUsdMeshToThreeMesh(meshData);
             const materialId = meshData.materialId ?? 0;
 
             // Handle submeshes (GeomSubset multi-material)
@@ -3641,7 +3641,7 @@ async function buildScene() {
     clearUSDLights();
 
     try {
-        const domeLightData = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usd, state.pmremGenerator);
+        const domeLightData = await LightUSDLoaderUtils.loadDomeLightFromUSD(usd, state.pmremGenerator);
         if (domeLightData) {
             state.domeLightData = domeLightData;
             state.envMap = domeLightData.texture;
@@ -5023,7 +5023,7 @@ async function handleBridgeScene(sceneData) {
         const { binaryData, scene, metadata } = sceneData;
         clearCurrentUSDScene();
 
-        // Parse with TinyUSDZ
+        // Parse with LightUSD
         state.usdData = await new Promise((resolve, reject) => {
             state.loader.parse(binaryData.buffer, scene?.name || 'BlenderScene.usdz', resolve, reject, staticNextParseOptions());
         });

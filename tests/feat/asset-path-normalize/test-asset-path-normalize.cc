@@ -5,7 +5,7 @@
 // asset-path normalization on flatten (SetNormalizeAssetPathOnFlatten).
 //
 // On flatten, a referenced asset's RELATIVE asset path (e.g.
-// `../../../Materials/x.png`) is anchored to the asset's directory; tinyusdz's
+// `../../../Materials/x.png`) is anchored to the asset's directory; lightusd's
 // JoinPath leaves the `..` in place (`.../Meshes/Foo/../../../Materials/x.png`),
 // while usdcat collapses it (`.../Materials/x.png`). The opt-in normalizes the
 // joined path to match.
@@ -16,7 +16,7 @@
 #include "io-util.hh"
 #include "composition.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 int g_failures = 0;

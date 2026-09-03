@@ -13,7 +13,7 @@
 #include "relationship.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // for bindMaterialAs
 constexpr auto kWeakerThanDescendants = "weakerThanDescendants";
@@ -49,7 +49,7 @@ class MaterialBinding {
   //  - an all-purpose, collection-based binding, e.g. material:binding:collection:metalBits
   //  - a purpose-restricted, collection-based binding, e.g. material:binding:collection:full:metalBits
   //
-  // In TinyUSDZ, treat empty purpose token as "all purpose"
+  // In LightUSD, treat empty purpose token as "all purpose"
   //
 
   // Some frequently used materialBindings
@@ -192,12 +192,12 @@ class MaterialBinding {
   }
 
   const std::map<std::string, Relationship> &materialBindingMap() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _materialBindingMap;
   }
 
   const std::map<std::string, ordered_dict<Relationship>>
-      &materialBindingCollectionMap() const TINYUSDZ_LIFETIMEBOUND {
+      &materialBindingCollectionMap() const LIGHTUSD_LIFETIMEBOUND {
     return _materialBindingCollectionMap;
   }
 
@@ -255,4 +255,4 @@ class MaterialBinding {
   std::map<std::string, ordered_dict<Relationship>> _materialBindingCollectionMap;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

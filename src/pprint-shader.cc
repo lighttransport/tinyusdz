@@ -11,7 +11,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // Domain-specific enum converters
@@ -182,7 +182,7 @@ static std::string print_shader_params(const UsdUVTexture &shader,
   ss << print_typed_token_attr(shader.wrapS, "inputs:wrapS", indent);
   ss << print_typed_token_attr(shader.wrapT, "inputs:wrapT", indent);
 
-  // tinyusdz extensions: UV set selection (index / name).
+  // lightusd extensions: UV set selection (index / name).
   ss << print_typed_attr(shader.uv_set, "inputs:uv_set", indent);
   ss << print_typed_attr(shader.uv_set_name, "inputs:uv_set_name", indent);
 
@@ -742,4 +742,4 @@ std::string to_string(const UsdPrimvarReader_float2 &preader,
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

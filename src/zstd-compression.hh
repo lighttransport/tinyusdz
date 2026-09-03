@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Zstd compression wrapper for TinyUSDZ
+// Zstd compression wrapper for LightUSD
 // Provides file-level zstd compression/decompression for USD files
 
 #pragma once
@@ -9,14 +9,14 @@
 #ifndef ZSTD_COMPRESSION_HH_
 #define ZSTD_COMPRESSION_HH_
 
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Zstd compression utility class.
@@ -85,12 +85,12 @@ class ZstdCompression {
   static constexpr uint8_t kZstdMagic[4] = {0x28, 0xB5, 0x2F, 0xFD};
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // !TINYUSDZ_WITH_ZSTD_COMPRESSION
+#else  // !LIGHTUSD_WITH_ZSTD_COMPRESSION
 
 // Stub implementation when zstd compression is disabled
-namespace tinyusdz {
+namespace lightusd {
 
 class ZstdCompression {
  public:
@@ -113,8 +113,8 @@ class ZstdCompression {
   static constexpr int kDefaultCompressionLevel = 5;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_WITH_ZSTD_COMPRESSION
+#endif  // LIGHTUSD_WITH_ZSTD_COMPRESSION
 
 #endif  // ZSTD_COMPRESSION_HH_

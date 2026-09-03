@@ -5,7 +5,7 @@ import concurrent.futures as cf
 
 import pytest
 
-import tinyusdz
+import lightusd
 
 from conftest import SIMPLE_USDA
 
@@ -17,7 +17,7 @@ N_ITER = 8
 
 def test_concurrent_independent_loads():
     def work(_):
-        st = tinyusdz.loads(SIMPLE_USDA)
+        st = lightusd.loads(SIMPLE_USDA)
         total = 0.0
         for prim in st:
             if "points" in prim:
@@ -31,7 +31,7 @@ def test_concurrent_independent_loads():
 
 
 def test_concurrent_reads_shared_stage():
-    st = tinyusdz.loads(SIMPLE_USDA)
+    st = lightusd.loads(SIMPLE_USDA)
 
     def work(_):
         q = st.prim_at("/World/Quad")
@@ -46,7 +46,7 @@ def test_concurrent_reads_shared_stage():
 
 
 def test_concurrent_export():
-    st = tinyusdz.loads(SIMPLE_USDA)
+    st = lightusd.loads(SIMPLE_USDA)
 
     def work(_):
         return st.export_usda()

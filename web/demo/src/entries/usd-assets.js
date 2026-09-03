@@ -1,5 +1,5 @@
-import { StreamingUSDRenderer } from 'tinyusdz-js/streaming.js';
-import { renderHttpUSD } from 'tinyusdz-js/http-asset-resolver.js';
+import { StreamingUSDRenderer } from 'lightusd-js/streaming.js';
+import { renderHttpUSD } from 'lightusd-js/http-asset-resolver.js';
 import { ASSETS, CATEGORIES } from '../usd-assets-manifest.js';
 import { Report } from '../app-report.js';
 
@@ -47,7 +47,7 @@ root.innerHTML = `
       <h1>USD Assets Browser</h1>
       <p>Browse and preview curated USD assets from the
         <a href="https://github.com/usd-wg/assets" target="_blank" rel="noopener">usd-wg/assets</a> corpus.
-        Assets are fetched from GitHub's raw CDN and rendered via TinyUSDZ's HTTP asset resolver.</p>
+        Assets are fetched from GitHub's raw CDN and rendered via LightUSD's HTTP asset resolver.</p>
     </div>
   </header>
   <main class="assets-main">
@@ -104,7 +104,7 @@ init();
 
 async function init() {
   renderer = new StreamingUSDRenderer($('asset-canvas'));
-  showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+  showLoader("Loading LightUSD WASM...", document.getElementById("viewport"));
     try {
       await renderer.init()
     } finally {

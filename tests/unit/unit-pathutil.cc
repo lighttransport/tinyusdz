@@ -9,7 +9,7 @@
 #include "core/path.hh"
 #include "path-util.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void pathutil_test(void) {
   {

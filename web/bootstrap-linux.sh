@@ -1,5 +1,5 @@
 # Default WASM32 build: Ninja generator + MinSizeRel.
-# Builds the LEGACY+NEXT combined module (tinyusdz.js/.wasm): the classic
+# Builds the LEGACY+NEXT combined module (lightusd.js/.wasm): the classic
 # loader plus the next-core nextFlatten* lazy pipeline and RenderStream.
 # Variants: bootstrap-linux-legacy-only.sh (no next core),
 # bootstrap-linux-next-only.sh (next-core + tydra-next only).

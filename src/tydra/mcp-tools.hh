@@ -16,7 +16,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -30,4 +30,4 @@ bool CallTool(Context &ctx, const std::string &tool_name,
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

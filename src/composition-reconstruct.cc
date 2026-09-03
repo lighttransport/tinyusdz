@@ -8,7 +8,7 @@
 
 #include <atomic>
 #include <functional>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
 
@@ -41,7 +41,7 @@
     (*warn) += s;   \
   }
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace prim {
 
@@ -268,7 +268,7 @@ bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
 
   stage.metas() = layer.metas();
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Large layers: reconstruct prim subtrees on worker threads, assembled in
   // DFS order (unit's own prim, then its child units in child order) — the
   // Prim tree, warning text and error text come out identical to the serial
@@ -375,7 +375,7 @@ bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
       return true;
     }
   }
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
   // TODO: primChildren metadatum
   for (auto &primspec : layer.primspecs()) {
@@ -996,4 +996,4 @@ bool VariantSelectPrimSpec(
   return VariantSelectPrimSpec(dst, csrc, variant_selection, warn, err);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

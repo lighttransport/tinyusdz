@@ -25,7 +25,7 @@ namespace crate {
 /// Abstract interface for USD-like paths
 ///
 /// This allows the sorting and encoding algorithms to work with
-/// different path implementations (TinyUSDZ Path, OpenUSD SdfPath, etc.)
+/// different path implementations (LightUSD Path, OpenUSD SdfPath, etc.)
 ///
 class IPath {
 public:
@@ -100,10 +100,10 @@ public:
   }
 
   // Direct accessors for SimplePath
-  const std::string& prim_part() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string& prim_part() const LIGHTUSD_LIFETIMEBOUND {
     return prim_part_;
   }
-  const std::string& prop_part() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string& prop_part() const LIGHTUSD_LIFETIMEBOUND {
     return prop_part_;
   }
 

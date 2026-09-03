@@ -7,7 +7,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-types.hh"
 #include "unit-value-types.h"
 #include "core/prim.hh"
@@ -18,8 +18,8 @@
 
 #include <cmath>
 
-using namespace tinyusdz;
-using namespace tinyusdz_test;
+using namespace lightusd;
+using namespace lightusd_test;
 
 // Helper: check if two quatf are close (component-wise)
 static bool quatf_close(const value::quatf &a, const value::quatf &b,
@@ -219,7 +219,7 @@ void quat_to_matrix_roundtrip_test(void) {
     value::matrix4d mq = to_matrix(q);
 
     // Expected: Rx(90) = (1,0,0; 0,0,-1; 0,1,0)
-    // Note: row-major convention in tinyusdz, but rotation matrices from quat
+    // Note: row-major convention in lightusd, but rotation matrices from quat
     // should match EvaluateXformOps result.
     XformOp op;
     op.op_type = XformOp::OpType::RotateXYZ;

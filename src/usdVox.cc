@@ -3,9 +3,9 @@
 #define OGT_VOX_IMPLEMENTATION
 #include "external/ogt_vox.h"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdVox {
 
 
 } // namespace usdVox
-} // namespace tinyusdz
+} // namespace lightusd

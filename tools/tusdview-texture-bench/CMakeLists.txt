@@ -1,10 +1,10 @@
 # Standalone headless GPU texture processing benchmark. It intentionally does
 # not link or include tusdview's renderer.
 # TIFF/TEX input is part of the benchmark's corpus path. The top-level project
-# enables TINYUSDZ_WITH_TIFF by default; keep that option visible to callers so
+# enables LIGHTUSD_WITH_TIFF by default; keep that option visible to callers so
 # a deliberately disabled core decoder produces a clear configuration choice.
-if(NOT TINYUSDZ_WITH_TIFF)
-  message(WARNING "texture GPU benchmark: TIFF/TEX input disabled by TINYUSDZ_WITH_TIFF=OFF")
+if(NOT LIGHTUSD_WITH_TIFF)
+  message(WARNING "texture GPU benchmark: TIFF/TEX input disabled by LIGHTUSD_WITH_TIFF=OFF")
 endif()
 include(CTest)
 if(BUILD_TESTING)
@@ -167,7 +167,7 @@ target_include_directories(tusdview_texture_gpu_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/include
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/src)
 target_link_libraries(tusdview_texture_gpu_bench PRIVATE
-  ${TINYUSDZ_TARGET_STATIC} tinyusdz_textools ${CMAKE_DL_LIBS})
+  ${LIGHTUSD_TARGET_STATIC} lightusd_textools ${CMAKE_DL_LIBS})
 if(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(tusdview_texture_gpu_bench PRIVATE Threads::Threads m)

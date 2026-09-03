@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
@@ -128,7 +128,7 @@ def test_transforms(simple_stage):
 
 
 def test_variants():
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Xform "root" (
     variants = { string lod = "high" }
     prepend variantSets = ["lod"]
@@ -153,7 +153,7 @@ def Xform "root" (
 
 
 def test_custom_data():
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Xform "a" (
     customData = { string owner = "me"  int version = 3 }
 )

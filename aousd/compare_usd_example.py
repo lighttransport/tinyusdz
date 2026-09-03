@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Compare USD file parsing between OpenUSD and TinyUSDZ
+Compare USD file parsing between OpenUSD and LightUSD
 """
 
 import sys
@@ -54,8 +54,8 @@ def analyze_with_openusd(filepath):
         print(f"Error analyzing with OpenUSD: {e}")
         return None
 
-def analyze_with_tinyusdz(filepath):
-    """Analyze USD file with TinyUSDZ tusdcat tool"""
+def analyze_with_lightusd(filepath):
+    """Analyze USD file with LightUSD tusdcat tool"""
     try:
         # Use tusdcat to dump the file
         tusdcat_path = os.path.join(os.path.dirname(os.path.dirname(filepath)), "build", "tusdcat")
@@ -77,8 +77,8 @@ def analyze_with_tinyusdz(filepath):
         lines = result.stdout.strip().split('\n')
 
         # Extract metadata from the header
-        tinyusdz_result = {
-            "library": "TinyUSDZ",
+        lightusd_result = {
+            "library": "LightUSD",
             "file": filepath,
             "output": result.stdout[:1000],  # First 1000 chars
             "exit_code": result.returncode
@@ -88,19 +88,19 @@ def analyze_with_tinyusdz(filepath):
         for line in lines:
             if "metersPerUnit" in line:
                 try:
-                    tinyusdz_result["meters_per_unit"] = float(line.split('=')[1].strip())
+                    lightusd_result["meters_per_unit"] = float(line.split('=')[1].strip())
                 except:
                     pass
             elif "upAxis" in line:
                 try:
-                    tinyusdz_result["up_axis"] = line.split('=')[1].strip().strip('"')
+                    lightusd_result["up_axis"] = line.split('=')[1].strip().strip('"')
                 except:
                     pass
 
-        return tinyusdz_result
+        return lightusd_result
 
     except Exception as e:
-        print(f"Error analyzing with TinyUSDZ: {e}")
+        print(f"Error analyzing with LightUSD: {e}")
         return None
 
 def main():
@@ -129,35 +129,35 @@ def main():
         for prim in openusd_result['prims'][:3]:
             print(f"  {prim['path']}: {prim['type']} ({len(prim['attributes'])} attributes)")
 
-    # Analyze with TinyUSDZ
-    print("\n### TinyUSDZ Analysis ###")
-    tinyusdz_result = analyze_with_tinyusdz(filepath)
-    if tinyusdz_result:
-        print(f"Exit code: {tinyusdz_result['exit_code']}")
-        if 'up_axis' in tinyusdz_result:
-            print(f"Up axis: {tinyusdz_result['up_axis']}")
-        if 'meters_per_unit' in tinyusdz_result:
-            print(f"Meters per unit: {tinyusdz_result['meters_per_unit']}")
+    # Analyze with LightUSD
+    print("\n### LightUSD Analysis ###")
+    lightusd_result = analyze_with_lightusd(filepath)
+    if lightusd_result:
+        print(f"Exit code: {lightusd_result['exit_code']}")
+        if 'up_axis' in lightusd_result:
+            print(f"Up axis: {lightusd_result['up_axis']}")
+        if 'meters_per_unit' in lightusd_result:
+            print(f"Meters per unit: {lightusd_result['meters_per_unit']}")
         print(f"\nOutput preview:")
-        print(tinyusdz_result['output'][:500])
+        print(lightusd_result['output'][:500])
 
     # Compare results
     print("\n### Comparison ###")
-    if openusd_result and tinyusdz_result:
+    if openusd_result and lightusd_result:
         print("Both libraries successfully parsed the file")
 
         # Compare metadata if available
-        if 'up_axis' in tinyusdz_result:
-            if openusd_result['up_axis'] == tinyusdz_result['up_axis']:
+        if 'up_axis' in lightusd_result:
+            if openusd_result['up_axis'] == lightusd_result['up_axis']:
                 print(f"✓ Up axis matches: {openusd_result['up_axis']}")
             else:
-                print(f"✗ Up axis differs - OpenUSD: {openusd_result['up_axis']}, TinyUSDZ: {tinyusdz_result['up_axis']}")
+                print(f"✗ Up axis differs - OpenUSD: {openusd_result['up_axis']}, LightUSD: {lightusd_result['up_axis']}")
 
-        if 'meters_per_unit' in tinyusdz_result:
-            if abs(openusd_result['meters_per_unit'] - tinyusdz_result['meters_per_unit']) < 0.001:
+        if 'meters_per_unit' in lightusd_result:
+            if abs(openusd_result['meters_per_unit'] - lightusd_result['meters_per_unit']) < 0.001:
                 print(f"✓ Meters per unit matches: {openusd_result['meters_per_unit']}")
             else:
-                print(f"✗ Meters per unit differs - OpenUSD: {openusd_result['meters_per_unit']}, TinyUSDZ: {tinyusdz_result['meters_per_unit']}")
+                print(f"✗ Meters per unit differs - OpenUSD: {openusd_result['meters_per_unit']}, LightUSD: {lightusd_result['meters_per_unit']}")
 
     print("=" * 60)
 

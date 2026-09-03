@@ -11,7 +11,7 @@
 //   instance/prototype groupings -- because composed output is a pure function
 //   of the (parse-once, shared) layers, independent of threading.
 //
-// Without -DTINYUSDZ_NEXT_ENABLE_THREAD the library's parallel path compiles out
+// Without -DLIGHTUSD_NEXT_ENABLE_THREAD the library's parallel path compiles out
 // and every "parallel" run is just another serial run, so the comparisons hold
 // trivially and these tests still build + pass.
 
@@ -23,7 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
 #endif
@@ -34,7 +34,7 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // ---------------------------------------------------------------------------
 // Canonical, interning-order-independent dumps (compare composition, not the
@@ -455,7 +455,7 @@ static void test_parallel_same_asset_parse_once() {
 
 static void test_layer_registry_inflight_failure_diagnostics() {
   std::cout << "test_layer_registry_inflight_failure_diagnostics..." << std::endl;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   const std::string asset_path = "/tmp/next_registry_bad.usda";
   {
     std::ofstream f(asset_path);
@@ -498,7 +498,7 @@ static void test_layer_registry_inflight_failure_diagnostics() {
   }
   std::remove(asset_path.c_str());
 #else
-  std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
+  std::cout << "  (skipped: build with -DLIGHTUSD_NEXT_ENABLE_THREAD=ON)\n";
 #endif
   std::cout << "  OK" << std::endl;
 }

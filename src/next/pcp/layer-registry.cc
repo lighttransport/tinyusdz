@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP LayerRegistry implementation
+// LightUSD Next - PCP LayerRegistry implementation
 
 #include "layer-registry.hh"
 #include "../safe-file-size.hh"
@@ -19,7 +19,7 @@
 #include <fstream>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -772,7 +772,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return LoadLayerFromFile(resolved, load_warn, load_err, options);
   };
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::shared_future<LoadOutcome> wait_fut;
   std::shared_ptr<std::promise<LoadOutcome>> my_promise;
   {
@@ -831,7 +831,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 }
 
 void LayerRegistry::Drop(const std::string &resolved_path) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*mu_);
 #endif
   by_resolved_.erase(resolved_path);
@@ -839,4 +839,4 @@ void LayerRegistry::Drop(const std::string &resolved_path) {
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

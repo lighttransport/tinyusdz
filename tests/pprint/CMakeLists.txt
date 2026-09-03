@@ -18,15 +18,15 @@ add_executable(pprint_benchmark
   pprint_benchmark.cc
 )
 
-# Link against tinyusdz library
+# Link against lightusd library
 target_link_libraries(pprint_benchmark
-  tinyusdz_static
+  lightusd_static
   Threads::Threads
 )
 
 # Enable threading support
 target_compile_definitions(pprint_benchmark PRIVATE
-  TINYUSDZ_ENABLE_THREAD=1
+  LIGHTUSD_ENABLE_THREAD=1
 )
 
 # Compiler flags

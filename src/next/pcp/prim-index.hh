@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP PrimIndex
+// LightUSD Next - PCP PrimIndex
 //
 // Per-prim composition graph (DAG of CompNodes in strength order). Mirrors the
 // design of composition_graph::PrimIndex but on next types. Standalone, C++14.
@@ -29,7 +29,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -221,7 +221,7 @@ struct CompositionOptions {
   ParseOptions usda_parse_options = {};
 
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
-  // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
+  // [next_warm]). Off by default. Replaces the former LIGHTUSD_NEXT_TIMING env
   // read so the composition core takes no implicit process-environment input;
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;
@@ -340,4 +340,4 @@ class PrimIndex {
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

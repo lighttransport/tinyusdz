@@ -6,7 +6,7 @@
 #include "core/path.hh"
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pathutil {
 
 namespace {
@@ -91,7 +91,7 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
   std::string abs_dir;
 
   if (startsWith(relative_str, "./")) {
-    // pxrUSD doesn't allow "./", so do same in tinyusdz.
+    // pxrUSD doesn't allow "./", so do same in lightusd.
 #if 1
     if (err) {
       (*err) += "Path starting with `./` is not allowed.\n";
@@ -199,7 +199,7 @@ bool ValidatePrimPath(const Path &path, std::string *err) {
       if (err) {
         (*err) = "Prim path is not composed of valid identifiers.";
       }
-      
+
       return false;
     }
   }
@@ -243,4 +243,4 @@ bool ValidatePropPath(const Path &path, std::string *err) {
 }
 
 } // namespace pathutil
-} // namespace tinyusdz
+} // namespace lightusd

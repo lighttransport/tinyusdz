@@ -43,7 +43,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace {
 
@@ -2961,4 +2961,4 @@ bool ConvertURDFJsonToUSDStage(const std::string &robot_json, Stage *out_stage,
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

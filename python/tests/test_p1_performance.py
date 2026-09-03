@@ -13,8 +13,8 @@ except ImportError:
 import pathlib
 import pytest
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 
 np = pytest.importorskip("numpy")
 
@@ -36,14 +36,14 @@ def _rss_mb():
 
 def test_zero_copy_view_under_5ms():
     n = 200_000
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     m = st.define_prim("/M", "Mesh")
     pts = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
     m.set("points", pts, type="point3f[]")
     m.set("faceVertexCounts", np.full(n // 3, 3, dtype=np.int32), type="int[]")
     m.set("faceVertexIndices", np.arange((n // 3) * 3, dtype=np.int32), type="int[]")
     blob = st.export_usdc()
-    st2 = tinyusdz.load_bytes(blob)
+    st2 = lightusd.load_bytes(blob)
     arr = st2.prim_at("/M")["points"]
     t0 = time.perf_counter()
     a = np.asarray(arr)
@@ -59,14 +59,14 @@ def test_rss_delta_bounded():
     rss0 = _rss_mb()
     n = 300_000  # ~3.6 MB points + indices
     pts = np.zeros((n, 3), np.float32)
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     m = st.define_prim("/M", "Mesh")
     m.set("points", pts, type="point3f[]")
     m.set("faceVertexCounts", np.full(n // 3, 3, dtype=np.int32), type="int[]")
     m.set("faceVertexIndices", np.arange((n // 3) * 3, dtype=np.int32), type="int[]")
     blob = st.export_usdc()
     rss1 = _rss_mb()
-    st2 = tinyusdz.load_bytes(blob)
+    st2 = lightusd.load_bytes(blob)
     # Access array without copying
     _ = np.asarray(st2.prim_at("/M")["points"])
     rss2 = _rss_mb()
@@ -83,7 +83,7 @@ def test_rss_delta_bounded():
 
 
 def test_flatten_file_vs_save(tmp_path):
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/A", "Xform").set("v", 1.0, type="float")
     m = st.define_prim("/A/M", "Mesh")
     pts = np.zeros((3, 3), np.float32)
@@ -94,19 +94,19 @@ def test_flatten_file_vs_save(tmp_path):
     st.save(str(src))
     dst = tmp_path / "dst.usdc"
     t0 = time.perf_counter()
-    tinyusdz.flatten_file(str(src), str(dst))
+    lightusd.flatten_file(str(src), str(dst))
     t_flat = time.perf_counter() - t0
     assert dst.stat().st_size > 0
     assert dst.read_bytes()[:8] == b"PXR-USDC"
     print(f"[perf] flatten_file {t_flat*1000:.1f} ms")
     assert t_flat < 1.0
     # roundtrip
-    st_flat = tinyusdz.load(str(dst))
+    st_flat = lightusd.load(str(dst))
     assert st_flat.prim_at("/A")["v"] == pytest.approx(1.0)
 
 
 def test_max_memory_enforces(tmp_path):
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     n = 100_000
     m = st.define_prim("/M", "Mesh")
     m.set("points", np.zeros((n, 3), np.float32), type="point3f[]")
@@ -115,15 +115,15 @@ def test_max_memory_enforces(tmp_path):
     fn = tmp_path / "big.usdc"
     st.save(str(fn))
     # 1 KiB must fail
-    with pytest.raises(tinyusdz.UsdError):
-        tinyusdz.load(str(fn), max_memory=1024)
+    with pytest.raises(lightusd.UsdError):
+        lightusd.load(str(fn), max_memory=1024)
     # 200 MiB must succeed
-    st2 = tinyusdz.load(str(fn), max_memory=200*1024*1024)
+    st2 = lightusd.load(str(fn), max_memory=200*1024*1024)
     assert st2.stats["prim_count"] >= 1
 
 
 def test_tydra_zero_copy_after_flatten(tmp_path):
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     m = st.define_prim("/M", "Mesh")
     pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], np.float32)
     m.set("points", pts, type="point3f[]")
@@ -132,8 +132,8 @@ def test_tydra_zero_copy_after_flatten(tmp_path):
     src = tmp_path / "src.usda"
     dst = tmp_path / "dst.usdc"
     st.save(str(src))
-    tinyusdz.flatten_file(str(src), str(dst))
-    st_flat = tinyusdz.load(str(dst))
+    lightusd.flatten_file(str(src), str(dst))
+    st_flat = lightusd.load(str(dst))
     scene = tydra.to_render_scene(st_flat)
     assert len(scene.meshes) == 1
     a = np.asarray(scene.meshes[0].points)
@@ -145,7 +145,7 @@ def test_tydra_zero_copy_after_flatten(tmp_path):
 def test_export_load_timing_scaling():
     for n in (10_000, 100_000):
         pts = np.zeros((n, 3), np.float32)
-        st = tinyusdz.Stage.create()
+        st = lightusd.Stage.create()
         m = st.define_prim("/M", "Mesh")
         m.set("points", pts, type="point3f[]")
         m.set("faceVertexCounts", np.full(n // 3, 3, dtype=np.int32), type="int[]")
@@ -154,7 +154,7 @@ def test_export_load_timing_scaling():
         blob = st.export_usdc()
         t_exp = time.perf_counter() - t0
         t0 = time.perf_counter()
-        st2 = tinyusdz.load_bytes(blob)
+        st2 = lightusd.load_bytes(blob)
         t_load = time.perf_counter() - t0
         print(f"[perf] n={n} export {t_exp*1000:.1f}ms load {t_load*1000:.1f}ms blob {len(blob)/1024:.1f}KB")
         assert t_exp < 1.0 and t_load < 1.0

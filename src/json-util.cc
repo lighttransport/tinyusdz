@@ -2,7 +2,7 @@
 
 #include "minijson.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 
-} // namespace tinyusdz
+} // namespace lightusd

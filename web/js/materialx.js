@@ -1,4 +1,4 @@
-// TinyUSDZ MaterialX/OpenPBR Simple Demo with Three.js
+// LightUSD MaterialX/OpenPBR Simple Demo with Three.js
 // Simple viewer for USD files with MaterialX/OpenPBR and UsdPreviewSurface material support
 
 import * as THREE from 'three';
@@ -6,21 +6,21 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
 import {
     buildNextThreeNode,
     isNextScene,
     nextCountsFromScene,
     readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
+} from 'lightusd/NextRenderSceneUtils.js';
 import {
     getAssetUriFromURL,
     LOADER_BACKEND_CHOICES,
     setBackendAndReload
-} from 'tinyusdz/LoaderConfigUtils.js';
-import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
-import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
+} from 'lightusd/LoaderConfigUtils.js';
+import { setLightUSD as setMaterialXLightUSD } from 'lightusd/LightUSDMaterialX.js';
+import { OpenPBRMaterial } from 'lightusd/LightUSDOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
 
 // ============================================================================
@@ -956,21 +956,21 @@ function initControls() {
 }
 
 async function initLoader() {
-    updateStatus('Initializing TinyUSDZ WASM...');
+    updateStatus('Initializing LightUSD WASM...');
     traceLoadPhase('wasm:init:start');
-    loaderState.loader = new TinyUSDZLoader(null, {
+    loaderState.loader = new LightUSDLoader(null, {
         maxMemoryLimitMB: 512,
         suppressNativeInfoLogs: settings.suppressNativeInfoLogs
     });
     await loaderState.loader.init({ useMemory64: false });
     traceLoadPhase('wasm:init:done');
 
-    // Set TinyUSDZ WASM module reference for HDR/EXR texture decoding fallback
-    const tinyusdzModule = loaderState.loader.native_;
-    TinyUSDZLoaderUtils.setTinyUSDZ(tinyusdzModule);
-    setMaterialXTinyUSDZ(tinyusdzModule);
+    // Set LightUSD WASM module reference for HDR/EXR texture decoding fallback
+    const lightusdModule = loaderState.loader.native_;
+    LightUSDLoaderUtils.setLightUSD(lightusdModule);
+    setMaterialXLightUSD(lightusdModule);
 
-    updateStatus('TinyUSDZ initialized');
+    updateStatus('LightUSD initialized');
 }
 
 function setupGUI() {
@@ -1618,15 +1618,15 @@ function updateEnvIntensity() {
 }
 
 // ============================================================================
-// DomeLight Loading (uses TinyUSDZLoaderUtils)
+// DomeLight Loading (uses LightUSDLoaderUtils)
 // ============================================================================
 
 /**
  * Load DomeLight from USD and apply to scene
- * Uses TinyUSDZLoaderUtils.loadDomeLightFromUSD for the heavy lifting
+ * Uses LightUSDLoaderUtils.loadDomeLightFromUSD for the heavy lifting
  */
 async function loadDomeLightFromUSD(usdLoader) {
-    const result = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usdLoader, threeState.pmremGenerator);
+    const result = await LightUSDLoaderUtils.loadDomeLightFromUSD(usdLoader, threeState.pmremGenerator);
 
     if (result) {
         // Apply result to app state
@@ -2176,7 +2176,7 @@ async function loadUSDFromData(data, filename, stats = null) {
         console.log('[materialx] next backend auto-fell back to legacy.');
     }
 
-    loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
+    loaderState.nativeLoader = new loaderState.loader.native_.LightUSDLoaderNative();
     if (typeof loaderState.nativeLoader.setNativeMaterialDedup === 'function') {
         loaderState.nativeLoader.setNativeMaterialDedup(settings.nativeMaterialDedup);
     }
@@ -2191,9 +2191,9 @@ async function loadUSDFromData(data, filename, stats = null) {
     }
 
     traceLoadPhase('native:loadFromBinary:start');
-    const previousDebugCallback = loaderState.loader.native_.onTinyUSDZDebug;
+    const previousDebugCallback = loaderState.loader.native_.onLightUSDDebug;
     if (TRACE_LOAD) {
-        loaderState.loader.native_.onTinyUSDZDebug = (event) => {
+        loaderState.loader.native_.onLightUSDDebug = (event) => {
             if (event && event.phase) {
                 traceLoadPhase(`native:${event.phase}`, event.detail || '');
             }
@@ -2205,7 +2205,7 @@ async function loadUSDFromData(data, filename, stats = null) {
         success = withNativeInfoLogFilter(() => loaderState.nativeLoader.loadFromBinary(data, filename));
     } finally {
         if (TRACE_LOAD) {
-            loaderState.loader.native_.onTinyUSDZDebug = previousDebugCallback;
+            loaderState.loader.native_.onLightUSDDebug = previousDebugCallback;
         }
     }
     stats.parseMs = performance.now() - parseStart;
@@ -2297,7 +2297,7 @@ function loadSceneMetadata() {
 }
 
 /**
- * Build scene graph using TinyUSDZLoaderUtils.buildThreeNode
+ * Build scene graph using LightUSDLoaderUtils.buildThreeNode
  * This properly reflects USD Prim xformOps hierarchy
  */
 async function buildSceneGraph() {
@@ -2355,7 +2355,7 @@ async function buildSceneGraph() {
     // Build Three.js scene graph from USD hierarchy
     traceLoadPhase('buildSceneGraph:buildThreeNode:start');
     sceneState.nextNodeIndexMap = null;
-    sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
+    sceneState.root = await LightUSDLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMtl,
         loaderState.nativeLoader,
@@ -2460,7 +2460,7 @@ async function buildMeshesFallback() {
         const meshData = loaderState.nativeLoader.getMeshCopy(i);
         if (!meshData) continue;
 
-        const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);
+        const geometry = LightUSDLoaderUtils.convertUsdMeshToThreeMesh(meshData);
         if (!geometry) continue;
 
         const mesh = createMeshWithMaterialsFallback(geometry, meshData, i);
@@ -2774,8 +2774,8 @@ async function convertMaterial(matData, index) {
         return material;
     }
 
-    const typeInfo = TinyUSDZLoaderUtils.getMaterialType(matData);
-    const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(matData);
+    const typeInfo = LightUSDLoaderUtils.getMaterialType(matData);
+    const typeString = LightUSDLoaderUtils.getMaterialTypeString(matData);
 
     try {
         // Check if we should use OpenPBRMaterial
@@ -2790,8 +2790,8 @@ async function convertMaterial(matData, index) {
             material.envMap = threeState.envMap;
             material.envMapIntensity = settings.envMapIntensity;
         } else {
-            // Use TinyUSDZLoaderUtils for MeshPhysicalMaterial
-            material = await TinyUSDZLoaderUtils.convertMaterial(
+            // Use LightUSDLoaderUtils for MeshPhysicalMaterial
+            material = await LightUSDLoaderUtils.convertMaterial(
                 matData,
                 loaderState.nativeLoader,
                 {
@@ -2803,7 +2803,7 @@ async function convertMaterial(matData, index) {
             );
 
             // Load normal map from OpenPBR geometry.normal if not already loaded
-            // TinyUSDZLoaderUtils expects normalTextureId at top level, but MaterialX has it nested
+            // LightUSDLoaderUtils expects normalTextureId at top level, but MaterialX has it nested
             if (!material.normalMap) {
                 const openPBR = matData.openPBR || matData.openPBRShader || {};
                 const geometrySection = openPBR.geometry || {};
@@ -2836,7 +2836,7 @@ async function convertMaterial(matData, index) {
                             }
                         }
 
-                        const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(loaderState.nativeLoader, actualTextureId);
+                        const texture = await LightUSDLoaderUtils.getTextureFromUSD(loaderState.nativeLoader, actualTextureId);
                         if (texture) {
                             material.normalMap = texture;
                             // Extract normal map scale from OpenPBR
@@ -3031,7 +3031,7 @@ function createBaseOpenPBRMaterial(openPBR) {
  * Convert material data to OpenPBRMaterial
  * Waits for all textures to load before returning.
  * @param {Object} matData - Material data from USD
- * @param {Object} nativeLoader - TinyUSDZ native loader for texture access
+ * @param {Object} nativeLoader - LightUSD native loader for texture access
  * @returns {Promise<OpenPBRMaterial>} The created material
  */
 async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
@@ -3045,7 +3045,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     if (hasOpenPBRTexture(openPBR.base_color)) {
         try {
             const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.base_color));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.map = texture;
                 material.userData.textures.map = { textureId: texId, texture };
@@ -3059,7 +3059,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     if (hasOpenPBRTexture(openPBR.specular_roughness)) {
         try {
             const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.specular_roughness));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.roughnessMap = texture;
                 material.userData.textures.roughnessMap = { textureId: texId, texture };
@@ -3073,7 +3073,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     if (hasOpenPBRTexture(openPBR.base_metalness)) {
         try {
             const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.base_metalness));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.metalnessMap = texture;
                 material.userData.textures.metalnessMap = { textureId: texId, texture };
@@ -3087,7 +3087,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     if (hasOpenPBRTexture(openPBR.emission_color)) {
         try {
             const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.emission_color));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.emissiveMap = texture;
                 material.userData.textures.emissiveMap = { textureId: texId, texture };
@@ -3102,7 +3102,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     if (hasOpenPBRTexture(normalParam)) {
         try {
             const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(normalParam));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.normalMap = texture;
                 material.userData.textures.normalMap = { textureId: texId, texture };
@@ -3121,7 +3121,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     if (hasOpenPBRTexture(aoParam)) {
         try {
             const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(aoParam));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.aoMap = texture;
                 material.userData.textures.aoMap = { textureId: texId, texture };
@@ -3146,7 +3146,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
  * Convert material data to OpenPBRMaterial (legacy pattern)
  * Returns material immediately, textures load asynchronously in background.
  * @param {Object} matData - Material data from USD
- * @param {Object} nativeLoader - TinyUSDZ native loader for texture access
+ * @param {Object} nativeLoader - LightUSD native loader for texture access
  * @returns {OpenPBRMaterial} The created material (textures load asynchronously)
  */
 function convertToOpenPBRMaterial(matData, nativeLoader = null) {
@@ -3160,7 +3160,7 @@ function convertToOpenPBRMaterial(matData, nativeLoader = null) {
     const loadTextureAsync = (param, mapName, onLoad = null) => {
         if (!hasOpenPBRTexture(param)) return;
         const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(param));
-        TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId).then((texture) => {
+        LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId).then((texture) => {
             if (texture) {
                 material[mapName] = texture;
                 material.userData.textures[mapName] = { textureId: texId, texture };

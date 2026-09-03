@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Time Sample Interpolation
+// LightUSD Next - Time Sample Interpolation
 // Provides interpolation for USD time-sampled values
 
 #pragma once
@@ -10,7 +10,7 @@
 #include <vector>
 #include <utility>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Time sample interpolation mode
@@ -188,4 +188,4 @@ SampleResult TimeInterpolator::InterpolateWithOffsets(
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

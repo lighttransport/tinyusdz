@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
-// RAII Memory Budget Manager for TinyUSDZ
+// RAII Memory Budget Manager for LightUSD
 //
 #pragma once
 
@@ -12,7 +12,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Counters are atomic: budget reserve/release runs concurrently during
 // parallel USDC prim reconstruction (relaxed ordering — the budget is an
@@ -129,15 +129,15 @@ class MemoryBudgetManager {
 template <typename ReturnType>
 class MemoryBudgetGuard {
  public:
-  MemoryBudgetGuard(MemoryBudgetManager& manager, uint64_t bytes, 
+  MemoryBudgetGuard(MemoryBudgetManager& manager, uint64_t bytes,
                     const std::string& error_tag = "")
       : reservation_(manager.ReserveScoped(bytes)), error_tag_(error_tag) {}
 
   template <typename T>
   nonstd::expected<T, std::string> CheckAndReturn(T&& value) {
     if (!reservation_.IsReserved()) {
-      return nonstd::make_unexpected(error_tag_.empty() 
-        ? "Reached maximum memory budget" 
+      return nonstd::make_unexpected(error_tag_.empty()
+        ? "Reached maximum memory budget"
         : error_tag_ + ": Reached maximum memory budget");
     }
     return std::forward<T>(value);
@@ -164,4 +164,4 @@ class MemoryBudgetGuard {
 #define MEMORY_BUDGET_CHECK_AND_RETURN(manager, bytes, error_tag, return_type) \
   MemoryBudgetGuard<return_type>(manager, bytes, error_tag)
 
-}  // namespace tinyusdz
+}  // namespace lightusd

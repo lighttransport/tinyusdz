@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP namespace mapping + layer offset (header-only)
+// LightUSD Next - PCP namespace mapping + layer offset (header-only)
 //
 // Prefix remap (analogue of OpenUSD PcpMapFunction) used to translate a
 // referenced/inherited prim's namespace into the referencing prim's namespace.
@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -255,4 +255,4 @@ struct NamespaceMapping {
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

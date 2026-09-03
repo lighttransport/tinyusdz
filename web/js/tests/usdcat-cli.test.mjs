@@ -22,7 +22,7 @@ async function testAsync(name, fn) {
   catch (err) { console.error(`not ok - ${name}`); console.error(err); process.exitCode = 1; }
 }
 function withTempDir(fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tinyusdz-usdcat-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lightusd-usdcat-'));
   try { return fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -88,7 +88,7 @@ await testAsync('buildInput: folder picks root + collects siblings', () => withT
   assert.equal(rootName, 'main.usda'); // shallow non-usdz root
 }));
 
-const glueUrl = new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+const glueUrl = new URL('../src/lightusd/lightusd.js', import.meta.url).href;
 const native = await loadWasm(() => import(glueUrl));
 
 await testAsync('runUsdcat: flatten inlines referenced prim (USDA)', () => withTempDir((dir) => {
@@ -119,7 +119,7 @@ await testAsync('runUsdcat: USDC export reloads cleanly', () => withTempDir((dir
   // PXR-USDC magic header.
   assert.equal(Buffer.from(res.bytes.slice(0, 8)).toString('latin1'), 'PXR-USDC');
   // Reload the produced crate to confirm it parses.
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   try {
     assert.ok(usd.loadAsLayerFromBinary(res.bytes, 'flat.usdc'), 'produced USDC should reload: ' + usd.error());
   } finally { usd.delete(); }

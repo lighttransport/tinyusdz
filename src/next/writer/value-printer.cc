@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Value Printer Implementation
+// LightUSD Next - Value Printer Implementation
 
 #include "value-printer.hh"
 #include "../crate/crate-data-source.hh"
@@ -18,7 +18,7 @@
 #include <cstring>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -1389,4 +1389,4 @@ std::string PrintAttributeValue(const std::string& type_name, const std::string&
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

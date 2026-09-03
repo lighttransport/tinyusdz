@@ -20,7 +20,7 @@ env __NV_PRIME_RENDER_OFFLOAD=1 \
 ```
 
 The UE commandlet runs with `-NullRHI`. On first run it compiles the included
-editor-only `TinyUSDZGroomExport` module, because `UnrealEditor-Cmd` will not
+editor-only `LightUSDGroomExport` module, because `UnrealEditor-Cmd` will not
 compile a project plugin by itself. UE 5.8's material baker requires a live RHI
 and crashes in `FExportMaterialProxy` in this mode, while the stock USD groom
 conversion is import-only. The bridge instead reads `UGroomAsset`'s public
@@ -62,7 +62,7 @@ When Epic authentication and network access are configured, request the full
 fitted face rig (joints and blend shapes) before export with:
 
 ```sh
-TINYUSDZ_UE_AUTORIG=1 tools/ue-metahuman-usd/run-export.sh
+LIGHTUSD_UE_AUTORIG=1 tools/ue-metahuman-usd/run-export.sh
 ```
 
 This uses UE's blocking `RequestAutoRigging` API and then exports the resulting

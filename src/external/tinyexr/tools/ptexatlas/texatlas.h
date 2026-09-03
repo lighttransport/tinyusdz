@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Small C11 texture-atlas helpers shared by TinyEXR tools and TinyUSDZ.
+ * Small C11 texture-atlas helpers shared by TinyEXR tools and LightUSD.
  */
 #ifndef TINYEXR_TEXATLAS_H_
 #define TINYEXR_TEXATLAS_H_

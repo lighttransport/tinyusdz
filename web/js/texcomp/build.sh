@@ -2,7 +2,7 @@
 # Build the Basis-free texcomp transcoder WASM module for the web demo.
 #
 # Produces texcomp_web.mjs + texcomp_web.wasm in this directory (ES6 module,
-# loaded by texcomp.js). Pure C11 — no tinyusdz, no basis_universal.
+# loaded by texcomp.js). Pure C11 — no lightusd, no basis_universal.
 #
 # Requires emscripten on PATH (e.g. `source /path/to/emsdk/emsdk_env.sh`).
 set -euo pipefail

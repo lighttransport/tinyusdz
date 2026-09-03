@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 
 // Simple image loader
-// supported file format: PNG(use fpng), BMP/JPEG(use stb_image), HDR/RGBE(use stb_image), OpenEXR(use tinyexr), TIFF(use tinydng)  
+// supported file format: PNG(use fpng), BMP/JPEG(use stb_image), HDR/RGBE(use stb_image), OpenEXR(use tinyexr), TIFF(use tinydng)
 #pragma once
 
 #include <cstddef>
@@ -13,7 +13,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace image {
 
 struct ImageResult {
@@ -40,7 +40,7 @@ struct ImageInfoResult {
 /// @param[in] addr Image data byte address.
 /// @param[in] datasize Image data size in bytes.
 /// @param[in] asset_name Corresponding asset/file name.
-/// @param[inout] user_data User data pointer. Can be nullptr. 
+/// @param[inout] user_data User data pointer. Can be nullptr.
 /// @param[out] warn Warning message. Can be nullptr.
 /// @param[out] err Error message. Can be nullptr.
 ///
@@ -54,7 +54,7 @@ typedef bool (*LoadImageDataFunction)(ImageResult *image, const uint8_t *addr, c
 /// @param[in] addr Image data byte address.
 /// @param[in] datasize Image data size in bytes.
 /// @param[in] asset_name Corresponding asset/file name.
-/// @param[inout] user_data User data pointer. Can be nullptr. 
+/// @param[inout] user_data User data pointer. Can be nullptr.
 /// @param[out] warn Warning message. Can be nullptr.
 /// @param[out] err Error message. Can be nullptr.
 ///
@@ -65,7 +65,7 @@ typedef bool (*GetImageInfoFunction)(ImageInfoResult *image, const uint8_t *addr
 
 ///
 /// Load image from a file.
-/// 
+///
 /// @param[in] filename Input filename(or URI)
 /// @param[in] max_memory_limit_in_mb Optional. Maximum image file size in [MB]. Default = 512 MB.
 /// @return ImageResult or error message(std::string)
@@ -77,7 +77,7 @@ nonstd::expected<ImageResult, std::string> LoadImageFromFile(
 
 ///
 /// Get Image info from file.
-/// 
+///
 /// @param[in] filename Input filename(or URI)
 /// @return ImageInfoResult or error message(std::string)
 ///
@@ -109,10 +109,10 @@ nonstd::expected<ImageInfoResult, std::string> GetImageInfoFromMemory(const uint
 /// case) and the image is scanline (non-tiled, single-part); returns false
 /// otherwise so the caller can fall back to the fp32 LoadImageFromMemory path.
 /// On success `image` is interleaved RGBA fp16 (PixelFormat::Float, bpp 16).
-/// Always defined; returns false when built without TINYUSDZ_WITH_EXR.
+/// Always defined; returns false when built without LIGHTUSD_WITH_EXR.
 ///
 bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size, const std::string &uri,
                         Image *image, std::string *err);
 
 } // namespace image
-} // namespace tinyusdz
+} // namespace lightusd

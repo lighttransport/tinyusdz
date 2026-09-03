@@ -1,9 +1,9 @@
-# Loading large USD scenes in TinyUSDZ
+# Loading large USD scenes in LightUSD
 
 Production USD scenes are 10–20 GB on disk, spread across thousands of payloaded
 files. This document analyzes three publicly-available scenes — **Moana Island**
 (Disney), **ALab** (Animal Logic), and **Caldera** (Activision) — and describes
-how TinyUSDZ loads them within a bounded RAM budget (target: **fit a parse into
+how LightUSD loads them within a bounded RAM budget (target: **fit a parse into
 16 GB**, geometry deferred), plus the remaining implementation work.
 
 See also [instancing.md](instancing.md) for the Island instancing analysis, and
@@ -97,7 +97,7 @@ All three fit a structural parse well under 16 GB when payloads are deferred.
 
 ---
 
-## 2. The TinyUSDZ loading strategy
+## 2. The LightUSD loading strategy
 
 ### 2.1 `LargeSceneLoader` (`src/large-scene-loader.{hh,cc}`)
 
@@ -105,12 +105,12 @@ A one-call, memory-bounded loader that wires the existing primitives together
 and **keeps the composition graph alive** so geometry can be streamed in later:
 
 ```cpp
-tinyusdz::LargeSceneLoadOptions opts;
+lightusd::LargeSceneLoadOptions opts;
 opts.payload_mode = PayloadMode::LoadNone;       // defer all geometry payloads
 opts.allow_parent_relative_paths = true;         // Caldera '..' paths
 opts.dedup_layers = true;                        // parse each file once
 
-tinyusdz::LargeSceneLoader loader;
+lightusd::LargeSceneLoader loader;
 loader.Load("caldera.usda", opts, &warn, &err);
 
 loader.stage();                                  // composed structure
@@ -470,15 +470,15 @@ if [ ! -f "$1" ]; then
 fi
 
 # Structural compose profile (deferred geometry payloads)
-TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -l \
   --compose-threads-auto --defer-payloads "$1"
 
 # Flattened USDA output check (native instance flattening behavior)
-TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -f \
+LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
   --compose-threads-auto --defer-payloads -o "/tmp/$(basename "$1").usda" "$1"
 
 # Flattened USDC output profile
-TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -f \
+LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
   --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
 ```
 
@@ -508,7 +508,7 @@ fi
 ```sh
 # Caldera (proxy composition baseline)
 CALDERA=<asset-root>/caldera/caldera.usda
-[ -f "$CALDERA" ] && TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+[ -f "$CALDERA" ] && LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -l \
   --compose-threads-auto --defer-payloads "$CALDERA"
 
 # ALab merged scene proxy mode
@@ -1064,7 +1064,7 @@ RTX 5060 Ti; curve and unoriented-point quality is intentionally reduced.
 Payload deferral solves structural loading, but realtime web/native viewers have
 a second pressure point after composition: authored scenes can expand to thousands
 of duplicate materials, many equivalent texture records, thousands of draw-call
-mesh nodes, and tens of thousands of transform-only prim nodes. TinyUSDZ now has
+mesh nodes, and tens of thousands of transform-only prim nodes. LightUSD now has
 opt-in `RenderSceneConverterConfig` switches for this viewer-oriented path:
 
 | Option | Default | Effect |
@@ -1404,7 +1404,7 @@ Regression: `pcp_external_payload_load_reprocesses_nested_arcs_test`.
 mmap zero-copy (`USDLoadOptions::mmap_zero_copy`) defers large uncompressed
 float arrays to disk on the legacy direct-Stage reader. Full composed-layer mmap
 is now supported through the **next PCP backend**
-(`TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON`): every file-backed USDC layer is read
+(`LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON`): every file-backed USDC layer is read
 with lazy arrays and mmap enabled, each `LazyArrayRef` retains shared ownership
 of its own `CrateDataSource`, and that reference survives Layer → composed
 PrimSpec → rebuilt Stage copies without materialization. This naturally handles
@@ -1561,7 +1561,7 @@ PNG re-encode of hundreds of 2k textures was the wall-clock bottleneck
   asset reads → `ProcessTexture` on a `std::thread` pool → sequential archive
   naming/stats — byte-identical output to the sequential order.
   `UsdzConvertOptions::num_threads` (0 = all cores), `tusdzconvert -numThreads`.
-  Pair with `-DTINYUSDZ_WITH_FPNGE=ON` to replace the scalar-fpng encoder
+  Pair with `-DLIGHTUSD_WITH_FPNGE=ON` to replace the scalar-fpng encoder
   (`FPNG_NO_SSE=1`). A 731-texture 2.5 GB scene: **33 s** vs 43 m 53 s via the
   sequential wasm CLI.
 - **Node CLI**: `--texture-codec js` runs PNG decode / gamma-aware box resize /
@@ -1579,7 +1579,7 @@ PNG re-encode of hundreds of 2k textures was the wall-clock bottleneck
 ### 5.2 wasm large-heap fixes (commits `3f314f0be`, `627d0472b`)
 
 - wasm32's 2 GB ceiling cannot hold a composed multi-GB scene folder; wasm64 is
-  required (`TINYUSDZ_WASM64=1`; in-tab needs Chrome ≥133 memory64).
+  required (`LIGHTUSD_WASM64=1`; in-tab needs Chrome ≥133 memory64).
 - wasm64 `MAXIMUM_MEMORY` raised 8 GB → **16 GB** (address-space reservation
   only, with `ALLOW_MEMORY_GROWTH`): the in-heap folder flatten of a 2.5 GB
   scene requests ~10 GB.
@@ -1645,7 +1645,7 @@ a *full* flatten no longer carries gratuitous peak overhead.
 
 ### 6.1 Native `next_usdcat` vs current `tusdcat` (2026-06-29)
 
-The table below is a TinyUSDZ-vs-TinyUSDZ snapshot of the native full-compose
+The table below is a LightUSD-vs-LightUSD snapshot of the native full-compose
 path on the public large scenes. `next_usdcat` uses the `src/next` PCP engine and
 streams the flattened USDA directly to a `FILE*`; `tusdcat` is the current
 library pipeline. Both write USDA to `/dev/null` so the output text is generated
@@ -1655,7 +1655,7 @@ chunked value streaming in the ASCII writer.
 Commands:
 
 ```sh
-/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+/usr/bin/time -v env LIGHTUSD_NEXT_TIMING=1 \
   build-next-release/next_usdcat -f -o /dev/null <root.usda>
 
 /usr/bin/time -v \
@@ -1695,13 +1695,13 @@ optimized substantially (§6.2). Current full-composition validation uses
 while keeping the output off disk:
 
 ```sh
-env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
   <asset-root>/caldera/caldera.usda
-env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
   <asset-root>/island/usd/island.usda
-env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entry.usda
-env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
 ```
 
@@ -1725,7 +1725,7 @@ For a pure USDC reader comparison, the pre-flattened Caldera crate isolates pars
 memory from composition:
 
 ```sh
-/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+/usr/bin/time -v env LIGHTUSD_NEXT_TIMING=1 \
   build-next-release/next_usdcat -l <caldera-build>/caldera.flattened.usdc
 
 /usr/bin/time -v \
@@ -1811,7 +1811,7 @@ element-range chunks formatted concurrently:
 New `value-printer` API: `ArrayElementCount`, `IsChunkableType`,
 `IsChunkableArray`, and `PrintArrayRangeToStream` (formatting an element range is
 byte-identical to the full array printer — the foundation of chunk splitting). The
-serial path (`TINYUSDZ_NEXT_NUM_THREADS=1`) is untouched and remains the
+serial path (`LIGHTUSD_NEXT_NUM_THREADS=1`) is untouched and remains the
 correctness oracle. The auto worker cap was raised 8 → 16 now that the balanced
 design scales with cores (both scenes still improve at 16+).
 
@@ -1831,7 +1831,7 @@ They exercise different serializers:
 - `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
   text through the optimized parallel ASCII writer. On the local 32-thread /
   16-core workstation, Island writes ~10.8 GB of USDA text to `/dev/null` in
-  about **14 s** with `TINYUSDZ_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
+  about **14 s** with `LIGHTUSD_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
 - `-o out.usdc` uses the next crate writer. Island's crate output is only
   ~2.5 GB, but the write phase is still about **36-40 s** even when the output
   path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
@@ -1843,7 +1843,7 @@ serial per-spec structural build and global interning/dedup tables over ~4.25M
 specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
 and array encoding are a smaller slice. Threaded crate writer paths help
 moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
-`TINYUSDZ_NEXT_NUM_THREADS=1` and ~36.1 s with `TINYUSDZ_NEXT_NUM_THREADS=16`,
+`LIGHTUSD_NEXT_NUM_THREADS=1` and ~36.1 s with `LIGHTUSD_NEXT_NUM_THREADS=16`,
 but they do not remove the global-dedup floor. Writing the same USDC to
 `/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
 not disk I/O.
@@ -2117,8 +2117,8 @@ cd build && ctest -R feat-large-scene --output-on-failure
 # the same suite end-to-end on the next::pcp::Cache backend (extent budget,
 # worker-thread snapshot, cross-layer payload-owner anchoring):
 cmake -S . -B build-next-pcp -DCMAKE_BUILD_TYPE=Release \
-  -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON -DTINYUSDZ_BUILD_TESTS=ON \
-  -DTINYUSDZ_BUILD_EXAMPLES=OFF -DTINYUSDZ_BUILD_TOOLS=OFF
+  -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_EXAMPLES=OFF -DLIGHTUSD_BUILD_TOOLS=OFF
 cd build-next-pcp && make feat-large-scene -j16 && \
   ctest -R feat-large-scene --output-on-failure
 # focused payload-policy owner-anchor regression (next pcp unit level):
@@ -2128,14 +2128,14 @@ cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
 # full composition + USDA writer stress checks:
-env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
   <asset-root>/island/usd/island.usda
-env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
 # suffix-fallback unit tests (§4):
-cd build && ./unit-test-tinyusdz ioutil_asset_path_suffix_candidates_test \
+cd build && ./unit-test-lightusd ioutil_asset_path_suffix_candidates_test \
                                  comp_reference_suffix_fallback_test
 # browser conversion bench (§5):
 cd web/js && xvfb-run -a node tests/bench-usdzconvert-browser.mjs --hw \

@@ -204,7 +204,7 @@ isBeach / isPandanusA + full `island.usda` all unchanged; `next` 23/23; smoke).
 
 Measured before → after on the same build (`-rtPreview -w 320 -height 180`;
 `sources` = the serial `[next_build]` source-resolution phase via
-`TINYUSDZ_NEXT_TIMING`; wall + peak RSS from `/usr/bin/time`):
+`LIGHTUSD_NEXT_TIMING`; wall + peak RSS from `/usr/bin/time`):
 
 | scene | input | `sources` ms | wall s | peak RSS | md5 |
 |---|---|---|---|---|---|
@@ -264,7 +264,7 @@ question, not pure builder.**
 ```sh
 python3 tools/tusdrender/bench_island.py \
     --island /mnt/disk1/data/island \
-    --dist   /mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist \
+    --dist   /mnt/nvme02/work/lightusd-repo/OpenUSD/dist \
     --bin    build_ninja/tools/tusdrender/tusdrender \
     --out    /tmp/island_bench
 # force a graceful-abort row by capping memory on the heavy element:
@@ -341,7 +341,7 @@ useful regression / shading / framing references that sit between the small
 | **Intel 4004 Moore Lane** (`v1.2.0`) | ASWF Digital Production Example Library ([dpel.aswf.io/4004-moore-lane](https://dpel.aswf.io/4004-moore-lane/)) | **ASWF Digital Assets License v1.1**, © Intel Corp. 2023 ([terms](https://dpel.aswf.io/4004-moore-lane/moore-lane-license/)) | 5.3 GB USD + 6.8 GB textures (~13 GB total) | Y |
 
 Both are **local-only test assets** here (`/mnt/disk1/data/usd/...`), not bundled
-with TinyUSDZ. Note the two licenses differ materially:
+with LightUSD. Note the two licenses differ materially:
 
 * **Kitchen_set** — Pixar's EULA permits only non-commercial testing and
   **forbids redistribution**.

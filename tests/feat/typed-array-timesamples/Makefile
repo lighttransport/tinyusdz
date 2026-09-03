@@ -9,12 +9,12 @@ CXX ?= g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -g
 INCLUDES = -I../../../src -I../../../src/external
 
-# TinyUSDZ root directory (3 levels up from this Makefile)
-TINYUSDZ_ROOT = ../../..
-BUILD_DIR = $(TINYUSDZ_ROOT)/build
+# LightUSD root directory (3 levels up from this Makefile)
+LIGHTUSD_ROOT = ../../..
+BUILD_DIR = $(LIGHTUSD_ROOT)/build
 
 # Use the pre-built static library
-TINYUSDZ_LIB = $(BUILD_DIR)/libtinyusdz_static.a
+LIGHTUSD_LIB = $(BUILD_DIR)/liblightusd_static.a
 
 # Test source
 TEST_SOURCE = test-typed-array-timesamples.cc
@@ -27,17 +27,17 @@ all: check-lib $(TARGET)
 
 # Check if library exists
 check-lib:
-	@if [ ! -f "$(TINYUSDZ_LIB)" ]; then \
-		echo "Error: TinyUSDZ library not found at $(TINYUSDZ_LIB)"; \
-		echo "Please build TinyUSDZ first:"; \
-		echo "  cd $(TINYUSDZ_ROOT) && mkdir -p build && cd build && cmake .. && make"; \
+	@if [ ! -f "$(LIGHTUSD_LIB)" ]; then \
+		echo "Error: LightUSD library not found at $(LIGHTUSD_LIB)"; \
+		echo "Please build LightUSD first:"; \
+		echo "  cd $(LIGHTUSD_ROOT) && mkdir -p build && cd build && cmake .. && make"; \
 		exit 1; \
 	fi
 
 # Link the executable
 $(TARGET): $(TEST_SOURCE)
 	@echo "Building $(TARGET)..."
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(TINYUSDZ_LIB) -pthread
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIGHTUSD_LIB) -pthread
 	@echo "✓ Build successful! Run with: ./$(TARGET)"
 
 # Clean build artifacts
@@ -62,7 +62,7 @@ help:
 	@echo ""
 	@echo "Requirements:"
 	@echo "  - C++14 compatible compiler"
-	@echo "  - TinyUSDZ source tree (../../.. from this directory)"
+	@echo "  - LightUSD source tree (../../.. from this directory)"
 	@echo ""
 	@echo "This test verifies that TypedArray<T> can be used with"
 	@echo "TimeSamples for memory-efficient deduplication of array data."

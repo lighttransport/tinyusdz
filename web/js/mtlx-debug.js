@@ -1,4 +1,4 @@
-// TinyUSDZ MaterialX/OpenPBR Demo with Three.js
+// LightUSD MaterialX/OpenPBR Demo with Three.js
 // This demo showcases OpenPBR material loading and editing with synthetic HDR environments
 
 import * as THREE from 'three';
@@ -6,8 +6,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
@@ -143,8 +143,8 @@ let scene, camera, renderer, controls;
 let raycaster, mouse;
 let selectedObject = null;
 let boundingBoxHelper = null; // Bounding box helper for selected object
-let currentLoader = null; // TinyUSDZLoader instance
-let currentNativeLoader = null; // Native TinyUSDZLoaderNative instance for low-level API
+let currentLoader = null; // LightUSDLoader instance
+let currentNativeLoader = null; // Native LightUSDLoaderNative instance for low-level API
 let materials = [];
 let meshes = [];
 let gui = null;
@@ -1733,7 +1733,7 @@ function exportMaterialToMaterialX(material) {
 
     let xml = '<?xml version="1.0"?>\n';
     xml += '<materialx version="1.38" xmlns:xi="http://www.w3.org/2001/XInclude">\n';
-    xml += `  <!-- Exported from TinyUSDZ MaterialX Demo on ${new Date().toISOString()} -->\n\n`;
+    xml += `  <!-- Exported from LightUSD MaterialX Demo on ${new Date().toISOString()} -->\n\n`;
 
     // Create material definition
     xml += `  <surfacematerial name="${materialName}" type="material">\n`;
@@ -2317,8 +2317,8 @@ async function init() {
     // Setup post-processing composer
     setupComposer();
 
-    // Load TinyUSDZ WASM module
-    await loadTinyUSDZ();
+    // Load LightUSD WASM module
+    await loadLightUSD();
 
     // Create synthetic HDR environment
     createSyntheticHDR('studio');
@@ -2516,24 +2516,24 @@ function toggleFalseColor() {
     console.log('False color:', showingFalseColor ? 'enabled' : 'disabled');
 }
 
-// Load TinyUSDZ WASM module
-async function loadTinyUSDZ() {
-    updateStatus('Loading TinyUSDZ WASM module...');
+// Load LightUSD WASM module
+async function loadLightUSD() {
+    updateStatus('Loading LightUSD WASM module...');
 
     try {
-        // Create a TinyUSDZLoader instance
-        currentLoader = new TinyUSDZLoader();
+        // Create a LightUSDLoader instance
+        currentLoader = new LightUSDLoader();
 
         // Initialize the loader (wait for WASM module to load)
         // Use memory64: false for browser compatibility
         // Use useZstdCompressedWasm: false since compressed WASM is not available
         await currentLoader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-        console.log('TinyUSDZ module loaded successfully');
-        updateStatus('TinyUSDZ module loaded', 'success');
+        console.log('LightUSD module loaded successfully');
+        updateStatus('LightUSD module loaded', 'success');
     } catch (error) {
-        console.error('Failed to initialize TinyUSDZ:', error);
-        updateStatus('Failed to load TinyUSDZ: ' + error.message, 'error');
+        console.error('Failed to initialize LightUSD:', error);
+        updateStatus('Failed to load LightUSD: ' + error.message, 'error');
         throw error;
     }
 }
@@ -4385,7 +4385,7 @@ function setupGUI() {
 // Load USD file
 async function loadUSDFile(arrayBuffer, filename) {
     if (!currentLoader) {
-        updateStatus('TinyUSDZ module not loaded', 'error');
+        updateStatus('LightUSD module not loaded', 'error');
         return;
     }
 
@@ -4402,8 +4402,8 @@ async function loadUSDFile(arrayBuffer, filename) {
         // Clear the scene
         clearScene();
 
-        // Create new native loader from the TinyUSDZLoader instance
-        currentNativeLoader = new currentLoader.native_.TinyUSDZLoaderNative();
+        // Create new native loader from the LightUSDLoader instance
+        currentNativeLoader = new currentLoader.native_.LightUSDLoaderNative();
 
         // Convert ArrayBuffer to Uint8Array
         const uint8Array = new Uint8Array(arrayBuffer);
@@ -5204,7 +5204,7 @@ async function createOpenPBRMaterial(materialData) {
 
     // Apply color space shader if textures are present
     if (Object.keys(material.userData.textures || {}).length > 0) {
-        // HACK. disabled 
+        // HACK. disabled
         //applyColorSpaceShader(material, material.userData.colorSpaceSettings);
     }
 

@@ -14,11 +14,11 @@
 #include "core/path-expression-eval.hh"
 #include "layer.hh"
 #include "io-util.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 #include <fstream>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -518,11 +518,11 @@ void comp_variant_nested_children_test(void) {
 // "Asset not found" warning.
 // ---------------------------------------------------------------------------
 void comp_reference_suffix_fallback_test(void) {
-  const std::string dir = tinyusdz::io::JoinPath(
-      tinyusdz::io::GetTempDir(), "tinyusdz_comp_reference_suffix_fallback");
-  const std::string assets = tinyusdz::io::JoinPath(dir, "Assets");
-  TEST_CHECK(tinyusdz::io::CreateDirectories(assets));
-  if (!tinyusdz::io::IsDirectory(assets)) {
+  const std::string dir = lightusd::io::JoinPath(
+      lightusd::io::GetTempDir(), "lightusd_comp_reference_suffix_fallback");
+  const std::string assets = lightusd::io::JoinPath(dir, "Assets");
+  TEST_CHECK(lightusd::io::CreateDirectories(assets));
+  if (!lightusd::io::IsDirectory(assets)) {
     return;
   }
 
@@ -538,9 +538,9 @@ def Xform "Leaf"
 )";
 
   TEST_CHECK(WriteTextFileForCompositionTest(
-      tinyusdz::io::JoinPath(assets, "leaf.usda"), leaf_usda));
+      lightusd::io::JoinPath(assets, "leaf.usda"), leaf_usda));
   TEST_CHECK(WriteTextFileForCompositionTest(
-      tinyusdz::io::JoinPath(assets, "leaf2.usda"), leaf_usda));
+      lightusd::io::JoinPath(assets, "leaf2.usda"), leaf_usda));
 
   const std::string root_usda = R"(#usda 1.0
 
@@ -563,7 +563,7 @@ def Xform "RefMissing" (
 }
 )";
 
-  const std::string root_path = tinyusdz::io::JoinPath(dir, "root.usda");
+  const std::string root_path = lightusd::io::JoinPath(dir, "root.usda");
   TEST_CHECK(WriteTextFileForCompositionTest(root_path, root_usda));
 
   Layer root_layer;
@@ -626,15 +626,15 @@ def Xform "RefMissing" (
 // selected variants are applied.
 // ---------------------------------------------------------------------------
 void comp_sublayer_variant_sets_merge_test(void) {
-  const std::string dir = tinyusdz::io::JoinPath(
-      tinyusdz::io::GetTempDir(), "tinyusdz_comp_sublayer_variant_sets_merge");
-  TEST_CHECK(tinyusdz::io::CreateDirectories(dir));
-  if (!tinyusdz::io::IsDirectory(dir)) {
+  const std::string dir = lightusd::io::JoinPath(
+      lightusd::io::GetTempDir(), "lightusd_comp_sublayer_variant_sets_merge");
+  TEST_CHECK(lightusd::io::CreateDirectories(dir));
+  if (!lightusd::io::IsDirectory(dir)) {
     return;
   }
 
-  const std::string weak_path = tinyusdz::io::JoinPath(dir, "weak.usda");
-  const std::string root_path = tinyusdz::io::JoinPath(dir, "root.usda");
+  const std::string weak_path = lightusd::io::JoinPath(dir, "weak.usda");
+  const std::string root_path = lightusd::io::JoinPath(dir, "root.usda");
 
   const std::string weak_usda = R"(#usda 1.0
 
@@ -754,18 +754,18 @@ def Xform "Root" (
   TEST_CHECK(geom_it->props().count("shapeMarker") == 1);
   TEST_CHECK(geom_it->props().count("lookMarker") == 1);
 
-  tinyusdz::io::RemoveFile(root_path);
-  tinyusdz::io::RemoveFile(weak_path);
-  tinyusdz::io::RemoveAll(dir);
+  lightusd::io::RemoveFile(root_path);
+  lightusd::io::RemoveFile(weak_path);
+  lightusd::io::RemoveAll(dir);
 }
 
 void comp_sublayer_path_expression_weaker_test(void) {
-  const std::string dir = tinyusdz::io::JoinPath(
-      tinyusdz::io::GetTempDir(), "tinyusdz_comp_path_expr_weaker");
-  TEST_CHECK(tinyusdz::io::CreateDirectories(dir));
-  if (!tinyusdz::io::IsDirectory(dir)) return;
-  const std::string weak_path = tinyusdz::io::JoinPath(dir, "weak.usda");
-  const std::string root_path = tinyusdz::io::JoinPath(dir, "root.usda");
+  const std::string dir = lightusd::io::JoinPath(
+      lightusd::io::GetTempDir(), "lightusd_comp_path_expr_weaker");
+  TEST_CHECK(lightusd::io::CreateDirectories(dir));
+  if (!lightusd::io::IsDirectory(dir)) return;
+  const std::string weak_path = lightusd::io::JoinPath(dir, "weak.usda");
+  const std::string root_path = lightusd::io::JoinPath(dir, "root.usda");
   const std::string weak_usda = R"(#usda 1.0
 def Xform "World"
 {
@@ -805,9 +805,9 @@ over "World"
   TEST_CHECK(MatchPath(parsed, "/World/A"));
   TEST_CHECK(MatchPath(parsed, "/World/B"));
   TEST_CHECK(!MatchPath(parsed, "/World/C"));
-  tinyusdz::io::RemoveFile(root_path);
-  tinyusdz::io::RemoveFile(weak_path);
-  tinyusdz::io::RemoveAll(dir);
+  lightusd::io::RemoveFile(root_path);
+  lightusd::io::RemoveFile(weak_path);
+  lightusd::io::RemoveAll(dir);
 }
 
 // ---------------------------------------------------------------------------

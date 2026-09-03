@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Value Printer
+// LightUSD Next - Value Printer
 // Convert Value objects to string representation
 
 #pragma once
@@ -9,7 +9,7 @@
 #include "../types/value.hh"
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 class StreamWriter;
@@ -91,4 +91,4 @@ std::string PrintAttributeValue(const std::string& type_name, const std::string&
                                  const Value& value, const PrintOptions& opts = {});
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

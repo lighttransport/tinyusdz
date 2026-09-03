@@ -12,8 +12,8 @@
 #include <vector>
 #include <cstring>
 
-using namespace tinyusdz;
-using namespace tinyusdz::value;
+using namespace lightusd;
+using namespace lightusd::value;
 
 void value_view_size_test(void) {
   // ValueView layout: void* ptr_ + uint32_t type_id_ + uint8_t flags_

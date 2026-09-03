@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Maya-like dark theme, adapted from tinyusdview / meshula's gist:
+// Maya-like dark theme, adapted from lightusdview / meshula's gist:
 //   https://gist.github.com/meshula/8ce01538bf643584477e61551e16d5ac
 #include "gui_style.hh"
 

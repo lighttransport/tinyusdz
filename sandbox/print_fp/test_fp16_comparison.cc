@@ -1,5 +1,5 @@
 // Comprehensive test comparing direct binary16 dragonbox vs fp32 path
-// Compile twice: once with and once without TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+// Compile twice: once with and once without LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 
 #include <iostream>
 #include <iomanip>
@@ -10,11 +10,11 @@
 #include <algorithm>
 
 // Include the implementation with appropriate define
-// To test: compile with -DTINYUSDZ_USE_DIRECT_FP16_DRAGONBOX and without
+// To test: compile with -DLIGHTUSD_USE_DIRECT_FP16_DRAGONBOX and without
 
 #include "dragonbox_to_chars.h"
 
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 #include "dragonbox_binary16.hh"
 #endif
 
@@ -156,7 +156,7 @@ inline char* write_significand(char* out, uint64_t significand,
 
 // The actual conversion function with both implementations
 char* dtoa_dragonbox(const half h, char* buf) {
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
   // Direct binary16 implementation
   uint16_t bits = h.value;
   dragonbox::binary16::ieee754_binary16 fp16(bits);
@@ -244,7 +244,7 @@ char* dtoa_dragonbox(const half h, char* buf) {
 } // namespace internal
 
 int main() {
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
   std::cout << "=== Testing DIRECT BINARY16 Dragonbox ===" << std::endl;
 #else
   std::cout << "=== Testing FP32 PATH (fp16->fp32->dragonbox) ===" << std::endl;
@@ -357,7 +357,7 @@ int main() {
   std::cout << "  Worst case value: " << worst_f << std::endl;
   std::cout << "  Worst case string: \"" << worst_buf << "\"" << std::endl;
 
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
   std::cout << "  Required buffer: " << (max_length + 1) << " bytes (16 bytes allocated)" << std::endl;
   std::cout << "  Status: " << (max_length + 1 <= 16 ? "✓ SAFE" : "✗ UNSAFE") << std::endl;
 #else

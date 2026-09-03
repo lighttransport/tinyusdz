@@ -7,8 +7,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR BSL-1.0
 
-#ifndef TINYUSDZ_DRAGONBOX_BINARY16_HH
-#define TINYUSDZ_DRAGONBOX_BINARY16_HH
+#ifndef LIGHTUSD_DRAGONBOX_BINARY16_HH
+#define LIGHTUSD_DRAGONBOX_BINARY16_HH
 
 #include <cstdint>
 #include <cassert>
@@ -268,4 +268,4 @@ inline decimal_fp to_decimal_precise(ieee754_binary16 f) {
 } // namespace binary16
 } // namespace dragonbox
 
-#endif // TINYUSDZ_DRAGONBOX_BINARY16_HH
+#endif // LIGHTUSD_DRAGONBOX_BINARY16_HH

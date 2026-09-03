@@ -1,11 +1,11 @@
 /**
  * @file test_c_api.c
- * @brief Unit tests for TinyUSDZ C API
+ * @brief Unit tests for LightUSD C API
  *
- * Run with: gcc -I. test_c_api.c -L. -ltinyusdz_c -lm -o test_c_api && ./test_c_api
+ * Run with: gcc -I. test_c_api.c -L. -llightusd_c -lm -o test_c_api && ./test_c_api
  */
 
-#include "tinyusdz_c.h"
+#include "lightusd_c.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -191,7 +191,7 @@ TEST(load_from_memory) {
         0
     );
 
-    // This test will likely fail without full TinyUSDZ support
+    // This test will likely fail without full LightUSD support
     // but demonstrates the API usage
     if (result == TUSDZ_SUCCESS) {
         ASSERT_NOT_NULL(stage, "Stage should be loaded");
@@ -222,7 +222,7 @@ TEST(memory_stats) {
 
 int main(int argc, char* argv[]) {
     printf("========================================\n");
-    printf("TinyUSDZ C API Test Suite\n");
+    printf("LightUSD C API Test Suite\n");
     printf("========================================\n\n");
 
     // Run all tests

@@ -123,7 +123,7 @@ async function validate() {
 if (checkOnly) {
   await validate();
 } else {
-  const temp = await mkdtemp(path.join(tmpdir(), 'tinyusdz-hair-'));
+  const temp = await mkdtemp(path.join(tmpdir(), 'lightusd-hair-'));
   try {
     const source = path.join(temp, 'hair-fur-demo.usda');
     await writeFile(source, makeUSDA());

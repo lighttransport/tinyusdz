@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -295,4 +295,4 @@ Layer MaterializeVariantHolders(const Layer& layer) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

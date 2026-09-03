@@ -12,7 +12,7 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // variant in pxrUSD is something like a Scene variation(different scene
@@ -129,12 +129,12 @@ class MetaVariable {
   }
 
   void set_name(const std::string &name) { _name = name; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return _name; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return _name; }
 
-  const value::Value &get_raw_value() const TINYUSDZ_LIFETIMEBOUND {
+  const value::Value &get_raw_value() const LIGHTUSD_LIFETIMEBOUND {
     return _value;
   }
-  value::Value &get_raw_value() TINYUSDZ_LIFETIMEBOUND { return _value; }
+  value::Value &get_raw_value() LIGHTUSD_LIFETIMEBOUND { return _value; }
 
   // No set_type_name()
   const std::string type_name() const { return TypeName(*this); }
@@ -171,4 +171,4 @@ DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA,
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

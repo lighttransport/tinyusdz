@@ -22,7 +22,7 @@
 #include <thread>
 #include <vector>
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 #include "ascii-parser.hh"
 #include "core/model-scope.hh"  // Model, Scope
@@ -59,14 +59,14 @@
 #include "primvar.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 // template specialization forward decls.
@@ -159,7 +159,7 @@ namespace usda {
 constexpr auto kTag = "[USDA]";  // moved from usda-reader.cc
 
 // Supporting types for USDAReader::Impl. NOTE: originally TU-local (anonymous namespace);
-// promoted to named tinyusdz::usda for use across the split reconstruct TUs.
+// promoted to named lightusd::usda for use across the split reconstruct TUs.
 struct VariantNode {
   PrimMeta metas;
   std::map<std::string, Property> props;
@@ -715,7 +715,7 @@ class USDAReader::Impl {
           // TODO: store triple-quote info
           m[item.first] = pvs.value().value;
         } else {
-          return nonstd::make_unexpected(fmt::format("TinyUSDZ only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.type_name(), item.second.type_id()));
+          return nonstd::make_unexpected(fmt::format("LightUSD only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.type_name(), item.second.type_id()));
         }
       }
 
@@ -1521,6 +1521,6 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(SpatialAudio)
 #undef USDA_EXTERN_REGISTER_RECONSTRUCT
 
 }  // namespace usda
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // !LIGHTUSD_DISABLE_MODULE_USDA_READER

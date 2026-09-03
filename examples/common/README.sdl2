@@ -1,4 +1,4 @@
-We changed to remove SDL2 files from tinyusdz git repo to reduce repo size.
+We changed to remove SDL2 files from lightusd git repo to reduce repo size.
 
 Please download SDL2 source package from:
 

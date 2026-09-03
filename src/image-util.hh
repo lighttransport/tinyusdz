@@ -14,7 +14,7 @@
 #include <vector>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // forward decl
 namespace value {
@@ -113,7 +113,7 @@ bool rec709_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
 
 ///
 /// Convert fp16 image in Display P3(P3-D65, gamma-applied) to fp32 image in linear Display P3 color space.
-/// 
+///
 /// The conversion is identical to sRGB -> linear sRGB, since Display P3 uses the same gamma curve(transfer function) with sRGB.
 ///
 /// Linearlized value is further modified by x' = x * scale + bias.
@@ -149,7 +149,7 @@ bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t 
 ///
 /// When alpha channel is supplied, alpha value in [0.0, 1.0] is quantized to 2bit(~0.25 = 0, ~0.5 = 1, ~0.75 = 2, 0.75+ = 3)
 ///
-/// @param[in] in_img Input image in linear Display P3 color space. 
+/// @param[in] in_img Input image in linear Display P3 color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 1 = mono, 2 = luminance(mono) + alpha, 3 = RGB, 4 = RGBA
@@ -167,7 +167,7 @@ bool linear_f32_to_displayp3_u10(const std::vector<float> &in_img, size_t width,
 ///
 /// When alpha channel is supplied, no conversion applied to alpha value.
 ///
-/// @param[in] in_img Input image in linear Display P3 color space. 
+/// @param[in] in_img Input image in linear Display P3 color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 3 = RGB, 4 = RGBA
@@ -185,7 +185,7 @@ bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t wi
 ///
 /// When alpha channel is supplied, no conversion applied to alpha value.
 ///
-/// @param[in] in_img Input image in linear sRGB color space. 
+/// @param[in] in_img Input image in linear sRGB color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 3 = RGB, 4 = RGBA
@@ -203,7 +203,7 @@ bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t wi
 ///
 /// When alpha channel is supplied, no conversion applied to alpha value.
 ///
-/// @param[in] in_img Input image in linear sRGB color space. 
+/// @param[in] in_img Input image in linear sRGB color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 3 = RGB, 4 = RGBA
@@ -222,7 +222,7 @@ bool linear_sRGB_to_ACEScg(const std::vector<float> &in_img, size_t width,
 ///
 /// When alpha channel is supplied, no conversion applied to alpha value.
 ///
-/// @param[in] in_img Input image in ACEScg(AP1) color space. 
+/// @param[in] in_img Input image in ACEScg(AP1) color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 3 = RGB, 4 = RGBA
@@ -284,7 +284,7 @@ bool linear_f32_to_rec2020_8bit(const std::vector<float> &in_img, size_t width,
 ///
 /// When alpha channel is supplied, no conversion applied to alpha value.
 ///
-/// @param[in] in_img Input image in linear Rec.2020 color space. 
+/// @param[in] in_img Input image in linear Rec.2020 color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 3 = RGB, 4 = RGBA
@@ -302,7 +302,7 @@ bool linear_rec2020_to_linear_sRGB(const std::vector<float> &in_img, size_t widt
 ///
 /// When alpha channel is supplied, no conversion applied to alpha value.
 ///
-/// @param[in] in_img Input image in linear sRGB color space. 
+/// @param[in] in_img Input image in linear sRGB color space.
 /// @param[in] width Width pixels
 /// @param[in] height Height pixels
 /// @param[in] channels 3 = RGB, 4 = RGBA
@@ -321,7 +321,7 @@ bool linear_sRGB_to_linear_rec2020(const std::vector<float> &in_img, size_t widt
 /// @param[in] channels Pixel channels to apply conversion. must be less than or
 /// equal to `channel_stride`
 /// @param[in] channel_stride channel stride. For example, channels=3 and
-/// channel_stride=4 to apply gamma conversion to RGB channel but leave alpha 
+/// channel_stride=4 to apply gamma conversion to RGB channel but leave alpha
 /// channel untouched for RGBA image.
 /// @param[out] out_img Image in linear color space. Image size is same with
 /// `in_image`
@@ -464,4 +464,4 @@ bool resize_image_u8_srgb(const std::vector<uint8_t> &src_img, size_t src_width,
 
                           size_t channels, std::vector<uint8_t> *dest_img, std::string *err =nullptr);
 
-}  // namespace tinyusdz
+}  // namespace lightusd

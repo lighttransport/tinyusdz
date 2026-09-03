@@ -12,7 +12,7 @@
 // DOM references (mutable: canvas is replaced on worker respawn)
 // ============================================================================
 
-import { getAssetUriFromURL, mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
+import { getAssetUriFromURL, mountBackendSelector } from './src/lightusd/LoaderConfigUtils.js';
 
 let canvas = document.getElementById('gl');
 const statusEl = document.getElementById('status');

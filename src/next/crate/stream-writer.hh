@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - little-endian byte stream writer.
+// LightUSD Next - little-endian byte stream writer.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 class StreamWriter {
@@ -90,4 +90,4 @@ class StreamWriter {
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -12,8 +12,8 @@
 
 #include <vector>
 
-using namespace tinyusdz;
-using namespace tinyusdz::value;
+using namespace lightusd;
+using namespace lightusd::value;
 
 void typed_array_view_binary_float_test(void) {
   TimeSamples samples;

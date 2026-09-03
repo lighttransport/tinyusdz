@@ -4,8 +4,8 @@
 #include <sstream>
 #include <string>
 
-// Global flag to control DCOUT output. Set via TINYUSDZ_ENABLE_DCOUT environment variable.
-namespace tinyusdz {
+// Global flag to control DCOUT output. Set via LIGHTUSD_ENABLE_DCOUT environment variable.
+namespace lightusd {
 extern bool g_enable_dcout_output;
 
 // Default limit for recursive/iterative traversals to prevent infinite loops.
@@ -13,14 +13,14 @@ extern bool g_enable_dcout_output;
 constexpr size_t kMaxDefaultTraversalLimit = 1024 * 1024;
 }
 
-#if !defined(TINYUSDZ_PRODUCTION_BUILD) && !defined(TINYUSDZ_FUZZER_BUILD)
-#if defined(TINYUSDZ_DEBUG_PRINT)
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
+#if !defined(LIGHTUSD_PRODUCTION_BUILD) && !defined(LIGHTUSD_FUZZER_BUILD)
+#if defined(LIGHTUSD_DEBUG_PRINT)
+#define LIGHTUSD_LOCAL_DEBUG_PRINT
 #endif
 #endif
 
 
-#if defined(TINYUSDZ_PRODUCTION_BUILD)
+#if defined(LIGHTUSD_PRODUCTION_BUILD)
 // Do not include full filepath for privacy.
 
 #define PUSH_ERROR_AND_RETURN(s)                         \
@@ -57,7 +57,7 @@ constexpr size_t kMaxDefaultTraversalLimit = 1024 * 1024;
     PushWarn(ss_w.str());                                \
   } while (0)
 
-#else  // TINYUSDZ_PRODUCTION_BUILD
+#else  // LIGHTUSD_PRODUCTION_BUILD
 
 #define PUSH_ERROR_AND_RETURN(s)                                          \
   do {                                                                    \
@@ -97,14 +97,14 @@ constexpr size_t kMaxDefaultTraversalLimit = 1024 * 1024;
     PushWarn(ss_w.str());                                                \
   } while (0)
 
-#endif  // TINYUSDZ_PRODUCTION_BUILD
+#endif  // LIGHTUSD_PRODUCTION_BUILD
 
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#if defined(LIGHTUSD_LOCAL_DEBUG_PRINT)
 // DCOUT macro - accepts iostream expressions with << operator
 // Example usage: DCOUT("ptr = " << std::hex << ptr)
 #define DCOUT(x)                                               \
   do {                                                         \
-    if (tinyusdz::g_enable_dcout_output) {                     \
+    if (lightusd::g_enable_dcout_output) {                     \
       std::ostringstream dcout_ss;                             \
       dcout_ss << x;                                           \
       std::cout << __FILE__ << ":" << __func__ << ":"          \
@@ -123,11 +123,11 @@ constexpr size_t kMaxDefaultTraversalLimit = 1024 * 1024;
 template<typename T>
 class AutoFree {
  private:
-  T *_v{nullptr}; 
+  T *_v{nullptr};
 
  public:
 
-  AutoFree() : _v(new T()) { 
+  AutoFree() : _v(new T()) {
   }
 
   ~AutoFree() {

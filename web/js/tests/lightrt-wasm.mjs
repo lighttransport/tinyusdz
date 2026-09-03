@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import createTinyUSDZ from '../src/tinyusdz/tinyusdz_next.js';
+import createLightUSD from '../src/lightusd/lightusd_next.js';
 
-const module = await createTinyUSDZ();
+const module = await createLightUSD();
 assert.equal(typeof module.LightRTPathTracer, 'function');
 const tracer = new module.LightRTPathTracer();
 const positions = new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]);

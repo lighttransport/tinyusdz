@@ -31,7 +31,7 @@
 #include "str-util.hh"
 #include "tiny-format.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -52,11 +52,11 @@
 #include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace ascii {
 
 extern template bool AsciiParser::ParseBasicTypeArray(
@@ -399,7 +399,7 @@ static constexpr size_t g_usd_keywords_count =
 
 
 static void RegisterStageMetas(
-    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
+    lightusd::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
   metas["documentation"] =
@@ -460,7 +460,7 @@ static void RegisterStageMetas(
 }
 
 static void RegisterPrimMetas(
-    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
+    lightusd::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
@@ -522,7 +522,7 @@ static void RegisterPrimMetas(
 }
 
 static void RegisterPropMetas(
-    tinyusdz::HashMap<std::string, AsciiParser::VariableDef> &metas) {
+    lightusd::HashMap<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
@@ -541,7 +541,7 @@ static void RegisterPropMetas(
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
   // usdSkel inbetween BlendShape
-  // use Double in TinyUSDZ. its float type in pxrUSD.
+  // use Double in LightUSD. its float type in pxrUSD.
   metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
 
   // usdShade?
@@ -629,7 +629,7 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("GPrim");
 }
 
-// TinyUSDZ does not allow user-defined API schema at the moment
+// LightUSD does not allow user-defined API schema at the moment
 // (Primarily for security reason, secondary it requires re-design of Prim
 // classes to support user-defined API schema)
 static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
@@ -683,7 +683,7 @@ AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) { Setup(); }
 
 std::string AsciiParser::GenerateSuggestion(const std::string& invalid_token) {
   // Only generate suggestions if feature is enabled and token is not empty
-  if (!TINYUSDZ_ENABLE_SUGGEST_FIX || invalid_token.empty()) {
+  if (!LIGHTUSD_ENABLE_SUGGEST_FIX || invalid_token.empty()) {
     return "";
   }
 
@@ -736,7 +736,7 @@ void AsciiParser::RecordPropertyCursor(const std::string &prim_path,
 
 namespace {
 
-std::string GetSourceLineAtCursor(const tinyusdz::StreamReader *sr, int target_row) {
+std::string GetSourceLineAtCursor(const lightusd::StreamReader *sr, int target_row) {
   if (!sr || !sr->data() || (target_row < 0)) {
     return std::string();
   }
@@ -1528,7 +1528,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 ///
 bool AsciiParser::Parse(const uint32_t load_states,
                         const AsciiParserOption &parser_option) {
-  TINYUSDZ_PROFILE_FUNCTION("ascii-parser");
+  LIGHTUSD_PROFILE_FUNCTION("ascii-parser");
 
   _cursor_store.Clear();
 
@@ -1540,7 +1540,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
 
   bool header_ok;
   {
-    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseMagicHeader");
+    LIGHTUSD_PROFILE_SCOPE("ascii-parser", "ParseMagicHeader");
     header_ok = ParseMagicHeader();
   }
   if (!header_ok) {
@@ -1562,7 +1562,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
 
     if (c == '(') {
       // stage meta.
-      TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseStageMetas");
+      LIGHTUSD_PROFILE_SCOPE("ascii-parser", "ParseStageMetas");
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }
@@ -1584,7 +1584,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
 
   // parse blocks
   {
-    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlocks");
+    LIGHTUSD_PROFILE_SCOPE("ascii-parser", "ParseBlocks");
     while (!Eof()) {
       if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
@@ -1676,7 +1676,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
                                          << ", parentPrimIdx = root(-1)");
       bool block_ok;
       {
-        TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlock");
+        LIGHTUSD_PROFILE_SCOPE("ascii-parser", "ParseBlock");
         block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
                              /* in_variantStmt */ false);
       }
@@ -1714,9 +1714,9 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
     return false;
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  lightusd::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  lightusd::ascii::AsciiParser parser(&sr);
 
 #define PARSE_BASE_TYPE(__ty)                                            \
   case value::TypeTraits<__ty>::type_id(): {                             \
@@ -1784,6 +1784,6 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
 }
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // !LIGHTUSD_DISABLE_MODULE_USDA_READER

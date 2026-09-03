@@ -12,7 +12,7 @@
 #include "common-macros.inc"
 #include "math-util.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace value {
 
 // matrix set_row, set_scale, set_translation methods
@@ -381,4 +381,4 @@ matrix3d MatSub(const matrix3d &a, const matrix3d &b) { return MatSubImpl<matrix
 matrix4d MatSub(const matrix4d &a, const matrix4d &b) { return MatSubImpl<matrix4d, 4>(a, b); }
 
 }  // namespace value
-}  // namespace tinyusdz
+}  // namespace lightusd

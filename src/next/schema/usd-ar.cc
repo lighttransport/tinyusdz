@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdAR Schema Implementation
+// LightUSD Next - UsdAR Schema Implementation
 
 #include "usd-ar.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -355,4 +355,4 @@ bool GetARImagingAPIData(const UsdPrim& prim, ARImagingAPIData* out) {
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

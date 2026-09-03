@@ -122,10 +122,10 @@ def main() -> int:
     # Snapshot compute-device exposure before Vulkan initialization. Some
     # PRIME loaders transiently create NVIDIA control nodes even when no CUDA
     # compute device is usable in this container.
-    cuda_available = (os.environ.get("TINYUSDZ_MTLX_FLAKE_CUDA") == "1" and
+    cuda_available = (os.environ.get("LIGHTUSD_MTLX_FLAKE_CUDA") == "1" and
                       pathlib.Path("/dev/nvidia0").exists() and
                       pathlib.Path("/dev/nvidia-uvm").exists())
-    hip_available = (os.environ.get("TINYUSDZ_MTLX_FLAKE_HIP") == "1" and
+    hip_available = (os.environ.get("LIGHTUSD_MTLX_FLAKE_HIP") == "1" and
                      pathlib.Path("/dev/kfd").exists())
     with tempfile.TemporaryDirectory(prefix="tusdrender-mtlx-flake-") as tmp:
         asset = pathlib.Path(tmp) / "flake.usda"

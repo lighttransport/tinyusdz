@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
@@ -10,10 +10,10 @@ using namespace emscripten;
 
 namespace detail {
 
-// To RGBA 
+// To RGBA
 bool ToRGBA(const std::vector<uint8_t> &src, int channels,
   std::vector<uint8_t> &dst) {
-  
+
   uint32_t npixels = src.size() / channels;
   dst.resize(npixels * 4);
 
@@ -52,23 +52,23 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 ///
 /// Simple C++ wrapper class for Emscripten
 ///
-class TinyUSDZLoader {
+class LightUSDLoader {
  public:
   ///
-  /// `binary` is the buffer for TinyUSDZ binary(e.g. buffer read by
+  /// `binary` is the buffer for LightUSD binary(e.g. buffer read by
   /// fs.readFileSync) std::string can be used as UInt8Array in JS layer.
   ///
-  TinyUSDZLoader(const std::string &binary) {
-    tinyusdz::Stage stage;
+  LightUSDLoader(const std::string &binary) {
+    lightusd::Stage stage;
 
-    loaded_ = tinyusdz::LoadUSDFromMemory(
+    loaded_ = lightusd::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         "dummy.usda", &stage, &warn_, &error_);
 
-    bool is_usdz = tinyusdz::IsUSDZ(
+    bool is_usdz = lightusd::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
-    tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::tydra::RenderSceneConverterEnv env(stage);
 
     env.material_config.preserve_texel_bitdepth = true;
 
@@ -77,18 +77,18 @@ class TinyUSDZLoader {
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
 
-      if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+      if (!lightusd::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
         loaded_ = false;
       }
 
-      tinyusdz::AssetResolutionResolver arr;
+      lightusd::AssetResolutionResolver arr;
 
       // NOTE: Pointer address of usdz_asset must be valid until the call of
       // RenderSceneConverter::ConvertToRenderScene.
-      if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+      if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
         loaded_ = false;
       }
@@ -97,7 +97,7 @@ class TinyUSDZLoader {
     }
 
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-    tinyusdz::tydra::RenderSceneConverter converter;
+    lightusd::tydra::RenderSceneConverter converter;
 
     // env.timecode = timecode; // TODO
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
@@ -106,7 +106,7 @@ class TinyUSDZLoader {
                 << converter.GetError() << "\n";
     }
   }
-  ~TinyUSDZLoader() {}
+  ~LightUSDLoader() {}
 
   int numMeshes() const {
     return render_scene_.meshes.size();
@@ -176,7 +176,7 @@ class TinyUSDZLoader {
       const auto &b = render_scene_.buffers[i.buffer_id];
 
       // TODO: Support HDR
-      
+
       img.set("data", emscripten::typed_memory_view(b.data.size(), b.data.data()));
       img.set("width", int(i.width));
       img.set("height", int(i.height));
@@ -198,7 +198,7 @@ class TinyUSDZLoader {
       return mesh;
     }
 
-    const tinyusdz::tydra::RenderMesh &rmesh = render_scene_.meshes[size_t(mesh_id)];
+    const lightusd::tydra::RenderMesh &rmesh = render_scene_.meshes[size_t(mesh_id)];
 
     // TODO: Use three.js scene description format?
     mesh.set("prim_name", rmesh.prim_name);
@@ -210,7 +210,7 @@ class TinyUSDZLoader {
     mesh.set("faceVertexCounts", emscripten::typed_memory_view(rmesh.faceVertexCounts().size(), counts_ptr));
     const float *points_ptr = reinterpret_cast<const float *>(rmesh.points.data());
     // vec3
-    mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3, points_ptr)); 
+    mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3, points_ptr));
 
     {
       // slot 0 hardcoded.
@@ -219,7 +219,7 @@ class TinyUSDZLoader {
         const float *uvs_ptr = reinterpret_cast<const float *>(rmesh.texcoords.at(uvSlotId).data.data());
 
         // assume vec2
-        mesh.set("texcoords", emscripten::typed_memory_view(rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr)); 
+        mesh.set("texcoords", emscripten::typed_memory_view(rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr));
       }
     }
 
@@ -238,8 +238,8 @@ class TinyUSDZLoader {
   std::string warn_;
   std::string error_;
 
-  tinyusdz::tydra::RenderScene render_scene_;
-  tinyusdz::USDZAsset usdz_asset_;
+  lightusd::tydra::RenderScene render_scene_;
+  lightusd::USDZAsset usdz_asset_;
 };
 
 // Register STL
@@ -249,14 +249,14 @@ EMSCRIPTEN_BINDINGS(stl_wrappters) {
   register_vector<uint32_t>("VectorUInt");
 }
 
-EMSCRIPTEN_BINDINGS(tinyusdz_module) {
-  class_<TinyUSDZLoader>("TinyUSDZLoader")
+EMSCRIPTEN_BINDINGS(lightusd_module) {
+  class_<LightUSDLoader>("LightUSDLoader")
       .constructor<const std::string &>()
-      .function("getMesh", &TinyUSDZLoader::getMesh)
-      .function("numMeshes", &TinyUSDZLoader::numMeshes)
-      .function("getMaterial", &TinyUSDZLoader::getMaterial)
-      .function("getTexture", &TinyUSDZLoader::getTexture)
-      .function("getImage", &TinyUSDZLoader::getImage)
-      .function("ok", &TinyUSDZLoader::ok)
-      .function("error", &TinyUSDZLoader::error);
+      .function("getMesh", &LightUSDLoader::getMesh)
+      .function("numMeshes", &LightUSDLoader::numMeshes)
+      .function("getMaterial", &LightUSDLoader::getMaterial)
+      .function("getTexture", &LightUSDLoader::getTexture)
+      .function("getImage", &LightUSDLoader::getImage)
+      .function("ok", &LightUSDLoader::ok)
+      .function("error", &LightUSDLoader::error);
 }

@@ -21,7 +21,7 @@
 #include "render-data.hh"
 #include "image-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 struct MeshVisitorEnv;
@@ -110,7 +110,7 @@ struct UDIMTile {
 /// Result of combining UDIM tiles into a single grid atlas.
 ///
 struct UDIMAtlas {
-  tinyusdz::Image image;   // combined atlas image (8-bit, RGBA)
+  lightusd::Image image;   // combined atlas image (8-bit, RGBA)
   uint32_t cols{1};        // number of grid columns
   uint32_t rows{1};        // number of grid rows
   uint32_t min_u{0};       // grid origin (lowest tile column)
@@ -374,7 +374,7 @@ struct MeshConverterConfig {
 
 struct MaterialConverterConfig {
   // purpose name for two-sided material mapping.
-  // https://github.com/syoyo/tinyusdz/issues/120
+  // https://github.com/syoyo/lightusd/issues/120
   std::string default_backface_material_purpose_name{"back"};
 
   // Assign a generated RenderMaterial to meshes that have no authored material
@@ -487,7 +487,7 @@ struct RenderSceneConverterConfig {
   // is a `.ktx2`, the level-0 block payload is stored verbatim in the buffer
   // and `TextureImage::blockFormat` is set, so a GPU consumer (e.g. tusdview)
   // can upload/transcode the blocks directly instead of re-encoding decoded
-  // texels. Requires TINYUSDZ_WITH_TEXTOOLS; ignored otherwise. Non-UDIM only.
+  // texels. Requires LIGHTUSD_WITH_TEXTOOLS; ignored otherwise. Non-UDIM only.
   bool keep_compressed_textures{false};
 
   //
@@ -565,7 +565,7 @@ struct RenderSceneConverterConfig {
   //
   //   0 = auto: use hardware_concurrency() capped at 16 on desktop/native
   //       builds; serial (1) on WASM/single-thread runtimes or when
-  //       TINYUSDZ_NO_THREADS is defined.
+  //       LIGHTUSD_NO_THREADS is defined.
   //   1 = force the fully serial path (identical to pre-parallel behavior;
   //       useful for deterministic tests and memory-constrained hosts).
   //   N = cap workers at N.
@@ -1127,12 +1127,12 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertCube(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &cube_abs_path,
-      const tinyusdz::GeomCube &cube, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &cube_abs_path,
+      const lightusd::GeomCube &cube, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
@@ -1152,63 +1152,63 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertSphere(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &sphere_abs_path,
-      const tinyusdz::GeomSphere &sphere, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &sphere_abs_path,
+      const lightusd::GeomSphere &sphere, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertCylinder(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
-      const tinyusdz::GeomCylinder &cylinder, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
+      const lightusd::GeomCylinder &cylinder, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertCone(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
-      const tinyusdz::GeomCone &cone, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
+      const lightusd::GeomCone &cone, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertCapsule(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
-      const tinyusdz::GeomCapsule &capsule, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
+      const lightusd::GeomCapsule &capsule, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertPlane(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
-      const tinyusdz::GeomPlane &plane, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &abs_path,
+      const lightusd::GeomPlane &plane, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
   bool ConvertMesh(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
-      const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const lightusd::Path &mesh_abs_path,
+      const lightusd::GeomMesh &mesh, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       //const std::map<std::string, int64_t> &rmaterial_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const lightusd::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const lightusd::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
@@ -1220,7 +1220,7 @@ class RenderSceneConverter {
   ///
   bool ConvertVolume(
       const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
-      const tinyusdz::Volume &volume, RenderVolume *dst);
+      const lightusd::Volume &volume, RenderVolume *dst);
 
   ///
   /// Compute tangents/binormals for a RenderMesh that had deferred tangent
@@ -1248,8 +1248,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertMaterial(const RenderSceneConverterEnv &env,
-                       const tinyusdz::Path &abs_mat_path,
-                       const tinyusdz::Material &material,
+                       const lightusd::Path &abs_mat_path,
+                       const lightusd::Material &material,
                        RenderMaterial *rmat_out);
 
   ///
@@ -1263,8 +1263,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
-                                   const tinyusdz::Path &shader_abs_path,
-                                   const tinyusdz::UsdPreviewSurface &shader,
+                                   const lightusd::Path &shader_abs_path,
+                                   const lightusd::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out,
                                    bool is_materialx = false);
 
@@ -1279,8 +1279,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
-                                    const tinyusdz::Path &shader_abs_path,
-                                    const tinyusdz::OpenPBRSurface &shader,
+                                    const lightusd::Path &shader_abs_path,
+                                    const lightusd::OpenPBRSurface &shader,
                                     OpenPBRSurfaceShader *openpbr_out,
                                     bool is_materialx = false,
                                     bool standard_surface_source = false);
@@ -1715,4 +1715,4 @@ class RenderSceneConverter {
 };
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

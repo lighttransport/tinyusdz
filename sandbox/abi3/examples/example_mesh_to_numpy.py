@@ -28,9 +28,9 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import tinyusdz_abi3 as tusd
+    import lightusd_abi3 as tusd
 except ImportError as e:
-    print(f"Error: Could not import tinyusdz_abi3: {e}")
+    print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
     print("  ./build.sh setup")
     sys.exit(1)
@@ -250,7 +250,7 @@ def demonstrate_buffer_protocol():
     print("=" * 60)
 
     print("\nThe buffer protocol enables zero-copy data access:")
-    print("  1. C++ std::vector<GfVec3f> in TinyUSDZ")
+    print("  1. C++ std::vector<GfVec3f> in LightUSD")
     print("  2. → ValueArray (C wrapper with pointer)")
     print("  3. → np.asarray() creates view (NO COPY!)")
     print("  4. → NumPy operations work directly on USD data")
@@ -293,7 +293,7 @@ def demonstrate_buffer_protocol():
 
 def main():
     print("=" * 60)
-    print("TinyUSDZ GeomMesh to NumPy Example")
+    print("LightUSD GeomMesh to NumPy Example")
     print("=" * 60)
 
     # Check for input file

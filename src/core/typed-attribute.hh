@@ -14,7 +14,7 @@
 #include "animatable.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Tyeped Attribute without fallback(default) value.
@@ -68,7 +68,7 @@ class TypedAttribute {
   }
 
   /// Get const reference to the internal optional value (no copy)
-  const nonstd::optional<T> &get_value_ref() const TINYUSDZ_LIFETIMEBOUND {
+  const nonstd::optional<T> &get_value_ref() const LIGHTUSD_LIFETIMEBOUND {
     return _attrib;
   }
 
@@ -96,10 +96,10 @@ class TypedAttribute {
 
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &get_connections() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Path> &get_connections() const LIGHTUSD_LIFETIMEBOUND {
     return _paths;
   }
-  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Path> &connections() const LIGHTUSD_LIFETIMEBOUND {
     return _paths;
   }
 
@@ -172,8 +172,8 @@ class TypedAttribute {
     _value_empty = true;
   }
 
-  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
-  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
 
   // The typeName as actually authored in USDA/USDC when it differs from the
@@ -186,7 +186,7 @@ class TypedAttribute {
     _actual_type_name = type_name;
   }
   bool has_actual_type() const { return _actual_type_name.size(); }
-  const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_actual_type_name() const LIGHTUSD_LIFETIMEBOUND {
     return _actual_type_name;
   }
 
@@ -229,12 +229,12 @@ class TypedTerminalAttribute {
 
   bool has_actual_type() const { return _actual_type_name.size(); }
 
-  const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_actual_type_name() const LIGHTUSD_LIFETIMEBOUND {
     return _actual_type_name;
   }
 
-  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
-  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
  private:
   AttrMeta _metas;
@@ -316,7 +316,7 @@ class TypedAttributeWithFallback {
     return true;
   }
 
-  const T &get_value() const TINYUSDZ_LIFETIMEBOUND {
+  const T &get_value() const LIGHTUSD_LIFETIMEBOUND {
     if (_attrib) {
       return _attrib.value();
     }
@@ -337,10 +337,10 @@ class TypedAttributeWithFallback {
 
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &get_connections() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Path> &get_connections() const LIGHTUSD_LIFETIMEBOUND {
     return _paths;
   }
-  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Path> &connections() const LIGHTUSD_LIFETIMEBOUND {
     return _paths;
   }
 
@@ -371,8 +371,8 @@ class TypedAttributeWithFallback {
     return false;
   }
 
-  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
-  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
 
   // The typeName as actually authored in USDA/USDC when it differs from the
@@ -385,7 +385,7 @@ class TypedAttributeWithFallback {
     _actual_type_name = type_name;
   }
   bool has_actual_type() const { return _actual_type_name.size(); }
-  const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_actual_type_name() const LIGHTUSD_LIFETIMEBOUND {
     return _actual_type_name;
   }
 
@@ -407,4 +407,4 @@ bool ConvertTokenAttributeToStringAttribute(
       const TypedAttribute<Animatable<value::token>> &inp,
       TypedAttribute<Animatable<std::string>> &out);
 
-}  // namespace tinyusdz
+}  // namespace lightusd

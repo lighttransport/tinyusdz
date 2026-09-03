@@ -1,7 +1,7 @@
-// udim — UDIM textures in the Three.js path (TinyUSDZ WASM)
+// udim — UDIM textures in the Three.js path (LightUSD WASM)
 //
 // WebGL has no native UDIM. This demo loads a UDIM USD with the tiles passed
-// through unchanged (TinyUSDZ "keep-as-is" / sparse mode,
+// through unchanged (LightUSD "keep-as-is" / sparse mode,
 // setCombineUDIMTiles(false)), packs the resolved tiles into a single
 // THREE.DataArrayTexture (one layer per tile, the same idea as packing skin
 // data into a lookup texture), and a custom GLSL3 ShaderMaterial remaps each
@@ -19,7 +19,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { loadWasm, rootUsdFromMap, isUsdName, isImageName } from './src/usdzconvert.js';
 import { meshPtrToGeometry, meshCopyToGeometry } from './src/gl-upload.js';
 
-const WASM_GLUE = './src/tinyusdz/tinyusdz.js';
+const WASM_GLUE = './src/lightusd/lightusd.js';
 
 // Sample 2x2 UDIM set. 1012 is authored smaller to exercise the resize path.
 const SAMPLE_TILES = [
@@ -266,9 +266,9 @@ function assetNameFor(path, rootDir) {
 }
 
 // Register dependency layers + textures and load the root layer, returning a
-// configured TinyUSDZLoaderNative. `combine` toggles UDIM atlas vs sparse.
+// configured LightUSDLoaderNative. `combine` toggles UDIM atlas vs sparse.
 function loadUsd(assetMap, rootPath, combine) {
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   usd.setCombineUDIMTiles(combine);   // false => passthrough sparse tiles
   usd.setLoadTextureInNative(true);   // decode tile images natively (RGBA)
 

@@ -3,7 +3,7 @@
 // Dumps and verifies MaterialX shader node graph data from USD files
 // Usage: node dump-mtlx-node.js <usd-file> [options]
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -334,7 +334,7 @@ async function dumpNodeGraphs(options) {
   }
 
   // Initialize loader
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: false });
   loader.setMaxMemoryLimitMB(500);
 

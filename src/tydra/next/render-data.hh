@@ -20,7 +20,7 @@
 
 #include "chunked-array.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -1333,4 +1333,4 @@ class RenderScene {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

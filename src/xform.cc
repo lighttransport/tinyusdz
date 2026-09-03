@@ -30,7 +30,7 @@
 // https://github.com/PixarAnimationStudios/USD/issues/2136
 //#define PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION
 
-namespace tinyusdz {
+namespace lightusd {
 
 using matrix44d = linalg::aliases::double4x4;
 using matrix33d = linalg::aliases::double3x3;
@@ -438,7 +438,7 @@ bool decompose(const value::matrix4d &m,
   // Convert rotation matrix to quaternion using Shepperd's method
   // This is numerically stable for all cases
   //
-  // NOTE: TinyUSDZ uses row-vector convention (v' = v * M), so the rotation
+  // NOTE: LightUSD uses row-vector convention (v' = v * M), so the rotation
   // matrix is the TRANSPOSE of the column-vector convention matrix.
   // The standard Shepperd formulas assume column-vector convention, so we
   // reverse the subtraction order in all antisymmetric terms (R[i][j]-R[j][i]
@@ -957,7 +957,7 @@ bool Xformable::EvaluateXformOps(double t,
   //
   // in post-multiply order.
   //
-  // But in pre-multiply order system(pxrUSD and TinyUSDZ),
+  // But in pre-multiply order system(pxrUSD and LightUSD),
   // C++ code is
   //
   // p' = p x C x B x A
@@ -1860,4 +1860,4 @@ value::matrix4d trs_rot_axis(const value::double3 &translation,
   return m;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

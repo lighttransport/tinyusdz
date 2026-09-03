@@ -1,22 +1,22 @@
-# TinyUSDZ
+# LightUSD
 
-TinyUSDZ is a portable C++17 library for reading and writing USD scene files
+LightUSD is a portable C++17 library for reading and writing USD scene files
 without requiring Pixar OpenUSD at runtime. It supports USDA, USDC (Crate), and
 USDZ, and is built for applications that need a small dependency footprint,
 bounded-memory loading, and predictable behavior on desktop, mobile, and web
 targets.
 
-For v1.0.0, TinyUSDZ is focused on USD infrastructure for generative AI,
+For v1.0.0, LightUSD is focused on USD infrastructure for generative AI,
 physical AI, and agentic 3D DCC workflows, with a scalable architecture that can
 run across embedded systems, the web, desktop tools, and HPC pipelines.
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github)](https://github.com/sponsors/lighttransport)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/tinyusdz)
-[![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/lightusd)
+[![npm version](https://img.shields.io/npm/v/lightusd.svg)](https://www.npmjs.com/package/lightusd)
 
 <p align="center">
- <a href="https://lighttransport.github.io/tinyusdz/demos/">
-   <img src="screenshots/demos.jpg" width="800px" alt="TinyUSDZ web demos">
+ <a href="https://lighttransport.github.io/lightusd/demos/">
+   <img src="screenshots/demos.jpg" width="800px" alt="LightUSD web demos">
  </a>
 </p>
 
@@ -58,17 +58,17 @@ run across embedded systems, the web, desktop tools, and HPC pipelines.
 - WebAssembly and JavaScript bindings live under [web/](web/), with Three.js
   integration documented in [doc/threejs.md](doc/threejs.md).
 
-TinyUSDZ is not a full replacement for the OpenUSD runtime.
+LightUSD is not a full replacement for the OpenUSD runtime.
 Renderer/DCC-specific domains such as UsdRi, UsdHydra, UsdUI, and UsdProc are
 out of scope; unsupported typed prims are preserved as generic prim data where
 possible.
 
 ## Python Package
 
-Python bindings are available as the `tinyusdz` package on PyPI:
+Python bindings are available as the `lightusd` package on PyPI:
 
 ```sh
-python -m pip install tinyusdz
+python -m pip install lightusd
 ```
 
 The current package targets CPython 3.11+ with abi3 wheels. It exposes
@@ -78,13 +78,13 @@ NumPy is not required, but array values and render buffers support Python's
 buffer protocol for zero-copy NumPy views when NumPy is installed.
 
 ```python
-import tinyusdz
+import lightusd
 
-stage = tinyusdz.load("scene.usdz")
-for prim in tinyusdz.traverse(stage):
+stage = lightusd.load("scene.usdz")
+for prim in lightusd.traverse(stage):
     print(prim.type_name, prim.name)
 
-scene = tinyusdz.tydra.convert_to_render_scene(stage)
+scene = lightusd.tydra.convert_to_render_scene(stage)
 print(len(scene.meshes()), len(scene.materials()))
 ```
 
@@ -107,10 +107,10 @@ Useful entry points:
 
 ## Platform Notes
 
-TinyUSDZ is developed for Linux, Windows, macOS, iOS, Android, WebAssembly
+LightUSD is developed for Linux, Windows, macOS, iOS, Android, WebAssembly
 (Emscripten), and WASI-style sandboxed builds. A C++17 compiler and CMake are
 the normal native build requirements. C++20 is only needed for coroutine support
-when `TINYUSDZ_WITH_COROUTINE` is enabled. Cross-compiling pure Win32/Win64
+when `LIGHTUSD_WITH_COROUTINE` is enabled. Cross-compiling pure Win32/Win64
 binaries on Linux with clang-cl + the MSVC SDK (runnable under WINE) is
 documented in [doc/wine_cl.md](doc/wine_cl.md).
 
@@ -120,7 +120,7 @@ their own locking.
 
 ## Security
 
-TinyUSDZ is intended to load untrusted USD-family files with explicit resource
+LightUSD is intended to load untrusted USD-family files with explicit resource
 limits. Use `USDLoadOptions::max_memory_limit_in_mb` when loading files from
 unknown origins. Parser code is exercised with unit tests, AddressSanitizer,
 CodeQL, and fuzzing; fuzzer sources live in [tests/fuzzer](tests/fuzzer).
@@ -153,8 +153,8 @@ Completed or superseded documents live in [doc/archive/](doc/archive/).
 
 ## License
 
-TinyUSDZ is primarily licensed under Apache 2.0. Some helper code is MIT or
+LightUSD is primarily licensed under Apache 2.0. Some helper code is MIT or
 similarly permissive. Third-party dependency notices are listed in
 [LICENSE.3rdparty](LICENSE.3rdparty).
 
-TinyUSDZ does not support Apple's `.reality` Reality Composer format.
+LightUSD does not support Apple's `.reality` Reality Composer format.

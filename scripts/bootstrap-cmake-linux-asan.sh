@@ -6,7 +6,7 @@ rm -rf ${builddir}
 mkdir ${builddir}
 
 # with lld linker
-#  -DCMAKE_TOOLCHAIN_FILE=cmake/lld-linux.toolchain.cmake 
+#  -DCMAKE_TOOLCHAIN_FILE=cmake/lld-linux.toolchain.cmake
 
 # Honor CXX/CC from the environment (CI passes CXX=g++ CC=gcc — clang's
 # Ubuntu compiler-rt layout doesn't match where libclang-rt-XX-dev
@@ -17,11 +17,11 @@ mkdir ${builddir}
 
 cd ${builddir} && CXX="${CXX}" CC="${CC}" cmake \
   -DSANITIZE_ADDRESS=1 \
-  -DTINYUSDZ_NO_WERROR=On \
+  -DLIGHTUSD_NO_WERROR=On \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   ..
 
-# -DTINYUSDZ_NO_WERROR=On: gcc's static analyzer under ASan
+# -DLIGHTUSD_NO_WERROR=On: gcc's static analyzer under ASan
 # instrumentation generates false-positive -Warray-bounds /
 # -Wstringop-truncation warnings on vendored stb_image_write.h and
 # strncpy() use in crate-writer.cc that don't fire in non-ASan builds.

@@ -41,8 +41,8 @@ struct Stage
     return false;
   }
 
-  nonstd::optional<tinyusdz::GPrim> GetPrimAtPath(const std::string &_path) const {
-    tinyusdz::GPrim prim;
+  nonstd::optional<lightusd::GPrim> GetPrimAtPath(const std::string &_path) const {
+    lightusd::GPrim prim;
 
     if (_path == "/bora") {
       return nonstd::nullopt;
@@ -52,8 +52,8 @@ struct Stage
 
   }
 
-  static tinyusdz::GPrim DefinePrim(const std::string &_path, const std::string &type) {
-    tinyusdz::GPrim prim;
+  static lightusd::GPrim DefinePrim(const std::string &_path, const std::string &type) {
+    lightusd::GPrim prim;
 
     if (type == "Xform") {
       // TODO:...
@@ -66,7 +66,7 @@ struct Stage
 
 };
 
-NB_MODULE(pytinyusd, m) {
+NB_MODULE(pylightusd, m) {
 
   m.def("test_api", &test_api, "Test API");
 
@@ -84,14 +84,14 @@ NB_MODULE(pytinyusd, m) {
     });
   ;
 
-  nb::class_<tinyusdz::GPrim>(UsdModule, "GPrim");
+  nb::class_<lightusd::GPrim>(UsdModule, "GPrim");
 
 
-  nb::class_<tinyusdz::GeomSphere>(m, "Sphere")
+  nb::class_<lightusd::GeomSphere>(m, "Sphere")
     .def(nb::init<>())
   ;
 
-  //py::class_<tinyusdz::GeomSphere>(m, "Sphere")
+  //py::class_<lightusd::GeomSphere>(m, "Sphere")
   //  .def(py::init<>())
   //  .def
 }

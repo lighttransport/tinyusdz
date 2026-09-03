@@ -7,7 +7,7 @@
 
 #include "typed-array-core.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace detail {
 
@@ -1207,4 +1207,4 @@ void swap(ChunkedTypedArray<T>& lhs, ChunkedTypedArray<T>& rhs) noexcept {
   lhs.swap(rhs);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

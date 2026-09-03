@@ -10,14 +10,14 @@
 
 #include "unit-usda-roundtrip.h"
 #include "math-util.inc"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usd-to-json.hh"
 #include "usdGeom.hh"
 
 #include <iostream>
 #include <sstream>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -73,7 +73,7 @@ static bool doRoundtripTest(const std::string &usd_content,
   }
 
   // Step 4: Convert both stages to JSON and compare
-#if defined(TINYUSDZ_WITH_JSON)
+#if defined(LIGHTUSD_WITH_JSON)
   USDToJSONOptions options;
 
   auto json1_result = ToJSON(stage1, options);

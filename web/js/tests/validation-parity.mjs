@@ -10,9 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const tusdcat = process.env.TUSDCAT_PATH || path.join(repoRoot, 'build', 'tusdcat');
-const wasmDir = process.env.TINYUSDZ_WASM_DIR ||
-  path.join(repoRoot, 'web', 'js', 'src', 'tinyusdz');
-const wasmEntry = path.join(wasmDir, 'tinyusdz.js');
+const wasmDir = process.env.LIGHTUSD_WASM_DIR ||
+  path.join(repoRoot, 'web', 'js', 'src', 'lightusd');
+const wasmEntry = path.join(wasmDir, 'lightusd.js');
 
 const cases = [
   'tests/usda/validation/valid/clean.usda',
@@ -24,8 +24,8 @@ const cases = [
 ];
 
 const optionalCases = [
-  ...(process.env.TINYUSDZ_PARITY_EXTRA
-    ? process.env.TINYUSDZ_PARITY_EXTRA.split(path.delimiter).filter(Boolean)
+  ...(process.env.LIGHTUSD_PARITY_EXTRA
+    ? process.env.LIGHTUSD_PARITY_EXTRA.split(path.delimiter).filter(Boolean)
     : []),
 ];
 
@@ -36,10 +36,10 @@ function requireFile(filePath, label) {
 }
 
 function skipIfStaleWasm() {
-  if (process.env.TINYUSDZ_PARITY_SKIP_STALE_WASM !== '1') {
+  if (process.env.LIGHTUSD_PARITY_SKIP_STALE_WASM !== '1') {
     return;
   }
-  const wasmPath = path.join(wasmDir, 'tinyusdz.wasm');
+  const wasmPath = path.join(wasmDir, 'lightusd.wasm');
   const wasmTime = fs.statSync(wasmPath).mtimeMs;
   const sources = [
     path.join(repoRoot, 'src', 'usd-validation.cc'),
@@ -128,12 +128,12 @@ function compareIssues(filePath, nativeIssues, webIssues) {
 
 requireFile(tusdcat, 'tusdcat');
 requireFile(wasmEntry, 'WASM JS module');
-requireFile(path.join(wasmDir, 'tinyusdz.wasm'), 'WASM binary');
+requireFile(path.join(wasmDir, 'lightusd.wasm'), 'WASM binary');
 skipIfStaleWasm();
 
-const createTinyUSDZ = (await import(pathToFileURL(wasmEntry).href)).default;
-const module = await createTinyUSDZ({ locateFile: (file) => path.join(wasmDir, file) });
-const native = new module.TinyUSDZLoaderNative();
+const createLightUSD = (await import(pathToFileURL(wasmEntry).href)).default;
+const module = await createLightUSD({ locateFile: (file) => path.join(wasmDir, file) });
+const native = new module.LightUSDLoaderNative();
 
 try {
   const allCases = [

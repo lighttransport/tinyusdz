@@ -9,7 +9,7 @@
 
 #include "io-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace ptx {
 
 enum class DataType : uint32_t { UInt8 = 0, UInt16 = 1, Half = 2, Float = 3 };
@@ -85,4 +85,4 @@ class Reader {
 };
 
 }  // namespace ptx
-}  // namespace tinyusdz
+}  // namespace lightusd

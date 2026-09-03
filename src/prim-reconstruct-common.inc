@@ -8,7 +8,7 @@
 // Shared infrastructure for prim-reconstruct split modules.
 // Included by prim-reconstruct.cc and prim-reconstruct-shader.cc
 //
-// This file must be included inside namespace tinyusdz::prim after
+// This file must be included inside namespace lightusd::prim after
 // the ReconstructShader template declaration.
 
 namespace {
@@ -544,7 +544,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         target.set_blocked(true);
       }
 
-      
+
       const auto &var = attr.get_var();
 
       if (var.has_default() || var.has_timesamples()) {

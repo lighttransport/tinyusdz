@@ -38,7 +38,7 @@
 #include "typed-array-core.hh"
 
 //
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 //
 
@@ -86,7 +86,7 @@
 #include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 
@@ -94,7 +94,7 @@
 #include "tiny-string.hh"
 
 
-namespace tinyusdz {
+namespace lightusd {
 namespace ascii {
 
 [[maybe_unused]] constexpr auto kAscii = "[ASCII]";
@@ -290,8 +290,8 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *res
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::PathExpression> *result);
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#else  // LIGHTUSD_DISABLE_MODULE_USDA_READER
 
-#endif  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // LIGHTUSD_DISABLE_MODULE_USDA_READER

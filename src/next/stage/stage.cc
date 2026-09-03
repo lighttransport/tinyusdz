@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Stage Implementation
+// LightUSD Next - Stage Implementation
 
 #include "stage.hh"
 #include "../composition/composition.hh"
@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -1175,4 +1175,4 @@ Stage StageBuilder::Build() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

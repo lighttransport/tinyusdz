@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - typed AOUSD spline (TsSpline) support.
+// LightUSD Next - typed AOUSD spline (TsSpline) support.
 //
 // PrimSpec stores authored splines as raw USDA text (`spline_sources_`),
 // which composition and the USDA writer pass through verbatim. This module
@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct SplineKnot {
@@ -101,4 +101,4 @@ bool DecodeSplineBinary(const uint8_t* data, size_t size, SplineData* out,
 bool EvaluateSplineData(const SplineData& sd, double time, double* out);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

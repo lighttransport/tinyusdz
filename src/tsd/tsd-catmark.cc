@@ -21,7 +21,7 @@
 #include "tsd-internal.hh"
 #include "tsd-kernel.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 float ChaikinChildEdgeSharpness(float edge_sharpness,
@@ -141,4 +141,4 @@ void CatmarkRefineValues(const Topology &topo, const uint32_t *parent_fvi,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

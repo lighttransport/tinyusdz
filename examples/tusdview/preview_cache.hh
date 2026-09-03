@@ -22,7 +22,7 @@ struct PreviewCacheLookup {
   bool hit{false};
   std::string reason;
   std::string key;
-  tinyusdz::next::Stage stage;
+  lightusd::next::Stage stage;
 };
 
 std::string DefaultPreviewCacheDirectory();
@@ -34,7 +34,7 @@ PreviewCacheLookup LoadPreviewCache(const PreviewCacheOptions& options,
 bool StorePreviewCache(const PreviewCacheOptions& options,
                        const std::string& root,
                        const std::string& fingerprint,
-                       const tinyusdz::next::Stage& preview,
+                       const lightusd::next::Stage& preview,
                        const std::vector<std::string>& dependencies,
                        std::string* reason);
 

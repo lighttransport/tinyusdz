@@ -20,10 +20,10 @@ namespace tusdview {
 
 namespace {
 
-namespace tydra = tinyusdz::tydra;
-using tinyusdz::value::matrix4d;
-using tinyusdz::value::point3f;
-using tinyusdz::value::quatf;
+namespace tydra = lightusd::tydra;
+using lightusd::value::matrix4d;
+using lightusd::value::point3f;
+using lightusd::value::quatf;
 
 // Evaluate a flat keyframe sampler (comps floats per key) at time code `t`.
 // Held or linear interpolation; clamps outside the key range.
@@ -59,7 +59,7 @@ void EvalSampler(const tydra::KeyframeSampler& s, double t, int comps,
 // Build a joint-local transform from animated TRS (row-vector convention,
 // matching SkelMakeTransform: translation in row 3, scale applied per row).
 matrix4d MakeLocal(const float t[3], const quatf& r, const float s[3]) {
-  matrix4d m = tinyusdz::to_matrix(r);
+  matrix4d m = lightusd::to_matrix(r);
   m.m[0][0] *= s[0]; m.m[0][1] *= s[0]; m.m[0][2] *= s[0];
   m.m[1][0] *= s[1]; m.m[1][1] *= s[1]; m.m[1][2] *= s[1];
   m.m[2][0] *= s[2]; m.m[2][1] *= s[2]; m.m[2][2] *= s[2];
@@ -157,9 +157,9 @@ void BuildJointLocals(const tydra::AnimationClip* clip, int skelId, double t,
   for (size_t j = 0; j < nj; ++j) {
     R[j].imag[0] = R[j].imag[1] = R[j].imag[2] = 0.0f;
     R[j].real = 1.0f;
-    tinyusdz::value::double3 dt, ds;
-    tinyusdz::value::quatd dr;
-    if (tinyusdz::decompose(baseLocal[j], &dt, &dr, &ds)) {
+    lightusd::value::double3 dt, ds;
+    lightusd::value::quatd dr;
+    if (lightusd::decompose(baseLocal[j], &dt, &dr, &ds)) {
       T[j * 3 + 0] = static_cast<float>(dt[0]);
       T[j * 3 + 1] = static_cast<float>(dt[1]);
       T[j * 3 + 2] = static_cast<float>(dt[2]);
@@ -292,7 +292,7 @@ bool BuildSkinningMatrices(const tydra::RenderScene& render, int skelId,
 
   skinOut->resize(nj);
   for (size_t j = 0; j < nj; ++j) {
-    (*skinOut)[j] = tinyusdz::inverse(bindWorld[j]) * world[j];
+    (*skinOut)[j] = lightusd::inverse(bindWorld[j]) * world[j];
   }
   return true;
 }
@@ -302,14 +302,14 @@ namespace {
 // Map of blendshape prim name -> animated weight at time `t`, gathered from all
 // SkelAnimation prims in the stage (Tydra does not emit blendShapeWeights).
 std::unordered_map<std::string, float> GatherBlendWeights(
-    const tinyusdz::Stage& stage, double t) {
+    const lightusd::Stage& stage, double t) {
   std::unordered_map<std::string, float> out;
-  tydra::PathPrimMap<tinyusdz::SkelAnimation> anims;
+  tydra::PathPrimMap<lightusd::SkelAnimation> anims;
   if (!tydra::ListPrims(stage, anims)) return out;
   for (auto& kv : anims) {
-    tinyusdz::SkelAnimation* sa = const_cast<tinyusdz::SkelAnimation*>(kv.second);
+    lightusd::SkelAnimation* sa = const_cast<lightusd::SkelAnimation*>(kv.second);
     if (!sa) continue;
-    std::vector<tinyusdz::value::token> names;
+    std::vector<lightusd::value::token> names;
     if (!sa->get_blendShapes(&names) || names.empty()) continue;
     std::vector<float> weights;
     if (!sa->get_blendShapeWeights(&weights, t)) continue;
@@ -321,15 +321,15 @@ std::unordered_map<std::string, float> GatherBlendWeights(
 
 // Read a BlendShape prim's in-between shapes from its `inbetweens:*` attributes
 // (vector3f[] offsets + a `weight` attr-meta). Sorted ascending by weight.
-InbetweenSamples ReadInbetweensFromPrim(const tinyusdz::BlendShape& bs) {
+InbetweenSamples ReadInbetweensFromPrim(const lightusd::BlendShape& bs) {
   InbetweenSamples out;
   for (const auto& kv : bs.props) {
     if (kv.first.rfind("inbetweens:", 0) != 0) continue;  // namespace prefix
-    const tinyusdz::Property& p = kv.second;
+    const lightusd::Property& p = kv.second;
     if (!p.is_attribute()) continue;
-    const tinyusdz::Attribute& a = p.get_attribute();
+    const lightusd::Attribute& a = p.get_attribute();
     if (!a.metas().has_weight()) continue;
-    std::vector<tinyusdz::value::vector3f> offs;
+    std::vector<lightusd::value::vector3f> offs;
     if (!a.get_value(&offs)) continue;
     out.emplace_back(static_cast<float>(a.metas().get_weight()), std::move(offs));
   }
@@ -471,7 +471,7 @@ bool BuildComposedSkinningMatrices(
   }
   const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
   const matrix4d skeletonWorld = MatrixFromDraw(dm.skinSkeletonWorld);
-  const matrix4d invMeshWorld = tinyusdz::inverse(MatrixFromDraw(dm.world));
+  const matrix4d invMeshWorld = lightusd::inverse(MatrixFromDraw(dm.world));
   composed->clear();
   composed->reserve(cit->second.size());
   for (const matrix4d& m : cit->second) {
@@ -726,12 +726,12 @@ void RecomputeDrawSceneBounds(DrawScene* draw) {
 }  // namespace
 
 std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
-    const tinyusdz::Stage& stage) {
+    const lightusd::Stage& stage) {
   std::map<std::string, InbetweenSamples> out;
-  tydra::PathPrimMap<tinyusdz::BlendShape> bss;
+  tydra::PathPrimMap<lightusd::BlendShape> bss;
   if (!tydra::ListPrims(stage, bss)) return out;
   for (auto& kv : bss) {
-    const tinyusdz::BlendShape* bs = kv.second;
+    const lightusd::BlendShape* bs = kv.second;
     if (!bs) continue;
     InbetweenSamples ibs = ReadInbetweensFromPrim(*bs);
     if (!ibs.empty()) out[bs->name] = std::move(ibs);
@@ -799,9 +799,9 @@ static void ApplyMorphChannelsToVertices(const DrawMeshCPU& dm,
     for (size_t k = 0; k < count && base + k < entries; ++k) {
       const uint16_t* e = &dm.morphDeltaHalf[(base + k) * 4];
       auto f16 = [](uint16_t bits) {
-        tinyusdz::value::half h;
+        lightusd::value::half h;
         h.value = bits;
-        return tinyusdz::value::half_to_float(h);
+        return lightusd::value::half_to_float(h);
       };
       const size_t chan =
           haveIds ? dm.morphChannelId[base + k]
@@ -819,7 +819,7 @@ static void ApplyMorphChannelsToVertices(const DrawMeshCPU& dm,
 bool BuildGpuSkinningFrame(
     const tydra::RenderScene& render, DrawScene* draw, double timecode,
     SkinningFrameCPU* frame, bool updateSkinnedHelpers,
-    const tinyusdz::Stage* stage,
+    const lightusd::Stage* stage,
     const std::unordered_map<std::string, float>* blendOverride) {
   if (!draw || !frame) return false;
   const int matrices = draw->boneMatrixCount;
@@ -862,7 +862,7 @@ bool BuildGpuSkinningFrame(
     }
     const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
     const matrix4d skeletonWorld = MatrixFromDraw(dm.skinSkeletonWorld);
-    const matrix4d invMeshWorld = tinyusdz::inverse(MatrixFromDraw(dm.world));
+    const matrix4d invMeshWorld = lightusd::inverse(MatrixFromDraw(dm.world));
     std::vector<matrix4d> composed;
     composed.reserve(cit->second.size());
     for (size_t j = 0; j < cit->second.size(); ++j) {
@@ -1048,7 +1048,7 @@ bool BuildGpuSkinningFrame(
 }
 
 bool BuildRtSkinnedMeshVertices(
-    const tinyusdz::Stage& stage, const tydra::RenderScene& render,
+    const lightusd::Stage& stage, const tydra::RenderScene& render,
     DrawScene* draw, double timecode,
     const std::unordered_map<std::string, float>* blendOverride,
     bool updateSkinnedHelpers,
@@ -1242,7 +1242,7 @@ bool BuildRtGpuSkinUpdates(const tydra::RenderScene& render, DrawScene* draw,
 }
 
 void BuildMorphChannelWeights(
-    const tinyusdz::Stage& stage, const DrawScene& draw, double timecode,
+    const lightusd::Stage& stage, const DrawScene& draw, double timecode,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<std::pair<int, std::vector<float>>>* out) {
   if (!out) return;
@@ -1269,7 +1269,7 @@ void FlattenXformWorlds(const tydra::XformNode& n,
 }
 }  // namespace
 
-bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
+bool UpdateAnimatedMeshWorlds(const lightusd::Stage& stage, DrawScene* draw,
                               double timecode) {
   if (!draw) return false;
   tydra::XformNode root;
@@ -1340,7 +1340,7 @@ bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
 }
 
 void DeformSkinnedMeshes(
-    const tinyusdz::Stage& stage, tydra::RenderScene& render, double timecode,
+    const lightusd::Stage& stage, tydra::RenderScene& render, double timecode,
     const std::unordered_map<std::string, float>* blendOverride) {
   if (!SceneHasDeformation(render)) return;
   const double t = timecode;  // time codes (matches Tydra sampler times)
@@ -1468,7 +1468,7 @@ void DeformSkinnedMeshes(
           const auto sw = nodeWorlds.find(skel.abs_path);
           if (mw != meshWorlds.end() && sw != nodeWorlds.end()) {
             const matrix4d skeletonToMesh =
-                sw->second * tinyusdz::inverse(mw->second) * jw.geomBindTransform;
+                sw->second * lightusd::inverse(mw->second) * jw.geomBindTransform;
             for (size_t j = 0; j < meshLocalSkin.size(); ++j)
               meshLocalSkin[j] = meshLocalSkin[j] * skeletonToMesh;
           }

@@ -25,7 +25,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -600,4 +600,4 @@ nonstd::expected<std::string, std::string> serializeLight(
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

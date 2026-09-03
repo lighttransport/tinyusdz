@@ -7,7 +7,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Policy for backtick-delimited variable expressions in composition asset
@@ -50,4 +50,4 @@ ExpressionEvaluation EvaluateAssetPathExpression(const std::string& path,
                                                  const Value& variables);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

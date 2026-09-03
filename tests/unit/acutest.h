@@ -113,7 +113,7 @@
 
 
 #ifdef __cplusplus
-/* TinyUSDZ: Disable exception */
+/* LightUSD: Disable exception */
 
 #if 0
 /* Macros to verify that the code (the 1st argument) throws exception of given
@@ -1019,7 +1019,7 @@ acutest_do_run_(const struct acutest_test_* test, int index)
     acutest_cond_failed_ = 0;
 
 #ifdef __cplusplus
-/* TinyUSDZ: disable exception */
+/* LightUSD: disable exception */
 #if 0
     try {
 #else
@@ -1078,7 +1078,7 @@ aborted:
         status = (acutest_test_failures_ == 0) ? 0 : -1;
 
 #ifdef __cplusplus
-/* TinyUSDZ: disable exception */
+/* LightUSD: disable exception */
 #if 0
     } catch(std::exception& e) {
         const char* what = e.what();

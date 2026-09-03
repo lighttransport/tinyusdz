@@ -39,7 +39,7 @@ void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst) {
   DrawLightRtOpenPBRCPU fallback;
   const DrawLightRtOpenPBRCPU& m =
       mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR : fallback;
-  tinyusdz::tydra::PackLightRtOpenPBRParams(
+  lightusd::tydra::PackLightRtOpenPBRParams(
       m, mat.hasLightRtOpenPBR, static_cast<float>(mat.alphaMode),
       mat.alphaCutoff, dst);
 }

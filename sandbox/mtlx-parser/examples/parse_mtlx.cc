@@ -5,7 +5,7 @@
 #include <iostream>
 #include <iomanip>
 
-using namespace tinyusdz::mtlx;
+using namespace lightusd::mtlx;
 
 void print_indent(int level) {
   for (int i = 0; i < level; ++i) {
@@ -60,11 +60,11 @@ void print_value(const MtlxValue& value) {
 void print_input(MtlxInputPtr input, int indent) {
   print_indent(indent);
   std::cout << "Input: " << input->GetName();
-  
+
   if (!input->GetType().empty()) {
     std::cout << " (type: " << input->GetType() << ")";
   }
-  
+
   if (!input->GetNodeName().empty()) {
     std::cout << " -> node: " << input->GetNodeName();
     if (!input->GetOutput().empty()) {
@@ -76,21 +76,21 @@ void print_input(MtlxInputPtr input, int indent) {
     std::cout << " = ";
     print_value(input->GetValue());
   }
-  
+
   std::cout << std::endl;
 }
 
 void print_node(MtlxNodePtr node, int indent) {
   print_indent(indent);
-  std::cout << "Node: " << node->GetName() 
+  std::cout << "Node: " << node->GetName()
             << " [" << node->GetCategory() << "]";
-  
+
   if (!node->GetType().empty()) {
     std::cout << " -> " << node->GetType();
   }
-  
+
   std::cout << std::endl;
-  
+
   for (const auto& input : node->GetInputs()) {
     print_input(input, indent + 1);
   }
@@ -99,7 +99,7 @@ void print_node(MtlxNodePtr node, int indent) {
 void print_nodegraph(MtlxNodeGraphPtr ng, int indent) {
   print_indent(indent);
   std::cout << "NodeGraph: " << ng->GetName() << std::endl;
-  
+
   // Print inputs
   if (!ng->GetInputs().empty()) {
     print_indent(indent + 1);
@@ -108,7 +108,7 @@ void print_nodegraph(MtlxNodeGraphPtr ng, int indent) {
       print_input(input, indent + 2);
     }
   }
-  
+
   // Print nodes
   if (!ng->GetNodes().empty()) {
     print_indent(indent + 1);
@@ -117,7 +117,7 @@ void print_nodegraph(MtlxNodeGraphPtr ng, int indent) {
       print_node(node, indent + 2);
     }
   }
-  
+
   // Print outputs
   if (!ng->GetOutputs().empty()) {
     print_indent(indent + 1);
@@ -142,23 +142,23 @@ void print_nodegraph(MtlxNodeGraphPtr ng, int indent) {
 void print_material(MtlxMaterialPtr mat, int indent) {
   print_indent(indent);
   std::cout << "Material: " << mat->GetName();
-  
+
   if (!mat->GetType().empty()) {
     std::cout << " (type: " << mat->GetType() << ")";
   }
-  
+
   std::cout << std::endl;
-  
+
   if (!mat->GetSurfaceShader().empty()) {
     print_indent(indent + 1);
     std::cout << "Surface Shader: " << mat->GetSurfaceShader() << std::endl;
   }
-  
+
   if (!mat->GetDisplacementShader().empty()) {
     print_indent(indent + 1);
     std::cout << "Displacement Shader: " << mat->GetDisplacementShader() << std::endl;
   }
-  
+
   if (!mat->GetVolumeShader().empty()) {
     print_indent(indent + 1);
     std::cout << "Volume Shader: " << mat->GetVolumeShader() << std::endl;
@@ -168,33 +168,33 @@ void print_material(MtlxMaterialPtr mat, int indent) {
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <materialx_file.mtlx>" << std::endl;
-    
+
     // If no file provided, create and parse a sample
     std::cout << "\nNo file provided. Parsing sample MaterialX document..." << std::endl;
-    
+
     const char* sample = R"(<?xml version="1.0"?>
 <materialx version="1.38" colorspace="lin_rec709">
   <!-- Texture nodegraph -->
   <nodegraph name="NG_marble_texture">
     <input name="base_color_file" type="filename" value="marble_diffuse.png"/>
     <input name="roughness_file" type="filename" value="marble_roughness.png"/>
-    
+
     <image name="base_color_image" type="color3">
       <input name="file" type="filename" interfacename="base_color_file"/>
       <input name="uaddressmode" type="string" value="periodic"/>
       <input name="vaddressmode" type="string" value="periodic"/>
     </image>
-    
+
     <image name="roughness_image" type="float">
       <input name="file" type="filename" interfacename="roughness_file"/>
       <input name="uaddressmode" type="string" value="periodic"/>
       <input name="vaddressmode" type="string" value="periodic"/>
     </image>
-    
+
     <output name="base_color_out" type="color3" nodename="base_color_image"/>
     <output name="roughness_out" type="float" nodename="roughness_image"/>
   </nodegraph>
-  
+
   <!-- Shader -->
   <standard_surface name="SR_marble" type="surfaceshader">
     <input name="base" type="float" value="0.8"/>
@@ -205,20 +205,20 @@ int main(int argc, char** argv) {
     <input name="subsurface" type="float" value="0.3"/>
     <input name="subsurface_color" type="color3" value="0.9, 0.9, 0.8"/>
   </standard_surface>
-  
+
   <!-- Material -->
   <surfacematerial name="M_marble" type="material">
     <shaderref name="surfaceshader" node="SR_marble"/>
   </surfacematerial>
 </materialx>
     )";
-    
+
     MtlxDocument doc;
     if (!doc.ParseFromXML(sample)) {
       std::cerr << "Error: " << doc.GetError() << std::endl;
       return 1;
     }
-    
+
     std::cout << "\n=== MaterialX Document ===" << std::endl;
     std::cout << "Version: " << doc.GetVersion() << std::endl;
     if (!doc.GetColorSpace().empty()) {
@@ -227,36 +227,36 @@ int main(int argc, char** argv) {
     if (!doc.GetNamespace().empty()) {
       std::cout << "Namespace: " << doc.GetNamespace() << std::endl;
     }
-    
+
     std::cout << "\n--- NodeGraphs ---" << std::endl;
     for (const auto& ng : doc.GetNodeGraphs()) {
       print_nodegraph(ng, 0);
     }
-    
+
     std::cout << "\n--- Shaders ---" << std::endl;
     for (const auto& node : doc.GetNodes()) {
       print_node(node, 0);
     }
-    
+
     std::cout << "\n--- Materials ---" << std::endl;
     for (const auto& mat : doc.GetMaterials()) {
       print_material(mat, 0);
     }
-    
+
     if (!doc.GetWarning().empty()) {
       std::cout << "\nWarnings:\n" << doc.GetWarning() << std::endl;
     }
-    
+
     return 0;
   }
-  
+
   // Parse file from command line
   MtlxDocument doc;
   if (!doc.ParseFromFile(argv[1])) {
     std::cerr << "Error: " << doc.GetError() << std::endl;
     return 1;
   }
-  
+
   std::cout << "=== MaterialX Document: " << argv[1] << " ===" << std::endl;
   std::cout << "Version: " << doc.GetVersion() << std::endl;
   if (!doc.GetColorSpace().empty()) {
@@ -265,25 +265,25 @@ int main(int argc, char** argv) {
   if (!doc.GetNamespace().empty()) {
     std::cout << "Namespace: " << doc.GetNamespace() << std::endl;
   }
-  
+
   std::cout << "\n--- NodeGraphs ---" << std::endl;
   for (const auto& ng : doc.GetNodeGraphs()) {
     print_nodegraph(ng, 0);
   }
-  
+
   std::cout << "\n--- Shaders ---" << std::endl;
   for (const auto& node : doc.GetNodes()) {
     print_node(node, 0);
   }
-  
+
   std::cout << "\n--- Materials ---" << std::endl;
   for (const auto& mat : doc.GetMaterials()) {
     print_material(mat, 0);
   }
-  
+
   if (!doc.GetWarning().empty()) {
     std::cout << "\nWarnings:\n" << doc.GetWarning() << std::endl;
   }
-  
+
   return 0;
 }

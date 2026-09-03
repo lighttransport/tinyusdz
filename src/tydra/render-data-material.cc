@@ -17,11 +17,11 @@
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
 // KTX2 reader for the keep-compressed texture path (RenderSceneConverterConfig::
 // keep_compressed_textures). Pulls in texcomp.h too.
 #include "texpipe.h"
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -39,7 +39,7 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "safe-arithmetic.hh"
@@ -66,7 +66,7 @@
 #include "tydra/shader-network.hh"
 #include "tydra/render-data-material-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -433,10 +433,10 @@ struct MtlxConnectionResolveCacheEntry {
 
 struct ConnectionResolveCache {
   const Stage *stage{nullptr};
-  tinyusdz::HashMap<std::string, UVConnectionResolveCacheEntry,
+  lightusd::HashMap<std::string, UVConnectionResolveCacheEntry,
                     FNV1StringHash>
       uv_texture_by_connection;
-  tinyusdz::HashMap<std::string, MtlxConnectionResolveCacheEntry,
+  lightusd::HashMap<std::string, MtlxConnectionResolveCacheEntry,
                     FNV1StringHash>
       mtlx_texture_by_connection;
 };
@@ -455,25 +455,25 @@ void ResetConnectionResolveCache(const Stage &stage) {
   ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
   // Swap with empty maps to release bucket memory (clear() keeps capacity)
   {
-    tinyusdz::HashMap<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    lightusd::HashMap<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.uv_texture_by_connection.swap(tmp);
   }
   {
-    tinyusdz::HashMap<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    lightusd::HashMap<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
     cache.mtlx_texture_by_connection.swap(tmp);
   }
 }
 
 namespace {
 
-std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
-    const tinyusdz::Prim &prim) {
-  std::vector<const tinyusdz::GeomSubset *> dst;
+std::vector<const lightusd::GeomSubset *> GetMaterialBindGeomSubsets(
+    const lightusd::Prim &prim) {
+  std::vector<const lightusd::GeomSubset *> dst;
 
   // GeomSubet Prim must be a child Prim of GeomMesh.
   for (const auto &child : prim.children()) {
-    if (const tinyusdz::GeomSubset *psubset =
-            child.as<tinyusdz::GeomSubset>()) {
+    if (const lightusd::GeomSubset *psubset =
+            child.as<lightusd::GeomSubset>()) {
       value::token tok;
       if (!psubset->familyName.get_value(&tok)) {
         continue;
@@ -1990,7 +1990,7 @@ bool RenderSceneConverter::GetOrCreateDefaultMaterial(
   }
 
   constexpr const char *kDefaultMaterialPath =
-      "/__tinyusdz_default_material__";
+      "/__lightusd_default_material__";
   if (auto it = materialMap.find(kDefaultMaterialPath);
       it != materialMap.s_end()) {
     *material_id = int(it->second);
@@ -2031,10 +2031,10 @@ bool RenderSceneConverter::GetOrCreateDefaultMaterial(
 //
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
 namespace {
 
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
 // KTX2 Zstd (supercompressionScheme 2) decompressor for tp_ktx2_read_zstd.
 static size_t KTX2ZstdDecompress(void * /*user*/, uint8_t *dst, size_t dst_cap,
                                  const uint8_t *src, size_t src_size) {
@@ -2110,7 +2110,7 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
   // tp_ktx2_image_free below (with the same allocator).
   size_t alloc_cap = security_policy::GetMaxAssetReadBytes();
   const tir_allocator kalloc{&alloc_cap, &KTX2BudgetAlloc, &KTX2BudgetFree};
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
   const tp_result kr = tp_ktx2_read_zstd(asset.data(), asset.size(), &kalloc,
                                          &KTX2ZstdDecompress, nullptr, &k);
 #else
@@ -2153,7 +2153,7 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
 }
 
 }  // namespace
-#endif  // TINYUSDZ_WITH_TEXTOOLS
+#endif  // LIGHTUSD_WITH_TEXTOOLS
 
 bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                                             const Path &tex_abs_path,
@@ -2201,8 +2201,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         tex_abs_path.prim_part()));
   }
 
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
-  // ---- Legacy-transparent KTX2 companion hint (tinyusdz extension) ----------
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
+  // ---- Legacy-transparent KTX2 companion hint (lightusd extension) ----------
   // `inputs:file` deliberately stays a png/jpg/exr so the asset opens in stock
   // USD tools and is USDZ-legal. A per-attribute `customData` entry
   //     asset inputs:file = @diffuse.png@ ( customData = { asset ktx2 = @diffuse.ktx2@ } )
@@ -2237,7 +2237,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
     }
   }
-#endif  // TINYUSDZ_WITH_TEXTOOLS
+#endif  // LIGHTUSD_WITH_TEXTOOLS
 
   std::string authored_color_space;
   bool authored_color_space_set = false;
@@ -2265,13 +2265,13 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     std::string cacheKey = env.asset_resolver.resolve(assetPath.GetAssetPath());
     if (cacheKey.empty()) cacheKey = assetPath.GetAssetPath();
     if (authored_color_space_set) {
-      tinyusdz::color::ColorTransform transform;
+      lightusd::color::ColorTransform transform;
       std::string transform_error;
       if (color_management::BuildColorTransform(
               env.stage, tex_abs_path, authored_color_space,
               "lin_rec709_scene", &transform, &transform_error)) {
         cacheKey += "|source:" +
-                    tinyusdz::color::CanonicalizeToken(authored_color_space) +
+                    lightusd::color::CanonicalizeToken(authored_color_space) +
                     ":" + std::to_string(transform.source.gamma) + ":" +
                     std::to_string(transform.source.linear_bias);
         for (float coefficient : transform.matrix) {
@@ -2460,7 +2460,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           tex_loaded = false;
         }
       } else {
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
         // Keep-compressed KTX2 fast path: store the GPU block payload verbatim
         // (blockFormat set) instead of decoding to RGBA8. Falls through to the
         // normal decode when disabled, when the asset is not a .ktx2, or on any
@@ -2529,7 +2529,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // exists, `colorSpace` metadata supercedes.
     // NOTE: `inputs:sourceColorSpace` attribute should be deprecated in favor of `colorSpace` metadata.
     auto storeColorTransform = [&](const std::string &source) -> bool {
-      tinyusdz::color::ColorTransform transform;
+      lightusd::color::ColorTransform transform;
       std::string transform_error;
       if (!color_management::BuildColorTransform(
               env.stage, tex_abs_path, source, "lin_rec709_scene",
@@ -2537,11 +2537,11 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         return false;
       }
       texImage.sourceColorSpaceName =
-          tinyusdz::color::CanonicalizeToken(source);
+          lightusd::color::CanonicalizeToken(source);
       texImage.colorTransformValid = true;
       texImage.colorTransformBypass = transform.bypass;
       texImage.sourceColorIsData =
-          transform.source.kind == tinyusdz::color::ColorSpaceKind::Data;
+          transform.source.kind == lightusd::color::ColorSpaceKind::Data;
       texImage.sourceGamma = transform.source.gamma;
       texImage.sourceLinearBias = transform.source.linear_bias;
       std::memcpy(texImage.sourceToDisplayLinear, transform.matrix,
@@ -2623,14 +2623,14 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       value::token cs_token(authored_color_space);
       PUSH_ERROR_AND_RETURN(
           fmt::format("Invalid or unknown colorSpace metadataum: {}. Please "
-                      "report an issue to TinyUSDZ github repo.",
+                      "report an issue to LightUSD github repo.",
                       cs_token.str()));
     }
 
     if (tex_loaded) {
       BufferData imageBuffer;
 
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
       // Keep-compressed: the buffer holds GPU block bytes, not texels. Skip all
       // color-space linearization / bit-depth widening and pass the blocks
       // through unchanged.
@@ -2753,20 +2753,20 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               PUSH_ERROR_AND_RETURN(
                   "Custom color-space texture requires at least 3 channels.");
             }
-            tinyusdz::color::ColorTransform transform;
+            lightusd::color::ColorTransform transform;
             transform.source.name = texImage.sourceColorSpaceName;
             transform.source.gamma = texImage.sourceGamma;
             transform.source.linear_bias = texImage.sourceLinearBias;
             transform.source.kind = texImage.sourceColorIsData
-                ? tinyusdz::color::ColorSpaceKind::Data
-                : tinyusdz::color::ColorSpaceKind::Color;
-            (void)tinyusdz::color::GetBuiltinColorSpace(
+                ? lightusd::color::ColorSpaceKind::Data
+                : lightusd::color::ColorSpaceKind::Color;
+            (void)lightusd::color::GetBuiltinColorSpace(
                 "lin_rec709_scene", &transform.destination);
             transform.bypass = texImage.colorTransformBypass;
             std::memcpy(transform.matrix, texImage.sourceToDisplayLinear,
                         sizeof(transform.matrix));
             for (size_t i = 0; i < width * height; ++i) {
-              tinyusdz::color::TransformRGB(
+              lightusd::color::TransformRGB(
                   transform, &buf[i * channels]);
             }
             store_f32_buf(buf);
@@ -2840,20 +2840,20 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               PUSH_ERROR_AND_RETURN(
                   "Custom color-space texture requires at least 3 channels.");
             }
-            tinyusdz::color::ColorTransform transform;
+            lightusd::color::ColorTransform transform;
             transform.source.name = texImage.sourceColorSpaceName;
             transform.source.gamma = texImage.sourceGamma;
             transform.source.linear_bias = texImage.sourceLinearBias;
             transform.source.kind = texImage.sourceColorIsData
-                ? tinyusdz::color::ColorSpaceKind::Data
-                : tinyusdz::color::ColorSpaceKind::Color;
-            (void)tinyusdz::color::GetBuiltinColorSpace(
+                ? lightusd::color::ColorSpaceKind::Data
+                : lightusd::color::ColorSpaceKind::Color;
+            (void)lightusd::color::GetBuiltinColorSpace(
                 "lin_rec709_scene", &transform.destination);
             transform.bypass = texImage.colorTransformBypass;
             std::memcpy(transform.matrix, texImage.sourceToDisplayLinear,
                         sizeof(transform.matrix));
             for (size_t i = 0; i < width * height; ++i) {
-              tinyusdz::color::TransformRGB(
+              lightusd::color::TransformRGB(
                   transform, &in_buf[i * channels]);
             }
             store_f32_buf(in_buf);
@@ -3049,7 +3049,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
          << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
       ss << "  width x height x components " << texImage.width << " x "
          << texImage.height << " x " << texImage.channels << "\n";
-      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+      ss << "  colorSpace " << lightusd::tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
     } else {
@@ -3066,7 +3066,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
          << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
       ss << "  width x height x components " << texImage.width << " x "
          << texImage.height << " x " << texImage.channels << "\n";
-      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+      ss << "  colorSpace " << lightusd::tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
 
@@ -3214,7 +3214,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.wrapS.authored()) {
-    tinyusdz::UsdUVTexture::Wrap wrap;
+    lightusd::UsdUVTexture::Wrap wrap;
     std::string wrap_err;
 
     if (!ResolveTextureWrap(env.stage, texture.wrapS, "inputs:wrapS",
@@ -3237,7 +3237,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.wrapT.authored()) {
-    tinyusdz::UsdUVTexture::Wrap wrap;
+    lightusd::UsdUVTexture::Wrap wrap;
     std::string wrap_err;
 
     if (!ResolveTextureWrap(env.stage, texture.wrapT, "inputs:wrapT",
@@ -4780,7 +4780,7 @@ static const Prim *ResolveSurfaceShaderThroughNodeGraph(const Stage &stage,
 
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
-                                           const tinyusdz::Material &material,
+                                           const lightusd::Material &material,
                                            RenderMaterial *rmat_out) {
   if (!rmat_out) {
     PUSH_ERROR_AND_RETURN("rmat_out argument is nullptr.");
@@ -5377,7 +5377,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
   return true;
 }
 
-bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
+bool MeshVisitor(const lightusd::Path &abs_path, const lightusd::Prim &prim,
                  const int32_t level, void *userdata, std::string *err) {
   if (!userdata) {
     if (err) {
@@ -5398,7 +5398,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
   // Lambda to convert and cache bound materials - shared by all geometry types
   auto ConvertBoundMaterial = [&](const Path &bound_material_path,
-                                  const tinyusdz::Material *bound_material,
+                                  const lightusd::Material *bound_material,
                                   int64_t &rmaterial_id) -> bool {
     std::vector<RenderMaterial> &rmaterials =
         visitorEnv->converter->materials;
@@ -5598,9 +5598,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return true;
   };
 
-  if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+  if (const lightusd::GeomMesh *pmesh = prim.as<lightusd::GeomMesh>()) {
     // Collect GeomSubsets
-    // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
+    // std::vector<const lightusd::GeomSubset *> subsets = GetGeomSubsets(;
 
     DCOUT("Mesh: " << abs_path);
 
@@ -5635,8 +5635,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
         // front and back
         {
-          tinyusdz::Path bound_material_path;
-          const tinyusdz::Material *bound_material{nullptr};
+          lightusd::Path bound_material_path;
+          const lightusd::Material *bound_material{nullptr};
           bool ret{false};
           if (!ResolveBoundMaterial(
                   /* GeomSubset prim path */ subset_abs_path,
@@ -5671,8 +5671,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           DCOUT("backface_material_purpose "
                 << visitorEnv->env->material_config
                        .default_backface_material_purpose_name);
-          tinyusdz::Path bound_material_path;
-          const tinyusdz::Material *bound_material{nullptr};
+          lightusd::Path bound_material_path;
+          const lightusd::Material *bound_material{nullptr};
           bool ret{false};
           if (!ResolveBoundMaterial(
                   /* GeomSubset prim path */ subset_abs_path,
@@ -5714,8 +5714,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       // Front and back material.
       {
-        tinyusdz::Path bound_material_path;
-        const tinyusdz::Material *bound_material{nullptr};
+        lightusd::Path bound_material_path;
+        const lightusd::Material *bound_material{nullptr};
         bool ret{false};
         if (!ResolveBoundMaterial(
                 /* GeomMesh prim path */ abs_path,
@@ -5747,8 +5747,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       if (!backface_purpose.empty() &&
           pmesh->has_materialBinding(value::token(backface_purpose))) {
-        tinyusdz::Path bound_material_path;
-        const tinyusdz::Material *bound_material{nullptr};
+        lightusd::Path bound_material_path;
+        const lightusd::Material *bound_material{nullptr};
         bool ret{false};
         if (!ResolveBoundMaterial(
                 /* GeomMesh prim path */ abs_path,
@@ -5888,7 +5888,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   // Handle GeomCube primitives by converting to mesh
-  if (const tinyusdz::GeomCube *pcube = prim.as<tinyusdz::GeomCube>()) {
+  if (const lightusd::GeomCube *pcube = prim.as<lightusd::GeomCube>()) {
     DCOUT("Cube: " << abs_path);
 
     // Get material binding (same logic as GeomMesh)
@@ -5937,8 +5937,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 
     RenderMesh rmesh;
-    std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Cubes don't have subsets
-    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
+    std::vector<const lightusd::GeomSubset *> material_subsets;  // Cubes don't have subsets
+    std::vector<std::pair<std::string, const lightusd::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
 
     if (!visitorEnv->converter->ConvertCube(
             *visitorEnv->env, abs_path, *pcube, material_path,
@@ -5987,7 +5987,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   // Handle GeomSphere primitives by converting to mesh
-  if (const tinyusdz::GeomSphere *psphere = prim.as<tinyusdz::GeomSphere>()) {
+  if (const lightusd::GeomSphere *psphere = prim.as<lightusd::GeomSphere>()) {
     DCOUT("Sphere: " << abs_path);
 
     // Get material binding (same logic as GeomMesh)
@@ -6036,8 +6036,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 
     RenderMesh rmesh;
-    std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Spheres don't have subsets
-    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
+    std::vector<const lightusd::GeomSubset *> material_subsets;  // Spheres don't have subsets
+    std::vector<std::pair<std::string, const lightusd::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
 
     if (!visitorEnv->converter->ConvertSphere(
             *visitorEnv->env, abs_path, *psphere, material_path,
@@ -6126,8 +6126,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 
     RenderMesh rmesh;
-    std::vector<const tinyusdz::GeomSubset *> material_subsets;
-    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;
+    std::vector<const lightusd::GeomSubset *> material_subsets;
+    std::vector<std::pair<std::string, const lightusd::BlendShape *>> blendshapes;
 
     if (!(visitorEnv->converter->*convertFunc)(
             *visitorEnv->env, abs_path, *pprim, material_path,
@@ -6168,7 +6168,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   };
 
   // Handle GeomCylinder primitives
-  if (const tinyusdz::GeomCylinder *pcyl = prim.as<tinyusdz::GeomCylinder>()) {
+  if (const lightusd::GeomCylinder *pcyl = prim.as<lightusd::GeomCylinder>()) {
     if (!convertParamPrim(pcyl, "cylinder", MeshWorkItem::Kind::Cylinder,
                           &RenderSceneConverter::ConvertCylinder)) {
       return false;
@@ -6176,7 +6176,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   // Handle GeomCone primitives
-  if (const tinyusdz::GeomCone *pcone = prim.as<tinyusdz::GeomCone>()) {
+  if (const lightusd::GeomCone *pcone = prim.as<lightusd::GeomCone>()) {
     if (!convertParamPrim(pcone, "cone", MeshWorkItem::Kind::Cone,
                           &RenderSceneConverter::ConvertCone)) {
       return false;
@@ -6184,7 +6184,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   // Handle GeomCapsule primitives
-  if (const tinyusdz::GeomCapsule *pcap = prim.as<tinyusdz::GeomCapsule>()) {
+  if (const lightusd::GeomCapsule *pcap = prim.as<lightusd::GeomCapsule>()) {
     if (!convertParamPrim(pcap, "capsule", MeshWorkItem::Kind::Capsule,
                           &RenderSceneConverter::ConvertCapsule)) {
       return false;
@@ -6192,7 +6192,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   // Handle GeomPlane primitives
-  if (const tinyusdz::GeomPlane *pplane = prim.as<tinyusdz::GeomPlane>()) {
+  if (const lightusd::GeomPlane *pplane = prim.as<lightusd::GeomPlane>()) {
     if (!convertParamPrim(pplane, "plane", MeshWorkItem::Kind::Plane,
                           &RenderSceneConverter::ConvertPlane)) {
       return false;
@@ -6203,4 +6203,4 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

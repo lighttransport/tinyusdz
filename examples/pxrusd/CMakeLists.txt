@@ -10,7 +10,7 @@ set(EXAMPLE_USD_LIB_PREFIX "" CACHE STRING "Prefix to pxrUSD lib name.For exampl
 set(EXAMPLE_USD_INC_DIR "dist/include" CACHE PATH "Path to pxrUSD include dir")
 set(EXAMPLE_USD_LIB_DIR "dist/lib" CACHE PATH "Path to pxrUSD lib dir")
 set(EXAMPLE_USD_MONOLITHIC OFF CACHE BOOL "Is pxrUSD monolithic build?")
-# USD is being built with Python(libboost_python) cannot be detected by pxrConfig.cmake or other settings file, so need to supply Python info manually. 
+# USD is being built with Python(libboost_python) cannot be detected by pxrConfig.cmake or other settings file, so need to supply Python info manually.
 set(EXAMPLE_LINK_BOOST_PYTHON OFF CACHE BOOL "Link libboost_python*")
 
 # cmake modules
@@ -67,7 +67,7 @@ add_executable(${EXAMPLE_BUILD_TARGET} ${EXAMPLE_SOURCES})
 add_sanitizers(${EXAMPLE_BUILD_TARGET})
 
 
-# <tinyusdz>/src
+# <lightusd>/src
 target_include_directories(${EXAMPLE_BUILD_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 
 # [pxrusd]

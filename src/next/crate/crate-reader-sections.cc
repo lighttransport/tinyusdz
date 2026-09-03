@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Reader structural section readers
+// LightUSD Next - USDC Crate Reader structural section readers
 
 #include "crate-reader-internal.hh"
 #include "lazy-array.hh"
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
@@ -1202,4 +1202,4 @@ bool CrateReader::Impl::ReadPaths() {
 
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -14,13 +14,13 @@
 #include "next/types/value.hh"
 #include "tydra/urdf-payload.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 namespace {
 
 using Json = nlohmann::json;
-namespace tn = ::tinyusdz::next;
+namespace tn = ::lightusd::next;
 
 std::string JsonString(const Json &j, const char *key,
                        const std::string &fallback = std::string()) {
@@ -452,7 +452,7 @@ void AuthorGenericScope(tn::Layer *layer, const Json &items,
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
-    ::tinyusdz::next::Stage *out_stage, std::string *warn, std::string *err) {
+    ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
   if (!out_stage) {
     if (err) *err = "Output Stage pointer is null";
     return false;
@@ -460,8 +460,8 @@ bool ConvertURDFJsonToUSDStage(
   if (warn) warn->clear();
   if (err) err->clear();
 
-  ::tinyusdz::tydra::detail::URDFPayload payload;
-  if (!::tinyusdz::tydra::detail::URDFPayload::Parse(robot_json, &payload,
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Parse(robot_json, &payload,
                                                       err)) {
     return false;
   }
@@ -673,11 +673,11 @@ bool ConvertURDFJsonToUSDStage(
 }
 
 bool ConvertURDFJsonToUSDStage(const std::string &robot_json,
-                               ::tinyusdz::next::Stage *out_stage,
+                               ::lightusd::next::Stage *out_stage,
                                std::string *warn, std::string *err) {
   return ConvertURDFJsonToUSDStage(robot_json, nullptr, out_stage, warn, err);
 }
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

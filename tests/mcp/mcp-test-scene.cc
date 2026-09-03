@@ -9,7 +9,7 @@
 #include "tydra/mcp-tools-scene.hh"
 #include "tydra/js-script.hh"
 
-using namespace tinyusdz::tydra::mcp;
+using namespace lightusd::tydra::mcp;
 using json = nlohmann::json;
 
 // Helper: create a fresh context with an empty stage

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // mtlx-roundtrip.js
 //
-// A CLI tool to test MaterialX import/export roundtrip in TinyUSDZ.
+// A CLI tool to test MaterialX import/export roundtrip in LightUSD.
 // Parses USD files containing MaterialX materials, exports them back to XML,
 // and validates the roundtrip.
 //
@@ -1788,7 +1788,7 @@ function fetchUrl(url) {
     const protocol = url.startsWith('https') ? https : http;
 
     const request = protocol.get(url, {
-      headers: { 'User-Agent': 'TinyUSDZ-MaterialX-Tester/1.0' }
+      headers: { 'User-Agent': 'LightUSD-MaterialX-Tester/1.0' }
     }, (response) => {
       // Handle redirects
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
@@ -2143,7 +2143,7 @@ Usage: mtlx-roundtrip.js [options] <input.usd>
        mtlx-roundtrip.js --tusdcat <path> --generate-synthetic
        mtlx-roundtrip.js --tusdcat <path> --fetch-mtlx-tests
 
-Test MaterialX import/export roundtrip in TinyUSDZ.
+Test MaterialX import/export roundtrip in LightUSD.
 
 Supports glob patterns:
   *        - matches any characters except /

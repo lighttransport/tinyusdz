@@ -6,7 +6,7 @@
 #include "minijson.hh"
 
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 bool HistoryQueue::push(EditHistory &&hist) {
@@ -65,8 +65,8 @@ std::string HistoryQueue::to_json_string(bool dump_layer) const {
     j["history"].push_back(hist_json);
   }
 
-  return j.dump();  
+  return j.dump();
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

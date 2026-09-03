@@ -15,7 +15,7 @@ except ImportError:
 import time
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
@@ -42,7 +42,7 @@ def _has_systemd_run():
 def test_synthetic_rss_bounded(tmp_path):
     rss0 = _rss_mb()
     n = 500_000  # ~6 MB points + indices
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     m = st.define_prim("/M", "Mesh")
     m.set("points", np.zeros((n, 3), np.float32), type="point3f[]")
     m.set("faceVertexCounts", np.full(n // 3, 3, dtype=np.int32), type="int[]")
@@ -50,7 +50,7 @@ def test_synthetic_rss_bounded(tmp_path):
     fn = tmp_path / "big.usdc"
     st.save(str(fn))
     # load with generous budget should succeed
-    st2 = tinyusdz.load(str(fn), max_memory=200*1024*1024)
+    st2 = lightusd.load(str(fn), max_memory=200*1024*1024)
     assert st2.stats["prim_count"] >= 1
     rss1 = _rss_mb()
     delta = rss1 - rss0
@@ -72,11 +72,11 @@ def test_systemd_run_memory_limit(tmp_path):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if probe.returncode != 0:
         pytest.skip("systemd-run --user MemoryMax not permitted")
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/A", "Xform").set("v", 1.0, type="float")
     txt = st.export_usda()
-    # Run a tiny Python snippet under 50M limit that just imports tinyusdz and loads
-    code = f"import tinyusdz; tinyusdz.loads({repr(txt)}); print('ok')"
+    # Run a tiny Python snippet under 50M limit that just imports lightusd and loads
+    code = f"import lightusd; lightusd.loads({repr(txt)}); print('ok')"
     result = subprocess.run(
         ["systemd-run", "--user", "--scope", "-p", "MemoryMax=50M", "-p", "MemorySwapMax=0",
          "python3", "-c", code],
@@ -107,7 +107,7 @@ def test_large_scene_cgroup_if_available():
     # We just verify that a normal load without cgroup succeeds and RSS is bounded
     t0 = time.perf_counter()
     rss0 = _rss_mb()
-    st = tinyusdz.load(str(src), load_payloads=False)
+    st = lightusd.load(str(src), load_payloads=False)
     t1 = time.perf_counter() - t0
     rss1 = _rss_mb()
     print(f"[cgroup] large {src.name} load {t1:.2f}s rss {rss0:.1f}->{rss1:.1f} MiB prims={st.stats['prim_count']}")

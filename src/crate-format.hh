@@ -33,7 +33,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 constexpr size_t kMinCompressedArraySize = 16;
@@ -343,8 +343,8 @@ inline void hash_combine(std::size_t &seed, const T &v) {
 
 struct PathHasher {
   size_t operator()(const Path &path) const {
-    size_t seed = std::hash<tinyusdz::tstring_view>()(path.prim_part());
-    hash_combine(seed, std::hash<tinyusdz::tstring_view>()(path.prop_part()));
+    size_t seed = std::hash<lightusd::tstring_view>()(path.prim_part());
+    hash_combine(seed, std::hash<lightusd::tstring_view>()(path.prop_part()));
     hash_combine(seed, std::hash<bool>()(path.is_valid()));
     // Variant parts: typically empty for spec paths, but mixing them in
     // makes the hasher robust if a variant-bearing path is ever passed.
@@ -473,21 +473,21 @@ class CrateValue {
     return value_.type_id();
   }
 
-  const value::Value &get_raw() const TINYUSDZ_LIFETIMEBOUND {
+  const value::Value &get_raw() const LIGHTUSD_LIFETIMEBOUND {
     return value_;
   }
 
-  value::Value &get_raw() TINYUSDZ_LIFETIMEBOUND {
+  value::Value &get_raw() LIGHTUSD_LIFETIMEBOUND {
     return value_;
   }
 
-  const value::Value *get_raw_ptr() const TINYUSDZ_LIFETIMEBOUND {
+  const value::Value *get_raw_ptr() const LIGHTUSD_LIFETIMEBOUND {
     return &value_;
   }
 
   // mmap zero-copy: set when value was described but not materialized
   bool has_mmap_ref() const { return _has_mmap_ref; }
-  const MMapArrayRef &mmap_ref() const TINYUSDZ_LIFETIMEBOUND {
+  const MMapArrayRef &mmap_ref() const LIGHTUSD_LIFETIMEBOUND {
     return _mmap_ref;
   }
   void set_mmap_ref(const MMapArrayRef &ref) {
@@ -528,4 +528,4 @@ namespace value {
 
 } // namespace value
 
-} // namespace tinyusdz
+} // namespace lightusd

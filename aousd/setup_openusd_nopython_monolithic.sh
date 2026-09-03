@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenUSD No-Python Monolithic Build Setup Script for comparison with TinyUSDZ
+# OpenUSD No-Python Monolithic Build Setup Script for comparison with LightUSD
 # This script clones, builds, and installs OpenUSD as a single monolithic library
 # WITHOUT Python bindings - ideal for C++-only production deployments
 

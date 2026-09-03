@@ -17,7 +17,7 @@
 #include "animatable.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct SubLayer
 {
@@ -81,7 +81,7 @@ struct LayerMetas {
   TypedAttributeWithFallback<PlaybackMode> playbackMode{
       PlaybackMode::PlaybackModeLoop};
 
-  // Unregistered (unknown-to-tinyusdz) layer metadata, preserved verbatim as the
+  // Unregistered (unknown-to-lightusd) layer metadata, preserved verbatim as the
   // raw USDA text of the value (quotes included for string values), keyed by the
   // metadatum name. OpenUSD preserves such opinions (SdfUnregisteredValue);
   // dropping them silently loses authored data. Mirrors PrimMeta::unregisteredMetas.
@@ -131,4 +131,4 @@ struct LayerMetas {
 // Layer class has been moved to layer.hh
 class Layer;
 
-}  // namespace tinyusdz
+}  // namespace lightusd

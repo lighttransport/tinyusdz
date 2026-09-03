@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    doc = "Shader parented by an Xform instead of a Material/NodeGraph. TinyUSDZ: shade.encapsulation.shaderParent. OpenUSD usdchecker: usdShade EncapsulationRulesValidator."
+    doc = "Shader parented by an Xform instead of a Material/NodeGraph. LightUSD: shade.encapsulation.shaderParent. OpenUSD usdchecker: usdShade EncapsulationRulesValidator."
     defaultPrim = "World"
     upAxis = "Y"
     metersPerUnit = 0.01

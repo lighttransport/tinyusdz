@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "preview_cache.hh"
 
 namespace fs = std::filesystem;
@@ -33,9 +33,9 @@ def Cube "Bound" {
     output << "#usda 1.0\ndef Scope \"Dependency\" {}\n";
   }
 
-  tinyusdz::next::Stage preview;
+  lightusd::next::Stage preview;
   std::string warn, err;
-  assert(tinyusdz::next::LoadUSDA(root.string(), &preview, &warn, &err));
+  assert(lightusd::next::LoadUSDA(root.string(), &preview, &warn, &err));
 
   tusdview::PreviewCacheOptions options;
   options.mode = tusdview::PreviewCacheMode::Auto;

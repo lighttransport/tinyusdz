@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct SchemaPropertyDefinition {
@@ -59,4 +59,4 @@ class SchemaRegistry {
 const SchemaRegistry& GetSchemaRegistry();
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

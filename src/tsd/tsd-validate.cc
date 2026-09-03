@@ -9,7 +9,7 @@
 
 #include "tsd-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 const char *to_string(Result result) {
@@ -313,4 +313,4 @@ Result CanonicalizeCreases(const MeshView &mesh, CreaseEdges *out,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

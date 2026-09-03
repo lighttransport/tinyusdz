@@ -3,14 +3,14 @@ import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js'
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js'
 
 const gui = new GUI();
 
 let ui_state = {}
 ui_state['rot_scale'] = 1.0;
-ui_state['mtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
+ui_state['mtl'] = LightUSDLoaderUtils.createDefaultMaterial();
 
 ui_state['envMapIntensity'] = 3.14; // pi is good for pisaHDR;
 ui_state['ambient'] = 0.4;
@@ -165,7 +165,7 @@ gui.add(params, 'shader_normal').name('NormalMaterial').onChange((value) => {
 
 async function loadScenes() {
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
@@ -200,7 +200,7 @@ async function loadScenes() {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+    const threeNode = LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
@@ -229,10 +229,10 @@ function createWhiteEnvmap() {
   // Create a simple white cube texture using HDRCubeTexture
   const size = 64; // Small size for performance
   const data = new Uint16Array(size * size * 4);
-  
+
   // Fill with white color (1.0, 1.0, 1.0) for HDR
   for (let i = 0; i < data.length; i += 4) {
-   
+
     data[i] = THREE.DataUtils.toHalfFloat(1.0);
     data[i+1] = THREE.DataUtils.toHalfFloat(1.0);
     data[i+2] = THREE.DataUtils.toHalfFloat(1.0);
@@ -246,14 +246,14 @@ function createWhiteEnvmap() {
     faceTexture.needsUpdate = true;
     faces.push(faceTexture);
   }
-  
+
   // Create HDRCubeTexture
   const cubeTexture = new THREE.CubeTexture();
   cubeTexture.image = faces.map(face => createImageFromFloatData(data, size, size));
   cubeTexture.format = THREE.RGBAFormat;
   cubeTexture.type = THREE.HalfFloatType;
   cubeTexture.needsUpdate = true;
-  
+
   return cubeTexture;
 }
 
@@ -263,7 +263,7 @@ function createImageFromFloatData(data, width, height) {
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   const imageData = ctx.createImageData(width, height);
-  
+
   // Convert Float RGB to Uint8 RGBA
   for (let i = 0, j = 0; i < data.length; i += 3, j += 4) {
     imageData.data[j] = Math.min(255, data[i] * 255);     // R
@@ -271,7 +271,7 @@ function createImageFromFloatData(data, width, height) {
     imageData.data[j + 2] = Math.min(255, data[i + 2] * 255); // B
     imageData.data[j + 3] = 255;     // A
   }
-  
+
   ctx.putImageData(imageData, 0, 0);
   return canvas;
 }
@@ -284,7 +284,7 @@ function updateEnvironment() {
   scene.background = envmap;
   scene.environment = envmap;
   ui_state['mtl'].envMap = envmap;
-  
+
   // Update all materials in the scene
   scene.traverse((object) => {
     if (object.material && object.material.envMap !== undefined) {
@@ -299,11 +299,11 @@ async function initScene() {
   const envmap = await new HDRCubeTextureLoader()
     .setPath( 'assets/textures/cube/pisaHDR/' )
     .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
-  
+
   console.log(envmap);
   hdrEnvmap = envmap;
   whiteEnvmap = createWhiteEnvmap();
-  
+
   // Set initial environment
   updateEnvironment();
 

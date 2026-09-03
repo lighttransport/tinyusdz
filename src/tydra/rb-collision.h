@@ -25,8 +25,8 @@
  * Memory: The C API does not allocate. Caller provides all buffers.
  * See rb-collision.hh for C++ helpers that build colliders from Tydra data.
  */
-#ifndef TINYUSDZ_TYDRA_RB_COLLISION_H_
-#define TINYUSDZ_TYDRA_RB_COLLISION_H_
+#ifndef LIGHTUSD_TYDRA_RB_COLLISION_H_
+#define LIGHTUSD_TYDRA_RB_COLLISION_H_
 
 #include <stdint.h>
 
@@ -240,4 +240,4 @@ int32_t tydra_phys_aabb_overlap(const TydraPhysAABB *a,
 }  /* extern "C" */
 #endif
 
-#endif /* TINYUSDZ_TYDRA_RB_COLLISION_H_ */
+#endif /* LIGHTUSD_TYDRA_RB_COLLISION_H_ */

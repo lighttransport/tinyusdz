@@ -3,15 +3,15 @@
 negative indices, fuzz-style inputs. All must raise UsdError, never crash."""
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
 
 def test_garbage_bytes():
     for blob in [b"", b"\x00\x01\x02", b"not usd", b"\xff"*1024, b"PXR-USDC truncated"]:
-        with pytest.raises((tinyusdz.UsdError, ValueError)):
-            tinyusdz.load_bytes(blob)
+        with pytest.raises((lightusd.UsdError, ValueError)):
+            lightusd.load_bytes(blob)
 
 
 def test_malformed_usda():
@@ -22,35 +22,35 @@ def test_malformed_usda():
         "#usda 1.0\n" + "def Xform \"A\" {" * 1000,  # deep nesting
     ]
     for txt in bads:
-        with pytest.raises((tinyusdz.UsdError, tinyusdz.UsdParseError, ValueError)):
-            tinyusdz.loads(txt)
+        with pytest.raises((lightusd.UsdError, lightusd.UsdParseError, ValueError)):
+            lightusd.loads(txt)
 
 
 def test_truncated_usdc():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/X", "Xform").set("v", 1.0, type="float")
     blob = st.export_usdc()
     assert blob[:8] == b"PXR-USDC"
     for cut in [10, 100, len(blob)//2, len(blob)-1]:
-        with pytest.raises(tinyusdz.UsdError):
-            tinyusdz.load_bytes(blob[:cut])
+        with pytest.raises(lightusd.UsdError):
+            lightusd.load_bytes(blob[:cut])
 
 
 def test_overlong_token():
     tok = "x" * 5000
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     p.set("tok", tok, type="token")
     # roundtrip via USDA may truncate or keep, but must not crash
     txt = st.export_usda()
-    st2 = tinyusdz.loads(txt)
+    st2 = lightusd.loads(txt)
     # Either preserves or truncates, but load must succeed and not crash
     assert st2.prim_at("/P") is not None
 
 
 def test_negative_face_indices_tydra_warns():
-    from tinyusdz import tydra
-    st = tinyusdz.Stage.create()
+    from lightusd import tydra
+    st = lightusd.Stage.create()
     m = st.define_prim("/M", "Mesh")
     pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], np.float32)
     m.set("points", pts, type="point3f[]")
@@ -64,7 +64,7 @@ def test_negative_face_indices_tydra_warns():
 
 
 def test_very_large_array_max_memory():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     n = 200_000
     m = st.define_prim("/M", "Mesh")
     m.set("points", np.zeros((n, 3), np.float32), type="point3f[]")
@@ -77,10 +77,10 @@ def test_very_large_array_max_memory():
     try:
         st.save(fname)
         # tiny budget must raise, not crash
-        with pytest.raises(tinyusdz.UsdError):
-            tinyusdz.load(fname, max_memory=4096)
+        with pytest.raises(lightusd.UsdError):
+            lightusd.load(fname, max_memory=4096)
         # large budget must succeed
-        st2 = tinyusdz.load(fname, max_memory=200*1024*1024)
+        st2 = lightusd.load(fname, max_memory=200*1024*1024)
         assert st2.stats["prim_count"] >= 1
     finally:
         pathlib.Path(fname).unlink(missing_ok=True)
@@ -96,26 +96,26 @@ def test_fuzz_random_usda_tokens():
         txt = f'#usda 1.0\ndef Xform "{name}" {{ token t = "{tok}" }}\n'
         # Must either load or raise UsdParseError, never crash
         try:
-            st = tinyusdz.loads(txt)
+            st = lightusd.loads(txt)
             assert st.get_prim_at(f"/{name}") is not None
-        except tinyusdz.UsdError:
+        except lightusd.UsdError:
             pass
 
 
 def test_empty_and_whitespace_usda():
     for txt in ["", "   ", "\n", "#usda 1.0\n"]:
         try:
-            st = tinyusdz.loads(txt)
+            st = lightusd.loads(txt)
             # Empty stage may be allowed (0 prims)
             assert st.stats["prim_count"] >= 0
-        except (tinyusdz.UsdError, ValueError):
+        except (lightusd.UsdError, ValueError):
             pass
 
 
 def test_double_free_close_idempotent():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/A", "Xform")
     st.close()
     st.close()  # double close must not crash
-    with pytest.raises(tinyusdz.UsdError):
+    with pytest.raises(lightusd.UsdError):
         st.prim_at("/A")

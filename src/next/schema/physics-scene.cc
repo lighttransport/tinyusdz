@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdPhysics Scene Schema Implementation
+// LightUSD Next - UsdPhysics Scene Schema Implementation
 
 #include "physics-scene.hh"
 
 #include <cmath>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool IsPhysicsScene(const UsdPrim& prim) {
@@ -51,4 +51,4 @@ bool GetPhysicsSceneData(const Stage& stage, const UsdPrim& prim,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

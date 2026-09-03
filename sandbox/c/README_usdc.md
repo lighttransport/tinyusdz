@@ -19,7 +19,7 @@ The USDC parser provides secure, memory-safe parsing of USD binary files with ex
 
 ```c
 usdc_reader_t     - Main parser state
-usdc_header_t     - File header (magic, version, TOC offset)  
+usdc_header_t     - File header (magic, version, TOC offset)
 usdc_toc_t        - Table of Contents with sections
 usdc_section_t    - Individual section metadata
 usdc_token_t      - Token strings
@@ -31,7 +31,7 @@ usdc_value_rep_t  - 8-byte value representation (type + data/offset)
 ### Security Features
 
 - Memory budget enforcement (default 2GB limit)
-- Configurable limits on data structure sizes  
+- Configurable limits on data structure sizes
 - Bounds checking on all file reads
 - Protection against buffer overruns and out-of-memory conditions
 - Input validation for all parsed data
@@ -59,9 +59,9 @@ The USDC (Crate) format consists of:
 
 ## Features
 
-✅ **Complete LZ4 Token Decompression**: Full support for LZ4-compressed tokens using TinyUSDZ's wrapper format
+✅ **Complete LZ4 Token Decompression**: Full support for LZ4-compressed tokens using LightUSD's wrapper format
 ✅ **Intelligent Path Reconstruction**: Extracts meaningful USD path names with fallback strategies
-✅ **Security-Focused**: Memory budget enforcement and extensive bounds checking  
+✅ **Security-Focused**: Memory budget enforcement and extensive bounds checking
 ✅ **Real Token Parsing**: Extracts actual token strings from USDC files
 ✅ **Multi-File Support**: Successfully tested with various USDC file sizes
 ✅ **C99 Compatible**: Pure C99 implementation with no external dependencies except LZ4
@@ -131,7 +131,7 @@ First 3 paths:
 
 To create a full USDC parser, you would need to add:
 
-1. **Path Decoding**: Implement the hierarchical path index decoding algorithm  
+1. **Path Decoding**: Implement the hierarchical path index decoding algorithm
 2. **Value Parsing**: Add full support for all USD value types (vectors, matrices, etc.)
 3. **Scene Graph**: Build USD scene graph structures from the parsed data
 4. **Additional Sections**: Support for FIELDSETS, SPECS, and other section types
@@ -147,4 +147,4 @@ To create a full USDC parser, you would need to add:
 
 ## Reference
 
-This implementation is based on the TinyUSDZ C++ USDC parser and follows the same security-focused approach with extensive bounds checking and memory management.
+This implementation is based on the LightUSD C++ USDC parser and follows the same security-focused approach with extensive bounds checking and memory management.

@@ -1,12 +1,12 @@
-// USD Export Demo — TinyUSDZ WASM
+// USD Export Demo — LightUSD WASM
 // Demonstrates: load USD, generate sample scene, export as USDA/USDC/USDZ
-// Textures encoded via browser Canvas API (PNG/JPEG); tinyusdz image-writer for EXR only.
+// Textures encoded via browser Canvas API (PNG/JPEG); lightusd image-writer for EXR only.
 
 // ---- UI Setup ----
 const container = document.createElement('div');
 container.style.cssText = 'max-width:720px;margin:40px auto;padding:20px;';
 container.innerHTML = `
-  <h1 style="margin:0 0 8px">TinyUSDZ USD Export Demo</h1>
+  <h1 style="margin:0 0 8px">LightUSD USD Export Demo</h1>
   <p style="color:#aaa;margin:0 0 20px">Load or generate a USD scene, then export as USDA / USDC / USDZ.</p>
 
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
@@ -123,9 +123,9 @@ let usd = null;
 let sceneReady = false;
 
 async function initWasm() {
-  log('Loading TinyUSDZ WASM module...');
+  log('Loading LightUSD WASM module...');
   try {
-    const mod = await import('./src/tinyusdz/tinyusdz.js');
+    const mod = await import('./src/lightusd/lightusd.js');
     native = await mod.default();
     log('WASM module loaded.');
   } catch (e) {
@@ -159,7 +159,7 @@ btnGenerate.addEventListener('click', async () => {
 
   // Create native instance
   if (usd) usd.delete();
-  usd = new native.TinyUSDZLoaderNative();
+  usd = new native.LightUSDLoaderNative();
 
   // Pass texture to WASM asset cache
   // Embind accepts Uint8Array for std::string without UTF-8 string mangling.
@@ -191,7 +191,7 @@ fileInput.addEventListener('change', async (e) => {
   const fileData = new Uint8Array(await file.arrayBuffer());
 
   if (usd) usd.delete();
-  usd = new native.TinyUSDZLoaderNative();
+  usd = new native.LightUSDLoaderNative();
 
   const ok = usd.loadAsLayerFromBinary(fileData, file.name);
   if (!ok) {
@@ -263,5 +263,5 @@ btnUSDZ.addEventListener('click', () => {
 });
 
 // ---- Init ----
-log('TinyUSDZ USD Export Demo ready.');
+log('LightUSD USD Export Demo ready.');
 log('Click "Generate Sample Scene" or load a USD file to start.');

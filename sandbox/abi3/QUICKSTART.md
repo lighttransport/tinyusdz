@@ -1,4 +1,4 @@
-# TinyUSDZ ABI3 Binding - Quick Start Guide
+# LightUSD ABI3 Binding - Quick Start Guide
 
 ## Prerequisites
 
@@ -140,7 +140,7 @@ cargo install uv
 After setup, verify everything works:
 
 ```python
-python -c "import tinyusdz_abi3 as tusd; print(f'✓ TinyUSDZ ABI3 {tusd.__version__}')"
+python -c "import lightusd_abi3 as tusd; print(f'✓ LightUSD ABI3 {tusd.__version__}')"
 python -c "import numpy as np; print(f'✓ NumPy {np.__version__}')"
 ```
 
@@ -159,7 +159,7 @@ make wheel
 python setup.py bdist_wheel
 
 # Install the wheel
-pip install dist/tinyusdz_abi3-*.whl
+pip install dist/lightusd_abi3-*.whl
 ```
 
 The wheel will be tagged as `cp310-abi3` meaning it works with Python 3.10+.
@@ -170,7 +170,7 @@ The wheel will be tagged as `cp310-abi3` meaning it works with Python 3.10+.
 
 Install uv as shown above.
 
-### "ImportError: No module named 'tinyusdz_abi3'"
+### "ImportError: No module named 'lightusd_abi3'"
 
 Make sure you've built the module:
 
@@ -273,7 +273,7 @@ python my_script.py
 Example of efficient code:
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 import numpy as np
 
 # Load once
@@ -299,7 +299,7 @@ Make sure you're in the right directory:
 
 ```bash
 cd sandbox/abi3
-python -c "import tinyusdz_abi3"
+python -c "import lightusd_abi3"
 ```
 
 ### Different Python versions
@@ -320,7 +320,7 @@ source .venv/bin/activate
 ### Build succeeds but runtime errors
 
 This usually means:
-1. Missing TinyUSDZ C++ library
+1. Missing LightUSD C++ library
 2. Linking issues
 3. Missing dependencies
 

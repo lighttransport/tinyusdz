@@ -1,12 +1,12 @@
 # tusdchecker
 
 `tusdchecker` validates USDA, USDC, USDZ, and MaterialX `.mtlx` documents using
-TinyUSDZ's dependency-free `next` core. It runs AOUSD Core 1.0.1 semantic checks and the
+LightUSD's dependency-free `next` core. It runs AOUSD Core 1.0.1 semantic checks and the
 available structural schema checks for UsdGeom/UsdSkel, UsdShade/MaterialX,
 UsdLux, and UsdPhysics (including the supported physics extensions).
 
 ```sh
-cmake -S . -B build_ninja -G Ninja -DTINYUSDZ_BUILD_TOOLS=ON
+cmake -S . -B build_ninja -G Ninja -DLIGHTUSD_BUILD_TOOLS=ON
 cmake --build build_ninja --target tusdchecker
 
 build_ninja/tusdchecker scene.usdz
@@ -29,7 +29,7 @@ build_ninja/tusdchecker --variant-sets shape scene.usda
 
 The default is equivalent to `--all`. `--arkit` adds the opt-in ARKit /
 RealityKit delivery profile (`arkit` group + `core,geom,shade,package`), the
-tinyusdz counterpart of `usdchecker --arkit`: Y-up stage metadata, the
+lightusd counterpart of `usdchecker --arkit`: Y-up stage metadata, the
 ARKit prim-type whitelist, `id`-based UsdPreviewSurface / UsdUVTexture shading,
 portable texture formats, normal-map scale/bias, resolvable material bindings,
 and a `.usdc`-rooted package containing only layers and exr/jpg/jpeg/png
@@ -86,7 +86,7 @@ resolves external arcs, validates the flattened result, and reports composition
 errors and cross-arc attribute/property-kind type conflicts, and enumerates
 every combination of authored variant selections (see "usdchecker parity"
 above). Schema checks are structural and cover the schemas known to
-TinyUSDZ; they are not a plugin registry. The `package` group checks USDZ root
+LightUSD; they are not a plugin registry. The `package` group checks USDZ root
 ordering, store mode, encryption/data-descriptor policy, 64-byte alignment,
 CRC-32, central-directory consistency, safe/unique paths, portable extensions,
 and authored dependency containment, including dictionary, clip, property

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Reader decode/allocation helpers
+// LightUSD Next - USDC Crate Reader decode/allocation helpers
 
 #include "crate-reader-internal.hh"
 #include "safe-arithmetic.hh"
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
@@ -577,4 +577,4 @@ void CrateReader::Impl::AddWarning(const std::string& msg) {
 
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

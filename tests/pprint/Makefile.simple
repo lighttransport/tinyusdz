@@ -6,7 +6,7 @@ LDFLAGS = -pthread
 
 # Library path
 LIBDIR = ../../build
-LIBS = -L$(LIBDIR) -ltinyusdz_static
+LIBS = -L$(LIBDIR) -llightusd_static
 
 TARGET = simple_array_benchmark
 SOURCES = simple_array_benchmark.cc
@@ -42,5 +42,5 @@ help:
 	@echo "  make run-large   - Run with large dataset (500K/250K)"
 	@echo "  make clean    - Remove build artifacts"
 	@echo ""
-	@echo "Note: Make sure to build the main tinyusdz library first:"
-	@echo "  cd ../../build && make tinyusdz_static"
+	@echo "Note: Make sure to build the main lightusd library first:"
+	@echo "  cd ../../build && make lightusd_static"

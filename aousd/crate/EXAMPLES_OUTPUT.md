@@ -273,6 +273,6 @@ libtbb.so.2 => ../dist_nopython_monolithic/lib/libtbb.so.2
 1. **Modify the examples** to explore different USD features
 2. **Create custom scenes** with your own geometry
 3. **Analyze production files** using `crate_internal_api`
-4. **Compare with TinyUSDZ** implementation
+4. **Compare with LightUSD** implementation
 
 See [README.md](README.md) for full documentation and build instructions.

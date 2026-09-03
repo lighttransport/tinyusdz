@@ -6,27 +6,27 @@
 #include "acutest.h"
 
 #include "unit-primvar.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "primvar.hh"
 #include "value-pprint.hh"
 #include "usdGeom.hh"
 
-using namespace tinyusdz::value;
-using namespace tinyusdz::primvar;
+using namespace lightusd::value;
+using namespace lightusd::primvar;
 
 void primvar_test(void) {
 
   // geom primvar
   {
-    tinyusdz::GeomMesh mesh;
+    lightusd::GeomMesh mesh;
     std::vector<float> scalar_array = {1.0, 2.0, 3.0, 4.0};
-    tinyusdz::Attribute attr;
+    lightusd::Attribute attr;
     attr.set_value(std::move(scalar_array));
-    tinyusdz::Property prop(attr, /* custom */false);
+    lightusd::Property prop(attr, /* custom */false);
 
     mesh.props.emplace("primvars:myvar", prop);
 
-    tinyusdz::GeomPrimvar primvar;
+    lightusd::GeomPrimvar primvar;
     TEST_CHECK(mesh.get_primvar("myvar", &primvar) == true);
 
     // Exercise the (thinned) GeomPrimvar::get_value<T> overloads end-to-end:
@@ -44,8 +44,8 @@ void primvar_test(void) {
 
       // Time-sampled overload at default time (no timesamples -> default value).
       std::vector<float> out_t;
-      TEST_CHECK(primvar.get_value(tinyusdz::value::TimeCode::Default(), &out_t,
-                                   tinyusdz::value::TimeSampleInterpolationType::Held,
+      TEST_CHECK(primvar.get_value(lightusd::value::TimeCode::Default(), &out_t,
+                                   lightusd::value::TimeSampleInterpolationType::Held,
                                    &gerr));
       TEST_CHECK(out_t.size() == 4);
       if (out_t.size() == 4) {

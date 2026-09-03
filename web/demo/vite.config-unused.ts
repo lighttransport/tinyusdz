@@ -9,7 +9,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['tinyusdz'],
+    exclude: ['lightusd'],
   },
 });
 

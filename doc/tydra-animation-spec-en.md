@@ -1,4 +1,4 @@
-# TinyUSDZ Tydra Animation
+# LightUSD Tydra Animation
 
 How USD animation is converted through the Tydra RenderScene IR and mapped to
 Three.js. This document describes **what is implemented today** and, in a
@@ -224,7 +224,7 @@ float arrays; channels reference nodes by index; the legacy
 
 Blender's built-in USD exporter only exports the single active Action as one
 `UsdSkelAnimation`. The single-file addon
-`web/js/scripts/tinyusdz_anim_clips.py` (v1.1, Blender 4.0+) adds multi-clip
+`web/js/scripts/lightusd_anim_clips.py` (v1.1, Blender 4.0+) adds multi-clip
 export via two workflows. See the addon's
 [README](../web/js/scripts/README.md) for installation and usage.
 
@@ -251,15 +251,15 @@ and NLA strip Actions, deduplicated per object. Supported types: `ARMATURE`
 `customData.Blender.generated=1`, on re-import):
 
 ```
-custom int    userProperties:tinyusdz:animClips:version       # 1
-custom int    userProperties:tinyusdz:animClips:clipCount     # 3
-custom float  userProperties:tinyusdz:animClips:fps           # 24.0
-custom string userProperties:tinyusdz:animClips:names         # "Walk|Idle|CubeMove"
-custom string userProperties:tinyusdz:animClips:startFrames   # "1|1|1"
-custom string userProperties:tinyusdz:animClips:endFrames     # "72|48|60"
-custom string userProperties:tinyusdz:animClips:sourceTypes   # "SkelAnimation|SkelAnimation|XformOp"
-custom string userProperties:tinyusdz:animClips:objectNames   # "CharacterRig|CharacterRig|Cube"
-custom string userProperties:tinyusdz:animClips:objectTypes   # "Armature|Armature|Mesh"
+custom int    userProperties:lightusd:animClips:version       # 1
+custom int    userProperties:lightusd:animClips:clipCount     # 3
+custom float  userProperties:lightusd:animClips:fps           # 24.0
+custom string userProperties:lightusd:animClips:names         # "Walk|Idle|CubeMove"
+custom string userProperties:lightusd:animClips:startFrames   # "1|1|1"
+custom string userProperties:lightusd:animClips:endFrames     # "72|48|60"
+custom string userProperties:lightusd:animClips:sourceTypes   # "SkelAnimation|SkelAnimation|XformOp"
+custom string userProperties:lightusd:animClips:objectNames   # "CharacterRig|CharacterRig|Cube"
+custom string userProperties:lightusd:animClips:objectTypes   # "Armature|Armature|Mesh"
 ```
 
 Auto-Bake mode additionally concatenates Actions via a temporary NLA setup and
@@ -267,7 +267,7 @@ writes `concatStartFrames` / `concatEndFrames`.
 
 Design constraints: scalar strings only (Blender's importer drops `string[]`/
 `int[]` custom attrs); `|` separator (commas appear in Action names);
-`userProperties:tinyusdz:` namespace (recognized by Blender, collision-free).
+`userProperties:lightusd:` namespace (recognized by Blender, collision-free).
 
 ### B.4 Workflow 2 — separate files (HumanFemale pattern)
 
@@ -281,7 +281,7 @@ animation only.
 JavaScript splits the concatenated clip with `THREE.AnimationUtils.subclip`:
 
 ```javascript
-const SEP = '|', NS = 'userProperties:tinyusdz:animClips:';
+const SEP = '|', NS = 'userProperties:lightusd:animClips:';
 const clipCount = prim.getIntAttribute(NS + 'clipCount');
 const fps       = prim.getFloatAttribute(NS + 'fps');
 const names       = prim.getAttribute(NS + 'names').split(SEP);

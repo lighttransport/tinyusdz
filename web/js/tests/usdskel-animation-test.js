@@ -3,17 +3,17 @@ import * as THREE from 'three';
 import {
   convertUSDSkeletalAnimationsToThreeJS,
   convertUSDNodeAnimationsToThreeJS
-} from '../src/tinyusdz/USDAnimationConverter.js';
+} from '../src/lightusd/USDAnimationConverter.js';
 import {
   extractUSDSceneAnimations,
   createUSDSceneAnimationPlayback,
   computeUSDSceneTimelineDuration
-} from '../src/tinyusdz/USDSceneAnimationPipeline.js';
-import { createThreeSkeletonFromUSD } from '../src/tinyusdz/USDSkeletalHelper.js';
+} from '../src/lightusd/USDSceneAnimationPipeline.js';
+import { createThreeSkeletonFromUSD } from '../src/lightusd/USDSkeletalHelper.js';
 import {
   isOwnedFloat32Array,
   markOwnedFloat32Array
-} from '../src/tinyusdz/TypedArrayOwnership.js';
+} from '../src/lightusd/TypedArrayOwnership.js';
 
 function near(a, b, eps = 1e-4) {
   return Math.abs(a - b) <= eps;

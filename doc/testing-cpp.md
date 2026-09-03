@@ -1,13 +1,13 @@
 # C++ Testing Guide
 
-How to build, run, and extend the TinyUSDZ C++ test suite.
+How to build, run, and extend the LightUSD C++ test suite.
 
 ## Overview
 
 The C++ test infrastructure is split into four layers:
 
 1. `ctest`-registered tests for parser coverage, roundtrip coverage, feature tests, and the main Acutest unit suite.
-2. A large Acutest executable, `unit-test-tinyusdz`, which aggregates the unit coverage from `tests/unit/unit-main.cc`.
+2. A large Acutest executable, `unit-test-lightusd`, which aggregates the unit coverage from `tests/unit/unit-main.cc`.
 3. Standalone/manual runners under `tests/` for broader corpus checks, especially parser and Tydra conversion sweeps.
 4. Fuzzer targets under `tests/fuzzer/` built separately with Meson/libFuzzer.
 
@@ -17,7 +17,7 @@ Core functionality is tested by the parser, reader, writer, composition, and cra
 
 The repository-wide harness is `scripts/verify.sh`. Preparation downloads only
 the pinned external inputs from `tests/verification/manifest.json` into the
-ignored `.cache/tinyusdz-verification/` directory. Test actions do not fetch
+ignored `.cache/lightusd-verification/` directory. Test actions do not fetch
 or update dependencies; use `--offline` to enforce that contract.
 
 ```bash
@@ -65,43 +65,43 @@ Configure the native build with tests enabled:
 ```bash
 mkdir build
 cd build
-cmake .. -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake .. -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 make -j16
 ```
 
 Relevant options in the current build configuration:
 
-- `TINYUSDZ_BUILD_TESTS=ON`
-- `TINYUSDZ_BUILD_EXAMPLES=ON`
-- `TINYUSDZ_WITH_JSON=ON`
-- `TINYUSDZ_WITH_MODULE_USDA_READER=ON`
-- `TINYUSDZ_WITH_MODULE_USDC_READER=ON`
-- `TINYUSDZ_WITH_MODULE_USDC_WRITER=ON`
-- `TINYUSDZ_WITH_TYDRA=ON`
-- `TINYUSDZ_WITH_PXR_COMPAT_API=ON`
-- `TINYUSDZ_TEST_FIXTURE_DIR` — source-tree root containing `tests/`; set this
+- `LIGHTUSD_BUILD_TESTS=ON`
+- `LIGHTUSD_BUILD_EXAMPLES=ON`
+- `LIGHTUSD_WITH_JSON=ON`
+- `LIGHTUSD_WITH_MODULE_USDA_READER=ON`
+- `LIGHTUSD_WITH_MODULE_USDC_READER=ON`
+- `LIGHTUSD_WITH_MODULE_USDC_WRITER=ON`
+- `LIGHTUSD_WITH_TYDRA=ON`
+- `LIGHTUSD_WITH_PXR_COMPAT_API=ON`
+- `LIGHTUSD_TEST_FIXTURE_DIR` — source-tree root containing `tests/`; set this
   when the build directory is outside the checkout.
 
 CTest passes the fixture root to the unit tests, so an out-of-tree build can
 run the same tests without changing its working directory:
 
 ```bash
-cmake -S . -B /tmp/tinyusdz-build -G Ninja \
-  -DTINYUSDZ_BUILD_TESTS=ON \
-  -DTINYUSDZ_TEST_FIXTURE_DIR="$PWD"
-cmake --build /tmp/tinyusdz-build
-ctest --test-dir /tmp/tinyusdz-build -R unit-test-tinyusdz --output-on-failure
+cmake -S . -B /tmp/lightusd-build -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_TEST_FIXTURE_DIR="$PWD"
+cmake --build /tmp/lightusd-build
+ctest --test-dir /tmp/lightusd-build -R unit-test-lightusd --output-on-failure
 ```
 
 The fixture root can also be supplied directly to a test executable with the
-`TINYUSDZ_TEST_FIXTURE_DIR` environment variable.
+`LIGHTUSD_TEST_FIXTURE_DIR` environment variable.
 
 ## Full Regression Tests
 
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
-> **Scope:** The experimental `next` module (`src/next/`, `tinyusdz_next`) and
+> **Scope:** The experimental `next` module (`src/next/`, `lightusd_next`) and
 > its tests under `tests/next/` are **not** part of this regression suite. They
 > are a standalone CMake project, are not built by the main `build/` (so they do
 > not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
@@ -115,7 +115,7 @@ The full regression pass has two parts:
    corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
    and the main Acutest unit suite.
 2. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
-   checks TinyUSDZ output against `usdcat` over the USDA and USDC fixture
+   checks LightUSD output against `usdcat` over the USDA and USDC fixture
    corpora.
 
 Recommended command sequence from the repository root:
@@ -130,7 +130,7 @@ ctest --output-on-failure
 cd ..
 
 # 2. Run the stable next module tests. Keep this Debug: tests use assert().
-cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
 
@@ -164,15 +164,15 @@ shell command itself completes.
 ### Headless NVIDIA viewer regression
 
 The viewer tests are part of the native CTest tree only when
-`TINYUSDZ_BUILD_GUI_VIEWER=ON`. On an NVIDIA Linux host, run them under a
+`LIGHTUSD_BUILD_GUI_VIEWER=ON`. On an NVIDIA Linux host, run them under a
 24-bit Xvfb display and opt into CMake's NVIDIA offload environment:
 
 ```bash
 cmake -S . -B build_ninja -G Ninja \
-  -DTINYUSDZ_BUILD_TESTS=ON \
-  -DTINYUSDZ_BUILD_EXAMPLES=ON \
-  -DTINYUSDZ_BUILD_GUI_VIEWER=ON \
-  -DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_EXAMPLES=ON \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
+  -DLIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON
 cmake --build build_ninja -j16
 
 # Viewer-only hardware/display coverage:
@@ -184,7 +184,7 @@ xvfb-run -a -s "-screen 0 1280x800x24" \
   ctest --test-dir build_ninja --output-on-failure
 ```
 
-`TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` is evaluated during CMake configure. If
+`LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON` is evaluated during CMake configure. If
 the NVIDIA kernel device, GLVND vendor file, and an NVIDIA Vulkan physical
 device are visible, CMake injects the following into `tusdview-*` tests:
 
@@ -260,32 +260,32 @@ node tests/compare-usda.js \
 
 ## ctest Suite
 
-CMake registers these tests when the corresponding targets are built (most in the top-level `CMakeLists.txt`; `unit-test-tinyusdz` in `tests/unit/CMakeLists.txt` and `mcp-test` in `tests/mcp/CMakeLists.txt`):
+CMake registers these tests when the corresponding targets are built (most in the top-level `CMakeLists.txt`; `unit-test-lightusd` in `tests/unit/CMakeLists.txt` and `mcp-test` in `tests/mcp/CMakeLists.txt`):
 
 | ctest name | Kind | Backing executable/script |
 | --- | --- | --- |
-| `usda-parser-unit-test` | Parser corpus runner | `python3 tests/usda/unit-runner.py --app build/test_tinyusdz` |
+| `usda-parser-unit-test` | Parser corpus runner | `python3 tests/usda/unit-runner.py --app build/test_lightusd` |
 | `usda-roundtrip-test` | USDA roundtrip corpus runner | `python3 tests/usda/roundtrip-runner.py --app build/usda_roundtrip` |
 | `usdc-roundtrip-test` | USDA -> USDC -> reparse corpus runner | `python3 tests/usda/usdc-roundtrip-runner.py --app build/usdc_roundtrip` |
-| `usdc-parser-unit-test` | Parser corpus runner | `python3 tests/usdc/unit-runner.py --app build/test_tinyusdz` |
+| `usdc-parser-unit-test` | Parser corpus runner | `python3 tests/usdc/unit-runner.py --app build/test_lightusd` |
 | `usdc-writer-diff-test` | USDC writer roundtrip diff (informational) | `python3 tests/usdc-writer/usdc-writer-runner.py ... --report-only` |
 | `feat-value-clip` | Feature test | `build/feat-value-clip` |
 | `feat-mtlx-parse`, `feat-mtlx-import`, `feat-mtlx-export` | Feature tests | `build/feat-mtlx-*` |
-| `feat-mtlx-grouped-params` | Feature test (needs `TINYUSDZ_WITH_JSON`) | `build/feat-mtlx-grouped-params` |
+| `feat-mtlx-grouped-params` | Feature test (needs `LIGHTUSD_WITH_JSON`) | `build/feat-mtlx-grouped-params` |
 | `feat-variant-converter`, `feat-variant-applier` | Feature tests | `build/feat-variant-*` |
 | `feat-subdiv` | Feature test (tinysubdiv) | `build/feat-subdiv` |
-| `feat-subdiv-verify` | Feature test (only when `TINYUSDZ_TSD_VERIFY_WITH_OSD`, label `osd-verify`) | `build/feat-subdiv-verify` |
+| `feat-subdiv-verify` | Feature test (only when `LIGHTUSD_TSD_VERIFY_WITH_OSD`, label `osd-verify`) | `build/feat-subdiv-verify` |
 | `bench-parse-opt` | Benchmark target (label `benchmark`) | `build/bench-parse-opt --quick` |
 | `bench-render-convert` | Stage→renderable-mesh conversion benchmark (label `benchmark`) | `build/bench-render-convert --iters 1 --prims 64` |
-| `bench-render-convert-next` | Same, + tydra-next pipeline (only when `TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
-| `unit-test-tinyusdz` | Acutest unit suite | `build/unit-test-tinyusdz` |
-| `mcp-test` | MCP server unit test (only when `TINYUSDZ_WITH_MCP_SERVER`) | `build/mcp-test` |
+| `bench-render-convert-next` | Same, + tydra-next pipeline (only when `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
+| `unit-test-lightusd` | Acutest unit suite | `build/unit-test-lightusd` |
+| `mcp-test` | MCP server unit test (only when `LIGHTUSD_WITH_MCP_SERVER`) | `build/mcp-test` |
 
-`usdc-parser-unit-test` is set to run after `unit-test-tinyusdz` (it globs `*-runtime.usdc` fixtures the unit suite generates).
+`usdc-parser-unit-test` is set to run after `unit-test-lightusd` (it globs `*-runtime.usdc` fixtures the unit suite generates).
 
 The `ctest` labels in use today are `benchmark`, `osd-verify`, and `tusdview`;
 the `textools` label exists only when the vendored textools upstream self-tests
-are explicitly enabled (`-DTINYUSDZ_BUILD_TEXTOOLS_TESTS=ON`, default OFF):
+are explicitly enabled (`-DLIGHTUSD_BUILD_TEXTOOLS_TESTS=ON`, default OFF):
 
 ```bash
 ctest --print-labels
@@ -341,7 +341,7 @@ ctest -N
 ctest --output-on-failure
 
 # Run just the Acutest suite
-ctest -R unit-test-tinyusdz --output-on-failure
+ctest -R unit-test-lightusd --output-on-failure
 
 # Run parser corpus tests only
 ctest -R 'parser-unit-test' --output-on-failure
@@ -443,7 +443,7 @@ runs of the same build must print the same hash.
 ```
 
 Report-only: never fails on timings. Threading follows the repo-wide
-`TINYUSDZ_ENABLE_THREAD` / `TINYUSDZ_NEXT_ENABLE_THREAD` CMake options
+`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_NEXT_ENABLE_THREAD` CMake options
 (default OFF = fully serial); without them the tool still runs and reports,
 just single-threaded.
 
@@ -473,7 +473,7 @@ Major source groups in `tests/unit/` (see `tests/unit/CMakeLists.txt` for the fu
 - Subdivision: `feat-subdiv` (tinysubdiv feature test under tests/feat/subdiv)
 - Physics / simulation: `unit-physics`, `unit-ik`, `unit-rb-collision`, `unit-rb-dynamics`
 - Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-tiny-hashmap`, `unit-handle-allocator`, `unit-ioutil`, `unit-pathutil`, `unit-pprint`
-- PXR compat API: `unit-pxr-compat-api` (conditionally compiled with `TINYUSDZ_WITH_PXR_COMPAT_API`)
+- PXR compat API: `unit-pxr-compat-api` (conditionally compiled with `LIGHTUSD_WITH_PXR_COMPAT_API`)
 - Array/time-samples dedup: `unit-dedup` (CrateWriter value dedup, cross-attribute timeSamples dedup, shared times arrays, default scalar dedup)
 
 The unit suite currently registers **~1,022 tests** (see `TEST_LIST` in
@@ -482,19 +482,19 @@ The unit suite currently registers **~1,022 tests** (see `TEST_LIST` in
 Run it directly:
 
 ```bash
-./build/unit-test-tinyusdz
+./build/unit-test-lightusd
 ```
 
 List individual Acutest cases:
 
 ```bash
-./build/unit-test-tinyusdz --list
+./build/unit-test-lightusd --list
 ```
 
 Run one case:
 
 ```bash
-./build/unit-test-tinyusdz crate_writer_cone_test
+./build/unit-test-lightusd crate_writer_cone_test
 ```
 
 Representative Tydra-related cases:
@@ -522,7 +522,7 @@ It exits nonzero when any success case fails to parse.
 
 ```bash
 python3 tests/usda/unit-runner.py \
-  --app ./build/test_tinyusdz \
+  --app ./build/test_lightusd \
   --basedir tests/usda
 ```
 
@@ -537,15 +537,15 @@ It exits nonzero when any success case fails, or when an expected-failure file p
 
 ```bash
 python3 tests/usdc/unit-runner.py \
-  --app ./build/test_tinyusdz \
+  --app ./build/test_lightusd \
   --basedir tests/usdc
 ```
 
 ### Standalone loader binary
 
-The parser runners above use `test_tinyusdz`, built from `tests/test-main.cc`.
+The parser runners above use `test_lightusd`, built from `tests/test-main.cc`.
 
-`test_tinyusdz`:
+`test_lightusd`:
 
 - dispatches by extension to `LoadUSDAFromFile`, `LoadUSDCFromFile`, `LoadUSDZFromFile`, or `LoadUSDFromFile`
 - returns success/failure based on the parser result
@@ -589,8 +589,8 @@ python3 tests/usda/usdc-roundtrip-runner.py \
 
 Pipeline per file:
 
-1. `tusdcat input.usda -o temp.usdc` — TinyUSDZ writes USDC
-2. `tusdcat temp.usdc -o temp_rt.usda` — TinyUSDZ reads USDC back as USDA
+1. `tusdcat input.usda -o temp.usdc` — LightUSD writes USDC
+2. `tusdcat temp.usdc -o temp_rt.usda` — LightUSD reads USDC back as USDA
 3. `tusddiff input.usda temp_rt.usda` — Layer-level diff of original vs roundtripped USDA
 
 The `ctest` target runs in `--report-only` mode (informational — always exits 0) because the USDC writer does not yet preserve all property and metadata details.
@@ -607,7 +607,7 @@ python3 tests/usdc-writer/usdc-writer-runner.py \
 
 ### tusddiff
 
-`tusddiff` is the Layer-level diff tool built from `tools/tusddiff/` (requires `-DTINYUSDZ_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
+`tusddiff` is the Layer-level diff tool built from `tools/tusddiff/` (requires `-DLIGHTUSD_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
 
 ```bash
 # Text diff
@@ -641,7 +641,7 @@ For `bench-parse-opt` specifically:
 
 Tydra is covered in two different ways.
 
-### Unit coverage inside `unit-test-tinyusdz`
+### Unit coverage inside `unit-test-lightusd`
 
 The Tydra unit sources are:
 
@@ -681,7 +681,7 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ### Experimental `next` library tests
 
-`next` (`src/next/`, library `tinyusdz_next`) is an **experimental, under-construction**
+`next` (`src/next/`, library `lightusd_next`) is an **experimental, under-construction**
 rewrite of the core with a new modular architecture. It is intentionally kept
 out of the main regression suite:
 
@@ -689,7 +689,7 @@ out of the main regression suite:
   `project()`), *not* added by the top-level `CMakeLists.txt`. The default
   `build/` therefore does not compile it, and none of its tests appear in the
   `build/` `ctest` run or the Pixar comparison runner.
-- Its tests are gated behind `TINYUSDZ_NEXT_BUILD_TESTS` (**OFF by default**).
+- Its tests are gated behind `LIGHTUSD_NEXT_BUILD_TESTS` (**OFF by default**).
 - Treat its results as informational only — **not** a merge/regression gate.
   Do not wire `next` into the full regression gate until the suite is hardened.
 
@@ -734,8 +734,8 @@ The equivalent manual commands are:
 ```bash
 # Configure the standalone next project with its tests enabled.
 cmake -S src/next -B build-next \
-  -DTINYUSDZ_NEXT_BUILD_TESTS=ON \
-  -DTINYUSDZ_NEXT_ENABLE_THREAD=ON \
+  -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+  -DLIGHTUSD_NEXT_ENABLE_THREAD=ON \
   -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
@@ -784,7 +784,7 @@ Several directories under `tests/feat/` contain standalone programs built via lo
 | `zstdusd/` | `test_zstd_usd.cc`, `compress_usda.cc` | Zstd-compressed USD read/write tools |
 | `nestedVariantSet/` | `test_variant_api.cpp` | Standalone variant API exerciser (the ctest-registered tests are `feat-variant-converter` and `feat-variant-applier`) |
 
-Some earlier standalone tests have been folded into the Acutest unit suite (`typed-array-view`, `typed-array-timesamples`, `value-view`). Their `tests/feat/` Makefiles still exist but the canonical coverage now lives in `unit-test-tinyusdz`.
+Some earlier standalone tests have been folded into the Acutest unit suite (`typed-array-view`, `typed-array-timesamples`, `value-view`). Their `tests/feat/` Makefiles still exist but the canonical coverage now lives in `unit-test-lightusd`.
 
 ### Feature fixture directories
 
@@ -810,7 +810,7 @@ only via its local Makefile, e.g. `test_nodegraph_export.cc`,
 
 Important current behavior:
 
-- it looks for `build_release/tusdcat`, not `build/test_tinyusdz`
+- it looks for `build_release/tusdcat`, not `build/test_lightusd`
 - it recursively scans a target tree for `.usd`, `.usda`, `.usdc`, and `.usdz`
 - it invokes `tusdcat -l <file>`
 - it supports `--timeout`
@@ -849,7 +849,7 @@ node tests/compare-usda.js \
 
 ## Python Bindings Test
 
-`tests/python/test_basic.py` contains pytest-based tests for the Python bindings module (`tinyusdz`). This is not integrated into `ctest` and requires the Python bindings to be built and installed separately.
+`tests/python/test_basic.py` contains pytest-based tests for the Python bindings module (`lightusd`). This is not integrated into `ctest` and requires the Python bindings to be built and installed separately.
 
 ```bash
 cd tests/python
@@ -871,13 +871,13 @@ ninja
 Examples from the current README:
 
 ```bash
-./fuzz_tinyusdz -max_len=128m
+./fuzz_lightusd -max_len=128m
 ./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
 ```
 
 Relevant fuzz entry points include:
 
-- `tinyusdz_fuzzmain.cc`
+- `lightusd_fuzzmain.cc`
 - `usdaparser_fuzzmain.cc`
 - `usdcparser_fuzzmain.cc`
 - `lz4_decompress_fuzzmain.cc`
@@ -890,11 +890,11 @@ Relevant fuzz entry points include:
 1. Declare the test function in the corresponding `tests/unit/unit-*.h` header.
 2. Implement it in the matching `tests/unit/unit-*.cc` file with `TEST_CHECK` or `TEST_ASSERT`.
 3. Register it in `tests/unit/unit-main.cc`.
-4. Rebuild and run `ctest -R unit-test-tinyusdz --output-on-failure`.
+4. Rebuild and run `ctest -R unit-test-lightusd --output-on-failure`.
 
 ### Add a new `ctest` target
 
-1. Add the executable in the top-level `CMakeLists.txt` under `if(TINYUSDZ_BUILD_TESTS)`.
+1. Add the executable in the top-level `CMakeLists.txt` under `if(LIGHTUSD_BUILD_TESTS)`.
 2. Register it with `add_test(...)`.
 3. If it is a benchmark, label it consistently, as `bench-parse-opt` already does with `LABELS "benchmark"`.
 
@@ -947,4 +947,4 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
-- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
+- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).

@@ -18,7 +18,7 @@
 
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace spatial {
 
@@ -46,11 +46,11 @@ inline uint32_t morton3D(uint32_t x, uint32_t y, uint32_t z) {
     x = std::min(x, uint32_t(0x3FF));
     y = std::min(y, uint32_t(0x3FF));
     z = std::min(z, uint32_t(0x3FF));
-    
+
     uint32_t xx = expandBits(x);
     uint32_t yy = expandBits(y);
     uint32_t zz = expandBits(z);
-    
+
     return (xx << 2) | (yy << 1) | zz;
 }
 
@@ -78,11 +78,11 @@ inline uint64_t morton3D64(uint32_t x, uint32_t y, uint32_t z) {
     x = std::min(x, uint32_t(0x1FFFFF));
     y = std::min(y, uint32_t(0x1FFFFF));
     z = std::min(z, uint32_t(0x1FFFFF));
-    
+
     uint64_t xx = expandBits64(x);
     uint64_t yy = expandBits64(y);
     uint64_t zz = expandBits64(z);
-    
+
     return (xx << 2) | (yy << 1) | zz;
 }
 
@@ -96,12 +96,12 @@ inline void decodeMorton3D64(uint64_t code, uint32_t& x, uint32_t& y, uint32_t& 
 
 // Helper function to compute grid coordinates
 template <typename T>
-inline void computeGridCoords(const T pos[3], const T origin[3], T cellSize, 
+inline void computeGridCoords(const T pos[3], const T origin[3], T cellSize,
                               uint32_t& gx, uint32_t& gy, uint32_t& gz) {
     T dx = pos[0] - origin[0];
     T dy = pos[1] - origin[1];
     T dz = pos[2] - origin[2];
-    
+
     gx = static_cast<uint32_t>(std::max(T(0), dx / cellSize));
     gy = static_cast<uint32_t>(std::max(T(0), dy / cellSize));
     gz = static_cast<uint32_t>(std::max(T(0), dz / cellSize));
@@ -138,7 +138,7 @@ public:
         value::float3 color;
         float opacity;
         uint32_t id;
-        
+
         Vertex() : id(0), opacity(0.0f) {
             position = {0, 0, 0};
             normal = {0, 0, 0};
@@ -149,21 +149,21 @@ public:
             color = {0, 0, 0};
         }
     };
-    
+
     struct Cell {
         std::vector<uint32_t> indices;
         std::unique_ptr<VertexSpatialHashGrid> subcell;
         uint32_t level = 0;
     };
-    
+
     struct SearchResult {
         uint32_t vertexId;
         T distanceSquared;
     };
-    
+
     // Function type for custom similarity checking
     using SimilarityFunc = std::function<bool(const Vertex&, const Vertex&, T)>;
-    
+
 protected:
     std::vector<Vertex> vertices_;
     std::unordered_map<uint64_t, Cell> grid_;
@@ -175,16 +175,16 @@ protected:
     uint32_t maxItemsPerCell_;
     uint32_t currentLevel_;
     uint32_t maxLevel_;
-    
+
     std::vector<std::pair<uint64_t, uint32_t>> sortedEntries_;
     bool needsRebuild_ = true;
-    
+
 public:
-    VertexSpatialHashGrid(T cellSize = 0.01f, 
+    VertexSpatialHashGrid(T cellSize = 0.01f,
                          T positionEps = 1e-6f,
                          T attributeEps = 1e-3f,
-                         uint32_t maxItemsPerCell = 128, 
-                         uint32_t level = 0, 
+                         uint32_t maxItemsPerCell = 128,
+                         uint32_t level = 0,
                          uint32_t maxLevel = 5)
         : cellSize_(cellSize),
           positionEpsilon_(positionEps),
@@ -195,39 +195,39 @@ public:
         origin_[0] = origin_[1] = origin_[2] = (std::numeric_limits<T>::max)();
         bounds_[0] = bounds_[1] = bounds_[2] = std::numeric_limits<T>::lowest();
     }
-    
+
     void addVertex(const Vertex& vertex) {
         vertices_.push_back(vertex);
-        
+
         origin_[0] = std::min(origin_[0], static_cast<T>(vertex.position[0]));
         origin_[1] = std::min(origin_[1], static_cast<T>(vertex.position[1]));
         origin_[2] = std::min(origin_[2], static_cast<T>(vertex.position[2]));
-        
+
         bounds_[0] = std::max(bounds_[0], static_cast<T>(vertex.position[0]));
         bounds_[1] = std::max(bounds_[1], static_cast<T>(vertex.position[1]));
         bounds_[2] = std::max(bounds_[2], static_cast<T>(vertex.position[2]));
-        
+
         needsRebuild_ = true;
     }
-    
+
     void reserveVertices(size_t count) {
         vertices_.reserve(count);
     }
-    
+
     void build() {
         if (!needsRebuild_ || vertices_.empty()) return;
-        
+
         grid_.clear();
         sortedEntries_.clear();
         sortedEntries_.reserve(vertices_.size());
-        
+
         // Extend origin slightly to handle boundary cases
         T extendedOrigin[3] = {
             origin_[0] - cellSize_,
             origin_[1] - cellSize_,
             origin_[2] - cellSize_
         };
-        
+
         // Compute Morton codes for all vertices
         for (size_t i = 0; i < vertices_.size(); ++i) {
             const auto& v = vertices_[i];
@@ -238,19 +238,19 @@ public:
                 static_cast<T>(v.position[2])
             };
             computeGridCoords(pos, extendedOrigin, cellSize_, gx, gy, gz);
-            
+
             uint64_t mortonCode = morton::morton3D64(gx, gy, gz);
             sortedEntries_.emplace_back(mortonCode, static_cast<uint32_t>(i));
         }
-        
+
         // Sort by Morton code for cache-friendly access
         std::sort(sortedEntries_.begin(), sortedEntries_.end());
-        
+
         // Build grid cells
         for (const auto& entry : sortedEntries_) {
             grid_[entry.first].indices.push_back(entry.second);
         }
-        
+
         // Subdivide large cells if needed
         if (currentLevel_ < maxLevel_) {
             for (auto& gridEntry : grid_) {
@@ -259,30 +259,30 @@ public:
                 }
             }
         }
-        
+
         needsRebuild_ = false;
     }
-    
+
     // Find similar vertices using position and attribute comparison
     std::vector<SearchResult> findSimilarVertices(const Vertex& queryVertex,
                                                   T searchRadius = -1.0f) {
         if (needsRebuild_) build();
-        
+
         std::vector<SearchResult> results;
-        
+
         // Use position epsilon as search radius if not specified
         if (searchRadius < 0) {
             searchRadius = positionEpsilon_;
         }
-        
+
         T searchRadiusSq = searchRadius * searchRadius;
-        
+
         T extendedOrigin[3] = {
             origin_[0] - cellSize_,
             origin_[1] - cellSize_,
             origin_[2] - cellSize_
         };
-        
+
         uint32_t gx, gy, gz;
         T pos[3] = {
             static_cast<T>(queryVertex.position[0]),
@@ -290,50 +290,50 @@ public:
             static_cast<T>(queryVertex.position[2])
         };
         computeGridCoords(pos, extendedOrigin, cellSize_, gx, gy, gz);
-        
+
         // Search in 27-neighborhood
         static const auto neighborOffsets = getNeighborOffsets();
-        
+
         for (const auto& offset : neighborOffsets) {
             int nx = static_cast<int>(gx) + offset[0];
             int ny = static_cast<int>(gy) + offset[1];
             int nz = static_cast<int>(gz) + offset[2];
-            
+
             if (nx < 0 || ny < 0 || nz < 0) continue;
-            
+
             uint64_t neighborCode = morton::morton3D64(
                 static_cast<uint32_t>(nx),
                 static_cast<uint32_t>(ny),
                 static_cast<uint32_t>(nz)
             );
-            
+
             auto it = grid_.find(neighborCode);
             if (it != grid_.end()) {
                 searchInCell(it->second, queryVertex, searchRadiusSq, results);
             }
         }
-        
+
         // Sort results by distance
-        std::sort(results.begin(), results.end(), 
+        std::sort(results.begin(), results.end(),
                  [](const SearchResult& a, const SearchResult& b) {
                      return a.distanceSquared < b.distanceSquared;
                  });
-        
+
         return results;
     }
-    
+
     // Find exact match considering epsilon for all attributes
     bool findExactVertex(const Vertex& queryVertex, uint32_t& outId) {
         auto results = findSimilarVertices(queryVertex, positionEpsilon_);
-        
+
         for (const auto& r : results) {
             const auto& v = vertices_[r.vertexId];
-            
+
             // Check position with position epsilon
             if (!float3_equal(v.position, queryVertex.position, positionEpsilon_)) {
                 continue;
             }
-            
+
             // Check other attributes with attribute epsilon
             if (!float3_equal(v.normal, queryVertex.normal, attributeEpsilon_)) continue;
             if (!float2_equal(v.uv0, queryVertex.uv0, attributeEpsilon_)) continue;
@@ -342,14 +342,14 @@ public:
             if (!float3_equal(v.binormal, queryVertex.binormal, attributeEpsilon_)) continue;
             if (!float3_equal(v.color, queryVertex.color, attributeEpsilon_)) continue;
             if (!float_equal(v.opacity, queryVertex.opacity, attributeEpsilon_)) continue;
-            
+
             outId = v.id;
             return true;
         }
-        
+
         return false;
     }
-    
+
     void clear() {
         vertices_.clear();
         grid_.clear();
@@ -358,20 +358,20 @@ public:
         bounds_[0] = bounds_[1] = bounds_[2] = std::numeric_limits<T>::lowest();
         needsRebuild_ = true;
     }
-    
+
     size_t getVertexCount() const { return vertices_.size(); }
     size_t getCellCount() const { return grid_.size(); }
     T getCellSize() const { return cellSize_; }
-    
+
     const Vertex& getVertex(uint32_t idx) const { return vertices_[idx]; }
-    
-    void getStatistics(size_t& totalCells, size_t& maxCellSize, 
+
+    void getStatistics(size_t& totalCells, size_t& maxCellSize,
                       size_t& avgCellSize, size_t& subdivisionCount) const {
         totalCells = grid_.size();
         maxCellSize = 0;
         size_t totalItems = 0;
         subdivisionCount = 0;
-        
+
         for (const auto& gridEntry : grid_) {
             const auto& cell = gridEntry.second;
             size_t cellItemCount = cell.indices.size();
@@ -384,52 +384,52 @@ public:
             maxCellSize = std::max(maxCellSize, cellItemCount);
             totalItems += cellItemCount;
         }
-        
+
         avgCellSize = totalCells > 0 ? totalItems / totalCells : 0;
     }
-    
+
 private:
     void subdivideCell(uint64_t mortonCode, Cell& cell) {
         uint32_t x, y, z;
         morton::decodeMorton3D64(mortonCode, x, y, z);
-        
+
         T subcellSize = cellSize_ / 2.0f;
         cell.subcell = std::make_unique<VertexSpatialHashGrid>(
             subcellSize, positionEpsilon_, attributeEpsilon_,
             maxItemsPerCell_, currentLevel_ + 1, maxLevel_
         );
-        
+
         T extendedOrigin[3] = {
             origin_[0] - cellSize_,
             origin_[1] - cellSize_,
             origin_[2] - cellSize_
         };
-        
+
         T cellOrigin[3] = {
             extendedOrigin[0] + x * cellSize_,
             extendedOrigin[1] + y * cellSize_,
             extendedOrigin[2] + z * cellSize_
         };
-        
+
         cell.subcell->origin_[0] = cellOrigin[0];
         cell.subcell->origin_[1] = cellOrigin[1];
         cell.subcell->origin_[2] = cellOrigin[2];
-        
+
         cell.subcell->bounds_[0] = cellOrigin[0] + cellSize_;
         cell.subcell->bounds_[1] = cellOrigin[1] + cellSize_;
         cell.subcell->bounds_[2] = cellOrigin[2] + cellSize_;
-        
+
         // Transfer vertices to subcell
         for (uint32_t idx : cell.indices) {
             cell.subcell->vertices_.push_back(vertices_[idx]);
         }
-        
+
         cell.subcell->build();
-        
+
         cell.indices.clear();
         cell.level = currentLevel_ + 1;
     }
-    
+
     void searchInCell(const Cell& cell, const Vertex& queryVertex, T searchRadiusSq,
                      std::vector<SearchResult>& results) {
         if (cell.subcell) {
@@ -444,31 +444,31 @@ private:
                 T dy = v.position[1] - queryVertex.position[1];
                 T dz = v.position[2] - queryVertex.position[2];
                 T distSq = dx*dx + dy*dy + dz*dz;
-                
+
                 if (distSq <= searchRadiusSq) {
                     results.push_back({v.id, distSq});
                 }
             }
         }
     }
-    
+
     // Helper comparison functions (same as in render-data.hh)
     bool float_equal(float a, float b, float eps) const {
         return std::abs(a - b) <= eps;
     }
-    
+
     bool float2_equal(const value::float2& a, const value::float2& b, float eps) const {
         return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps);
     }
-    
+
     bool float3_equal(const value::float3& a, const value::float3& b, float eps) const {
-        return float_equal(a[0], b[0], eps) && 
-               float_equal(a[1], b[1], eps) && 
+        return float_equal(a[0], b[0], eps) &&
+               float_equal(a[1], b[1], eps) &&
                float_equal(a[2], b[2], eps);
     }
 };
 
 } // namespace spatial
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 

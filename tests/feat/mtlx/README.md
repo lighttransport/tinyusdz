@@ -1,16 +1,16 @@
 # MaterialX Export Feature Tests
 
-This directory contains tests for the MaterialX XML export functionality in TinyUSDZ.
+This directory contains tests for the MaterialX XML export functionality in LightUSD.
 
 ## Overview
 
-The MaterialX export feature allows converting TinyUSDZ materials (particularly OpenPBR Surface Shader) to MaterialX 1.38 XML format, which is compatible with Three.js WebGPU renderer and other MaterialX-compliant renderers.
+The MaterialX export feature allows converting LightUSD materials (particularly OpenPBR Surface Shader) to MaterialX 1.38 XML format, which is compatible with Three.js WebGPU renderer and other MaterialX-compliant renderers.
 
 ## Building and Running Tests
 
 ### Prerequisites
 
-1. Build the main TinyUSDZ library first:
+1. Build the main LightUSD library first:
    ```bash
    cd ../../../
    mkdir -p build && cd build

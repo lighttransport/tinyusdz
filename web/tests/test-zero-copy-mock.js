@@ -2,7 +2,7 @@
 
 /**
  * Mock test for setAssetFromRawPointer method - Zero-Copy Uint8Array Transfer
- * 
+ *
  * This test demonstrates how the new zero-copy method works with raw pointers
  * to avoid copying data when transferring Uint8Array from JavaScript to C++.
  */
@@ -33,26 +33,26 @@ class MockEMAssetResolver {
     if (size === 0) {
       return false;
     }
-    
+
     // Simulate reading directly from heap without intermediate copying
     console.log(`  📍 Reading ${size} bytes directly from heap address ${dataPtr}`);
-    
+
     // In real WebAssembly, this would be:
     // const uint8_t* data = reinterpret_cast<const uint8_t*>(dataPtr);
     // Here we simulate it by reading from our mock heap
     const startOffset = dataPtr % this.heapView.length;
     const data = this.heapView.subarray(startOffset, startOffset + size);
-    
+
     // Only copy once into storage format (unavoidable for persistence)
     // Store as binary data directly to avoid string conversion issues
     const binaryData = new Uint8Array(data);
-    
+
     const overwritten = this.cache.has(assetName);
     this.cache.set(assetName, {
       binary: binaryData,
       sha256_hash: 'mock-hash-' + assetName
     });
-    
+
     console.log(`  ✓ Asset stored with zero-copy read, single storage copy`);
     return overwritten;
   }
@@ -83,8 +83,8 @@ class MockEMAssetResolver {
   }
 }
 
-// Mock TinyUSDZLoaderNative with zero-copy support
-class MockTinyUSDZLoaderNative {
+// Mock LightUSDLoaderNative with zero-copy support
+class MockLightUSDLoaderNative {
   constructor() {
     this.em_resolver_ = new MockEMAssetResolver();
   }
@@ -109,7 +109,7 @@ class MockTinyUSDZLoaderNative {
   // Helper method to simulate JavaScript side pointer calculation
   simulateGetPointerFromUint8Array(uint8Array) {
     // In real JavaScript with Emscripten, this would be:
-    // const dataPtr = Module.HEAPU8.subarray(uint8Array.byteOffset, 
+    // const dataPtr = Module.HEAPU8.subarray(uint8Array.byteOffset,
     //                   uint8Array.byteOffset + uint8Array.byteLength).byteOffset;
     return this.em_resolver_.simulateHeapAllocation(uint8Array);
   }
@@ -117,10 +117,10 @@ class MockTinyUSDZLoaderNative {
 
 function runZeroCopyTest() {
   console.log('Running zero-copy mock test...\n');
-  
+
   try {
     // Create mock loader
-    const loader = new MockTinyUSDZLoaderNative();
+    const loader = new MockLightUSDLoaderNative();
     console.log('✓ Mock loader with zero-copy support created');
 
     // Create test data
@@ -134,7 +134,7 @@ function runZeroCopyTest() {
     // Traditional method (for comparison)
     console.log('\n📊 Comparison: Traditional vs Zero-Copy');
     console.log('─'.repeat(50));
-    
+
     const traditionalAssetName = 'traditional-asset.bin';
     console.log('🔄 Traditional method (setAsset):');
     console.log('  1. JavaScript Uint8Array → String conversion (copy #1)');
@@ -168,7 +168,7 @@ function runZeroCopyTest() {
     if (!retrievedView) {
       throw new Error('Should be able to retrieve stored data');
     }
-    
+
     if (retrievedView.length !== largeData.length) {
       throw new Error(`Size mismatch: expected ${largeData.length}, got ${retrievedView.length}`);
     }
@@ -222,7 +222,7 @@ const uint8Array = new Uint8Array(arrayBuffer);
 // Zero-copy transfer to C++
 // Method 1: Direct heap access (most efficient)
 const dataPtr = Module.HEAPU8.subarray(
-  uint8Array.byteOffset, 
+  uint8Array.byteOffset,
   uint8Array.byteOffset + uint8Array.byteLength
 ).byteOffset;
 const success = loader.setAssetFromRawPointer('texture.jpg', dataPtr, uint8Array.length);

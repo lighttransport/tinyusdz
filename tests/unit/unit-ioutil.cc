@@ -8,7 +8,7 @@
 #include "unit-ioutil.h"
 #include "io-util.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void ioutil_test(void) {
   {

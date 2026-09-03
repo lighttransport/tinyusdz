@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "image-types.hh"
 #include "image-loader.hh"
 #include "image-writer.hh"
@@ -32,14 +32,14 @@
 
 namespace {
 
-tinyusdz::Image MakeSolidImage(int w, int h, int channels, uint8_t r, uint8_t g,
+lightusd::Image MakeSolidImage(int w, int h, int channels, uint8_t r, uint8_t g,
                                uint8_t b, uint8_t a) {
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = w;
   img.height = h;
   img.channels = channels;
   img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data.resize(size_t(w) * size_t(h) * size_t(channels));
   for (int i = 0; i < w * h; i++) {
     uint8_t px[4] = {r, g, b, a};
@@ -51,10 +51,10 @@ tinyusdz::Image MakeSolidImage(int w, int h, int channels, uint8_t r, uint8_t g,
 }
 
 // Deterministic high-entropy image so PNG/JPEG sizes are non-trivial.
-tinyusdz::Image MakeNoisyImage(int w, int h, int channels) {
-  tinyusdz::Image img;
+lightusd::Image MakeNoisyImage(int w, int h, int channels) {
+  lightusd::Image img;
   img.width = w; img.height = h; img.channels = channels; img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data.resize(size_t(w) * size_t(h) * size_t(channels));
   uint32_t s = 0x12345678u;
   for (auto &b : img.data) {
@@ -64,25 +64,25 @@ tinyusdz::Image MakeNoisyImage(int w, int h, int channels) {
   return img;
 }
 
-std::vector<uint8_t> EncodePNG(const tinyusdz::Image &img) {
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::PNG;
-  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+std::vector<uint8_t> EncodePNG(const lightusd::Image &img) {
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::PNG;
+  auto enc = lightusd::image::WriteImageToMemory(img, wopt);
   return enc ? enc.value() : std::vector<uint8_t>{};
 }
 
 std::string TempDir() {
   const std::string base =
-      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tusdzconvert_test");
-  tinyusdz::io::CreateDirectories(base);
+      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "tusdzconvert_test");
+  lightusd::io::CreateDirectories(base);
   return base;
 }
 
 std::string TestFixturePath(const std::string &rel) {
-  if (const char *root = std::getenv("TINYUSDZ_TEST_FIXTURE_DIR")) {
+  if (const char *root = std::getenv("LIGHTUSD_TEST_FIXTURE_DIR")) {
     if (*root != '\0') {
-      const std::string candidate = tinyusdz::io::JoinPath(root, rel);
-      if (tinyusdz::io::FileExists(candidate)) return candidate;
+      const std::string candidate = lightusd::io::JoinPath(root, rel);
+      if (lightusd::io::FileExists(candidate)) return candidate;
     }
   }
 
@@ -93,10 +93,10 @@ std::string TestFixturePath(const std::string &rel) {
   // the same relative path works everywhere.
   std::string candidate = rel;
   for (int depth = 0; depth < 8; ++depth) {
-    if (tinyusdz::io::FileExists(candidate)) {
+    if (lightusd::io::FileExists(candidate)) {
       return candidate;
     }
-    candidate = tinyusdz::io::JoinPath("..", candidate);
+    candidate = lightusd::io::JoinPath("..", candidate);
   }
   return rel;
 }
@@ -104,29 +104,29 @@ std::string TestFixturePath(const std::string &rel) {
 bool CopyFile(const std::string &src, const std::string &dst) {
   std::vector<uint8_t> bytes;
   std::string ioerr;
-  if (!tinyusdz::io::ReadWholeFile(&bytes, &ioerr, src, 0)) {
+  if (!lightusd::io::ReadWholeFile(&bytes, &ioerr, src, 0)) {
     return false;
   }
-  return tinyusdz::io::WriteWholeFile(dst, bytes.data(), bytes.size(), &ioerr);
+  return lightusd::io::WriteWholeFile(dst, bytes.data(), bytes.size(), &ioerr);
 }
 
-bool WritePNG(const std::string &path, const tinyusdz::Image &img) {
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::PNG;
-  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+bool WritePNG(const std::string &path, const lightusd::Image &img) {
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::PNG;
+  auto enc = lightusd::image::WriteImageToMemory(img, wopt);
   if (!enc) {
     return false;
   }
   std::string werr;
-  return tinyusdz::io::WriteWholeFile(path, enc.value().data(),
+  return lightusd::io::WriteWholeFile(path, enc.value().data(),
                                       enc.value().size(), &werr);
 }
 
-size_t CountAggregateFaces(const tinyusdz::Layer &layer) {
-  using namespace tinyusdz;
+size_t CountAggregateFaces(const lightusd::Layer &layer) {
+  using namespace lightusd;
   const PrimSpec *root = nullptr;
   std::string err;
-  if (!layer.find_primspec_at(Path("/__TinyUSDZ_MeshMerge", ""), &root,
+  if (!layer.find_primspec_at(Path("/__LightUSD_MeshMerge", ""), &root,
                               &err) ||
       !root) {
     return 0;
@@ -145,11 +145,11 @@ size_t CountAggregateFaces(const tinyusdz::Layer &layer) {
   return total;
 }
 
-size_t CountAggregateMeshes(const tinyusdz::Layer &layer) {
-  using namespace tinyusdz;
+size_t CountAggregateMeshes(const lightusd::Layer &layer) {
+  using namespace lightusd;
   const PrimSpec *root = nullptr;
   std::string err;
-  if (!layer.find_primspec_at(Path("/__TinyUSDZ_MeshMerge", ""), &root,
+  if (!layer.find_primspec_at(Path("/__LightUSD_MeshMerge", ""), &root,
                               &err) ||
       !root) {
     return 0;
@@ -180,7 +180,7 @@ bool WriteMinimalUSDA(const std::string &path) {
       "{\n"
       "}\n";
   std::string werr;
-  return tinyusdz::io::WriteWholeFile(
+  return lightusd::io::WriteWholeFile(
       path, reinterpret_cast<const unsigned char *>(usda.data()), usda.size(),
       &werr);
 }
@@ -213,7 +213,7 @@ bool WriteTexturedUSDA(const std::string &path, const std::string &texture_path)
       "    }\n"
       "}\n";
   std::string werr;
-  return tinyusdz::io::WriteWholeFile(
+  return lightusd::io::WriteWholeFile(
       path, reinterpret_cast<const unsigned char *>(usda.data()), usda.size(),
       &werr);
 }
@@ -253,19 +253,19 @@ bool WriteTwoTexturedUSDA(const std::string &path, const std::string &tex0,
       "    }\n"
       "}\n";
   std::string werr;
-  return tinyusdz::io::WriteWholeFile(
+  return lightusd::io::WriteWholeFile(
       path, reinterpret_cast<const unsigned char *>(usda.data()), usda.size(),
       &werr);
 }
 
-bool FindTextureFilePath(const tinyusdz::Prim &prim, std::string *out) {
-  const tinyusdz::Shader *shd = prim.as<tinyusdz::Shader>();
+bool FindTextureFilePath(const lightusd::Prim &prim, std::string *out) {
+  const lightusd::Shader *shd = prim.as<lightusd::Shader>();
   if (shd && shd->info_id == "UsdUVTexture") {
-    const tinyusdz::UsdUVTexture *tex = shd->value.as<tinyusdz::UsdUVTexture>();
+    const lightusd::UsdUVTexture *tex = shd->value.as<lightusd::UsdUVTexture>();
     if (tex) {
       const auto av = tex->file.get_value();
       if (av && av.value().is_scalar()) {
-        tinyusdz::value::AssetPath ap;
+        lightusd::value::AssetPath ap;
         if (av.value().get_scalar(&ap)) {
           *out = ap.GetAssetPath();
           return true;
@@ -281,7 +281,7 @@ bool FindTextureFilePath(const tinyusdz::Prim &prim, std::string *out) {
   return false;
 }
 
-bool FindTextureFilePath(const tinyusdz::Stage &stage, std::string *out) {
+bool FindTextureFilePath(const lightusd::Stage &stage, std::string *out) {
   for (const auto &prim : stage.root_prims()) {
     if (FindTextureFilePath(prim, out)) {
       return true;
@@ -310,7 +310,7 @@ std::string FirstUSDZEntryName(const std::vector<uint8_t> &data) {
 
 // fpnge/fpng PNG encode -> decode roundtrip preserves pixels.
 void usdz_convert_png_roundtrip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Image img = MakeSolidImage(16, 12, 4, 10, 20, 30, 40);
   // Add a varying pixel to avoid trivial all-same encoding.
@@ -349,7 +349,7 @@ void usdz_convert_png_roundtrip_test(void) {
 
 // ResizeImage downsamples and preserves channel count.
 void usdz_convert_resize_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Image img = MakeSolidImage(8, 8, 4, 50, 60, 70, 255);
   Image out;
@@ -374,7 +374,7 @@ void usdz_convert_resize_test(void) {
 
 // PackChannels merges two single-source images into R/G.
 void usdz_convert_pack_channels_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Image red = MakeSolidImage(4, 4, 1, 111, 0, 0, 0);    // 1ch value 111
   Image grn = MakeSolidImage(4, 4, 1, 222, 0, 0, 0);    // 1ch value 222
@@ -410,7 +410,7 @@ void usdz_convert_pack_channels_test(void) {
 // Empty ORM inputs should produce a scalar fallback texture. Missing maps are
 // represented with empty buffers and zero channels by callers.
 void usdz_convert_orm_scalar_fallback_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   std::vector<uint8_t> out;
   size_t out_w = 0;
@@ -434,7 +434,7 @@ void usdz_convert_orm_scalar_fallback_test(void) {
 }
 
 void usdz_convert_orm_scalar_nonfinite_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   std::vector<uint8_t> out;
   size_t out_w = 0;
@@ -460,17 +460,17 @@ void usdz_convert_orm_scalar_nonfinite_test(void) {
 }
 
 void usdz_convert_archive_collision_name_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string a_dir = tinyusdz::io::JoinPath(dir, "collision_a");
-  const std::string b_dir = tinyusdz::io::JoinPath(dir, "collision_b");
-  tinyusdz::io::CreateDirectories(a_dir);
-  tinyusdz::io::CreateDirectories(b_dir);
-  const std::string tex_a = tinyusdz::io::JoinPath(a_dir, "same.png");
-  const std::string tex_b = tinyusdz::io::JoinPath(b_dir, "same.png");
-  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene_collision.usda");
-  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out_collision.usdz");
+  const std::string a_dir = lightusd::io::JoinPath(dir, "collision_a");
+  const std::string b_dir = lightusd::io::JoinPath(dir, "collision_b");
+  lightusd::io::CreateDirectories(a_dir);
+  lightusd::io::CreateDirectories(b_dir);
+  const std::string tex_a = lightusd::io::JoinPath(a_dir, "same.png");
+  const std::string tex_b = lightusd::io::JoinPath(b_dir, "same.png");
+  const std::string usda_path = lightusd::io::JoinPath(dir, "scene_collision.usda");
+  const std::string usdz_path = lightusd::io::JoinPath(dir, "out_collision.usdz");
 
   auto write_png = [](const std::string &path, const Image &img) -> bool {
     image::WriteOption wopt;
@@ -513,7 +513,7 @@ void usdz_convert_archive_collision_name_test(void) {
 
 // FitTexturesToBudget shrinks a set of textures to a tight byte budget.
 void usdz_convert_fit_budget_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   std::vector<tydra::FitTextureInput> inputs;
   for (auto dim : {256, 512, 128}) {
@@ -577,12 +577,12 @@ void usdz_convert_fit_budget_test(void) {
 
 // End-to-end: USDA + on-disk PNG -> resized/re-encoded -> USDZ (validated).
 void usdz_convert_pipeline_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string png_path = tinyusdz::io::JoinPath(dir, "tex.png");
-  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene.usda");
-  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out.usdz");
+  const std::string png_path = lightusd::io::JoinPath(dir, "tex.png");
+  const std::string usda_path = lightusd::io::JoinPath(dir, "scene.usda");
+  const std::string usdz_path = lightusd::io::JoinPath(dir, "out.usdz");
 
   // 1) Write a 64x64 PNG texture on disk.
   Image tex = MakeSolidImage(64, 64, 4, 200, 150, 100, 255);
@@ -674,7 +674,7 @@ void usdz_convert_pipeline_test(void) {
     return;
   }
   std::string vwarn, verr;
-  bool valid = tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
+  bool valid = lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
                                       &vwarn, &verr);
   TEST_CHECK(valid);
   if (!valid) {
@@ -683,10 +683,10 @@ void usdz_convert_pipeline_test(void) {
 }
 
 void usdz_convert_flat_output_size_stats_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string usda_path = tinyusdz::io::JoinPath(dir, "flat_stats.usda");
+  const std::string usda_path = lightusd::io::JoinPath(dir, "flat_stats.usda");
   TEST_CHECK(WriteMinimalUSDA(usda_path));
 
   const struct {
@@ -700,7 +700,7 @@ void usdz_convert_flat_output_size_stats_test(void) {
   for (const auto &tc : cases) {
     usdz::UsdzConvertOptions opts;
     opts.inputs.push_back(usda_path);
-    opts.output = tinyusdz::io::JoinPath(dir, tc.filename);
+    opts.output = lightusd::io::JoinPath(dir, tc.filename);
     opts.output_format = tc.format;
     opts.flatten = true;
 
@@ -720,14 +720,14 @@ void usdz_convert_flat_output_size_stats_test(void) {
 }
 
 void usdz_convert_usdz_root_layer_format_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string png_path = tinyusdz::io::JoinPath(dir, "root_format_tex.png");
+  const std::string png_path = lightusd::io::JoinPath(dir, "root_format_tex.png");
   const std::string usda_path =
-      tinyusdz::io::JoinPath(dir, "root_format_scene.usda");
+      lightusd::io::JoinPath(dir, "root_format_scene.usda");
   const std::string usdz_path =
-      tinyusdz::io::JoinPath(dir, "root_format_out.usdz");
+      lightusd::io::JoinPath(dir, "root_format_out.usdz");
 
   {
     Image tex = MakeSolidImage(4, 4, 4, 20, 40, 60, 255);
@@ -779,14 +779,14 @@ void usdz_convert_usdz_root_layer_format_test(void) {
 }
 
 void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string png_path = tinyusdz::io::JoinPath(dir, "arkit_tex.png");
+  const std::string png_path = lightusd::io::JoinPath(dir, "arkit_tex.png");
   const std::string usda_path =
-      tinyusdz::io::JoinPath(dir, "arkit_scene.usda");
+      lightusd::io::JoinPath(dir, "arkit_scene.usda");
   const std::string usdz_path =
-      tinyusdz::io::JoinPath(dir, "arkit_out.usdz");
+      lightusd::io::JoinPath(dir, "arkit_out.usdz");
 
   {
     Image tex = MakeSolidImage(4, 4, 4, 80, 90, 100, 255);
@@ -837,12 +837,12 @@ void usdz_convert_arkit_forces_flattened_usdc_root_test(void) {
 
 // Standalone RepackTextureFiles: two grayscale PNGs -> packed RG image.
 void usdz_convert_repack_files_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string a_path = tinyusdz::io::JoinPath(dir, "gloss.png");
-  const std::string b_path = tinyusdz::io::JoinPath(dir, "rough.png");
-  const std::string out_path = tinyusdz::io::JoinPath(dir, "packed.png");
+  const std::string a_path = lightusd::io::JoinPath(dir, "gloss.png");
+  const std::string b_path = lightusd::io::JoinPath(dir, "rough.png");
+  const std::string out_path = lightusd::io::JoinPath(dir, "packed.png");
 
   auto write_png = [](const std::string &path, const Image &img) -> bool {
     image::WriteOption wopt;
@@ -892,7 +892,7 @@ void usdz_convert_repack_files_test(void) {
 
 // JPEG encode -> decode roundtrip preserves approximate pixel values.
 void usdz_convert_jpeg_roundtrip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   // Use a solid-color image (JPEG is lossy, so avoid exact pixel comparisons
   // for high-frequency content).
@@ -936,7 +936,7 @@ void usdz_convert_jpeg_roundtrip_test(void) {
 
 // RemapTextureAssetPaths handles an empty stage gracefully (returns 0).
 void usdz_convert_remap_asset_paths_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Stage stage;
   std::map<std::string, std::string> remap;
@@ -948,15 +948,15 @@ void usdz_convert_remap_asset_paths_test(void) {
 }
 
 void usdz_convert_regression_texture_remap_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
-  const std::string dir = tinyusdz::io::JoinPath(TempDir(), "regression_remap");
-  tinyusdz::io::CreateDirectories(dir);
+  const std::string dir = lightusd::io::JoinPath(TempDir(), "regression_remap");
+  lightusd::io::CreateDirectories(dir);
   const std::string src_fixture = TestFixturePath(
       "tests/unit/fixtures/usdzconvert-regression-textured-two-materials.usda");
-  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene.usda");
-  const std::string png_path = tinyusdz::io::JoinPath(dir, "Texture.png");
-  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out.usdz");
+  const std::string usda_path = lightusd::io::JoinPath(dir, "scene.usda");
+  const std::string png_path = lightusd::io::JoinPath(dir, "Texture.png");
+  const std::string usdz_path = lightusd::io::JoinPath(dir, "out.usdz");
 
   TEST_CHECK(CopyFile(src_fixture, usda_path));
   TEST_CHECK(WritePNG(png_path, MakeSolidImage(8, 8, 3, 90, 120, 180, 255)));
@@ -1014,7 +1014,7 @@ void usdz_convert_regression_texture_remap_test(void) {
 }
 
 void usdz_convert_regression_material_preview_dedupe_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1057,7 +1057,7 @@ void usdz_convert_regression_material_preview_dedupe_test(void) {
 }
 
 void usdz_convert_regression_invalid_index_skip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1085,7 +1085,7 @@ void usdz_convert_regression_invalid_index_skip_test(void) {
 }
 
 void usdz_convert_material_dedupe_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1127,7 +1127,7 @@ void usdz_convert_material_dedupe_test(void) {
 }
 
 void usdz_convert_material_preview_atlas_fallback_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   {
     Layer layer;
@@ -1211,7 +1211,7 @@ void usdz_convert_material_preview_atlas_fallback_test(void) {
 }
 
 void usdz_convert_material_preview_transitive_key_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1252,7 +1252,7 @@ void usdz_convert_material_preview_transitive_key_test(void) {
 }
 
 void usdz_convert_geometry_merge_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1292,7 +1292,7 @@ void usdz_convert_geometry_merge_test(void) {
 
   const PrimSpec *merged = nullptr;
   ok = layer.find_primspec_at(
-      Path("/__TinyUSDZ_MeshMerge/Merged_0", ""), &merged, &err);
+      Path("/__LightUSD_MeshMerge/Merged_0", ""), &merged, &err);
   TEST_CHECK(ok);
   TEST_CHECK(merged != nullptr);
   if (!merged) {
@@ -1366,7 +1366,7 @@ void usdz_convert_geometry_merge_test(void) {
 }
 
 void usdz_convert_geometry_subset_merge_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1394,7 +1394,7 @@ void usdz_convert_geometry_subset_merge_test(void) {
 }
 
 void usdz_convert_geometry_subset_partition_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1424,7 +1424,7 @@ void usdz_convert_geometry_subset_partition_test(void) {
 }
 
 void usdz_convert_geometry_subset_overlap_skip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1452,7 +1452,7 @@ void usdz_convert_geometry_subset_overlap_skip_test(void) {
 }
 
 void usdz_convert_geometry_descendant_material_skip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1479,7 +1479,7 @@ void usdz_convert_geometry_descendant_material_skip_test(void) {
 }
 
 void usdz_convert_geometry_authored_semantics_skip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1506,7 +1506,7 @@ void usdz_convert_geometry_authored_semantics_skip_test(void) {
 }
 
 void usdz_convert_geometry_normal_inverse_transpose_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1529,7 +1529,7 @@ void usdz_convert_geometry_normal_inverse_transpose_test(void) {
 
   const PrimSpec *merged = nullptr;
   ok = layer.find_primspec_at(
-      Path("/__TinyUSDZ_MeshMerge/Merged_0", ""), &merged, &err);
+      Path("/__LightUSD_MeshMerge/Merged_0", ""), &merged, &err);
   TEST_CHECK(ok);
   TEST_CHECK(merged != nullptr);
   if (!merged) {
@@ -1550,7 +1550,7 @@ void usdz_convert_geometry_normal_inverse_transpose_test(void) {
 }
 
 void usdz_convert_geometry_multi_binding_skip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1579,7 +1579,7 @@ void usdz_convert_geometry_multi_binding_skip_test(void) {
 }
 
 void usdz_convert_geometry_display_constant_size_skip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Layer layer;
   std::string warn, err;
@@ -1608,7 +1608,7 @@ void usdz_convert_geometry_display_constant_size_skip_test(void) {
 
 // Error-path: invalid inputs should return errors, not crash.
 void usdz_convert_error_path_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   // 1) Convert with nonexistent input file.
   {
@@ -1646,7 +1646,7 @@ void usdz_convert_error_path_test(void) {
 
 // Adversarial: feed truncated/corrupted image data to decoders; must not crash.
 void usdz_convert_adversarial_image_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   // 1) Truncated PNG (valid header, then garbage).
   {
@@ -1707,7 +1707,7 @@ void usdz_convert_adversarial_image_test(void) {
 
 // PackChannels error paths.
 void usdz_convert_pack_channels_error_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   // 1) Empty inputs vector.
   {
@@ -1822,7 +1822,7 @@ void usdz_convert_pack_channels_error_test(void) {
 
 // FitTexturesToBudget error paths and edge cases.
 void usdz_convert_fit_budget_error_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   // 1) Empty inputs.
   {
@@ -1925,7 +1925,7 @@ void usdz_convert_fit_budget_error_test(void) {
 }
 
 void usdz_convert_missing_texture_reference_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
 
@@ -1933,9 +1933,9 @@ void usdz_convert_missing_texture_reference_test(void) {
   // to a sanitized archive path that is not actually present.
   {
     const std::string usda_path =
-        tinyusdz::io::JoinPath(dir, "scene_missing_safe.usda");
+        lightusd::io::JoinPath(dir, "scene_missing_safe.usda");
     const std::string usdz_path =
-        tinyusdz::io::JoinPath(dir, "out_missing_safe.usdz");
+        lightusd::io::JoinPath(dir, "out_missing_safe.usdz");
     TEST_CHECK(WriteTexturedUSDA(usda_path, "missing.png"));
 
     usdz::UsdzConvertOptions opts;
@@ -1969,9 +1969,9 @@ void usdz_convert_missing_texture_reference_test(void) {
   // preserved or rewritten to a broken internal reference.
   {
     const std::string usda_path =
-        tinyusdz::io::JoinPath(dir, "scene_missing_unsafe.usda");
+        lightusd::io::JoinPath(dir, "scene_missing_unsafe.usda");
     const std::string usdz_path =
-        tinyusdz::io::JoinPath(dir, "out_missing_unsafe.usdz");
+        lightusd::io::JoinPath(dir, "out_missing_unsafe.usdz");
     TEST_CHECK(WriteTexturedUSDA(usda_path, "../missing.png"));
 
     usdz::UsdzConvertOptions opts;
@@ -1989,12 +1989,12 @@ void usdz_convert_missing_texture_reference_test(void) {
 
 // Pipeline test with JPEG output format.
 void usdz_convert_pipeline_jpeg_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   const std::string dir = TempDir();
-  const std::string png_path = tinyusdz::io::JoinPath(dir, "tex_jpg.png");
-  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene_jpg.usda");
-  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out_jpg.usdz");
+  const std::string png_path = lightusd::io::JoinPath(dir, "tex_jpg.png");
+  const std::string usda_path = lightusd::io::JoinPath(dir, "scene_jpg.usda");
+  const std::string usdz_path = lightusd::io::JoinPath(dir, "out_jpg.usdz");
 
   Image tex = MakeSolidImage(64, 64, 4, 200, 150, 100, 255);
   {
@@ -2070,7 +2070,7 @@ void usdz_convert_pipeline_jpeg_test(void) {
   TEST_CHECK(rok);
   if (!rok) return;
   std::string vwarn, verr;
-  bool valid = tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
+  bool valid = lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(),
                                       &vwarn, &verr);
   TEST_CHECK(valid);
   if (!valid) {
@@ -2081,9 +2081,9 @@ void usdz_convert_pipeline_jpeg_test(void) {
 // Cleanup: remove temp files created by earlier tests.
 void usdz_convert_cleanup_test(void) {
   const std::string base =
-      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tusdzconvert_test");
-  if (tinyusdz::io::IsDirectory(base)) {
-    tinyusdz::io::RemoveAll(base);
+      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "tusdzconvert_test");
+  if (lightusd::io::IsDirectory(base)) {
+    lightusd::io::RemoveAll(base);
     // Not a test failure if cleanup fails (e.g. file in use).
   }
   TEST_CHECK(true);  // Always passes; this is a bookkeeping test.
@@ -2093,7 +2093,7 @@ void usdz_convert_cleanup_test(void) {
 // output (previously a stub) and the inverted LoadEXRFromMemory success check
 // (which made every successful EXR decode report failure).
 void usdz_convert_exr_roundtrip_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Image img;
   img.width = 4; img.height = 4; img.channels = 4; img.bpp = 32;
@@ -2133,7 +2133,7 @@ void usdz_convert_exr_roundtrip_test(void) {
 
 // fp32 (HDR) resize support in ResizeImage (previously 8-bit only).
 void usdz_convert_resize_float_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   Image img;
   img.width = 8; img.height = 8; img.channels = 3; img.bpp = 32;

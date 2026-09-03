@@ -50,9 +50,9 @@ set(LIBJPEG_TURBO_VERSION_NUMBER ${VERSION_MAJOR}${VERSION_MINOR}${VERSION_REVIS
 # ExternalProject_Add() or make downstream modifications to the libjpeg-turbo
 # build system to suit their specific needs.  Please do not file bug reports,
 # feature requests, or pull requests regarding this.
-# tinyusdz: vendored as a subproject. The upstream add_subdirectory guard is
+# lightusd: vendored as a subproject. The upstream add_subdirectory guard is
 # disabled intentionally; only the static turbojpeg lib is consumed (EXCLUDE_FROM_ALL).
-if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT TINYUSDZ_VENDORED_TURBOJPEG)
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT LIGHTUSD_VENDORED_TURBOJPEG)
   message(FATAL_ERROR "The libjpeg-turbo build system cannot be integrated into another build system using add_subdirectory().  Use ExternalProject_Add() instead.")
 endif()
 
@@ -757,7 +757,7 @@ if(WITH_TURBOJPEG)
       set_target_properties(turbojpeg-static PROPERTIES OUTPUT_NAME turbojpeg)
     endif()
 
-    # tinyusdz: tjunittest-static / tjbench-static (tests + benchmark) removed in
+    # lightusd: tjunittest-static / tjbench-static (tests + benchmark) removed in
     # the vendored trim -- only the turbojpeg/jpeg libraries are built.
   endif()
 endif()
@@ -768,7 +768,7 @@ endif()
 set(CDJPEG_COMPILE_FLAGS
   "-DBMP_SUPPORTED -DGIF_SUPPORTED -DPPM_SUPPORTED -DTARGA_SUPPORTED ${USE_SETMODE}")
 
-# tinyusdz: the cjpeg / djpeg / jpegtran / example CLI programs (and the
+# lightusd: the cjpeg / djpeg / jpegtran / example CLI programs (and the
 # rdjpgcom / wrjpgcom utilities) were removed in the vendored trim -- only the
 # turbojpeg + jpeg libraries are needed. Their sources and the per-precision
 # object libs are gone, so the target definitions are dropped here.
@@ -778,7 +778,7 @@ set(CDJPEG_COMPILE_FLAGS
 # TESTS
 ###############################################################################
 
-# tinyusdz: libjpeg-turbo's own test suite is disabled in the vendored build.
+# lightusd: libjpeg-turbo's own test suite is disabled in the vendored build.
 # The trim removed its CLI test programs (cjpeg/djpeg/jpegtran/tjbench/tjunittest
 # /example + md5cmp), so registering their ctest entries would only produce
 # spurious failures in the parent project's `ctest`. Wrapped in if(FALSE).
@@ -790,7 +790,7 @@ endif()
 
 add_executable(strtest strtest.c)
 
-# tinyusdz: md5/ (the md5cmp ctest helper) was removed in the vendored trim --
+# lightusd: md5/ (the md5cmp ctest helper) was removed in the vendored trim --
 # it is only used by libjpeg-turbo's own test suite, which we never build.
 # Was: add_subdirectory(md5)
 
@@ -1680,7 +1680,7 @@ if(WITH_TURBOJPEG)
 endif()
 
 
-endif()  # tinyusdz: end of disabled libjpeg-turbo TESTS section
+endif()  # lightusd: end of disabled libjpeg-turbo TESTS section
 
 ###############################################################################
 # INSTALLATION
@@ -1740,9 +1740,9 @@ if(ENABLE_STATIC)
   endif()
 endif()
 
-# tinyusdz: rdjpgcom/wrjpgcom removed in the trim -- no install.
+# lightusd: rdjpgcom/wrjpgcom removed in the trim -- no install.
 
-# tinyusdz: only the license/readme remain installable; the manuals + example
+# lightusd: only the license/readme remain installable; the manuals + example
 # sources were removed in the trim.
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.ijg
   ${CMAKE_CURRENT_SOURCE_DIR}/README.md

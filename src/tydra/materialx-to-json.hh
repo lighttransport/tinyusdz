@@ -15,7 +15,7 @@
 #include "nonstd/expected.hpp"
 #include "value-types.hh"  // For value::float2
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class Prim;
@@ -203,4 +203,4 @@ std::string SpectralEmissionToJson(const SpectralEmission &data);
 std::string Vec2ArrayToJsonArray(const std::vector<value::float2> &vec);
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

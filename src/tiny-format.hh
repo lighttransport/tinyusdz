@@ -18,7 +18,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace fmt {
 
 /// Lower-case hexadecimal of `v`, zero-padded to `width` digits (0 = no
@@ -50,7 +50,7 @@ namespace detail {
 
 template <class T>
 std::ostringstream &format_sv_rec(
-    std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
+    std::ostringstream &ss LIGHTUSD_LIFETIMEBOUND,
                                   const std::vector<std::string> &sv,
                                   size_t idx, T const &v) {
   if (idx >= sv.size()) {
@@ -78,7 +78,7 @@ std::ostringstream &format_sv_rec(
 
 template <class T, class... Rest>
 std::ostringstream &format_sv_rec(
-    std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
+    std::ostringstream &ss LIGHTUSD_LIFETIMEBOUND,
                                   const std::vector<std::string> &sv,
                                   size_t idx, T const &v, Rest const &...args) {
   if (idx >= sv.size()) {
@@ -97,7 +97,7 @@ std::ostringstream &format_sv_rec(
 }
 
 template <class... Args>
-std::ostringstream &format_sv(std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
+std::ostringstream &format_sv(std::ostringstream &ss LIGHTUSD_LIFETIMEBOUND,
                               const std::vector<std::string> &sv,
                               Args const &...args) {
   format_sv_rec(ss, sv, 0, args...);
@@ -105,7 +105,7 @@ std::ostringstream &format_sv(std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
   return ss;
 }
 
-std::ostringstream &format_sv(std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
+std::ostringstream &format_sv(std::ostringstream &ss LIGHTUSD_LIFETIMEBOUND,
                               const std::vector<std::string> &sv);
 
 nonstd::expected<std::vector<std::string>, std::string> tokenize(
@@ -129,4 +129,4 @@ std::string format(const std::string &in, Args const &...args) {
 std::string format(const std::string &in);
 
 }  // namespace fmt
-}  // namespace tinyusdz
+}  // namespace lightusd

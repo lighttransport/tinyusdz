@@ -1,10 +1,10 @@
-TinyVDB I/O (tinyvdb_io.h) — vendored into tinyusdz
+TinyVDB I/O (tinyvdb_io.h) — vendored into lightusd
 ==============================================
 
 Source: https://github.com/syoyo/tinyvdbio
 License: Apache License 2.0
 
 Local integration changes are limited to repointing miniz, LZ4, and zstd
-includes at tinyusdz's existing vendored copies. `src/usdVol.cc` owns the
+includes at lightusd's existing vendored copies. `src/usdVol.cc` owns the
 renderer-facing dense conversion and memory budget rather than modifying the
 upstream sparse-tree representation.

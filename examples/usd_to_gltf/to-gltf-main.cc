@@ -9,15 +9,15 @@
 #include <iostream>
 #include <sstream>
 
-// Use json.hpp located at <tinyusdz>/src/external
+// Use json.hpp located at <lightusd>/src/external
 #define TINYGLTF_NO_INCLUDE_JSON
 #include "external/jsonhpp/nlohmann/json.hpp"
 
 #define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION // this will include <tinyusdz>/src/external/stb_image.h
+#define STB_IMAGE_IMPLEMENTATION // this will include <lightusd>/src/external/stb_image.h
 #include "external/tiny_gltf.h"
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -36,20 +36,20 @@ static std::string str_tolower(std::string s) {
 }
 
 // key = Full absolute prim path(e.g. `/bora/dora`)
-using XformMap = std::map<std::string, const tinyusdz::Xform *>;
-using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
-using MaterialMap = std::map<std::string, const tinyusdz::Material *>;
+using XformMap = std::map<std::string, const lightusd::Xform *>;
+using MeshMap = std::map<std::string, const lightusd::GeomMesh *>;
+using MaterialMap = std::map<std::string, const lightusd::Material *>;
 using PreviewSurfaceMap =
-    std::map<std::string, std::pair<const tinyusdz::Shader *,
-                                    const tinyusdz::UsdPreviewSurface *>>;
+    std::map<std::string, std::pair<const lightusd::Shader *,
+                                    const lightusd::UsdPreviewSurface *>>;
 using UVTextureMap =
-    std::map<std::string, std::pair<const tinyusdz::Shader *,
-                                    const tinyusdz::UsdUVTexture *>>;
+    std::map<std::string, std::pair<const lightusd::Shader *,
+                                    const lightusd::UsdUVTexture *>>;
 using PrimvarReader_float2Map =
-    std::map<std::string, std::pair<const tinyusdz::Shader *,
-                                    const tinyusdz::UsdPrimvarReader_float2 *>>;
+    std::map<std::string, std::pair<const lightusd::Shader *,
+                                    const lightusd::UsdPrimvarReader_float2 *>>;
 
-tinygltf::Material to_gltf_material(const tinyusdz::tydra::RenderMaterial &mat) {
+tinygltf::Material to_gltf_material(const lightusd::tydra::RenderMaterial &mat) {
   tinygltf::Material out;
 
   out.pbrMetallicRoughness.roughnessFactor = mat.surfaceShader.roughness.value;
@@ -57,7 +57,7 @@ tinygltf::Material to_gltf_material(const tinyusdz::tydra::RenderMaterial &mat) 
   return out;
 }
 
-bool to_gltf(const tinyusdz::tydra::RenderScene &rscene, const std::string &gltf_filename)
+bool to_gltf(const lightusd::tydra::RenderScene &rscene, const std::string &gltf_filename)
 {
   tinygltf::Model model;
   tinygltf::Scene scene;
@@ -66,7 +66,7 @@ bool to_gltf(const tinyusdz::tydra::RenderScene &rscene, const std::string &gltf
 
   tinygltf::Asset asset;
   asset.version = "2.0";
-  asset.generator = "usd_to_gltf example in TinyUSDZ";
+  asset.generator = "usd_to_gltf example in LightUSD";
 
   model.scenes.push_back(scene);
 
@@ -102,10 +102,10 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
 
   if (ext.compare("usdc") == 0) {
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDCFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -119,7 +119,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else if (ext.compare("usda") == 0) {
-    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDAFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     }
   } else if (ext.compare("usdz") == 0) {
     // std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDZFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
 
   } else {
     // try to auto detect format.
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -171,12 +171,12 @@ int main(int argc, char **argv) {
             << "\n";
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-  tinyusdz::tydra::RenderScene render_scene;
-  tinyusdz::tydra::RenderSceneConverter converter;
-  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::tydra::RenderScene render_scene;
+  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::tydra::RenderSceneConverterEnv env(stage);
 
   // Add base directory of .usd file to search path.
-  std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
+  std::string usd_basedir = lightusd::io::GetBaseDir(filepath);
   std::cout << "Add seach path: " << usd_basedir << "\n";
 
   env.set_search_paths({usd_basedir});
@@ -185,7 +185,7 @@ int main(int argc, char **argv) {
   // converter.set_asset_resoluition_resolver(arr);
 
 
-  double timecode = tinyusdz::value::TimeCode::Default();
+  double timecode = lightusd::value::TimeCode::Default();
   bool ret = converter.ConvertToRenderScene(env, &render_scene);
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
@@ -201,7 +201,7 @@ int main(int argc, char **argv) {
   if (!to_gltf(render_scene, "output.gltf")) {
     std::cerr << "Failed to save scene as glTF\n";
     return EXIT_FAILURE;
-  } 
+  }
 
   return EXIT_SUCCESS;
 }

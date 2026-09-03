@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Tydra/Next - MaterialX Support
+// LightUSD Tydra/Next - MaterialX Support
 //
 // Converts MaterialX materials to render-ready format
 
@@ -14,7 +14,7 @@
 #include <map>
 #include <memory>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -215,8 +215,8 @@ public:
   ///        materials whose shader neither side converts directly (e.g.
   ///        ND_standard_surface_surfaceshader).
   /// @return true on success
-  bool ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
-                               const tinyusdz::next::UsdPrim& material_prim,
+  bool ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
+                               const lightusd::next::UsdPrim& material_prim,
                                RenderMaterial* out,
                                bool allow_converter_delegation = true);
 
@@ -252,14 +252,14 @@ private:
 // ============================================================
 
 /// Check if prim has MaterialX binding
-bool HasMtlxBinding(const tinyusdz::next::UsdPrim& prim);
+bool HasMtlxBinding(const lightusd::next::UsdPrim& prim);
 
 /// Get MaterialX file path from material binding
-std::string GetMtlxFilePath(const tinyusdz::next::UsdPrim& material_prim);
+std::string GetMtlxFilePath(const lightusd::next::UsdPrim& material_prim);
 
 /// Parse MaterialX colorspace string to ColorSpace enum
 ColorSpace ParseMtlxColorSpace(const std::string& cs);
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

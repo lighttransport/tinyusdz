@@ -1,18 +1,18 @@
 #include <iostream>
 
-// All-in-one TinyUSDZ core, but pprint feature is not included to speed up compilation.
-#include "tinyusdz.hh"
+// All-in-one LightUSD core, but pprint feature is not included to speed up compilation.
+#include "lightusd.hh"
 
 // Import to_string() and operator<< features
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 
-#if defined(TINYUSDZ_WITH_TYDRA)
+#if defined(LIGHTUSD_WITH_TYDRA)
 
 // Tydra is a collection of APIs to access/convert USD Prim data
 // (e.g. Get Prim's attribute by name)
-// See <tinyusdz>/examples/tydra_api for more info about Tydra API.
+// See <lightusd>/examples/tydra_api for more info about Tydra API.
 #include "tydra/scene-access.hh"
 
 #endif
@@ -20,9 +20,9 @@
 //
 // create a Scene
 //
-void CreateScene(tinyusdz::Stage *stage) {
-  // TinyUSDZ API does not use mutex, smart pointers(e.g. unique_ptr/shared_ptr) and C++
-  // exception. Also threading is opional in TinyUSDZ and currently
+void CreateScene(lightusd::Stage *stage) {
+  // LightUSD API does not use mutex, smart pointers(e.g. unique_ptr/shared_ptr) and C++
+  // exception. Also threading is opional in LightUSD and currently
   // multi-threading is not used. `value::token` implementation is simply copy
   // string for each instances(like C++11 ABI std::string). (on the contrary,
   // pxrUSD's token implementation uses string-to-id, which requires mutex lock
@@ -30,7 +30,7 @@ void CreateScene(tinyusdz::Stage *stage) {
   // multi-core CPU, since they locks the mutex every `token` value
   // instanciation)
   //
-  // TinyUSDZ's API is not fully multi-thread safe, thus if you want to
+  // LightUSD's API is not fully multi-thread safe, thus if you want to
   // manipulate a scene(Stage) in multi-threaded context, The app must take care
   // of resource locks in the app layer.
 
@@ -39,19 +39,19 @@ void CreateScene(tinyusdz::Stage *stage) {
   //
   // Create simple material with UsdPrevieSurface.
   //
-  tinyusdz::Material mat;
+  lightusd::Material mat;
   mat.name = "mat";
 
-  tinyusdz::Shader shader;  // Shader container
+  lightusd::Shader shader;  // Shader container
   shader.name = "defaultPBR";
   {
-    tinyusdz::UsdPreviewSurface surfaceShader;  // Concrete Shader node object
+    lightusd::UsdPreviewSurface surfaceShader;  // Concrete Shader node object
 
     //
     // Asssign actual shader object to Shader::value.
     // Also do not forget set its shader node type name through Shader::info_id
     //
-    shader.info_id = tinyusdz::kUsdPreviewSurface;  // "UsdPreviewSurface" token
+    shader.info_id = lightusd::kUsdPreviewSurface;  // "UsdPreviewSurface" token
 
     //
     // Currently no shader network/connection API.
@@ -66,7 +66,7 @@ void CreateScene(tinyusdz::Stage *stage) {
     // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
     //
     // token outputs:surface = </mat/defaultPBR.outputs:surface>
-    mat.surface.set(tinyusdz::Path(/* prim path */ "/mat/defaultPBR",
+    mat.surface.set(lightusd::Path(/* prim path */ "/mat/defaultPBR",
                                    /* prop path */ "outputs:surface"));
 
     //
@@ -76,8 +76,8 @@ void CreateScene(tinyusdz::Stage *stage) {
     shader.value = std::move(surfaceShader);
   }
 
-  tinyusdz::Prim shaderPrim(shader);
-  tinyusdz::Prim matPrim(mat);
+  lightusd::Prim shaderPrim(shader);
+  lightusd::Prim matPrim(mat);
 
   // matPrim.children().emplace_back(std::move(shaderPrim)); // no uniqueness
   // check
@@ -91,21 +91,21 @@ void CreateScene(tinyusdz::Stage *stage) {
 
   //
   // To construct Prim, first create concrete Prim object(e.g. Xform, GeomMesh),
-  // then add it to tinyusdz::Prim.
+  // then add it to lightusd::Prim.
   //
   //
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   {
     xform.name = "root";  // Prim's name(elementPath)
 
     {
-      tinyusdz::XformOp op;
-      op.op_type = tinyusdz::XformOp::OpType::Transform;
-      tinyusdz::value::matrix4d a0;
-      tinyusdz::value::matrix4d b0;
+      lightusd::XformOp op;
+      op.op_type = lightusd::XformOp::OpType::Transform;
+      lightusd::value::matrix4d a0;
+      lightusd::value::matrix4d b0;
 
-      tinyusdz::Identity(&a0);
-      tinyusdz::Identity(&b0);
+      lightusd::Identity(&a0);
+      lightusd::Identity(&b0);
 
       a0.m[1][1] = 2.1;
 
@@ -114,7 +114,7 @@ void CreateScene(tinyusdz::Stage *stage) {
       b0.m[3][1] = 3.1;
       b0.m[3][2] = 5.1;
 
-      tinyusdz::value::matrix4d transform = a0 * b0;
+      lightusd::value::matrix4d transform = a0 * b0;
 
       op.set_value(std::move(transform));
 
@@ -124,9 +124,9 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     {
       // `xformOp:***` attribute is represented as XformOp class
-      tinyusdz::XformOp op;
-      op.op_type = tinyusdz::XformOp::OpType::Translate;
-      tinyusdz::value::double3 translate;
+      lightusd::XformOp op;
+      op.op_type = lightusd::XformOp::OpType::Translate;
+      lightusd::value::double3 translate;
       translate[0] = 1.0;
       translate[1] = 2.0;
       translate[2] = 3.0;
@@ -139,10 +139,10 @@ void CreateScene(tinyusdz::Stage *stage) {
     {
       // .suffix will be prepended to `xformOp:translate`
       // 'xformOp:translate:move'
-      tinyusdz::XformOp op;
-      op.op_type = tinyusdz::XformOp::OpType::Translate;
+      lightusd::XformOp op;
+      op.op_type = lightusd::XformOp::OpType::Translate;
       op.suffix = "move";
-      tinyusdz::value::double3 translate;
+      lightusd::value::double3 translate;
 
       // TimeSamples value can be added with `set_timesample`
       // NOTE: TimeSamples data will be automatically sorted by time when using
@@ -161,12 +161,12 @@ void CreateScene(tinyusdz::Stage *stage) {
     }
   }
 
-  tinyusdz::GeomMesh mesh;
+  lightusd::GeomMesh mesh;
   {
     mesh.name = "quad";
 
     {
-      std::vector<tinyusdz::value::point3f> pts;
+      std::vector<lightusd::value::point3f> pts;
       pts.push_back({0.0f, 0.0f, 0.0f});
       pts.push_back({1.0f, 0.0f, 0.0f});
       pts.push_back({1.0f, 1.0f, 0.0f});
@@ -203,8 +203,8 @@ void CreateScene(tinyusdz::Stage *stage) {
       // int[] primvars:uv:indices = [ ... ]
       //
       {
-        tinyusdz::Attribute uvAttr;
-        std::vector<tinyusdz::value::texcoord2f> uvs;
+        lightusd::Attribute uvAttr;
+        std::vector<lightusd::value::texcoord2f> uvs;
 
         uvs.push_back({0.0f, 0.0f});
         uvs.push_back({1.0f, 0.0f});
@@ -215,22 +215,22 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvAttr.set_value(std::move(uvs));
 
         // or we can first build primvar::PrimVar
-        // tinyusdz::primvar::PrimVar uvVar;
+        // lightusd::primvar::PrimVar uvVar;
         // uvVar.set_value(uvs);
         // uvAttr.set_var(std::move(uvVar));
 
         // Currently `interpolation` is described in Attribute metadataum.
         // You can set builtin(predefined) Attribute Metadatum(e.g.
         // `interpolation`, `hidden`) through `metas()`.
-        uvAttr.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
+        uvAttr.metas().set_interpolation_enum(lightusd::Interpolation::Vertex);
 
-        tinyusdz::Property uvProp(uvAttr);
+        lightusd::Property uvProp(uvAttr);
 
         mesh.props.emplace("primvars:uv", uvProp);
 
         // ----------------------
 
-        tinyusdz::Attribute uvIndexAttr;
+        lightusd::Attribute uvIndexAttr;
         std::vector<int> uvIndices;
 
         // FIXME: Validate
@@ -239,41 +239,41 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvIndices.push_back(3);
         uvIndices.push_back(2);
 
-        tinyusdz::primvar::PrimVar uvIndexVar;
+        lightusd::primvar::PrimVar uvIndexVar;
         uvIndexVar.set_value(std::move(uvIndices));
         uvIndexAttr.set_var(std::move(uvIndexVar));
         // Or you can use this approach(if you want to keep a copy of PrimVar
         // data)
         // uvIndexAttr.set_var(uvIndexVar);
 
-        tinyusdz::Property uvIndexProp(uvIndexAttr);
+        lightusd::Property uvIndexProp(uvIndexAttr);
         mesh.props.emplace("primvars:uv:indices", uvIndexProp);
       }
 
       // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
       {
-        tinyusdz::Attribute attrib;
+        lightusd::Attribute attrib;
         double myvalue = 3.0;
-        tinyusdz::primvar::PrimVar var;
+        lightusd::primvar::PrimVar var;
         var.set_value(myvalue);
         attrib.set_var(std::move(var));
-        attrib.variability() = tinyusdz::Variability::Uniform;
+        attrib.variability() = lightusd::Variability::Uniform;
 
         attrib.metas().set_hidden(false);
 
         // NOTE: `custom` keyword would be deprecated in the future USD syntax,
         // so you can set it false.
-        tinyusdz::Property prop(attrib, /* custom*/ true);
+        lightusd::Property prop(attrib, /* custom*/ true);
 
         mesh.props.emplace("myvalue", prop);
       }
 
       // Add Primvar through GeomPrimvar;
       {
-        tinyusdz::GeomPrimvar uvPrimvar;
+        lightusd::GeomPrimvar uvPrimvar;
 
         uvPrimvar.set_name("my_uv");
-        std::vector<tinyusdz::value::texcoord2f> uvs;
+        std::vector<lightusd::value::texcoord2f> uvs;
 
         uvs.push_back({0.0f, 0.0f});
         uvs.push_back({1.0f, 0.0f});
@@ -281,7 +281,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvs.push_back({0.0f, 1.0f});
 
         uvPrimvar.set_value(std::move(uvs)); // value at 'default' time
-        uvPrimvar.set_interpolation(tinyusdz::Interpolation::Vertex);
+        uvPrimvar.set_interpolation(lightusd::Interpolation::Vertex);
 
         std::vector<int> uvIndices;
         uvIndices.push_back(0);
@@ -294,7 +294,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 
         // NOTE: You can use `uvPrimvar.set_timesampled_indices` to set time-varying indices
         // {
-        //   tinyusdz::TypedTimeSamples<std::vector<int>> uvIndicesTimeSampled;
+        //   lightusd::TypedTimeSamples<std::vector<int>> uvIndicesTimeSampled;
         //   std::vector<int> uvIndices3;
         //   uvIndices3.push_back(1);
         //   uvIndices3.push_back(0);
@@ -304,7 +304,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         //   uvIndicesTimeSampled.add_sample(3.0, uvIndices3);
         //   uvPrimvar.set_timesampled_indices(uvIndicesTimeSampled);
         // }
-    
+
         // primvar name is extracted from Primvar::name
         std::string err;
         if (!mesh.set_primvar(uvPrimvar, &err)) {
@@ -315,23 +315,23 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     // Material binding(`rel material:binding` is done by manually setup
     // targetPath.
-    tinyusdz::Relationship materialBinding;
+    lightusd::Relationship materialBinding;
     materialBinding.set(
-        tinyusdz::Path(/* prim path */ "/mat/defaultPBR", /* prop path */ ""));
+        lightusd::Path(/* prim path */ "/mat/defaultPBR", /* prop path */ ""));
 
     mesh.materialBinding = materialBinding;
 
     // TODO: Explicitly author MaterialBindingAPI apiSchema in Mesh Prim.
   }
 
-  tinyusdz::GeomSphere sphere1;
+  lightusd::GeomSphere sphere1;
   {
     sphere1.name = "sphere";
 
     sphere1.radius = 3.14;
   }
 
-  tinyusdz::GeomSphere sphere2;
+  lightusd::GeomSphere sphere2;
   {
     sphere2.name =
         "sphere";  // name will be modified to be unique at add_child().
@@ -355,39 +355,39 @@ void CreateScene(tinyusdz::Stage *stage) {
 
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
   // Xform::name, ...)
-  tinyusdz::Prim meshPrim(mesh);
+  lightusd::Prim meshPrim(mesh);
   {
     // `references`, `paylaod`
 
     {
-      tinyusdz::Reference ref;
-      ref.asset_path = tinyusdz::value::AssetPath("submesh-000.usd");
+      lightusd::Reference ref;
+      ref.asset_path = lightusd::value::AssetPath("submesh-000.usd");
 
-      std::vector<tinyusdz::Reference> referencesList;
+      std::vector<lightusd::Reference> referencesList;
       referencesList.push_back(ref);
 
-      meshPrim.metas().references = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<tinyusdz::Reference>>>{
-          std::make_pair(tinyusdz::ListEditQual::Append, referencesList)};
+      meshPrim.metas().references = std::vector<std::pair<lightusd::ListEditQual, std::vector<lightusd::Reference>>>{
+          std::make_pair(lightusd::ListEditQual::Append, referencesList)};
     }
 
     {
-      tinyusdz::Payload pl;
-      pl.asset_path = tinyusdz::value::AssetPath("submesh-payload-000.usd");
+      lightusd::Payload pl;
+      pl.asset_path = lightusd::value::AssetPath("submesh-payload-000.usd");
 
-      std::vector<tinyusdz::Payload> payloadList;
+      std::vector<lightusd::Payload> payloadList;
       payloadList.push_back(pl);
 
-      meshPrim.metas().payload = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<tinyusdz::Payload>>>{
-          std::make_pair(tinyusdz::ListEditQual::Append, payloadList)};
+      meshPrim.metas().payload = std::vector<std::pair<lightusd::ListEditQual, std::vector<lightusd::Payload>>>{
+          std::make_pair(lightusd::ListEditQual::Append, payloadList)};
     }
   }
 
-  tinyusdz::Prim spherePrim(sphere1);
+  lightusd::Prim spherePrim(sphere1);
   {
     // variantSet is maniuplated in Prim.
     // Currently we don't provide easy API for variantSet.
     // Need to add variantSet information manually for a while.
-    tinyusdz::VariantSelectionMap vsmap;
+    lightusd::VariantSelectionMap vsmap;
 
     // List of variantSet in the Prim.
     std::vector<std::string> variantSetList;
@@ -397,25 +397,25 @@ void CreateScene(tinyusdz::Stage *stage) {
     vsmap.emplace("colorVariant", "red");
 
     spherePrim.metas().variants = vsmap;
-    spherePrim.metas().variantSets = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<std::string>>>{
-        std::make_pair(tinyusdz::ListEditQual::Append, variantSetList)};
+    spherePrim.metas().variantSets = std::vector<std::pair<lightusd::ListEditQual, std::vector<std::string>>>{
+        std::make_pair(lightusd::ListEditQual::Append, variantSetList)};
 
     // VariantSet is composed of metas + properties + childPrims
-    tinyusdz::VariantSet variantSet;
+    lightusd::VariantSet variantSet;
 
-    tinyusdz::Variant redVariant;
+    lightusd::Variant redVariant;
     redVariant.metas().set_comment("red color");
-    tinyusdz::value::color3f redColor({1.0f, 0.0f, 0.0f});
-    tinyusdz::Attribute redColorAttr;
+    lightusd::value::color3f redColor({1.0f, 0.0f, 0.0f});
+    lightusd::Attribute redColorAttr;
     redColorAttr.set_value(std::move(redColor));
     redVariant.properties().emplace("mycolor", redColorAttr);
     // TODO: Add example to add childPrims under Variant
     // redVariant.primChildren().emplace(...)
 
-    tinyusdz::Variant greenVariant;
+    lightusd::Variant greenVariant;
     greenVariant.metas().set_comment("green color");
-    tinyusdz::value::color3f greenColor({0.0f, 1.0f, 0.0f});
-    tinyusdz::Attribute greenColorAttr;
+    lightusd::value::color3f greenColor({0.0f, 1.0f, 0.0f});
+    lightusd::Attribute greenColorAttr;
     greenColorAttr.set_value(std::move(greenColor));
     greenVariant.properties().emplace("mycolor", greenColorAttr);
 
@@ -428,9 +428,9 @@ void CreateScene(tinyusdz::Stage *stage) {
     spherePrim.variantSets().emplace("colorVariant", variantSet);
   }
 
-  tinyusdz::Prim spherePrim2(sphere2);
+  lightusd::Prim spherePrim2(sphere2);
 
-  tinyusdz::Prim xformPrim(xform);
+  lightusd::Prim xformPrim(xform);
 
   // xformPrim.children().emplace_back(std::move(meshPrim));
   // xformPrim.children().emplace_back(std::move(spherePrim));
@@ -467,11 +467,11 @@ void CreateScene(tinyusdz::Stage *stage) {
   // metadata xfromPrim.metas().primChildren.size() must be identical to
   // xformPrim.children().size()
   xformPrim.metas().primChildren.push_back(
-      tinyusdz::value::token(xformPrim.children()[1].element_name()));
+      lightusd::value::token(xformPrim.children()[1].element_name()));
   xformPrim.metas().primChildren.push_back(
-      tinyusdz::value::token(xformPrim.children()[0].element_name()));
+      lightusd::value::token(xformPrim.children()[0].element_name()));
   xformPrim.metas().primChildren.push_back(
-      tinyusdz::value::token(xformPrim.children()[2].element_name()));
+      lightusd::value::token(xformPrim.children()[2].element_name()));
 #else
   // You can replace(or add if corresponding Prim does not exist) existing child
   // Prim using replace_child()
@@ -491,13 +491,13 @@ void CreateScene(tinyusdz::Stage *stage) {
   ///
   /// Add subLayers
   ///
-  std::vector<tinyusdz::SubLayer> sublayers;
-  tinyusdz::SubLayer slayer0;
-  slayer0.assetPath = tinyusdz::value::AssetPath("sublayer-000.usd");
+  std::vector<lightusd::SubLayer> sublayers;
+  lightusd::SubLayer slayer0;
+  slayer0.assetPath = lightusd::value::AssetPath("sublayer-000.usd");
   sublayers.push_back(slayer0);
   stage->metas().subLayers = sublayers;
   stage->metas().defaultPrim =
-      tinyusdz::value::token(xformPrim.element_name());  // token
+      lightusd::value::token(xformPrim.element_name());  // token
 
   if (!stage->add_root_prim(std::move(xformPrim))) {
     std::cerr << "Failed to add Prim to Stage root: " << stage->get_error()
@@ -515,8 +515,8 @@ void CreateScene(tinyusdz::Stage *stage) {
   // Prim using `replace_root_prim`.
 #if 0
   {
-    tinyusdz::Scope scope;
-    tinyusdz::Prim scopePrim(scope);
+    lightusd::Scope scope;
+    lightusd::Prim scopePrim(scope);
     if (!stage->replace_root_prim(/* root Prim name */"root", std::move(scopePrim))) {
       std::cerr << "Failed to replace Prim to Stage root: " << stage->get_error() << "\n";
       exit(-1);
@@ -525,21 +525,21 @@ void CreateScene(tinyusdz::Stage *stage) {
 #endif
 
   // You can add Stage metadatum through Stage::metas()
-  stage->metas().comment = "Generated by TinyUSDZ api_tutorial.";
+  stage->metas().comment = "Generated by LightUSD api_tutorial.";
 
   {
     // Dictionary(alias to CustomDataType) is similar to VtDictionary.
     // it is a map<string, MetaVariable>
     // MetaVariable is similar to Value, but accepts limited variation of
     // types(double, token, string, float3[], ...)
-    tinyusdz::Dictionary customData;
+    lightusd::Dictionary customData;
 
-    tinyusdz::MetaVariable metavar;
+    lightusd::MetaVariable metavar;
     double mycustom = 1.3;
     metavar.set_value("mycustom", mycustom);
 
     std::string mystring = "hello";
-    tinyusdz::MetaVariable metavar2("mystring", mystring);
+    lightusd::MetaVariable metavar2("mystring", mystring);
 
     customData.emplace("mycustom", metavar);
     customData.emplace("mystring", metavar2);
@@ -548,8 +548,8 @@ void CreateScene(tinyusdz::Stage *stage) {
     // You can also use SetCustomDataByKey to set custom value with key having
     // namespaces(':')
 
-    tinyusdz::MetaVariable intval = int(5);
-    tinyusdz::SetCustomDataByKey("mydict:myval", intval,
+    lightusd::MetaVariable intval = int(5);
+    lightusd::SetCustomDataByKey("mydict:myval", intval,
                                  /* inout */ customData);
 
     stage->metas().customLayerData = customData;
@@ -567,7 +567,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 }
 
 int main(int argc, char **argv) {
-  tinyusdz::Stage stage;  // empty scene
+  lightusd::Stage stage;  // empty scene
 
   CreateScene(&stage);
 
@@ -584,17 +584,17 @@ int main(int argc, char **argv) {
   std::cout << stage.dump_prim_tree() << "\n";
 
   {
-    tinyusdz::Path path(/* absolute prim path */ "/root",
+    lightusd::Path path(/* absolute prim path */ "/root",
                         /* property path */ "");
 
-    const tinyusdz::Prim *prim{nullptr};
+    const lightusd::Prim *prim{nullptr};
     std::string err;
     bool ret = stage.find_prim_at_path(path, prim, &err);
     if (ret) {
-      std::cout << "Found Prim at path: " << tinyusdz::to_string(path) << "\n";
+      std::cout << "Found Prim at path: " << lightusd::to_string(path) << "\n";
       std::cout << "Prim ID: " << prim->prim_id() << "\n";
       std::cout << "Prim's absolute_path: "
-                << tinyusdz::to_string(prim->absolute_path()) << "\n";
+                << lightusd::to_string(prim->absolute_path()) << "\n";
     } else {
       std::cerr << err << "\n";
     }
@@ -605,14 +605,14 @@ int main(int argc, char **argv) {
       return -1;
     }
 
-    if (!prim->is<tinyusdz::Xform>()) {
+    if (!prim->is<lightusd::Xform>()) {
       std::cerr << "Expected Xform prim."
                 << "\n";
       return -1;
     }
 
     // Cast to Xform
-    const tinyusdz::Xform *xform = prim->as<tinyusdz::Xform>();
+    const lightusd::Xform *xform = prim->as<lightusd::Xform>();
     if (!xform) {
       std::cerr << "Expected Xform prim."
                 << "\n";
@@ -624,13 +624,13 @@ int main(int argc, char **argv) {
   {
     uint64_t prim_id = 2;
 
-    const tinyusdz::Prim *prim{nullptr};
+    const lightusd::Prim *prim{nullptr};
     std::string err;
     bool ret = stage.find_prim_by_prim_id(prim_id, prim, &err);
     if (ret && prim) {
       std::cout << "Found Prim by ID: " << prim_id << "\n";
       std::cout << "Prim's absolute_path: "
-                << tinyusdz::to_string(prim->absolute_path()) << "\n";
+                << lightusd::to_string(prim->absolute_path()) << "\n";
     } else {
       std::cerr << err << "\n";
     }
@@ -638,17 +638,17 @@ int main(int argc, char **argv) {
 
   // GetAttribute and GeomPrimvar
   {
-    tinyusdz::Path path(/* absolute prim path */ "/root/quad",
+    lightusd::Path path(/* absolute prim path */ "/root/quad",
                         /* property path */ "");
 
-    const tinyusdz::Prim *prim{nullptr};
+    const lightusd::Prim *prim{nullptr};
     std::string err;
     bool ret = stage.find_prim_at_path(path, prim, &err);
     if (ret && prim) {
-      std::cout << "Found Prim at path: " << tinyusdz::to_string(path) << "\n";
+      std::cout << "Found Prim at path: " << lightusd::to_string(path) << "\n";
       std::cout << "Prim ID: " << prim->prim_id() << "\n";
       std::cout << "Prim's absolute_path: "
-                << tinyusdz::to_string(prim->absolute_path()) << "\n";
+                << lightusd::to_string(prim->absolute_path()) << "\n";
     } else {
       std::cerr << err << "\n";
     }
@@ -659,21 +659,21 @@ int main(int argc, char **argv) {
       return -1;
     }
 
-    const tinyusdz::GeomMesh *mesh = prim->as<tinyusdz::GeomMesh>();
+    const lightusd::GeomMesh *mesh = prim->as<lightusd::GeomMesh>();
     if (!mesh) {
       std::cerr << "Expected GeomMesh.\n";
       return -1;
     }
 
-#if defined(TINYUSDZ_WITH_TYDRA)
-    tinyusdz::Attribute attr;
+#if defined(LIGHTUSD_WITH_TYDRA)
+    lightusd::Attribute attr;
     // TODO: Use EvaluateAttribute
-    if (tinyusdz::tydra::GetAttribute(*prim, "points", &attr, &err)) {
+    if (lightusd::tydra::GetAttribute(*prim, "points", &attr, &err)) {
       std::cout << "point attribute type = " << attr.type_name() << "\n";
 
       // Ensure Attribute has a value(not Attribute connection)
       if (attr.is_value()) {
-        std::vector<tinyusdz::value::point3f> pts;
+        std::vector<lightusd::value::point3f> pts;
         if (attr.is_timesamples()) {
           // TODO: timesamples
         } else {
@@ -695,7 +695,7 @@ int main(int argc, char **argv) {
     // Access GeomPrimvar
     {
       std::cout << "uv is primvar? " << mesh->has_primvar("uv") << "\n";
-      tinyusdz::GeomPrimvar primvar;
+      lightusd::GeomPrimvar primvar;
       std::string err;
       if (mesh->get_primvar("uv", &primvar, &err)) {
         std::cout << "uv primvar has default indices? " << primvar.has_default_indices()
@@ -708,32 +708,32 @@ int main(int argc, char **argv) {
 
       // Equivalent to pxr::UsdGeomPrimvar::ComputeFlattened().
       // elems[i] = values[indices[i]]
-      tinyusdz::value::Value value;
+      lightusd::value::Value value;
       if (primvar.flatten_with_indices(&value, &err)) {
         // value;:Value can contain any types, but value.array_size() should
         // work well only for primvar types(e.g. `float[]`, `color3f[]`) It
         // would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
         std::cout << "uv primvars. array size = " << value.array_size() << "\n";
         std::cout << "uv primvars. expand_by_indices result = "
-                  << tinyusdz::value::pprint_value(value) << "\n";
+                  << lightusd::value::pprint_value(value) << "\n";
       } else {
         std::cerr << "expand_by_indices failed. err = " << err << "\n";
       }
 
       // Typed version
-      std::vector<tinyusdz::value::texcoord2f> uvs;
+      std::vector<lightusd::value::texcoord2f> uvs;
       if (primvar.flatten_with_indices(&uvs, &err)) {
         // value;:Value can contain any types, but value.array_size() should
         // work well only for primvar types(e.g. `float[]`, `color3f[]`) It
         // would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
         std::cout << "uv primvars. array size = " << uvs.size() << "\n";
         std::cout << "uv primvars. expand_by_indices result = "
-                  << tinyusdz::value::pprint_value(uvs) << "\n";
+                  << lightusd::value::pprint_value(uvs) << "\n";
       } else {
         std::cerr << "expand_by_indices failed. err = " << err << "\n";
       }
 
-      std::vector<tinyusdz::GeomPrimvar> gpvars = mesh->get_primvars();
+      std::vector<lightusd::GeomPrimvar> gpvars = mesh->get_primvars();
       std::cout << "# of primvars = " << gpvars.size();
       for (const auto &item : gpvars) {
         std::cout << "  primvar = " << item.name() << "\n";

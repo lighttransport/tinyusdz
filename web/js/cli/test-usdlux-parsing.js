@@ -2,7 +2,7 @@
 // UsdLux Parsing and Conversion Test Suite
 // Tests Node.js WASM bindings for UsdLux light parsing
 
-import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -80,7 +80,7 @@ async function testFile(testConfig) {
     }
 
     // Initialize loader
-    const loader = new TinyUSDZLoader();
+    const loader = new LightUSDLoader();
     await loader.init({ useMemory64: false });
     loader.setMaxMemoryLimitMB(500);
 

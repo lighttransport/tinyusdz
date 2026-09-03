@@ -7,7 +7,7 @@
  * Run with: node test-coroutine-async.mjs
  */
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -18,7 +18,7 @@ const __dirname = dirname(__filename);
 async function testCoroutineAsync() {
     console.log('=== C++20 Coroutine Async Loading Test ===\n');
 
-    const loader = new TinyUSDZLoader();
+    const loader = new LightUSDLoader();
     await loader.init();
 
     // Test file - use a binary USDC or USDZ file for proper testing

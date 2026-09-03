@@ -5,23 +5,23 @@ This example demonstrates how to load a USD file as a Layer in C++ and query Lay
 ## Overview
 
 The example shows how to:
-1. Load a USD file using TinyUSDZ's C++ API
+1. Load a USD file using LightUSD's C++ API
 2. Access the LayerMetas from the loaded Stage
 3. Execute JavaScript code that can query layer metadata through the Tydra interface
 4. Use the `getLayerMetas()` function from JavaScript to access USD layer properties
 
 ## Requirements
 
-- TinyUSDZ built with QuickJS support (`-DTINYUSDZ_WITH_QJS=ON`)
+- LightUSD built with QuickJS support (`-DLIGHTUSD_WITH_QJS=ON`)
 - A USD file to query (sample provided)
 
 ## Building
 
-From the TinyUSDZ root directory:
+From the LightUSD root directory:
 
 ```bash
 mkdir build && cd build
-cmake -DTINYUSDZ_WITH_QJS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON ..
+cmake -DLIGHTUSD_WITH_QJS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON ..
 make js-script
 ```
 
@@ -133,7 +133,7 @@ if (layerMetas.upAxis !== "Y") {
 
 // Generate report
 console.log("=== USD File Report ===");
-console.log("File appears to be: " + 
+console.log("File appears to be: " +
     (layerMetas.endTimeCode > layerMetas.startTimeCode ? "Animated" : "Static"));
 console.log("Scale: " + layerMetas.metersPerUnit + " meters per unit");
 console.log("Frame rate: " + layerMetas.framesPerSecond + " fps");
@@ -150,7 +150,7 @@ console.log("Frame rate: " + layerMetas.framesPerSecond + " fps");
 ## Troubleshooting
 
 **Error: "JavaScript is not supported in this build"**
-- Rebuild TinyUSDZ with `-DTINYUSDZ_WITH_QJS=ON`
+- Rebuild LightUSD with `-DLIGHTUSD_WITH_QJS=ON`
 
 **Error: "Failed to load USD file"**
 - Check that the USD file path is correct

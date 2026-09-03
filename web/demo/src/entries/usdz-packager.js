@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { showLoader, hideLoader } from '../tusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { parseUSDZEntries } from 'tinyusdz-js/src/usdzconvert.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { parseUSDZEntries } from 'lightusd-js/src/usdzconvert.js';
 
 const SAMPLES = [
   { label: 'Suzanne PBR', url: './assets/suzanne-pbr.usda' },
@@ -123,12 +123,12 @@ function setStatus(s) { $id('pack-status').textContent = s; }
 
 async function ensureLoader() {
   if (loader) return loader;
-  setStatus('Initializing TinyUSDZ WASM...');
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    showLoader('Loading TinyUSDZ WASM...', document.getElementById('viewport'));
+  setStatus('Initializing LightUSD WASM...');
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+    showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
   await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
     hideLoader();
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
 }
 
@@ -252,8 +252,8 @@ async function loadScene(url, label) {
 
   setStatus(`Building scene...`);
   world.clear();
-  const mat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+  const mat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
     nativeScene.getDefaultRootNode(), mat, nativeScene, {
       preferredMaterialType: 'usdpreviewsurface',
       textureCache: new Map(),
@@ -324,8 +324,8 @@ async function loadLocalFile(file) {
     loader.parse(currentBytes, currentFilename, resolve, reject, { backend: 'legacy', maxMemoryLimitMB: 512 });
   });
   world.clear();
-  const mat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(nativeScene.getDefaultRootNode(), mat, nativeScene, {
+  const mat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(nativeScene.getDefaultRootNode(), mat, nativeScene, {
     preferredMaterialType: 'usdpreviewsurface', textureCache: new Map(),
   });
   world.add(threeNode);

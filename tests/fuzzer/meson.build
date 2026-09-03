@@ -1,9 +1,9 @@
-project('fuzz_tinyusdz', 'c', 'cpp', default_options : ['cpp_std=c++17'])
+project('fuzz_lightusd', 'c', 'cpp', default_options : ['cpp_std=c++17'])
 
-tinyusdz_sources=[
+lightusd_sources=[
   '../../src/asset-resolution.cc',
   '../../src/lz4/lz4.c',
-  '../../src/tinyusdz.cc',
+  '../../src/lightusd.cc',
   '../../src/lz4-compression.cc',
   '../../src/integerCoding.cpp',
   '../../src/io-util.cc',
@@ -90,21 +90,21 @@ tinyusdz_sources=[
 incdirs = include_directories(['../../src',
   ])
 
-# TINYUSDZ_FUZZER_BUILD = suppress some debug message
-executable('fuzz_tinyusdz',
-  'tinyusdz_fuzzmain.cc',
-  tinyusdz_sources, 
+# LIGHTUSD_FUZZER_BUILD = suppress some debug message
+executable('fuzz_lightusd',
+  'lightusd_fuzzmain.cc',
+  lightusd_sources,
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_pathutil',
   'pathutil_fuzzmain.cc',
-  tinyusdz_sources, 
+  lightusd_sources,
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_intcoding_decompress',
@@ -114,7 +114,7 @@ executable('fuzz_intcoding_decompress',
   '../../src/integerCoding.cpp',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_lz4_decompress',
@@ -123,45 +123,45 @@ executable('fuzz_lz4_decompress',
   '../../src/lz4-compression.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 
 executable('fuzz_usdaparser',
   'usdaparser_fuzzmain.cc',
-  tinyusdz_sources, 
+  lightusd_sources,
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_usdcparser',
   'usdcparser_fuzzmain.cc',
-  tinyusdz_sources, 
+  lightusd_sources,
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_dr_mp3_decoding',
   'dr_mp3_decoding_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_dr_wav_decoding',
   'dr_wav_decoding_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_wuffs_jpeg_decoding',
   'wuffs_jpeg_decoding_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_ascii_value_parser',
@@ -169,7 +169,7 @@ executable('fuzz_ascii_value_parser',
   '../../src/tiny-string.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer')
 
 executable('fuzz_alac_decoding',
@@ -186,7 +186,7 @@ executable('fuzz_alac_decoding',
   '../../src/external/alac/codec/matrix_enc.c',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_mtlx_xml_parser',
@@ -195,22 +195,22 @@ executable('fuzz_mtlx_xml_parser',
   '../../src/mtlx-xml-tokenizer.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_usd_writer',
   'usd_writer_fuzzmain.cc',
-  tinyusdz_sources,
+  lightusd_sources,
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_stb_image',
   'stb_image_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_tsd',
@@ -226,7 +226,7 @@ executable('fuzz_tsd',
   '../../src/tsd/tsd-limit.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_lz4_null_deref',
@@ -234,7 +234,7 @@ executable('fuzz_lz4_null_deref',
   '../../src/lz4/lz4.c',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_str_parse_null',
@@ -243,21 +243,21 @@ executable('fuzz_str_parse_null',
   '../../src/value-types.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_tiny_hashmap_collision',
   'tiny_hashmap_collision_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_string_pool_stability',
   'string_pool_stability_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_orm_texture_bounds',
@@ -271,13 +271,13 @@ executable('fuzz_orm_texture_bounds',
   '../../src/external/fpng.cpp',
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_layer_find_primspec',
   'layer_find_primspec_fuzzmain.cc',
-  tinyusdz_sources,
+  lightusd_sources,
   install: true,
   include_directories : incdirs,
-  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  cpp_args : ['-fsanitize=address,fuzzer', '-DLIGHTUSD_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )

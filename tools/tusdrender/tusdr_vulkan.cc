@@ -222,15 +222,15 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
               << lrt_vk_engine_last_error(vk) << "\n";
     return false;
   }
-  tinyusdz::Image out;
+  lightusd::Image out;
   out.width = width; out.height = h; out.channels = 4; out.bpp = 8;
   out.data.resize(rgba.size());
   for (size_t i = 0; i < rgba.size(); ++i)
     out.data[i] = static_cast<uint8_t>(std::lround(
         std::max(0.0f, std::min(1.0f, rgba[i])) * 255.0f));
-  tinyusdz::image::WriteOption write_opt;
-  write_opt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto written = tinyusdz::image::WriteImageToFile(opt.output, out, write_opt);
+  lightusd::image::WriteOption write_opt;
+  write_opt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto written = lightusd::image::WriteImageToFile(opt.output, out, write_opt);
   if (!written) {
     std::cerr << "Failed to write Vulkan MaterialX/path image: "
               << written.error() << "\n";

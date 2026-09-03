@@ -472,8 +472,8 @@ int main() {
     return 1;
   }
   std::vector<float> sharedDefaultPack(tusdview::kLightRtOpenPBRFloats, -2.0f);
-  tinyusdz::tydra::RealtimePbrMaterial sharedDefault;
-  tinyusdz::tydra::PackRealtimePbrMaterial(
+  lightusd::tydra::RealtimePbrMaterial sharedDefault;
+  lightusd::tydra::PackRealtimePbrMaterial(
       sharedDefault, false, 0.0f, 0.5f, sharedDefaultPack.data());
   for (int i = 0; i < tusdview::kLightRtOpenPBRFloats; ++i) {
     if (!Near(defaultPack[size_t(i)], sharedDefaultPack[size_t(i)])) {
@@ -481,7 +481,7 @@ int main() {
       return 1;
     }
   }
-  tinyusdz::tydra::RealtimePbrMaterial extendedPbr;
+  lightusd::tydra::RealtimePbrMaterial extendedPbr;
   extendedPbr.specularAnisotropy = 0.25f;
   extendedPbr.specularRotation = 12.0f;
   extendedPbr.specularRoughnessAnisotropy = -0.15f;
@@ -503,7 +503,7 @@ int main() {
   extendedPbr.volumeEmission[2] = 0.7f;
   extendedPbr.volumeEmissionScale = 3.0f;
   std::vector<float> extendedPack(tusdview::kLightRtOpenPBRFloats, 0.0f);
-  tinyusdz::tydra::PackRealtimePbrMaterial(
+  lightusd::tydra::PackRealtimePbrMaterial(
       extendedPbr, true, 0.0f, 0.5f, extendedPack.data());
   if (!Near(extendedPack[57], 0.25f) ||
       !Near(extendedPack[58], 12.0f) ||
@@ -1795,7 +1795,7 @@ int main() {
       "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"surface\"/>"
       "</surfacematerial>"
       "</materialx>";
-  tinyusdz::tydra::LightRtOpenPBRParams imageParams{};
+  lightusd::tydra::LightRtOpenPBRParams imageParams{};
   std::string imageErr;
   const std::string materialTextureDir = MaterialTextureDir();
   if (materialTextureDir.empty()) {
@@ -1816,7 +1816,7 @@ int main() {
                  "asset-relative MaterialX image unexpectedly used default\n");
     return 1;
   }
-  tinyusdz::tydra::LightRtOpenPBRParams uvImageParams{};
+  lightusd::tydra::LightRtOpenPBRParams uvImageParams{};
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBRAtUv(
           imageXml, "material", materialTextureDir.c_str(), 0.13f, 0.87f,
           &uvImageParams, &imageErr) ||
@@ -2749,7 +2749,7 @@ int main() {
     return 1;
   }
 
-  const char* volumeTexturePath = "/tmp/tinyusdz_lightrt_volume.ppm";
+  const char* volumeTexturePath = "/tmp/lightusd_lightrt_volume.ppm";
   FILE* volumeTexture = std::fopen(volumeTexturePath, "wb");
   if (!volumeTexture) {
     std::fprintf(stderr, "could not create volume texture fixture\n");
@@ -2763,7 +2763,7 @@ int main() {
   const char* texturedVolumeXml =
       "<materialx version=\"1.39\">"
       " <image name=\"density\" type=\"color3\"><input name=\"file\""
-      " type=\"filename\" value=\"tinyusdz_lightrt_volume.ppm\"/></image>"
+      " type=\"filename\" value=\"lightusd_lightrt_volume.ppm\"/></image>"
       " <anisotropic_vdf name=\"Fog\" type=\"VDF\"><input name=\"absorption\""
       " type=\"color3\" nodename=\"density\"/></anisotropic_vdf>"
       " <volume name=\"Volume\" type=\"volumeshader\"><input name=\"vdf\""

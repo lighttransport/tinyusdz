@@ -4,8 +4,8 @@
 // rb-math.h -- Pure C header with shared physics math types and functions.
 //
 
-#ifndef TINYUSDZ_TYDRA_RB_MATH_H_
-#define TINYUSDZ_TYDRA_RB_MATH_H_
+#ifndef LIGHTUSD_TYDRA_RB_MATH_H_
+#define LIGHTUSD_TYDRA_RB_MATH_H_
 
 #include <math.h>
 #include <string.h>
@@ -479,4 +479,4 @@ static inline TydraPhysVec3 tp_inertia_inverse_diagonal(TydraPhysVec3 diag) {
 } /* extern "C" */
 #endif
 
-#endif /* TINYUSDZ_TYDRA_RB_MATH_H_ */
+#endif /* LIGHTUSD_TYDRA_RB_MATH_H_ */

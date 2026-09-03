@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace imageio {
 
 struct PngImageInfo {
@@ -140,4 +140,4 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
 bool TranscodePNG(const uint8_t *data, size_t size, std::vector<uint8_t> &out);
 
 }  // namespace imageio
-}  // namespace tinyusdz
+}  // namespace lightusd

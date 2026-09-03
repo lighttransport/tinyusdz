@@ -8,7 +8,7 @@
 #include <iostream>
 #include <mutex>
 #include <atomic>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
 #include <set>
@@ -31,14 +31,14 @@
 #include "layer.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdMtlx.hh"
 #include "usdShade.hh"
 #include "usda-reader.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -175,7 +175,7 @@ bool IsUSDFileFormat(const std::string &name) {
          (ext.compare("usdc") == 0) || (ext.compare("usdz") == 0);
 }
 
-#if defined(TINYUSDZ_WITH_USDOBJ)
+#if defined(LIGHTUSD_WITH_USDOBJ)
 bool IsWavefrontObjFileFormat(const std::string &name) {
   std::string ext = GetExtension(name);
 
@@ -198,7 +198,7 @@ bool IsBuiltinFileFormat(const std::string &name) {
     return true;
   }
 
-#if defined(TINYUSDZ_WITH_USDOBJ)
+#if defined(LIGHTUSD_WITH_USDOBJ)
   if (IsWavefrontObjFileFormat(name)) {
     return true;
   }
@@ -280,7 +280,7 @@ bool IsURIAssetPath(const std::string &asset_path) {
 // Opt-in (SetNormalizeAssetPathOnFlatten): lexically collapse `.`/`..` in asset
 // paths made absolute on flatten, matching usdcat. Plain global, read during
 // composition; set before flatten. The public setter/getter live in the
-// tinyusdz namespace (see below); this global is file-local.
+// lightusd namespace (see below); this global is file-local.
 static bool g_normalize_asset_path_on_flatten = false;
 
 std::string ResolveAuthoredAssetPathForFlatten(
@@ -445,7 +445,7 @@ bool PropagateAssetResolverState(PrimSpec &ps,
 bool LoadAsset(AssetResolutionResolver &resolver,
                const std::string &current_working_path,
                const std::vector<std::string> &search_paths,
-               const tinyusdz::HashMap<std::string, FileFormatHandler> &fileformats,
+               const lightusd::HashMap<std::string, FileFormatHandler> &fileformats,
                const value::AssetPath &assetPath, const Path &primPath,
                Layer *dst_layer, const PrimSpec **dst_primspec_root,
                const bool error_when_no_prims_found,
@@ -1228,7 +1228,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   }
 
   // AOUSD Core Spec 9.5: Build expression variables map for asset path substitution
-  tinyusdz::HashMap<std::string, std::string> expr_vars;
+  lightusd::HashMap<std::string, std::string> expr_vars;
   if (in_layer.metas().expressionVariables) {
     for (const auto &var : in_layer.metas().expressionVariables.value()) {
       if (auto sv = var.second.get_value<std::string>()) {
@@ -1268,7 +1268,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                                         resolver.search_paths_str()));
     }
 
-    tinyusdz::Layer sublayer;
+    lightusd::Layer sublayer;
     if (!LoadAsset(resolver, in_layer.get_current_working_path(),
                    in_layer.get_asset_search_paths(), options.fileformats,
                    layer.assetPath, /* not_used */ Path::make_root_path(),
@@ -2417,7 +2417,7 @@ std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer) {
 namespace {
 
 // Internal implementation that accepts a shared visited set for cross-arc cycle detection.
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 // ---------------------------------------------------------------------------
 // Parallel layer-cache pre-warm.
 //
@@ -2487,7 +2487,7 @@ void CollectWarmArcsRec(const PrimSpec &ps, uint32_t depth,
 
 void WarmLayerCacheParallel(
     const AssetResolutionResolver &base_resolver, const Layer &in_layer,
-    const tinyusdz::HashMap<std::string, FileFormatHandler> &fileformats,
+    const lightusd::HashMap<std::string, FileFormatHandler> &fileformats,
     bool allow_parent_relative_paths, size_t max_asset_bytes,
     std::map<std::string, Layer> *layer_cache, std::string *warn) {
   if (!layer_cache) {
@@ -2510,7 +2510,7 @@ void WarmLayerCacheParallel(
   }
   (*layer_cache)[kWarmedMarkerKey] = Layer();
   const bool warm_verbose = []() {
-    const char *e = ::getenv("TINYUSDZ_FLATTEN_TIMING");
+    const char *e = ::getenv("LIGHTUSD_FLATTEN_TIMING");
     return e && e[0] == '1';
   }();
   auto warm_t0 = std::chrono::steady_clock::now();
@@ -2590,7 +2590,7 @@ void WarmLayerCacheParallel(
     // cache feed the next wave (their primspecs carry the stamped resolution
     // context the nested arcs need).
     if (warm_verbose) {
-      std::cerr << "[tinyusdz] layer-cache warm wave " << wave_idx << ": "
+      std::cerr << "[lightusd] layer-cache warm wave " << wave_idx << ": "
                 << todo.size() << " arcs, "
                 << std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - warm_t0)
@@ -2613,9 +2613,9 @@ void WarmLayerCacheParallel(
     }
   }
 }
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 
 // One unit of parallel composition work: a prim subtree composed
 // independently of its siblings (all mutations stay inside the subtree).
@@ -2708,7 +2708,7 @@ size_t CompParallelThreads() {
       1, (std::min<size_t>)(static_cast<size_t>(hw ? hw : 1), size_t(16)));
 }
 
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
                              const Layer &in_layer, Layer *composited_layer,
@@ -2721,7 +2721,7 @@ bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
 
   std::vector<std::string> search_paths = in_layer.get_asset_search_paths();
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, in_layer, options.fileformats,
                            options.allow_parent_relative_paths,
@@ -2818,7 +2818,7 @@ bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
 
   ArcVisitedSet visited;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, *layer, options.fileformats,
                            options.allow_parent_relative_paths,
@@ -2848,7 +2848,7 @@ bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
   // when the scan above found none. `dst` is the internal-lookup layer and is
   // never consulted here for the same reason.
   bool parallel_done = false;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     const size_t nthreads = CompParallelThreads();
     if (nthreads > 1) {
@@ -2980,7 +2980,7 @@ bool CompositePayloadImpl(AssetResolutionResolver &resolver, const Layer &in_lay
     return false;
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, in_layer, options.fileformats,
                            options.allow_parent_relative_paths,
@@ -3027,7 +3027,7 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
 
   ArcVisitedSet visited;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (options.layer_cache) {
     WarmLayerCacheParallel(resolver, *layer, options.fileformats,
                            options.allow_parent_relative_paths,
@@ -3049,7 +3049,7 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
   // isolation argument (same LoadAsset cache mutex / per-task resolver +
   // cycle set / no-internal-arcs precondition).
   bool parallel_done = false;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     const size_t nthreads = CompParallelThreads();
     if (nthreads > 1) {
@@ -3124,7 +3124,7 @@ bool CompositeVariantOwned(Layer &&owned, Layer *composited_layer,
   // touches the prim it is applied to, so sibling subtrees are independent
   // (no resolver, no I/O, no cycle set).
   bool parallel_done = false;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     const size_t nthreads = CompParallelThreads();
     if (nthreads > 1) {
@@ -4575,4 +4575,4 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   return true;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Lazy array reference tests
+// LightUSD Next - Lazy array reference tests
 //
 // Verifies that numeric POD arrays read from USDC come back as lazy references
 // into the retained source buffer, materialize correctly on access, and share
@@ -31,10 +31,10 @@
 #include "next/writer/value-printer.hh"
 #include "next/writer/usdc-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Lazy Array Tests ===" << std::endl;
+  std::cout << "=== LightUSD Next Lazy Array Tests ===" << std::endl;
 
   // Empty ArrayView must be safe to use with begin()/end() range APIs.
   {
@@ -661,9 +661,9 @@ int main() {
 
     // Filesystem facade: USDA root + USDA sublayer must compose and write USDC.
     {
-      const char* sub_path = "/tmp/tinyusdz_next_flatten_usda_sub.usda";
-      const char* ref_path = "/tmp/tinyusdz_next_flatten_usda_ref.usda";
-      const char* root_path = "/tmp/tinyusdz_next_flatten_usda_root.usda";
+      const char* sub_path = "/tmp/lightusd_next_flatten_usda_sub.usda";
+      const char* ref_path = "/tmp/lightusd_next_flatten_usda_ref.usda";
+      const char* root_path = "/tmp/lightusd_next_flatten_usda_root.usda";
       {
         std::ofstream sub(sub_path, std::ios::binary);
         sub << "#usda 1.0\n"
@@ -694,13 +694,13 @@ int main() {
         std::ofstream root(root_path, std::ios::binary);
         root << "#usda 1.0\n"
                 "(\n"
-                "  subLayers = [@./tinyusdz_next_flatten_usda_sub.usda@]\n"
+                "  subLayers = [@./lightusd_next_flatten_usda_sub.usda@]\n"
                 ")\n"
                 "def Xform \"World\"\n"
                 "{\n"
                 "  def Xform \"Local\" {}\n"
                 "  def Xform \"RefSlot\" (\n"
-                "    prepend references = [@./tinyusdz_next_flatten_usda_ref.usda@</Referenced>]\n"
+                "    prepend references = [@./lightusd_next_flatten_usda_ref.usda@</Referenced>]\n"
                 "  ) {}\n"
                 "}\n";
       }

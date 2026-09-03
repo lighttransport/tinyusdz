@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cassert>
 
-using namespace tinyusdz::sandbox;
+using namespace lightusd::sandbox;
 
 // Test data structure
 struct TestData {

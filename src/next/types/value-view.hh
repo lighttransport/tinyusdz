@@ -7,7 +7,7 @@
 
 #include "value.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 template <typename T>
@@ -49,4 +49,4 @@ bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
                         ArrayView<uint64_t>* out);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

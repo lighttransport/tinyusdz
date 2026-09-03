@@ -11,7 +11,7 @@
 #include "value-types.hh"
 #include "layer.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void primspec_create_test(void) {
   // Default constructor
@@ -385,7 +385,7 @@ void primspec_metas_lazy_init_test(void) {
 
 // primChildren and propertyNames accessors.
 void primspec_primchildren_propertynames_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   PrimSpec ps(Specifier::Def, "Scope", "TestScope");
 
@@ -396,7 +396,7 @@ void primspec_primchildren_propertynames_test(void) {
 
 // set_current_working_path / get_current_working_path.
 void primspec_working_path_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   PrimSpec ps(Specifier::Def, "Xform", "PathTest");
 

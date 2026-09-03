@@ -7,7 +7,7 @@
 
 def Xform "root"
 {
-    matrix4d xformOp:transform:tinyusdz = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-    uniform token[] xformOpOrder = ["!invert!xformOp:transform:tinyusdz"]
+    matrix4d xformOp:transform:lightusd = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+    uniform token[] xformOpOrder = ["!invert!xformOp:transform:lightusd"]
 }
 

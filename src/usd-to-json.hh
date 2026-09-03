@@ -10,7 +10,7 @@
 
 #include "nonstd/expected.hpp"
 
-#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+#if defined(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -23,10 +23,10 @@
 #endif
 #endif
 
-#include "tinyusdz.hh"
-#include "usdGeom.hh"  // GeomMesh/Xform etc. (no longer re-exported by tinyusdz.hh)
+#include "lightusd.hh"
+#include "usdGeom.hh"  // GeomMesh/Xform etc. (no longer re-exported by lightusd.hh)
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace minijson {
 class Value;
@@ -47,7 +47,7 @@ struct JSONBuffer {
   std::vector<uint8_t> data;     // Raw binary data
   std::string uri;               // Optional URI (for external files, empty for embedded)
   size_t byteLength;             // Length in bytes
-  
+
   JSONBuffer() : byteLength(0) {}
 };
 
@@ -59,7 +59,7 @@ struct JSONBufferView {
   size_t byteOffset;             // Offset into buffer in bytes
   size_t byteLength;             // Length in bytes
   size_t byteStride;             // Optional stride between elements (0 = tightly packed)
-  
+
   JSONBufferView() : buffer(0), byteOffset(0), byteLength(0), byteStride(0) {}
 };
 
@@ -72,7 +72,7 @@ struct JSONAccessor {
   std::string componentType;     // "BYTE", "UNSIGNED_BYTE", "SHORT", "UNSIGNED_SHORT", "UNSIGNED_INT", "FLOAT"
   size_t count;                  // Number of elements
   std::string type;              // "SCALAR", "VEC2", "VEC3", "VEC4", "MAT2", "MAT3", "MAT4"
-  
+
   JSONAccessor() : bufferView(0), byteOffset(0), count(0) {}
 };
 
@@ -83,7 +83,7 @@ struct USDToJSONOptions {
   ArraySerializationMode arrayMode = ArraySerializationMode::Base64;
   bool embedBuffers = true;      // If true, embed buffer data in JSON; if false, write separate .bin files
   std::string bufferPrefix = "buffer";  // Prefix for external buffer files
-  
+
   USDToJSONOptions() = default;
 };
 
@@ -95,11 +95,11 @@ struct USDToJSONContext {
   std::vector<JSONBufferView> bufferViews;
   std::vector<JSONAccessor> accessors;
   USDToJSONOptions options;
-  
+
   // Add data to buffer and return accessor index
-  size_t AddArrayData(const void* data, size_t elementSize, size_t elementCount, 
+  size_t AddArrayData(const void* data, size_t elementSize, size_t elementCount,
                       const std::string& componentType, const std::string& type);
-  
+
   USDToJSONContext() = default;
   explicit USDToJSONContext(const USDToJSONOptions& opts) : options(opts) {}
 };
@@ -109,82 +109,82 @@ struct USDToJSONContext {
 ///
 /// @returns JSON string or error message(std::string) when failed to convert.
 ///
-nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
+nonstd::expected<std::string, std::string> ToJSON(const lightusd::Stage &stage);
 
 ///
 /// Convert USD Stage to JSON with options
 ///
 /// @returns JSON string or error message(std::string) when failed to convert.
 ///
-nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options);
+nonstd::expected<std::string, std::string> ToJSON(const lightusd::Stage &stage, const USDToJSONOptions& options);
 
 ///
 /// Convert USD Stage to JSON value.
 ///
-minijson::Value ToJSONValue(const tinyusdz::Stage &stage, USDToJSONContext* context);
+minijson::Value ToJSONValue(const lightusd::Stage &stage, USDToJSONContext* context);
 
 ///
 /// Convert USD Layer to JSON value.
 ///
-minijson::Value ToJSONValue(const tinyusdz::Layer &layer);
+minijson::Value ToJSONValue(const lightusd::Layer &layer);
 
 ///
 /// Convert USD Layer to JSON value with context.
 ///
-minijson::Value ToJSONValue(const tinyusdz::Layer &layer, USDToJSONContext& context);
+minijson::Value ToJSONValue(const lightusd::Layer &layer, USDToJSONContext& context);
 
 ///
 /// Convert USD Layer to JSON
 ///
-bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::string *warn, std::string *err);
+bool to_json_string(const lightusd::Layer &layer, std::string *json_str, std::string *warn, std::string *err);
 
 ///
 /// Convert USD Layer to JSON with options
 ///
-bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
+bool to_json_string(const lightusd::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
 
 ///
 /// Convert GeomMesh to JSON value with context
 ///
-minijson::Value ToJSONValue(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
+minijson::Value ToJSONValue(lightusd::GeomMesh& mesh, USDToJSONContext* context);
 
 ///
 /// Convert Attribute to JSON value
 ///
-minijson::Value ToJSONValue(const tinyusdz::Attribute& attribute, USDToJSONContext* context = nullptr);
+minijson::Value ToJSONValue(const lightusd::Attribute& attribute, USDToJSONContext* context = nullptr);
 
 ///
 /// Convert Relationship to JSON value
 ///
-minijson::Value ToJSONValue(const tinyusdz::Relationship& relationship);
+minijson::Value ToJSONValue(const lightusd::Relationship& relationship);
 
 ///
 /// Convert Property to JSON value
 ///
-minijson::Value ToJSONValue(const tinyusdz::Property& property, USDToJSONContext* context = nullptr);
+minijson::Value ToJSONValue(const lightusd::Property& property, USDToJSONContext* context = nullptr);
 
 ///
 /// Convert Properties map to JSON value
 ///
-minijson::Value PropertiesToJSONValue(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+minijson::Value PropertiesToJSONValue(const std::map<std::string, lightusd::Property>& properties, USDToJSONContext* context = nullptr);
 
-#if defined(TINYUSDZ_ENABLE_NLOHMANN_JSON_COMPAT)
+#if defined(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT)
 /// Deprecated: use ToJSONValue or string-producing ToJSON instead.
-nlohmann::json ToJSON(const tinyusdz::Stage &stage, USDToJSONContext* context);
+nlohmann::json ToJSON(const lightusd::Stage &stage, USDToJSONContext* context);
 /// Deprecated: use ToJSONValue or to_json_string instead.
-nlohmann::json ToJSON(const tinyusdz::Layer &layer);
+nlohmann::json ToJSON(const lightusd::Layer &layer);
 /// Deprecated: use ToJSONValue or to_json_string instead.
-nlohmann::json ToJSON(const tinyusdz::Layer &layer, USDToJSONContext& context);
+nlohmann::json ToJSON(const lightusd::Layer &layer, USDToJSONContext& context);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
+nlohmann::json ToJSON(lightusd::GeomMesh& mesh, USDToJSONContext* context);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* context = nullptr);
+nlohmann::json ToJSON(const lightusd::Attribute& attribute, USDToJSONContext* context = nullptr);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(const tinyusdz::Relationship& relationship);
+nlohmann::json ToJSON(const lightusd::Relationship& relationship);
 /// Deprecated: use ToJSONValue instead.
-nlohmann::json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context = nullptr);
+nlohmann::json ToJSON(const lightusd::Property& property, USDToJSONContext* context = nullptr);
 /// Deprecated: use PropertiesToJSONValue instead.
-nlohmann::json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+nlohmann::json PropertiesToJSON(const std::map<std::string, lightusd::Property>& properties, USDToJSONContext* context = nullptr);
 #endif
 
 ///
@@ -195,7 +195,7 @@ struct USDZToJSONResult {
   std::string assets_json;       // JSON representation of assets (filename -> base64 data)
   std::string main_usd_filename; // Name of the main USD file in USDZ
   std::vector<std::string> asset_filenames; // List of all asset filenames
-  
+
   USDZToJSONResult() = default;
 };
 
@@ -241,7 +241,7 @@ bool USDZToJSONFromMemory(const uint8_t* addr, size_t length, const std::string&
 ///
 /// @return true on success, false on failure
 ///
-bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets_json,
+bool USDZAssetsToJSON(const lightusd::USDZAsset& usdz_asset, std::string* assets_json,
                       std::string* warn, std::string* err);
 
-} // namespace tinyusdz
+} // namespace lightusd

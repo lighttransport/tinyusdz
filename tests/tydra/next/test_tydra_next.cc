@@ -37,8 +37,8 @@
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-skel.hh"
 
-using namespace tinyusdz::tydra::next;
-using namespace tinyusdz::next;
+using namespace lightusd::tydra::next;
+using namespace lightusd::next;
 
 //
 // ChunkedArray Tests
@@ -470,12 +470,12 @@ void TestRenderDataSafety() {
 
 void TestTextureBudgetLease() {
   std::cout << "Testing resident texture budget leases...\n";
-  auto state = std::make_shared<tinyusdz::next::TextureBudgetState>(8);
+  auto state = std::make_shared<lightusd::next::TextureBudgetState>(8);
   assert(state->try_add(8));
   {
     DecodedImage first;
     first.pixels.resize(8);
-    first.budget_lease = std::make_shared<tinyusdz::next::TextureBudgetLease>(
+    first.budget_lease = std::make_shared<lightusd::next::TextureBudgetLease>(
         state, 8);
     DecodedImage second = first;
     first.budget_lease.reset();
@@ -602,7 +602,7 @@ def Xform "World"
   auto meshes = FindMeshes(stage);
   assert(meshes.size() == 1);
   assert(meshes[0].GetName() == "Cube");
-  assert(::tinyusdz::next::IsMesh(meshes[0]));
+  assert(::lightusd::next::IsMesh(meshes[0]));
 
   // Find cameras
   auto cameras = FindCameras(stage);
@@ -3531,7 +3531,7 @@ def Xform "W"
 // matching rules themselves.
 void TestUsdzEntryMatching() {
   std::cout << "Testing usdz entry matching...\n";
-  using tinyusdz::tydra::next::UsdzEntryMatches;
+  using lightusd::tydra::next::UsdzEntryMatches;
 
   // Exact.
   assert(UsdzEntryMatches("tex.png", "tex.png"));
@@ -3747,18 +3747,18 @@ def Xform "World"
     "sensors": [{"name": "position", "type": "jointpos"}]
   })JSON";
 
-  tinyusdz::tydra::next::URDFMeshBuffer mesh;
+  lightusd::tydra::next::URDFMeshBuffer mesh;
   mesh.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0};
   mesh.normals = {0, 0, 1, 0, 0, 1, 0, 0, 1};
   mesh.uvs = {0, 0, 1, 0, 0, 1};
   mesh.indices = {0, 1, 2};
-  std::map<std::string, tinyusdz::tydra::next::URDFMeshBuffer> meshes;
+  std::map<std::string, lightusd::tydra::next::URDFMeshBuffer> meshes;
   meshes["body_mesh"] = mesh;
 
-  tinyusdz::next::Stage stage;
+  lightusd::next::Stage stage;
   std::string warn;
   std::string err;
-  assert(tinyusdz::tydra::next::ConvertURDFJsonToUSDStage(
+  assert(lightusd::tydra::next::ConvertURDFJsonToUSDStage(
       payload, &meshes, &stage, &warn, &err));
   assert(err.empty());
   assert(stage.GetMeta().defaultPrim == "World");
@@ -4488,7 +4488,7 @@ def Xform "World"
     assert(result.success);
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   assert(table.is_frozen() &&
          "render-phase accessors must not unfreeze the name table");
 #endif
@@ -4509,7 +4509,7 @@ def Xform "World"
          "new name must have been inserted");
   assert(table.find("zzz_unregistered_probe_name_7f3a") == probe_id &&
          "new name must be findable after interning");
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   assert(table.is_frozen() &&
          "interning a new name must not unfreeze a published snapshot");
 #endif
@@ -5513,8 +5513,8 @@ def Xform "World"
   // reader only handled scalar string/token authoring).
   {
     UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
-    ::tinyusdz::next::SkelAnimationData data;
-    assert(::tinyusdz::next::GetSkelAnimationData(lr.stage, anim, &data, 1.0));
+    ::lightusd::next::SkelAnimationData data;
+    assert(::lightusd::next::GetSkelAnimationData(lr.stage, anim, &data, 1.0));
     assert(data.joints.size() == 2);
     assert(data.joints[0] == "Root");
     assert(data.joints[1] == "Root/Spine");
@@ -6477,7 +6477,7 @@ def Xform "World"
     const RenderMaterial& dm =
         def_scene.materials[static_cast<size_t>(unbound.material_id)];
     assert(dm.name == "defaultMaterial");
-    assert(dm.prim_path == "/__tinyusdz_default_material__");
+    assert(dm.prim_path == "/__lightusd_default_material__");
     assert(dm.shader_type == RenderMaterial::ShaderType::PreviewSurface);
     assert(dm.preview_surface);
     // Bound geometry keeps its authored material.
@@ -6731,12 +6731,12 @@ def Xform "World" (
       result.scene.working_to_display_linear[6] * mtlx_emission.x +
           result.scene.working_to_display_linear[7] * mtlx_emission.y +
           result.scene.working_to_display_linear[8] * mtlx_emission.z};
-  ::tinyusdz::color::ColorTransform mtlx_to_display;
-  assert(::tinyusdz::next::color_management::BuildColorTransform(
+  ::lightusd::color::ColorTransform mtlx_to_display;
+  assert(::lightusd::next::color_management::BuildColorTransform(
       loaded.stage.GetPrimAtPath("/World/MtlxTextureMat/Constant"),
       "studio_ap0", "lin_rec709_scene", &mtlx_to_display));
   float expected_mtlx_emission[3] = {0.1f, 0.2f, 0.3f};
-  ::tinyusdz::color::TransformRGB(
+  ::lightusd::color::TransformRGB(
       mtlx_to_display, expected_mtlx_emission);
   for (int channel = 0; channel < 3; ++channel) {
     assert(std::fabs(mtlx_emission_display[channel] -

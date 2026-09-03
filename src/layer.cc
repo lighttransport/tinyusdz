@@ -10,12 +10,12 @@
 #include "common-macros.inc"
 #include "tiny-format.hh"
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <memory>
 #include <mutex>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -252,7 +252,7 @@ struct LayerImpl {
   mutable std::unordered_map<std::string, const PrimSpec *> _primspec_path_cache;
   mutable bool _dirty{true};
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Guards the derived/cached state on this LayerImpl so the `const` accessors
   // that lazily fill it are safe under concurrent readers (e.g. pcp::Cache
   // parallel builds share a Layer): the lookup cache above (find_primspec_at)
@@ -282,7 +282,7 @@ struct LayerImpl {
   void reset_lookup_cache() {
     _primspec_path_cache.clear();
     _dirty = true;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     _cache_mu = std::make_shared<std::mutex>();
 #endif
   }
@@ -342,7 +342,7 @@ Layer& Layer::operator=(const Layer& other) {
     // See copy ctor: reset the per-layer lookup cache (stale pointers + shared mutex).
     _impl->_dirty = true;
     _impl->_primspec_path_cache.clear();
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     _impl->_cache_mu = std::make_shared<std::mutex>();
 #endif
   }
@@ -367,7 +367,7 @@ Layer& Layer::operator=(Layer&& other) noexcept {
   return *this;
 }
 
-const std::string Layer::name() const { 
+const std::string Layer::name() const {
   return _impl->_name;
 }
 
@@ -383,12 +383,12 @@ bool Layer::has_primspec(const std::string &primname) const {
   return _impl->_prim_specs.count(primname) > 0;
 }
 
-const LayerMetas &Layer::metas() const { 
-  return _impl->_metas; 
+const LayerMetas &Layer::metas() const {
+  return _impl->_metas;
 }
 
-LayerMetas &Layer::metas() { 
-  return _impl->_metas; 
+LayerMetas &Layer::metas() {
+  return _impl->_metas;
 }
 
 const std::unordered_map<std::string, PrimSpec> &Layer::primspecs() const {
@@ -475,28 +475,28 @@ bool Layer::replace_primspec(const std::string &name, PrimSpec &&ps) {
 // check_unresolved_*() methods. Take the same gated lock for a consistent read
 // when a parallel build path touches a shared Layer.
 bool Layer::has_unresolved_references() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   return _impl->_has_unresolved_references;
 }
 
 bool Layer::has_unresolved_payload() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   return _impl->_has_unresolved_payload;
 }
 
 bool Layer::has_unresolved_variant() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   return _impl->_has_unresolved_variant;
 }
 
 bool Layer::has_over_primspec() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   return _impl->_has_over_primspec;
@@ -509,14 +509,14 @@ bool Layer::has_class_primspec() const {
 }
 
 bool Layer::has_unresolved_inherits() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   return _impl->_has_unresolved_inherits;
 }
 
 bool Layer::has_unresolved_specializes() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   return _impl->_has_unresolved_specializes;
@@ -546,7 +546,7 @@ const std::vector<std::string> Layer::get_asset_search_paths() const {
 
 bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
                              std::string *err) const {
-  
+
 #define PushError(msg) \
   if (err) {           \
     (*err) += msg;     \
@@ -573,7 +573,7 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
   // concurrent readers (the PrimSpec tree itself is immutable during the
   // lookup, so the tree walk below runs lock-free). Lock is a no-op build
   // when threads are disabled.
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::unique_lock<std::mutex> cache_lock(*_impl->_cache_mu);
 #endif
   if (_impl->_dirty) {
@@ -591,7 +591,7 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
       return true;
     }
   }
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   cache_lock.unlock();  // release during the (lock-free) tree walk
 #endif
 
@@ -602,7 +602,7 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 
       // Add to cache.
       // Assume pointer address does not change unless dirty state changes.
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
       cache_lock.lock();
 #endif
       _impl->_primspec_path_cache[path.full_path_name()] = pv.value();
@@ -625,7 +625,7 @@ bool Layer::check_unresolved_references(const uint32_t max_depth) const {
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   _impl->_has_unresolved_references = ret;
@@ -642,7 +642,7 @@ bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   _impl->_has_unresolved_payload = ret;
@@ -659,7 +659,7 @@ bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   _impl->_has_unresolved_variant = ret;
@@ -676,7 +676,7 @@ bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   _impl->_has_unresolved_inherits = ret;
@@ -693,7 +693,7 @@ bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   _impl->_has_unresolved_specializes = ret;
@@ -710,7 +710,7 @@ bool Layer::check_over_primspec(const uint32_t max_depth) const {
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*_impl->_cache_mu);
 #endif
   _impl->_has_over_primspec = ret;
@@ -719,53 +719,53 @@ bool Layer::check_over_primspec(const uint32_t max_depth) const {
 
 size_t Layer::estimate_memory_usage() const {
   size_t total = sizeof(Layer);
-  
+
   // Layer name
   total += _impl->_name.capacity();
-  
+
   // PrimSpecs map
   total += _impl->_prim_specs.bucket_count() * sizeof(void*); // Hash table buckets
   for (const auto& prim_pair : _impl->_prim_specs) {
     total += prim_pair.first.capacity(); // key string
     total += EstimatePrimSpecMemory(prim_pair.second); // PrimSpec data
   }
-  
+
   // LayerMetas
   total += sizeof(LayerMetas);
   // Add metadata strings
   // defaultPrim is a value::token (Token), not optional
   total += _impl->_metas.defaultPrim.str().capacity();
-  
+
   // comment and doc are StringData structs with a value member
   total += _impl->_metas.comment.value.capacity();
   total += _impl->_metas.doc.value.capacity();
-  
+
   // SubLayers
   for (const auto& sublayer : _impl->_metas.subLayers) {
     total += sizeof(SubLayer);
     // AssetPath contains strings
     total += sublayer.assetPath.GetAssetPath().capacity();
   }
-  
+
   // CustomLayerData map
   for (const auto& custom_pair : _impl->_metas.customLayerData) {
     total += custom_pair.first.capacity(); // key string
     total += sizeof(MetaVariable); // Simplified estimate for MetaVariable
   }
-  
+
   // PrimSpec path cache
   total += _impl->_primspec_path_cache.size() * (sizeof(std::string) + sizeof(const PrimSpec*));
   for (const auto& cache_pair : _impl->_primspec_path_cache) {
     total += cache_pair.first.capacity();
   }
-  
+
   // Asset resolution state
   total += _impl->_current_working_path.capacity();
   for (const auto& path : _impl->_asset_search_paths) {
     total += path.capacity();
   }
-  
+
   return total;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// High-resolution timing utilities for parser profiling
@@ -149,8 +149,8 @@ class ParserProfiler {
 };
 
 // Helper macro for variable name concatenation
-#define TINYUSDZ_CONCAT_IMPL(x, y) x##y
-#define TINYUSDZ_CONCAT(x, y) TINYUSDZ_CONCAT_IMPL(x, y)
+#define LIGHTUSD_CONCAT_IMPL(x, y) x##y
+#define LIGHTUSD_CONCAT(x, y) LIGHTUSD_CONCAT_IMPL(x, y)
 
 // Convenience macros for profiling.
 //
@@ -159,24 +159,24 @@ class ParserProfiler {
 // touches the shared ParserProfiler::timers_ map — important because parsers run
 // on worker threads (pcp parallel build) and from concurrent LoadUSDFromFile
 // calls. When enabled, GetTimer() is internally mutex-guarded.
-#define TINYUSDZ_PROFILE_FUNCTION(parser_name) \
-  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)( \
-    tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling \
-      ? tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, __FUNCTION__)
+#define LIGHTUSD_PROFILE_FUNCTION(parser_name) \
+  lightusd::ScopedTimer LIGHTUSD_CONCAT(timer_scope_, __LINE__)( \
+    lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling \
+      ? lightusd::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, __FUNCTION__)
 
-#define TINYUSDZ_PROFILE_SCOPE(parser_name, scope_name) \
-  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)( \
-    tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling \
-      ? tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, scope_name)
+#define LIGHTUSD_PROFILE_SCOPE(parser_name, scope_name) \
+  lightusd::ScopedTimer LIGHTUSD_CONCAT(timer_scope_, __LINE__)( \
+    lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling \
+      ? lightusd::ParserProfiler::GetInstance().GetTimer(parser_name) : nullptr, scope_name)
 
-#define TINYUSDZ_PROFILE_START(parser_name, operation) \
-  if (tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
-    tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name)->StartTimer(operation); \
+#define LIGHTUSD_PROFILE_START(parser_name, operation) \
+  if (lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
+    lightusd::ParserProfiler::GetInstance().GetTimer(parser_name)->StartTimer(operation); \
   }
 
-#define TINYUSDZ_PROFILE_END(parser_name, operation) \
-  if (tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
-    tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name)->EndTimer(operation); \
+#define LIGHTUSD_PROFILE_END(parser_name, operation) \
+  if (lightusd::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
+    lightusd::ParserProfiler::GetInstance().GetTimer(parser_name)->EndTimer(operation); \
   }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

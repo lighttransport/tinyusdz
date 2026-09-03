@@ -5,7 +5,7 @@
 // flatten_with_indices / get_value instantiation matrix can be distributed across
 // sibling usdGeom-primvar-inst-*.cc TUs (parallel compile, lower peak per TU).
 //
-// #included INSIDE `namespace tinyusdz` by usdGeom.cc (for the in-file
+// #included INSIDE `namespace lightusd` by usdGeom.cc (for the in-file
 // ExpandWithIndices use in GeomMesh::get_normals) and by each usdGeom-primvar-inst-*.cc.
 // The instantiations themselves live in the inst TUs; usdGeom.hh's
 // EXTERN_TEMPLATE_GET_VALUE suppresses implicit instantiation everywhere else.
@@ -290,8 +290,8 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
 // (usdGeom.cc): the value/timesamples extraction is emitted once, not per T.
 template <typename T>
 bool GeomPrimvar::get_value(T *dest, std::string *err) const {
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {
@@ -317,8 +317,8 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
 
 template <typename T>
 bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpolationType interp, std::string *err) const {
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(lightusd::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {

@@ -2,7 +2,7 @@
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
 // Shared template bodies for ListPrims/ListShaders and their iterative
-// traversal helpers. Included (inside namespace tinyusdz::tydra) by
+// traversal helpers. Included (inside namespace lightusd::tydra) by
 // scene-access.cc and by the per-group instantiation TUs
 // scene-access-listprims-inst.cc / scene-access-listshaders-inst.cc.
 //
@@ -10,10 +10,10 @@
 // instantiation in including TUs; the inst TUs emit the symbols explicitly.
 
 template <typename T>
-bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
+bool TraverseIterative(const lightusd::Prim &root_prim, PathPrimMap<T> &itemmap,
                        size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack stores: (prim pointer, child index, path length before this prim)
-  StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
+  StackVector<std::tuple<const lightusd::Prim *, size_t, size_t>, 4> stack;
   stack.reserve(64);
 
   // Shared path buffer - reuse to avoid allocations
@@ -25,7 +25,7 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
 
   if (root_prim.is<T>()) {
     if (const T *pv = root_prim.as<T>()) {
-      DCOUT("Path : <" << path_buffer << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
+      DCOUT("Path : <" << path_buffer << "> is " << lightusd::value::TypeTraits<T>::type_name());
       itemmap[path_buffer] = pv;
     }
   }
@@ -38,7 +38,7 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
   while (!stack.empty()) {
     if (iter++ >= max_iter) break;
     auto &top = stack.back();
-    const tinyusdz::Prim *parent = std::get<0>(top);
+    const lightusd::Prim *parent = std::get<0>(top);
     size_t &child_idx = std::get<1>(top);
     const size_t parent_path_len = std::get<2>(top);
 
@@ -50,7 +50,7 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
       continue;
     }
 
-    const tinyusdz::Prim &child = parent->children()[child_idx];
+    const lightusd::Prim &child = parent->children()[child_idx];
     ++child_idx;
 
     // Build path for this child
@@ -61,7 +61,7 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
     // Check and add to map if type matches
     if (child.is<T>()) {
       if (const T *pv = child.as<T>()) {
-        DCOUT("Path : <" << path_buffer << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
+        DCOUT("Path : <" << path_buffer << "> is " << lightusd::value::TypeTraits<T>::type_name());
         itemmap[path_buffer] = pv;
       }
     }
@@ -79,11 +79,11 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
 }
 
 template <typename ShaderTy>
-bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
+bool TraverseShaderIterative(const lightusd::Prim &root_prim,
                              PathShaderMap<ShaderTy> &itemmap,
                              size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack stores: (prim pointer, child index, path length before this prim)
-  StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
+  StackVector<std::tuple<const lightusd::Prim *, size_t, size_t>, 4> stack;
   stack.reserve(64);
 
   // Shared path buffer - reuse to avoid allocations
@@ -108,7 +108,7 @@ bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
   while (!stack.empty()) {
     if (iter++ >= max_iter) break;
     auto &top = stack.back();
-    const tinyusdz::Prim *parent = std::get<0>(top);
+    const lightusd::Prim *parent = std::get<0>(top);
     size_t &child_idx = std::get<1>(top);
     const size_t parent_path_len = std::get<2>(top);
 
@@ -119,7 +119,7 @@ bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
       continue;
     }
 
-    const tinyusdz::Prim &child = parent->children()[child_idx];
+    const lightusd::Prim &child = parent->children()[child_idx];
     ++child_idx;
 
     // Build path for this child
@@ -147,7 +147,7 @@ bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
 }
 
 template <typename T>
-bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
+bool ListPrims(const lightusd::Stage &stage, PathPrimMap<T> &m /* output */) {
   // Should report error at compilation stege.
   static_assert(
       (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
@@ -170,7 +170,7 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
 }
 
 template <typename T>
-bool ListShaders(const tinyusdz::Stage &stage,
+bool ListShaders(const lightusd::Stage &stage,
                  PathShaderMap<T> &m /* output */) {
   // Concrete Shader type(e.g. UsdPreviewSurface) is classified as Imaging
   // Should report error at compilation stege.

@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// MikkTSpace tangent computation wrapper for TinyUSDZ Tydra.
+// MikkTSpace tangent computation wrapper for LightUSD Tydra.
 // Uses the canonical MikkTSpace library by Morten S. Mikkelsen.
 // https://github.com/mmikk/MikkTSpace
 //
@@ -47,7 +47,7 @@ extern "C" {
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace detail {
@@ -365,4 +365,4 @@ inline bool ComputeTangentsMikkTSpace(
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

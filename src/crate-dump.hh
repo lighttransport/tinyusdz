@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025, Light Transport Entertainment Inc.
 //
-// TinyUSDZ Crate Dump Library
+// LightUSD Crate Dump Library
 //
 // Library for dumping low-level USDC Crate file structure in YAML or JSON format
 // for efficient debugging and investigation.
@@ -11,7 +11,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 enum class OutputFormat {
@@ -51,4 +51,4 @@ struct DumpOptions {
 bool DumpCrate(const std::string& filename, const DumpOptions& opts, std::string* err);
 
 }  // namespace crate
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -14,7 +14,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 value::quath slerp(const value::quath &_a, const value::quath &_b, const float t) {
   value::quatf a;
@@ -42,15 +42,15 @@ value::quath slerp(const value::quath &_a, const value::quath &_b, const float t
 }
 
 value::quatf slerp(const value::quatf &a, const value::quatf &b, const float t) {
-  linalg::vec<float, 4> qa;    
-  linalg::vec<float, 4> qb;    
-  linalg::vec<float, 4> qret;    
+  linalg::vec<float, 4> qa;
+  linalg::vec<float, 4> qb;
+  linalg::vec<float, 4> qret;
 
   memcpy(reinterpret_cast<value::quatf *>(&qa), &a, sizeof(float) * 4);
   memcpy(reinterpret_cast<value::quatf *>(&qb), &b, sizeof(float) * 4);
 
   qret = linalg::slerp(qa, qb, t);
-  
+
   value::quatf ret;
   memcpy(&ret, reinterpret_cast<value::quatf *>(&qret), sizeof(float) * 4);
   return ret;
@@ -58,9 +58,9 @@ value::quatf slerp(const value::quatf &a, const value::quatf &b, const float t) 
 
 value::quatd slerp(const value::quatd &a, const value::quatd &b, const double t) {
 
-  linalg::vec<double, 4> qa;    
-  linalg::vec<double, 4> qb;    
-  linalg::vec<double, 4> qret;    
+  linalg::vec<double, 4> qa;
+  linalg::vec<double, 4> qb;
+  linalg::vec<double, 4> qret;
 
   memcpy(reinterpret_cast<value::quatd *>(&qa), &a, sizeof(double) * 4);
   memcpy(reinterpret_cast<value::quatd *>(&qb), &b, sizeof(double) * 4);
@@ -70,7 +70,7 @@ value::quatd slerp(const value::quatd &a, const value::quatd &b, const double t)
   value::quatd ret;
   memcpy(&ret, reinterpret_cast<value::quatd *>(&qret), sizeof(double) * 4);
   return ret;
-  
+
 }
 
 float vlength(const value::float3 &a) {
@@ -271,4 +271,4 @@ value::point3d geometric_normal(const value::point3d &p0, const value::point3d &
   return vnormalize(n);
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

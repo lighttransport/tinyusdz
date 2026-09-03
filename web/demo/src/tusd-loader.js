@@ -10,7 +10,7 @@ function ensureOverlay(parent) {
     overlayEl.className = 'tusd-loader hidden';
     overlayEl.innerHTML =
       '<div class="loader-progress"><div class="loader-bar"></div></div>' +
-      '<div class="loader-text">Loading TinyUSDZ WASM…</div>';
+      '<div class="loader-text">Loading LightUSD WASM…</div>';
     overlayEl.style.pointerEvents = 'none';
   }
   if (!overlayEl.parentNode && parent) {
@@ -37,7 +37,7 @@ export function showLoader(text, parent) {
   const el = ensureOverlay(parent || document.body);
   const bar = el.querySelector('.loader-bar');
   if (bar) bar.style.width = '10%';
-  el.querySelector('.loader-text').textContent = text || 'Loading TinyUSDZ WASM…';
+  el.querySelector('.loader-text').textContent = text || 'Loading LightUSD WASM…';
   el.classList.remove('hidden');
   animateBar();
 }

@@ -1,13 +1,13 @@
 # GPU Texture Compression (KTX2 / BC / ASTC / ETC2)
 
-tinyusdz can load, decode, and produce GPU block-compressed textures to cut VRAM
+lightusd can load, decode, and produce GPU block-compressed textures to cut VRAM
 and bandwidth in the viewers (tusdview / tusdrender) and on the web — while
 staying **DCC-transparent** and **legacy-compatible**: a USD/USDZ asset that uses
 compression still opens in stock USD tools and Apple Quick Look.
 
 The compression codecs come from the vendored, pure-C11 **tinyexr texture tool
-stack** at `src/external/textools/` (built as `tinyusdz_textools` when
-`TINYUSDZ_WITH_TEXTOOLS=ON`, the default):
+stack** at `src/external/textools/` (built as `lightusd_textools` when
+`LIGHTUSD_WITH_TEXTOOLS=ON`, the default):
 
 - **texcomp** — block encoders **and decoders** for BC1/3/5/6H/7, ETC2/EAC and
   ASTC LDR+HDR, plus the `uni` transcodable intermediate.
@@ -15,7 +15,7 @@ stack** at `src/external/textools/` (built as `tinyusdz_textools` when
   (`tp_ktx2_read` / `tp_ktx2_decode_level_rgba8` / `tp_ktx2_write_uni`).
 - **tir** — content-aware image resize. **envmap** — IBL/prefiltered cubemaps.
 
-See `src/external/textools/README.tinyusdz.md` for the vendor provenance and the
+See `src/external/textools/README.lightusd.md` for the vendor provenance and the
 re-sync procedure (fix upstream in the tinyexr repo, then re-copy — keep the
 vendored tree pristine).
 
@@ -33,7 +33,7 @@ No single GPU compressed format is available everywhere:
 
 Only **BC6H** and **ASTC-HDR** carry HDR; everything else is LDR. Because formats
 don't overlap, the portable strategy is: ship one *transcodable* asset and
-convert it to the device's native format at load. tinyusdz uses its own
+convert it to the device's native format at load. lightusd uses its own
 private **Basis-free `uni`** intermediate. Its blocks are valid ASTC 4x4 and
 convert to BC7 / ASTC / ETC2 or RGBA8, but they are not the Basis UASTC wire
 representation.
@@ -41,7 +41,7 @@ representation.
 ## USD authoring: the legacy-safe KTX2 hint
 
 USD has **no standard** for compressed textures, and **USDZ forbids KTX2** (only
-png/jpg/exr/avif are permitted). So tinyusdz keeps `inputs:file` pointing at a
+png/jpg/exr/avif are permitted). So lightusd keeps `inputs:file` pointing at a
 conventional image and names the compressed companion in **attribute
 `customData`**:
 
@@ -55,14 +55,14 @@ def Shader "diffuseTex" {
 }
 ```
 
-- tinyusdz-aware loaders **search the `.ktx2` first**; if it resolves, they load
+- lightusd-aware loaders **search the `.ktx2` first**; if it resolves, they load
   and transcode/decode it. Otherwise they fall back to `inputs:file`.
 - Stock USD tools, Quick Look, and RealityKit ignore `customData` and see only
   the png — so the asset is fully valid and USDZ-legal. `usdz-convert` does not
   package `customData`-referenced assets, so a hinted stage is already
   spec-clean; the hint is inert to unaware consumers.
 - Resolution happens in `RenderSceneConverter::ConvertUVTexture`
-  (`src/tydra/render-data-material.cc`), gated by `TINYUSDZ_WITH_TEXTOOLS`.
+  (`src/tydra/render-data-material.cc`), gated by `LIGHTUSD_WITH_TEXTOOLS`.
   Non-UDIM textures only.
 
 A **direct** reference (`inputs:file = @tex.ktx2@`) also works: the core image
@@ -84,7 +84,7 @@ tusdview scene_ktx2.usda --texture-keep-compressed on
 ```
 
 The output opens unchanged in stock USD tools (they see only the png and ignore
-`customData`), while tinyusdz-aware consumers pick up the compressed companion.
+`customData`), while lightusd-aware consumers pick up the compressed companion.
 
 **HDR sources** (`.exr` / `.hdr`) are routed to **BC6H** instead of `uni` (which is
 LDR-only): they are encoded as a mipped BC6H `.ktx2` that uploads as-is wherever
@@ -95,11 +95,11 @@ The `.ktx2` is **Zstd-supercompressed** by default (`supercompressionScheme = 2`
 the form real KTX2/UASTC assets ship in) — typically an order of magnitude smaller
 on disk than the raw block payload (a 64x64 test texture: 5792 -> 501 bytes).
 `--zstd off` writes the uncompressed (scheme 0) form. Zstd needs
-`TINYUSDZ_WITH_ZSTD_COMPRESSION` (on by default).
+`LIGHTUSD_WITH_ZSTD_COMPRESSION` (on by default).
 
 ## Core / tydra: loading a KTX2
 
-`.ktx2` is a first-class loadable image. `tinyusdz::image::LoadImageFromMemory`
+`.ktx2` is a first-class loadable image. `lightusd::image::LoadImageFromMemory`
 (`src/image-loader.cc`) detects the KTX2 identifier and decodes level 0 to
 RGBA8 via the texpipe reader:
 
@@ -112,7 +112,7 @@ RGBA8 via the texpipe reader:
   files).
 - `supercompressionScheme = 0` (uncompressed) and `2` (Zstd) are supported —
   real-world KTX2 (esp. UASTC) is usually Zstd-supercompressed. Zstd support
-  requires `TINYUSDZ_WITH_ZSTD_COMPRESSION` (on by default); the reader
+  requires `LIGHTUSD_WITH_ZSTD_COMPRESSION` (on by default); the reader
   decompresses each level via the vendored ZSTD. BasisLZ (scheme 1) is not
   handled.
 
@@ -189,7 +189,7 @@ using the Basis-free path by itself:
 
 1. A sample RGBA8 texture is compressed once to `uni` in a small WebAssembly
    module (`web/js/texcomp/texcomp_web.c`, built by `build.sh` with emscripten —
-   pure C11 over the textools `texcomp` sources, not linked against tinyusdz).
+   pure C11 over the textools `texcomp` sources, not linked against lightusd).
 2. JS detects the browser's compressed-texture support (WebGL2
    `WEBGL_compressed_texture_*` / `EXT_texture_compression_bptc`).
 3. It transcodes `uni` to the best available format (BC7 / ASTC / ETC2) and
@@ -207,7 +207,7 @@ cd web/js && npm run dev:texcomp      # or any static server, open /texcomp.html
 The page reports the detected caps, the chosen GPU format, and the VRAM saving
 (e.g. a 256×256 texture: 256 KiB RGBA8 → 64 KiB BC7 = 4×).
 
-The main tinyusdz WASM module also links textools and exports
+The main lightusd WASM module also links textools and exports
 `compressTextureToUni` / `transcodeTextureUni`. `getTextureFromUSD` uses that ABI
 for real scene textures: native-decoded RGBA8 images go directly through it;
 ordinary images decoded by the browser are read back once and follow the same
@@ -218,20 +218,20 @@ maps set `THREE.SRGBColorSpace` while retaining Three.js's base compressed-forma
 constant (Three selects the sRGB GPU internal format); data maps stay linear.
 The usual scene-texture Y flip is performed before block encoding because WebGL
 cannot unpack-flip compressed uploads. Applications can opt out globally with
-`TinyUSDZLoaderUtils.setSceneTextureCompressionEnabled(false)`.
+`LightUSDLoaderUtils.setSceneTextureCompressionEnabled(false)`.
 
 Standard KTX2 is supported alongside that path. External URLs and undecoded
 embedded streams are passed to Three.js `KTX2Loader`, which handles Basis
 ETC1S/UASTC as well as defined VkFormats such as ASTC. Before dispatch, embedded
 headers are classified: TinyEXR's private UNSPECIFIED-model `uni` carrier is
 never sent to the Basis transcoder and receives a targeted error if the native
-tinyusdz/textools layer did not already decode it. The loader and its worker are
+lightusd/textools layer did not already decode it. The loader and its worker are
 initialized lazily; ordinary images do not pay that startup cost. By default a
 short-lived WebGL capability probe configures the loader. Applications may
 instead provide their renderer-configured instance with
-`TinyUSDZLoaderUtils.setKTX2Loader(loader)`, or set a separately hosted
+`LightUSDLoaderUtils.setKTX2Loader(loader)`, or set a separately hosted
 transcoder directory before first use with
-`TinyUSDZLoaderUtils.setKTX2TranscoderPath(path)`. Passing `null` to
+`LightUSDLoaderUtils.setKTX2TranscoderPath(path)`. Passing `null` to
 `setKTX2Loader` disables the Basis path.
 
 Private `uni` KTX2 files written before this discriminator was introduced used
@@ -241,7 +241,7 @@ than risking a silent misdecode of genuine Basis content.
 
 ## Building / gating
 
-- `TINYUSDZ_WITH_TEXTOOLS` (default ON) builds `tinyusdz_textools` and enables
+- `LIGHTUSD_WITH_TEXTOOLS` (default ON) builds `lightusd_textools` and enables
   the KTX2 image path in the core library and the compression paths in tusdview
   (`TUSDVIEW_WITH_TEXTOOLS`). When OFF, `.ktx2` is not decoded and tusdview falls
   back to its built-in BC1/BC3 encoder.

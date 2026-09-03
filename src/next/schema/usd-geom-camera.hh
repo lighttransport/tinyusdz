@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdGeomCamera Schema API
+// LightUSD Next - UsdGeomCamera Schema API
 // Convenience accessors for USD camera
 
 #pragma once
@@ -11,7 +11,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Camera projection type
@@ -109,4 +109,4 @@ void ComputeProjectionMatrix(const CameraData& camera, float* matrix16);
 void ComputeProjectionMatrix(const CameraData& camera, float aspect_ratio, float* matrix16);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

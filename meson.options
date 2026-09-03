@@ -1,4 +1,4 @@
-# TinyUSDZ Meson build options
+# LightUSD Meson build options
 # Source list synchronized with CMakeLists.txt
 
 # -- Core features (default ON) --

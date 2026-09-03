@@ -22,7 +22,7 @@ INCLUDES = -I$(SRC_DIR) \
 
 # Library settings
 LDFLAGS = -L$(BUILD_DIR)
-LIBS = -ltinyusdz_static -pthread
+LIBS = -llightusd_static -pthread
 
 # Detect platform-specific libraries
 UNAME_S := $(shell uname -s)
@@ -64,23 +64,23 @@ $(TARGET_EXPORT): $(SOURCE_EXPORT)
 	@echo "Built $(TARGET_EXPORT)"
 
 $(TARGET_IMPORT): $(SOURCE_IMPORT)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DLIGHTUSD_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_IMPORT)"
 
 $(TARGET_EXPORT_NEW): $(SOURCE_EXPORT_NEW)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DLIGHTUSD_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_EXPORT_NEW)"
 
 $(TARGET_NODEGRAPH): $(SOURCE_NODEGRAPH)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DLIGHTUSD_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_NODEGRAPH)"
 
 $(TARGET_PARSE): $(SOURCE_PARSE)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DLIGHTUSD_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_PARSE)"
 
 $(TARGET_TRAVERSAL): $(SOURCE_TRAVERSAL)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DLIGHTUSD_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_TRAVERSAL)"
 
 run-export: $(TARGET_EXPORT)
@@ -110,8 +110,8 @@ run-traversal: $(TARGET_TRAVERSAL)
 run: run-export run-import run-export-new run-nodegraph run-parse run-traversal
 
 check-library:
-	@if [ ! -f "$(BUILD_DIR)/libtinyusdz_static.a" ]; then \
-		echo "ERROR: libtinyusdz_static.a not found in $(BUILD_DIR)"; \
+	@if [ ! -f "$(BUILD_DIR)/liblightusd_static.a" ]; then \
+		echo "ERROR: liblightusd_static.a not found in $(BUILD_DIR)"; \
 		echo "Please build the main library first:"; \
 		echo "  cd $(ROOT_DIR) && mkdir -p build && cd build && cmake .. && make"; \
 		exit 1; \
@@ -131,5 +131,5 @@ help:
 	@echo "  make help     - Show this help message"
 	@echo ""
 	@echo "Requirements:"
-	@echo "  - TinyUSDZ library must be built first ($(BUILD_DIR)/libtinyusdz_static.a)"
+	@echo "  - LightUSD library must be built first ($(BUILD_DIR)/liblightusd_static.a)"
 	@echo "  - C++14 compatible compiler"

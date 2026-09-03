@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USD Prim definition
+// LightUSD Next - USD Prim definition
 // Represents a primitive in the USD scene hierarchy
 
 #pragma once
@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <memory>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Specifier for prim definition
@@ -161,4 +161,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

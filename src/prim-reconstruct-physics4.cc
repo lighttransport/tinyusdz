@@ -33,7 +33,7 @@
 
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 // Suppress unused-function warnings from enum handlers in the .inc that
@@ -120,4 +120,4 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsFixedJoint)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsDistanceJoint)
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

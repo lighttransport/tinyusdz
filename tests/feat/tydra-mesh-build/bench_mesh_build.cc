@@ -31,7 +31,7 @@ using float2 = std::array<float, 2>;
 using float3 = std::array<float, 3>;
 
 // ---------------------------------------------------------------------------
-// is_close: matches math::is_close from TinyUSDZ (math-util.inc).
+// is_close: matches math::is_close from LightUSD (math-util.inc).
 // Relative + absolute epsilon: |a-b| <= eps  OR  |a-b| <= eps * max(|a|,|b|)
 // ---------------------------------------------------------------------------
 static inline bool is_close(float a, float b, float eps) {

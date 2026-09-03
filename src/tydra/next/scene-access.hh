@@ -14,14 +14,14 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
-using ::tinyusdz::next::Stage;
-using ::tinyusdz::next::UsdPrim;
-using ::tinyusdz::next::Value;
-using ::tinyusdz::next::TypeId;
+using ::lightusd::next::Stage;
+using ::lightusd::next::UsdPrim;
+using ::lightusd::next::Value;
+using ::lightusd::next::TypeId;
 
 //
 // Prim type checking
@@ -295,4 +295,4 @@ std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name)
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

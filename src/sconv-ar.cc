@@ -6,7 +6,7 @@
 #include "sconv-detail.hh"
 #include "usdAR.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 #define EXTRACT_TYPED(attr, name) do { \
@@ -189,4 +189,4 @@ bool CrateWriter::ExtractPreliminaryTextProperties(
 }
 
 }  // namespace experimental
-}  // namespace tinyusdz
+}  // namespace lightusd

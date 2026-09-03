@@ -23,7 +23,7 @@
 
 #include "../layer/layer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// True when `layer` carries inline variant data (VariantSetData with variant
@@ -36,4 +36,4 @@ bool LayerNeedsVariantHolders(const Layer& layer);
 Layer MaterializeVariantHolders(const Layer& layer);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

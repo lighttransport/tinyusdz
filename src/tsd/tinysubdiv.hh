@@ -24,14 +24,14 @@
 // Scheme "none" is not a refinement: callers skip subdivision entirely
 // (Refine() returns Result::UnsupportedScheme for Scheme::None).
 
-#ifndef TINYUSDZ_TSD_TINYSUBDIV_HH_
-#define TINYUSDZ_TSD_TINYSUBDIV_HH_
+#ifndef LIGHTUSD_TSD_TINYSUBDIV_HH_
+#define LIGHTUSD_TSD_TINYSUBDIV_HH_
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 // USD `subdivisionScheme`
@@ -324,6 +324,6 @@ Result ComputeLimitNormals(const MeshView &base_mesh, const Options &options,
                            std::vector<float> *out_normals, std::string *err);
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_TSD_TINYSUBDIV_HH_
+#endif  // LIGHTUSD_TSD_TINYSUBDIV_HH_

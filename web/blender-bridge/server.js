@@ -1,5 +1,5 @@
 // Blender Bridge WebSocket Server
-// Streams Blender scenes to browser viewers via TinyUSDZ
+// Streams Blender scenes to browser viewers via LightUSD
 
 import { WebSocketServer } from 'ws';
 import express from 'express';
@@ -92,7 +92,7 @@ app.get('/blender/bootstrap', (req, res) => {
   res.setHeader('Content-Type', 'text/x-python');
 
   // Generate minimal bootstrap script that fetches and runs the full script
-  const bootstrap = `# TinyUSDZ Bridge Bootstrap - Run this in Blender
+  const bootstrap = `# LightUSD Bridge Bootstrap - Run this in Blender
 # Fetches and executes the bridge script from the server
 
 import urllib.request

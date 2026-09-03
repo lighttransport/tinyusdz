@@ -11,7 +11,7 @@
 #include <string>
 #include <cstdint>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class StreamWriter;
@@ -75,7 +75,7 @@ void pprint_timesamples(StreamWriter& writer,
 
 ///
 /// Set the threshold for using threaded printing of typed array timesamples
-/// Only effective when compiled with TINYUSDZ_ENABLE_THREAD
+/// Only effective when compiled with LIGHTUSD_ENABLE_THREAD
 ///
 /// @param threshold Minimum number of samples to use threading (default: 1024)
 ///
@@ -83,10 +83,10 @@ void set_threaded_print_threshold(size_t threshold);
 
 ///
 /// Set the number of threads to use for printing typed array timesamples
-/// Only effective when compiled with TINYUSDZ_ENABLE_THREAD
+/// Only effective when compiled with LIGHTUSD_ENABLE_THREAD
 ///
 /// @param num_threads Number of threads (0 = auto-detect from hardware)
 ///
 void set_threaded_print_num_threads(unsigned int num_threads);
 
-} // namespace tinyusdz
+} // namespace lightusd

@@ -14,7 +14,7 @@
 
 #include "tsd-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 namespace {
@@ -526,4 +526,4 @@ void LinearFVarRefineTri(const Topology &topo, const float *corner_values,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

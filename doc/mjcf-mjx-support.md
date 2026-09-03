@@ -1,7 +1,7 @@
 # MJCF / MuJoCo-MJX → USD support matrix
 
 Status of MuJoCo MJCF (and MJX-compatible) element/primitive conversion to USD
-in tinyusdz, plus what is still required for *full* coverage. This is the
+in lightusd, plus what is still required for *full* coverage. This is the
 authoritative checklist for the `urdf-to-usd` CLI (`examples/urdf-to-usd`),
 the shared converter (`src/tydra/urdf-to-usd.cc`), and the web demo
 (`web/js/urdf.js`, `web/js/cli/urdf-to-usd.js`).
@@ -127,10 +127,10 @@ however, support only a **subset** of MuJoCo features and reads a few extra
 ## Validating the export with the OpenUSD toolset
 
 The converter is cross-checked against **pixar OpenUSD** (the reference
-implementation) as an independent oracle — tinyusdz wrote the file, OpenUSD
+implementation) as an independent oracle — lightusd wrote the file, OpenUSD
 reads/validates it. Get the tools with `pip install usd-core` (provides
 `usdchecker`, `usdcat`, and the `pxr` Python module); a full OpenUSD build adds
-`usdview`/`usdrecord`. Without OpenUSD, tinyusdz's own `tusdcat`
+`usdview`/`usdrecord`. Without OpenUSD, lightusd's own `tusdcat`
 (`examples/tusdcat`) mirrors steps 2–3.
 
 First export a model in all three formats:
@@ -153,7 +153,7 @@ Catches missing stage metadata (e.g. `metersPerUnit`), unresolved asset paths,
 and compressed-ZIP-in-USDZ violations.
 
 **2. Composition — `usdcat`** (opens + flattens; confirms OpenUSD reads
-tinyusdz's crate and resolves the shading network):
+lightusd's crate and resolves the shading network):
 
 ```sh
 usdcat --flatten /tmp/cassie.usdz | less

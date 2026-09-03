@@ -6,17 +6,17 @@
 #include "acutest.h"
 
 #include "unit-value-clips.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-clip-utils.hh"
 
 #include <string>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 static bool LoadUSDA(const std::string &usda, Stage *stage) {
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       stage, &warn, &err);
   if (!ok) {

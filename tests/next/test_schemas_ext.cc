@@ -1,7 +1,7 @@
 /// Extended schema tests for the next library.
 /// Tests all 11 committed schema modules: Skel, AR, Mtlx, Media, Physics.
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/schema/usd-skel.hh"
 #include "next/schema/usd-ar.hh"
 #include "next/schema/usd-mtlx.hh"
@@ -23,7 +23,7 @@
 #include <fstream>
 #include <iterator>
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int test_count = 0;
 static int pass_count = 0;
@@ -87,7 +87,7 @@ static void test_generated_supported_schema_fixture() {
       "../../tests/usda/generated/openusd-supported-schema-26.08.usda",
       "tests/usda/generated/openusd-supported-schema-26.08.usda",
       "../../../tests/usda/generated/openusd-supported-schema-26.08.usda",
-      TINYUSDZ_TEST_REPO_ROOT
+      LIGHTUSD_TEST_REPO_ROOT
           "/tests/usda/generated/openusd-supported-schema-26.08.usda"};
   std::string text;
   for (const char* path : paths) {

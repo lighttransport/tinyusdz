@@ -24,14 +24,14 @@ if (typeof document === 'undefined') {
 
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from './src/tinyusdz/TinyUSDZLoaderUtils.js';
-import { setTinyUSDZ as setMaterialXTinyUSDZ } from './src/tinyusdz/TinyUSDZMaterialX.js';
+import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from './src/lightusd/LightUSDLoaderUtils.js';
+import { setLightUSD as setMaterialXLightUSD } from './src/lightusd/LightUSDMaterialX.js';
 import {
     buildNextThreeNode,
     isNextScene,
     readNextSceneMeta
-} from './src/tinyusdz/NextRenderSceneUtils.js';
+} from './src/lightusd/NextRenderSceneUtils.js';
 
 // ---- Worker-compatible image loading patch ----
 THREE.ImageLoader.prototype.load = function (url, onLoad, _onProgress, onError) {
@@ -237,7 +237,7 @@ async function handleInit({ canvas, width, height, pixelRatio }) {
         return;
     }
 
-    sendStatus('Initializing TinyUSDZ WASM...');
+    sendStatus('Initializing LightUSD WASM...');
     try {
         await initLoader();
     } catch (err) {
@@ -289,11 +289,11 @@ function initThreeJS(offscreenCanvas, width, height, pixelRatio) {
 }
 
 // ============================================================================
-// TinyUSDZ WASM loader
+// LightUSD WASM loader
 // ============================================================================
 
 async function initLoader() {
-    loaderState.loader = new TinyUSDZLoader(null, {
+    loaderState.loader = new LightUSDLoader(null, {
         maxMemoryLimitMB: 512,
         onTydraProgress: (info) => {
             const meshProgress = info.meshTotal > 0
@@ -320,8 +320,8 @@ async function initLoader() {
     await loaderState.loader.init({ useMemory64: USE_MEMORY64 });
 
     const wasmModule = loaderState.loader.native_;
-    TinyUSDZLoaderUtils.setTinyUSDZ(wasmModule);
-    setMaterialXTinyUSDZ(wasmModule);
+    LightUSDLoaderUtils.setLightUSD(wasmModule);
+    setMaterialXLightUSD(wasmModule);
 }
 
 // ============================================================================
@@ -529,7 +529,7 @@ async function loadUSDFromData(data, filename, backend = 'legacy') {
 
     // Try to load DomeLight environment
     try {
-        const result = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(
+        const result = await LightUSDLoaderUtils.loadDomeLightFromUSD(
             usd,
             three.pmremGenerator
         );
@@ -562,7 +562,7 @@ async function loadUSDFromData(data, filename, backend = 'legacy') {
             onTextureLoaded: (material, _mapProperty, _texture) => {
                 material.needsUpdate = true;
             },
-            concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+            concurrency: LightUSDLoaderUtils.defaultTextureConcurrency(),
             yieldInterval: 16
         }).then(status => {
             console.log(`[Worker] Texture loading complete: ${status.loaded}/${status.total}`);
@@ -626,7 +626,7 @@ async function buildSceneWithProgress(usd) {
     });
 
     if (rootNode) {
-        sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
+        sceneState.root = await LightUSDLoaderUtils.buildThreeNode(
             rootNode,
             defaultMtl,
             usd,

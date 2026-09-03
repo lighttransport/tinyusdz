@@ -11,11 +11,11 @@ function isEphemeralListenError(error) {
 }
 
 let server = null;
-let baseURL = process.env.TINYUSDZ_COLORSPACE_URL;
+let baseURL = process.env.LIGHTUSD_COLORSPACE_URL;
 let skipReason = '';
 if (!baseURL) {
   const host = '127.0.0.1';
-  const port = Number(process.env.TINYUSDZ_COLORSPACE_PORT || 41739);
+  const port = Number(process.env.LIGHTUSD_COLORSPACE_PORT || 41739);
   baseURL = `http://${host}:${port}/colorspace-regression.html`;
   let startupError = '';
   const vite = new URL('../node_modules/vite/bin/vite.js', import.meta.url)
@@ -38,7 +38,7 @@ if (!baseURL) {
   // First use may rebuild both legacy and next WASM modules through Vite's
   // configure plugin, which is substantially slower than an ordinary startup.
   const startupTimeout = Number(
-    process.env.TINYUSDZ_COLORSPACE_SERVER_TIMEOUT_MS || 120000);
+    process.env.LIGHTUSD_COLORSPACE_SERVER_TIMEOUT_MS || 120000);
   const deadline = Date.now() + startupTimeout;
   let ready = false;
   while (Date.now() < deadline) {
@@ -67,7 +67,7 @@ if (!baseURL) {
   }
 }
 if (!skipReason) {
-  const outputDir = path.resolve(process.env.TINYUSDZ_COLORSPACE_OUTPUT ||
+  const outputDir = path.resolve(process.env.LIGHTUSD_COLORSPACE_OUTPUT ||
     'artifacts/colorspace');
   await fs.mkdir(outputDir, { recursive: true });
   const launchOptions = { headless: true, args: [

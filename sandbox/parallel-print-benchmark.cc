@@ -4,10 +4,10 @@
 #include <iostream>
 #include <chrono>
 #include "stage.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "io-util.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 int main(int argc, char** argv) {
   if (argc < 2) {

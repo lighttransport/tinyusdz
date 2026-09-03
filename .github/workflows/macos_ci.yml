@@ -14,7 +14,7 @@ on:
 jobs:
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
-  # src/next/ is gated behind TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE and is not built
+  # src/next/ is gated behind LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built
   # by the default macOS job, so this variant keeps it from bit-rotting.
   build-next-macos:
 
@@ -28,11 +28,11 @@ jobs:
         run: |
             cmake -B build_next -S . \
               -DCMAKE_BUILD_TYPE=Release \
-              -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On \
-              -DTINYUSDZ_WITH_TYDRA=On \
-              -DTINYUSDZ_BUILD_TOOLS=On \
-              -DTINYUSDZ_BUILD_EXAMPLES=On \
-              -DTINYUSDZ_BUILD_TESTS=On
+              -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On \
+              -DLIGHTUSD_WITH_TYDRA=On \
+              -DLIGHTUSD_BUILD_TOOLS=On \
+              -DLIGHTUSD_BUILD_EXAMPLES=On \
+              -DLIGHTUSD_BUILD_TESTS=On
             cmake --build build_next
       - name: Ctest
         run: cd build_next && ctest --output-on-failure
@@ -80,9 +80,9 @@ jobs:
           usdcat --help
           echo "OpenUSD binary: $(which usdcat)"
 
-      - name: Test TinyUSDZ and OpenUSD interoperability (macOS ARM64)
+      - name: Test LightUSD and OpenUSD interoperability (macOS ARM64)
         run: |
-          echo "=== Testing TinyUSDZ <-> OpenUSD interoperability on macOS ARM64 ==="
+          echo "=== Testing LightUSD <-> OpenUSD interoperability on macOS ARM64 ==="
 
           # Test 1: Read files with both tools
           for usd_file in models/suzanne.usdc models/cube.usda; do
@@ -94,11 +94,11 @@ jobs:
             fi
           done
 
-          # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+          # Test 2: Convert with LightUSD, verify with OpenUSD
           if [ -f "models/suzanne.usdc" ]; then
-            ./build/tusdcat models/suzanne.usdc > /tmp/tinyusdz.usda
-            usdcat /tmp/tinyusdz.usda > /dev/null
-            echo "✓ OpenUSD read TinyUSDZ-generated USDA"
+            ./build/tusdcat models/suzanne.usdc > /tmp/lightusd.usda
+            usdcat /tmp/lightusd.usda > /dev/null
+            echo "✓ OpenUSD read LightUSD-generated USDA"
           fi
 
           echo "All macOS ARM64 tests passed!"

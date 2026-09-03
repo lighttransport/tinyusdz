@@ -1,7 +1,7 @@
 import ctypes
 import struct
 
-import ctinyusdz
+import clightusd
 import array
 
 arr = array.array('i', [1, 2, 3, 4])
@@ -13,7 +13,7 @@ print(int1d)
 fltval = ctypes.c_float(1.3)
 print(fltval)
 
-pvar = ctinyusdz.PrimVar()
+pvar = clightusd.PrimVar()
 pvar.set_buf(arr)
 pvar.set_buf(fltval)
 

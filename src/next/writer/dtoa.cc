@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - dragonbox-based float-to-string (dtoa)
+// LightUSD Next - dragonbox-based float-to-string (dtoa)
 //
 // Ported from src/str-util.cc `dtos` (Dragonbox algorithm by Junekey Jeon),
 // hardcoded to OpenUSD/usdcat notation. Only `jkj::dragonbox::to_decimal` is
@@ -27,7 +27,7 @@
 #pragma GCC diagnostic ignored "-Warray-bounds"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -399,7 +399,7 @@ void htos_append(std::string& out, uint16_t bits) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop

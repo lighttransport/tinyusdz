@@ -230,7 +230,7 @@ OpenPBRParams OpenPBRParamsFromTri(const TriInfo &tri, const Vec3 &normal) {
 }
 
 OpenPBRParams OpenPBRParamsFromLightRt(
-    const tinyusdz::tydra::LightRtOpenPBRParams &src, const Vec3 &normal) {
+    const lightusd::tydra::LightRtOpenPBRParams &src, const Vec3 &normal) {
   OpenPBRParams p{};
   p.base_weight = src.baseWeight;
   p.base_color = v3_make(src.baseColor[0], src.baseColor[1], src.baseColor[2]);
@@ -279,7 +279,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
 
 OpenPBRParams OpenPBRParamsForMaterial(
     const TriInfo &tri, const Vec3 &normal,
-    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+    const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
   if (openpbr) {
     OpenPBRParams p = OpenPBRParamsFromLightRt(*openpbr, normal);
     // tri.base_color carries the per-hit base-color TEXTURE sample (and any
@@ -332,7 +332,7 @@ bool FiniteColor(const Vec3 &v) {
 Vec3 EvalMaterialDirect(const TriInfo &tri, const Vec3 &normal,
                         const Vec3 &wo, const Vec3 &wi,
                         const Vec3 &radiance, const Options &opt,
-                        const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+                        const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
   const float ndotl = std::max(0.0f, Dot(normal, wi));
   if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
   if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
@@ -578,7 +578,7 @@ float PowerHeuristic(float pdf_a, float pdf_b) {
 Vec3 EvalMaterialIblDiffuse(
     const TriInfo &tri, const Vec3 &normal, const Vec3 &wo,
     const Vec3 &diffuse_irradiance, const Options &opt,
-    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+    const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
   if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
     return Vec3{0.0f, 0.0f, 0.0f};
   }
@@ -867,7 +867,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
-                    const tinyusdz::tydra::LightRtOpenPBRParams **out_openpbr) {
+                    const lightusd::tydra::LightRtOpenPBRParams **out_openpbr) {
   if (out_openpbr) *out_openpbr = nullptr;
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
@@ -1090,7 +1090,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const RayDiff &rd, int depth,
            const ByteVec *tri_colors,
            const std::vector<float> *tri_normals,
-           const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+           const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                *openpbr_mats,
            bool indirect,
            const std::vector<TriangleSceneChunk> *triangle_chunks,
@@ -1109,7 +1109,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   bool tri_hit = false;
   float tri_t = camera.zfar;
   TriInfo hit_tri;
-  const tinyusdz::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
+  const lightusd::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
@@ -1311,7 +1311,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     return lights.has_dome ? Add(opt.bg, lights.env_color) : opt.bg;
   }
   TriInfo tri;
-  const tinyusdz::tydra::LightRtOpenPBRParams *tri_openpbr = nullptr;
+  const lightusd::tydra::LightRtOpenPBRParams *tri_openpbr = nullptr;
   float hit_t = best_t;
   if (direct_hit.hit) {
     hit_t = direct_hit.t;
@@ -1711,7 +1711,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
     vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
     vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
     matrix4d invw;
-    if (!tinyusdz::inverse(v.world_matrix, invw, 1.0e-12)) {
+    if (!lightusd::inverse(v.world_matrix, invw, 1.0e-12)) {
       invw = matrix4d::identity();
     }
     vd.inv_world = invw;
@@ -1939,7 +1939,7 @@ bool SampleBackPlate(const BackPlateImage &plate, float u, float v,
 }
 }  // namespace
 
-tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
+lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<FlatTri> &tris,
                             const std::vector<TriMat> &mats,
                             const LightCache &lights, const IblCache *ibl,
@@ -1953,16 +1953,16 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const ByteVec *tri_colors,
                             const std::vector<float> *tri_normals,
                             const std::vector<VolumeData> *volumes,
-                            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                            const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats,
                             const std::vector<TriangleSceneChunk> *triangle_chunks,
                             const std::vector<BackPlateImage> *backplates) {
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = opt.width;
   img.height = height;
   img.channels = 4;
   img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data.resize(size_t(img.width) * size_t(img.height) * 4);
   float aspect = float(img.width) / float(img.height);
   // Exactly `samples` anti-aliasing samples, distributed by the Halton(2,3)

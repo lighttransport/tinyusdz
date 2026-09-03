@@ -17,7 +17,7 @@
 
 #include "core/property.hh"  // Property (transitively: attribute, relationship, path, prim-enums)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 /// Result codes for property parsing
@@ -96,4 +96,4 @@ struct PropertyCount {
 // };
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

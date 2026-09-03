@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Reader stage reconstruction
+// LightUSD Next - USDC Crate Reader stage reconstruction
 
 #include "crate-reader-internal.hh"
 #include "../layer/array-edit.hh"
@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // Decode a dictionary that was written as USDA dict text in a String field
@@ -326,8 +326,8 @@ bool CrateReader::Impl::BuildStage() {
           layer.meta().owner = *s;
           layer.meta().owner_set = true;
         }
-      } else if (field.first == "__tinyusdz_unknownMeta") {
-        // tinyusdz-private: length-prefixed (key, raw-value) pairs of unmodeled
+      } else if (field.first == "__lightusd_unknownMeta") {
+        // lightusd-private: length-prefixed (key, raw-value) pairs of unmodeled
         // LAYER metadata the parser preserved (see the writer).
         const std::string* s = field.second.as_string();
         if (!s) s = field.second.as_token();
@@ -1265,8 +1265,8 @@ bool CrateReader::Impl::BuildStage() {
           }
           continue;
         }
-        if (field.first == "__tinyusdz_unknownMeta") {
-          // tinyusdz-private field: length-prefixed (key, raw-value) pairs of
+        if (field.first == "__lightusd_unknownMeta") {
+          // lightusd-private field: length-prefixed (key, raw-value) pairs of
           // unmodeled prim metadata the parser preserved (see the writer).
           const std::string* blob = field.second.as_string();
           if (!blob) blob = field.second.as_token();
@@ -1614,4 +1614,4 @@ bool CrateReader::Impl::BuildStage() {
 
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

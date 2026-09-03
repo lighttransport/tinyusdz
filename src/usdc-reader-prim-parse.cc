@@ -9,7 +9,7 @@
 // All are USDCReader::Impl methods declared in usdc-reader-impl.hh.
 #include "usdc-reader-impl.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
@@ -424,7 +424,7 @@ bool USDCReader::Impl::ParseCommonPrimFields(
     result->specifier = default_spec;
   }
 
-  // 4. Determine TinyUSDZ prim type name
+  // 4. Determine LightUSD prim type name
   if (!result->typeName) {
     result->pTyName = "Model";
   } else {
@@ -447,4 +447,4 @@ bool USDCReader::Impl::ParseCommonPrimFields(
 }
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

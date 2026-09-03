@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-// 
+//
 // Work-in-progress. Nothing here yet.
 // Built-in .fbx import plugIn using OpenFBX.
-// Import only. 
+// Import only.
 //
-// example usage 
+// example usage
 //
 // def Xform "fbxroot" (
 //   prepend references = @bunny.fbx@
@@ -19,7 +19,7 @@
 
 class GPrim;
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace usdFbx {
 
@@ -28,4 +28,4 @@ bool ReadFbxFromFile(const std::string &filepath, GPrim *prim, std::string *err 
 
 } // namespace usdFbx
 
-} // namespace tinyusdz
+} // namespace lightusd

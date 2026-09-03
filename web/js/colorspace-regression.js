@@ -4,15 +4,15 @@ import {
   addColorCalibrationScene,
   comparePixelSamples,
   readRenderTargetPixels
-} from './src/tinyusdz/ColorCalibrationTestKit.js';
+} from './src/lightusd/ColorCalibrationTestKit.js';
 import {
   installTextureColorTransform,
   textureColorTransform,
   transformLinearColor
-} from './src/tinyusdz/ColorSpaceUtils.js';
+} from './src/lightusd/ColorSpaceUtils.js';
 import { loadWasm } from './src/usdzconvert.js';
-import { TinyUSDZLoaderUtils } from './src/tinyusdz/TinyUSDZLoaderUtils.js';
-import { createNextMaterial } from './src/tinyusdz/NextRenderSceneUtils.js';
+import { LightUSDLoaderUtils } from './src/lightusd/LightUSDLoaderUtils.js';
+import { createNextMaterial } from './src/lightusd/NextRenderSceneUtils.js';
 
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
@@ -195,14 +195,14 @@ def Xform "World" {
 async function createBackendThreeMaterials() {
   const bytes = new TextEncoder().encode(BACKEND_MTLX_USDA);
   const legacy = await loadWasm(() => import(/* @vite-ignore */
-    new URL('./src/tinyusdz/tinyusdz.js', import.meta.url).href));
+    new URL('./src/lightusd/lightusd.js', import.meta.url).href));
   const next = await loadWasm(() => import(/* @vite-ignore */
-    new URL('./src/tinyusdz/tinyusdz_next.js', import.meta.url).href), {
-    locateFile: (file) => new URL('./src/tinyusdz/' + file,
+    new URL('./src/lightusd/lightusd_next.js', import.meta.url).href), {
+    locateFile: (file) => new URL('./src/lightusd/' + file,
       import.meta.url).href
   });
 
-  const legacyScene = new legacy.TinyUSDZLoaderNative();
+  const legacyScene = new legacy.LightUSDLoaderNative();
   let legacyMaterial;
   try {
     if (!legacyScene.loadFromBinary(bytes, 'colorspace-browser-legacy.usda')) {
@@ -210,7 +210,7 @@ async function createBackendThreeMaterials() {
     }
     const record = legacyScene.getMaterialWithFormat(0, 'json');
     if (record.error) throw new Error(record.error);
-    legacyMaterial = await TinyUSDZLoaderUtils.convertMaterial(
+    legacyMaterial = await LightUSDLoaderUtils.convertMaterial(
       JSON.parse(record.data), legacyScene, {
         preferredMaterialType: 'openpbr', skipTextures: true
       });

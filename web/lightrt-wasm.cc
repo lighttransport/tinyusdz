@@ -145,7 +145,7 @@ class LightRTPathTracer {
 };
 }
 
-EMSCRIPTEN_BINDINGS(tinyusdz_lightrt_path_tracer) {
+EMSCRIPTEN_BINDINGS(lightusd_lightrt_path_tracer) {
   emscripten::class_<LightRTPathTracer>("LightRTPathTracer")
     .constructor<>().function("build",&LightRTPathTracer::build)
     .function("trace",&LightRTPathTracer::trace).function("clear",&LightRTPathTracer::clear)

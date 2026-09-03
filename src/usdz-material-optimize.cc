@@ -18,7 +18,7 @@
 #include "layer.hh"
 #include "prim-pprint.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdz {
 namespace {
 
@@ -606,4 +606,4 @@ bool OptimizeMaterialsInLayer(const UsdzConvertOptions &options, Layer *layer,
 }
 
 }  // namespace usdz
-}  // namespace tinyusdz
+}  // namespace lightusd

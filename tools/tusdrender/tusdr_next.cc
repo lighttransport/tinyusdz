@@ -35,42 +35,42 @@
 
 namespace tusdr {
 
-bool ReadFloatArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
+bool ReadFloatArrayViewLazy(const lightusd::next::UsdPrim &prim,
                             const char *name, double time,
-                            tinyusdz::tydra::next::ValueArrayRead<float> *out) {
-  return tinyusdz::tydra::next::ReadFloatArray(prim, name, time, out);
+                            lightusd::tydra::next::ValueArrayRead<float> *out) {
+  return lightusd::tydra::next::ReadFloatArray(prim, name, time, out);
 }
 
-bool AllowGaussianSHDecode(const tinyusdz::next::UsdPrim &prim) {
-  const tinyusdz::next::Value *value = prim.GetPropertyValue(
+bool AllowGaussianSHDecode(const lightusd::next::UsdPrim &prim) {
+  const lightusd::next::Value *value = prim.GetPropertyValue(
       "radiance:sphericalHarmonicsCoefficients");
   if (!value || !value->is_array()) return true;
   constexpr size_t kMaxDecodedShBytes = size_t(128) * 1024 * 1024;
   const bool oversized = value->array_size() >
                          kMaxDecodedShBytes / sizeof(float);
   return !oversized || !value->is_lazy() ||
-         tinyusdz::next::CanBorrowLazyFlat(*value);
+         lightusd::next::CanBorrowLazyFlat(*value);
 }
 
-bool ReadIntArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
+bool ReadIntArrayViewLazy(const lightusd::next::UsdPrim &prim,
                           const char *name, double time,
-                          tinyusdz::tydra::next::ValueArrayRead<int32_t> *out) {
-  return tinyusdz::tydra::next::ReadIntArray(prim, name, time, out);
+                          lightusd::tydra::next::ValueArrayRead<int32_t> *out) {
+  return lightusd::tydra::next::ReadIntArray(prim, name, time, out);
 }
 
-std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
+std::vector<float> ReadFloatArrayLazy(const lightusd::next::UsdPrim &prim,
                                       const char *name, double time) {
-  return tinyusdz::tydra::next::ReadFloatArrayCopy(prim, name, time);
+  return lightusd::tydra::next::ReadFloatArrayCopy(prim, name, time);
 }
 
-std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
+std::vector<int32_t> ReadIntArrayLazy(const lightusd::next::UsdPrim &prim,
                                       const char *name, double time) {
-  return tinyusdz::tydra::next::ReadIntArrayCopy(prim, name, time);
+  return lightusd::tydra::next::ReadIntArrayCopy(prim, name, time);
 }
 
-std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
+std::vector<int64_t> ReadInt64ArrayLazy(const lightusd::next::UsdPrim &prim,
                                         const char *name, double time) {
-  return tinyusdz::tydra::next::ReadInt64ArrayCopy(prim, name, time);
+  return lightusd::tydra::next::ReadInt64ArrayCopy(prim, name, time);
 }
 
 bool PointInstanceHidden(size_t index, size_t instance_count,
@@ -85,8 +85,8 @@ bool PointInstanceHidden(size_t index, size_t instance_count,
 }
 
 std::vector<std::string> ReadTokenArrayNext(
-    const tinyusdz::next::UsdPrim &prim, const char *name) {
-  const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    const lightusd::next::UsdPrim &prim, const char *name) {
+  const lightusd::next::Value *v = prim.GetPropertyValue(name);
   if (!v) return {};
   if (const std::vector<std::string> *arr = v->as_token_array()) return *arr;
   if (const std::string *tok = v->as_token()) return {*tok};
@@ -95,16 +95,16 @@ std::vector<std::string> ReadTokenArrayNext(
 }
 
 std::unordered_map<std::string, float> GatherBlendShapeWeightsNext(
-    const tinyusdz::next::Stage &stage, double time) {
+    const lightusd::next::Stage &stage, double time) {
   std::unordered_map<std::string, float> weights;
-  stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
-    if (!tinyusdz::next::IsSkelAnimation(prim)) return true;
+  stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
+    if (!lightusd::next::IsSkelAnimation(prim)) return true;
     const std::vector<std::string> names =
         ReadTokenArrayNext(prim, "blendShapes");
     if (names.empty()) return true;
-    tinyusdz::next::AttributeEval eval(&stage);
+    lightusd::next::AttributeEval eval(&stage);
     eval.SetTime(time);
-    tinyusdz::next::EvalResult result = eval.Eval(prim, "blendShapeWeights");
+    lightusd::next::EvalResult result = eval.Eval(prim, "blendShapeWeights");
     if (!result.success || !result.value.is_array()) return true;
     const std::vector<float> *arr = result.value.as_float_array();
     if (!arr) return true;
@@ -116,10 +116,10 @@ std::unordered_map<std::string, float> GatherBlendShapeWeightsNext(
 }
 
 std::vector<Vec3> ComputeBlendShapeOffsetsNext(
-    const tinyusdz::next::Stage *stage, const tinyusdz::next::UsdPrim &mesh,
+    const lightusd::next::Stage *stage, const lightusd::next::UsdPrim &mesh,
     const std::unordered_map<std::string, float> &weights, size_t npts) {
   if (!stage || npts == 0) return {};
-  const std::vector<tinyusdz::next::Path> *targets =
+  const std::vector<lightusd::next::Path> *targets =
       mesh.GetRelationship("skel:blendShapeTargets");
   if (!targets || targets->empty()) return {};
 
@@ -130,15 +130,15 @@ std::vector<Vec3> ComputeBlendShapeOffsetsNext(
   std::vector<Vec3> offsets(npts, Vec3{0.0f, 0.0f, 0.0f});
   bool any = false;
   for (size_t ti = 0; ti < targets->size(); ++ti) {
-    tinyusdz::next::UsdPrim shape_prim = stage->GetPrimAtPath((*targets)[ti]);
+    lightusd::next::UsdPrim shape_prim = stage->GetPrimAtPath((*targets)[ti]);
     if (!shape_prim.IsValid()) continue;
     const std::string shape_name =
         (ti < names.size() && !names[ti].empty()) ? names[ti] : shape_prim.GetName();
     auto wit = weights.find(shape_name);
     if (wit == weights.end() || wit->second == 0.0f) continue;
 
-    tinyusdz::next::BlendShapeData data;
-    if (!tinyusdz::next::GetBlendShapeData(*stage, shape_prim, &data)) continue;
+    lightusd::next::BlendShapeData data;
+    if (!lightusd::next::GetBlendShapeData(*stage, shape_prim, &data)) continue;
     const size_t n = data.offsets.size() / 3;
     if (data.hasPointIndices && !data.pointIndices.empty()) {
       const size_t m = std::min(n, data.pointIndices.size());
@@ -167,17 +167,17 @@ std::vector<Vec3> ComputeBlendShapeOffsetsNext(
   return any ? offsets : std::vector<Vec3>();
 }
 
-float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+float ReadCamFloatNext(const lightusd::next::UsdPrim &prim, const char *name,
                        float fallback);
 
 // Templated on the output buffer type so the flat path can stream into plain
 // std::vector (ctx.tris) while the instanced path streams into the budget-tracked
 // Blas FloatVec/TriVec (so the big instanced geometry is capped/pooled).
 template <class FVec, class TVec>
-void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
-                          const tinyusdz::next::Stage *stage,
+void AddRTPreviewMeshNext(const lightusd::next::UsdPrim &prim,
+                          const lightusd::next::Stage *stage,
                           const std::unordered_map<std::string, float> *blend_weights,
-                          const matrix4d &world, tinyusdz::Purpose purpose,
+                          const matrix4d &world, lightusd::Purpose purpose,
                           uint32_t purpose_mask, double time,
                           const Vec3 &base_color, int32_t tex_id,
                           int32_t normal_tex_id, float roughness, float metallic,
@@ -234,7 +234,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       const float li = ReadCamFloatNext(prim, "inputs:intensity", 1.0f);
       const float lx = ReadCamFloatNext(prim, "inputs:exposure", 0.0f);
       Vec3 lc{1.0f, 1.0f, 1.0f};
-      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("inputs:color"))
+      if (const lightusd::next::Value *v = prim.GetPropertyValue("inputs:color"))
         if (const float *f = v->as_float3()) lc = Vec3{f[0], f[1], f[2]};
       // Same convention as the legacy CollectAllGeometry path (MeshLightEmission):
       // the light color is TINTED by the material -- its emissive color if it has
@@ -250,7 +250,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       // why it is gated on MeshLightAPI. Blendshape offsets are not applied: a
       // morphing light would otherwise change brightness every frame.
       bool normalize = false;
-      if (const tinyusdz::next::Value *v =
+      if (const lightusd::next::Value *v =
               prim.GetPropertyValue("inputs:normalize"))
         if (const bool *b = v->as_bool()) normalize = *b;
       if (normalize) {
@@ -339,9 +339,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   // Read core geometry without permanently materializing it into the stage.
   // Uncompressed USDC arrays are borrowed from the retained crate buffer; other
   // encodings decode into function-local scratch and are freed after this mesh.
-  tinyusdz::tydra::next::ValueArrayRead<float> points;
-  tinyusdz::tydra::next::ValueArrayRead<int32_t> counts;
-  tinyusdz::tydra::next::ValueArrayRead<int32_t> indices;
+  lightusd::tydra::next::ValueArrayRead<float> points;
+  lightusd::tydra::next::ValueArrayRead<int32_t> counts;
+  lightusd::tydra::next::ValueArrayRead<int32_t> indices;
   ReadFloatArrayViewLazy(prim, "points", time, &points);
   ReadIntArrayViewLazy(prim, "faceVertexCounts", time, &counts);
   ReadIntArrayViewLazy(prim, "faceVertexIndices", time, &indices);
@@ -392,7 +392,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     }
     if (st.empty()) {
       for (const std::string &name :
-           tinyusdz::tydra::next::MeshConfig{}.uv_primvar_names) {
+           lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
         st = ReadFloatArrayLazy(prim, ("primvars:" + name).c_str(), time);
         if (!st.empty()) {
           st_name = name;
@@ -655,7 +655,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   const bool visible_for_fit = PurposeVisible(purpose_bit, purpose_mask);
   // USD doubleSided (schema default false = single-sided -> back-face cull).
   bool double_sided = false;
-  if (const tinyusdz::next::Value *v = prim.GetPropertyValue("doubleSided"))
+  if (const lightusd::next::Value *v = prim.GetPropertyValue("doubleSided"))
     if (const bool *b = v->as_bool()) double_sided = *b;
   const uint8_t ds_flag = double_sided ? 1 : 0;
 
@@ -859,9 +859,9 @@ bool IsUdimPattern(const std::string &asset) {
 // tydra::next::TextureDecoder now, shared with tusdview. `force_rgba` stays off:
 // the CPU integrator samples the source channel count, so a synthetic alpha
 // channel would be a third more memory for nothing.
-tinyusdz::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
+lightusd::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
   if (!tc.decoder) {
-    tinyusdz::tydra::next::TextureDecodeOptions opts;
+    lightusd::tydra::next::TextureDecodeOptions opts;
     opts.base_dir = tc.base_dir;
     opts.usdz = tc.usdz;
     opts.force_rgba = false;
@@ -875,7 +875,7 @@ tinyusdz::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
                               : 0ull;
     }
     tc.decoder =
-        std::make_shared<tinyusdz::tydra::next::TextureDecoder>(std::move(opts));
+        std::make_shared<lightusd::tydra::next::TextureDecoder>(std::move(opts));
   }
   return *tc.decoder;
 }
@@ -887,25 +887,25 @@ tinyusdz::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
 // file. Prims carry their authoring layer's directory through composition; see
 // next/layer/asset-anchor.hh. Prims with no anchor (root layer, USDZ entries)
 // return the path untouched, preserving the previous behavior.
-std::string AnchorAssetNext(const tinyusdz::next::UsdPrim &prim,
+std::string AnchorAssetNext(const lightusd::next::UsdPrim &prim,
                             const std::string &path) {
-  if (path.empty() || tinyusdz::next::AssetResolver::IsAbsolutePath(path) ||
+  if (path.empty() || lightusd::next::AssetResolver::IsAbsolutePath(path) ||
       path.find("://") != std::string::npos) {
     return path;
   }
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
   const uint32_t id = spec ? spec->asset_anchor_id() : 0u;
-  const std::string &dir = tinyusdz::next::AssetAnchorPath(id);
+  const std::string &dir = lightusd::next::AssetAnchorPath(id);
   if (dir.empty()) return path;
-  return tinyusdz::next::AssetResolver::NormalizePath(
-      tinyusdz::next::AssetResolver::JoinPath(dir, path));
+  return lightusd::next::AssetResolver::NormalizePath(
+      lightusd::next::AssetResolver::JoinPath(dir, path));
 }
 
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
                           WrapMode ws, WrapMode wt, bool srgb,
                           const Vec3 &scale = Vec3{1.0f, 1.0f, 1.0f},
                           const Vec3 &bias = Vec3{0.0f, 0.0f, 0.0f},
-                          const tinyusdz::color::ColorTransform *color_transform =
+                          const lightusd::color::ColorTransform *color_transform =
                               nullptr) {
   // Key on ALL scale/bias channels: keying only .x collided two materials
   // sharing a file with equal red-scale but different green/blue scale, so the
@@ -941,7 +941,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
   auto make_texture = [&](const std::string &asset, const std::string &label,
                           Texture *out) -> bool {
     if (!out) return false;
-    tinyusdz::tydra::next::DecodedImage img;
+    lightusd::tydra::next::DecodedImage img;
     if (!DecoderFor(tc).Decode(asset, srgb, &img)) return false;
     if (tc.options &&
         tc.options->texture_compress == Options::TextureCompress::BCn) {
@@ -979,7 +979,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     if (color_transform) t.color_transform = *color_transform;
     t.scale = scale;
     t.bias = bias;
-    const std::shared_ptr<tinyusdz::next::TextureBudgetState> budget_state =
+    const std::shared_ptr<lightusd::next::TextureBudgetState> budget_state =
         img.budget_lease ? img.budget_lease->state : nullptr;
     t.budget_leases.push_back(std::move(img.budget_lease));
     size_t mip_bytes = 0;
@@ -1001,7 +1001,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
       build_mips = budget_state->try_add(static_cast<uint64_t>(mip_bytes));
       if (build_mips) {
         t.budget_leases.push_back(std::make_shared<
-            tinyusdz::next::TextureBudgetLease>(budget_state, mip_bytes));
+            lightusd::next::TextureBudgetLease>(budget_state, mip_bytes));
       } else if (tc.texture_mip_fallbacks) {
         ++(*tc.texture_mip_fallbacks);
       }
@@ -1032,7 +1032,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     udim.bias = bias;
     for (int tile_id = 1001; tile_id <= 1100; ++tile_id) {
       const std::string tile_path =
-          tinyusdz::tydra::next::ReplaceUdimToken(asset_path, tile_id);
+          lightusd::tydra::next::ReplaceUdimToken(asset_path, tile_id);
       Texture tile_tex;
       if (!make_texture(tile_path, tile_path, &tile_tex)) continue;
       Texture::UdimTile tile;
@@ -1092,21 +1092,21 @@ void UpdateTextureStats(const std::vector<Texture> &textures,
 
 // Follow a connection on `prim` (e.g. "outputs:surface",
 // "inputs:diffuseColor") to its target prim, or an invalid prim if unconnected.
-tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
-                                          const tinyusdz::next::UsdPrim &prim,
+lightusd::next::UsdPrim ConnectedPrimNext(const lightusd::next::Stage &stage,
+                                          const lightusd::next::UsdPrim &prim,
                                           const std::string &prop) {
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
-  if (!spec) return tinyusdz::next::UsdPrim();
-  const std::vector<tinyusdz::next::Path> *c = spec->connection(prop);
-  if (!c || c->empty()) return tinyusdz::next::UsdPrim();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
+  if (!spec) return lightusd::next::UsdPrim();
+  const std::vector<lightusd::next::Path> *c = spec->connection(prop);
+  if (!c || c->empty()) return lightusd::next::UsdPrim();
   return stage.GetPrimAtPath((*c)[0].prim_path());
 }
 
-bool HasConnectionNext(const tinyusdz::next::UsdPrim &prim,
+bool HasConnectionNext(const lightusd::next::UsdPrim &prim,
                        const std::string &prop) {
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
   if (!spec) return false;
-  const std::vector<tinyusdz::next::Path> *c = spec->connection(prop);
+  const std::vector<lightusd::next::Path> *c = spec->connection(prop);
   return c && !c->empty();
 }
 
@@ -1117,7 +1117,7 @@ WrapMode ParseWrapMode(const std::string &s) {
   return WrapMode::Repeat;  // "repeat"/"useMetadata"/default
 }
 
-bool ReadVec3Value(const tinyusdz::next::Value &value, Vec3 *out) {
+bool ReadVec3Value(const lightusd::next::Value &value, Vec3 *out) {
   if (!out) return false;
   if (const float *f = value.as_float3()) {
     *out = Vec3{f[0], f[1], f[2]};
@@ -1137,26 +1137,26 @@ bool ReadVec3Value(const tinyusdz::next::Value &value, Vec3 *out) {
 // Resolve a scalar PBR input (inputs:roughness / inputs:metallic) that connects
 // to a UsdUVTexture outputs:{r,g,b,a} (e.g. ORM packing). Loads the raw texture
 // and records the source channel.
-void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
-                              const tinyusdz::next::UsdPrim &surf,
+void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
+                              const lightusd::next::UsdPrim &surf,
                               const std::string &input, TextureCache &tc,
                               ScalarTex *out) {
-  const tinyusdz::next::PrimSpec *spec = surf.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = surf.GetPrimSpec();
   if (!spec) return;
-  const std::vector<tinyusdz::next::Path> *c = spec->connection(input);
+  const std::vector<lightusd::next::Path> *c = spec->connection(input);
   if (!c || c->empty()) return;
-  const tinyusdz::next::Path &target = (*c)[0];
-  tinyusdz::next::UsdPrim tex = stage.GetPrimAtPath(target.prim_path());
+  const lightusd::next::Path &target = (*c)[0];
+  lightusd::next::UsdPrim tex = stage.GetPrimAtPath(target.prim_path());
   if (!tex.IsValid()) return;
-  const tinyusdz::next::Value *fv = tex.GetPropertyValue("inputs:file");
+  const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file");
   if (!fv) return;
   const std::string *ap = fv->as_asset_path();
   if (!ap) ap = fv->as_string();
   if (!ap || ap->empty()) return;
   WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
+  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
     if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
+  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
     if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
   int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, /*srgb=*/false);
   if (id < 0) return;
@@ -1173,11 +1173,11 @@ void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
   // UsdUVTexture inputs:scale / inputs:bias for the sampled channel (float4 or
   // scalar). out = raw*scale + bias. Stored for all scalar inputs; the caller
   // applies it only for displacement.
-  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
+  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
     if (const float *f = v->as_float4()) out->scale = f[std::min<int>(out->ch, 3)];
     else if (const float *s = v->as_float()) out->scale = *s;
   }
-  if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
+  if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
     if (const float *f = v->as_float4()) out->bias = f[std::min<int>(out->ch, 3)];
     else if (const float *s = v->as_float()) out->bias = *s;
   }
@@ -1185,20 +1185,20 @@ void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
 
 // If a UsdUVTexture's inputs:st chain runs through a UsdTransform2d, read its
 // rotation (deg, CCW) / scale / translation. Otherwise returns identity.
-UvXform ResolveUvXform(const tinyusdz::next::Stage &stage,
-                       const tinyusdz::next::UsdPrim &uvtex) {
+UvXform ResolveUvXform(const lightusd::next::Stage &stage,
+                       const lightusd::next::UsdPrim &uvtex) {
   UvXform x;
-  tinyusdz::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
+  lightusd::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
   if (!st.IsValid()) return x;
-  const tinyusdz::next::Value *idv = st.GetPropertyValue("info:id");
+  const lightusd::next::Value *idv = st.GetPropertyValue("info:id");
   const std::string *id = idv ? idv->as_token() : nullptr;
   if (!id || *id != "UsdTransform2d") return x;
   float rot = 0.0f, sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
-  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:rotation"))
+  if (const lightusd::next::Value *v = st.GetPropertyValue("inputs:rotation"))
     if (const float *f = v->as_float()) rot = *f;
-  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:scale"))
+  if (const lightusd::next::Value *v = st.GetPropertyValue("inputs:scale"))
     if (const float *f = v->as_float2()) { sx = f[0]; sy = f[1]; }
-  if (const tinyusdz::next::Value *v = st.GetPropertyValue("inputs:translation"))
+  if (const lightusd::next::Value *v = st.GetPropertyValue("inputs:translation"))
     if (const float *f = v->as_float2()) { tx = f[0]; ty = f[1]; }
   if (rot == 0.0f && sx == 1.0f && sy == 1.0f && tx == 0.0f && ty == 0.0f) {
     return x;  // identity
@@ -1214,8 +1214,8 @@ UvXform ResolveUvXform(const tinyusdz::next::Stage &stage,
   return x;
 }
 
-void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
-                             const tinyusdz::next::UsdPrim &mesh,
+void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
+                             const lightusd::next::UsdPrim &mesh,
                              TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
                              float *roughness, float *metallic,
                              int32_t *normal_tex_id, UvXform *uv_xform,
@@ -1236,26 +1236,26 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // stores per-corner colors (see AddRTPreviewMeshNext). A bound material below
   // overrides the constant color.
   constexpr double kDefaultTime = std::numeric_limits<double>::quiet_NaN();
-  tinyusdz::tydra::next::ValueArrayRead<float> dc;
-  if (tinyusdz::tydra::next::ReadFloatArray(
+  lightusd::tydra::next::ValueArrayRead<float> dc;
+  if (lightusd::tydra::next::ReadFloatArray(
           mesh, "primvars:displayColor", kDefaultTime, &dc)) {
     if (dc.size() >= 3) *base_color = Vec3{dc[0], dc[1], dc[2]};
     if (vertex_color && dc.size() > 3) *vertex_color = true;
   }
   if (opacity) {
-    tinyusdz::tydra::next::ValueArrayRead<float> od;
-    if (tinyusdz::tydra::next::ReadFloatArray(
+    lightusd::tydra::next::ValueArrayRead<float> od;
+    if (lightusd::tydra::next::ReadFloatArray(
             mesh, "primvars:displayOpacity", kDefaultTime, &od)) {
       if (!od.empty()) *opacity = std::min(1.0f, std::max(0.0f, od[0]));
       if (vertex_color && od.size() > 1) *vertex_color = true;
     }
   }
   const std::string bindPath =
-      tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
+      lightusd::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
   if (bindPath.empty()) return;
-  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath(bindPath);
+  lightusd::next::UsdPrim mat = stage.GetPrimAtPath(bindPath);
   if (!mat.IsValid()) return;
-  tinyusdz::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
+  lightusd::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
   if (!surf.IsValid()) {
     surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
   }
@@ -1266,10 +1266,10 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   if (roughness) *roughness = 0.5f;  // UsdPreviewSurface shader default.
 
   // Scalar PBR params (UsdPreviewSurface inputs:roughness / inputs:metallic).
-  if (const tinyusdz::next::Value *r = surf.GetPropertyValue("inputs:roughness")) {
+  if (const lightusd::next::Value *r = surf.GetPropertyValue("inputs:roughness")) {
     if (const float *f = r->as_float()) *roughness = std::min(1.0f, std::max(0.0f, *f));
   }
-  if (const tinyusdz::next::Value *m = surf.GetPropertyValue("inputs:metallic")) {
+  if (const lightusd::next::Value *m = surf.GetPropertyValue("inputs:metallic")) {
     if (const float *f = m->as_float()) *metallic = std::min(1.0f, std::max(0.0f, *f));
   }
   // Roughness/metallic textures (channel-aware; ORM packing).
@@ -1279,7 +1279,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
     ResolveScalarTextureNext(stage, surf, "inputs:metallic", tc, metal_tex);
 
   // Occlusion (AO) scalar + optional texture.
-  if (const tinyusdz::next::Value *o = surf.GetPropertyValue("inputs:occlusion"))
+  if (const lightusd::next::Value *o = surf.GetPropertyValue("inputs:occlusion"))
     if (const float *f = o->as_float())
       if (occlusion) *occlusion = std::min(1.0f, std::max(0.0f, *f));
   if (occ_tex)
@@ -1289,7 +1289,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // its normal (scene units). A scalar constant and/or a channel-aware height
   // texture (raw, like roughness/opacity). Applied per-vertex at mesh-build time
   // (coarse displacement) -- see AddRTPreviewMeshNext.
-  if (const tinyusdz::next::Value *d =
+  if (const lightusd::next::Value *d =
           surf.GetPropertyValue("inputs:displacement"))
     if (const float *f = d->as_float())
       if (displacement) *displacement = *f;
@@ -1302,13 +1302,13 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // map's alpha, outputs:a). inputs:opacityThreshold > 0 turns it into an alpha
   // cutout (mask) instead of translucent blending.
   const bool opacity_connected = HasConnectionNext(surf, "inputs:opacity");
-  if (const tinyusdz::next::Value *o = surf.GetPropertyValue("inputs:opacity"))
+  if (const lightusd::next::Value *o = surf.GetPropertyValue("inputs:opacity"))
     if (const float *f = o->as_float())
       if (opacity && !opacity_connected)
         *opacity *= std::min(1.0f, std::max(0.0f, *f));
   if (opacity_tex)
     ResolveScalarTextureNext(stage, surf, "inputs:opacity", tc, opacity_tex);
-  if (const tinyusdz::next::Value *ot =
+  if (const lightusd::next::Value *ot =
           surf.GetPropertyValue("inputs:opacityThreshold"))
     if (const float *f = ot->as_float())
       if (opacity_threshold) *opacity_threshold = std::max(0.0f, *f);
@@ -1316,10 +1316,10 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // Clearcoat: a second specular lobe (weight + roughness), each a scalar const
   // plus optional channel-aware texture. Only contributes under IBL (like base
   // roughness/metallic).
-  if (const tinyusdz::next::Value *c = surf.GetPropertyValue("inputs:clearcoat"))
+  if (const lightusd::next::Value *c = surf.GetPropertyValue("inputs:clearcoat"))
     if (const float *f = c->as_float())
       if (clearcoat) *clearcoat = std::min(1.0f, std::max(0.0f, *f));
-  if (const tinyusdz::next::Value *cr =
+  if (const lightusd::next::Value *cr =
           surf.GetPropertyValue("inputs:clearcoatRoughness"))
     if (const float *f = cr->as_float())
       if (clearcoat_roughness)
@@ -1334,34 +1334,34 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // for an explicit inputs:specularColor (constant + optional color texture).
   // inputs:ior sets the dielectric F0 in the (default) metallic workflow; ior 1.5
   // reproduces the fixed 0.04 used before, so the default is byte-identical.
-  if (const tinyusdz::next::Value *uw =
+  if (const lightusd::next::Value *uw =
           surf.GetPropertyValue("inputs:useSpecularWorkflow")) {
     if (const int32_t *i = uw->as_int())
       if (use_specular_workflow) *use_specular_workflow = (*i != 0) ? 1 : 0;
   }
-  if (const tinyusdz::next::Value *iv = surf.GetPropertyValue("inputs:ior"))
+  if (const lightusd::next::Value *iv = surf.GetPropertyValue("inputs:ior"))
     if (const float *f = iv->as_float())
       if (ior && *f > 0.0f) *ior = *f;
-  if (const tinyusdz::next::Value *sc =
+  if (const lightusd::next::Value *sc =
           surf.GetPropertyValue("inputs:specularColor"))
     if (const float *f = sc->as_float3())
       if (specular_color) *specular_color = Vec3{f[0], f[1], f[2]};
   if (specular_tex_id) {
-    tinyusdz::next::UsdPrim stex =
+    lightusd::next::UsdPrim stex =
         ConnectedPrimNext(stage, surf, "inputs:specularColor");
     if (stex.IsValid()) {
-      if (const tinyusdz::next::Value *fv =
+      if (const lightusd::next::Value *fv =
               stex.GetPropertyValue("inputs:file")) {
         const std::string *ap = fv->as_asset_path();
         if (!ap) ap = fv->as_string();
         if (ap && !ap->empty()) {
           WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-          if (const tinyusdz::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
+          if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
             if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-          if (const tinyusdz::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
+          if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
             if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
           bool srgb = true;
-          if (const tinyusdz::next::Value *v =
+          if (const lightusd::next::Value *v =
                   stex.GetPropertyValue("inputs:sourceColorSpace"))
             if (const std::string *t = v->as_token()) srgb = (*t != "raw");
           int32_t id = LoadTextureCached(tc, AnchorAssetNext(stex, *ap), ws, wt, srgb);
@@ -1375,23 +1375,23 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   }
 
   // Emissive color: constant + optional UsdUVTexture (sRGB color).
-  if (const tinyusdz::next::Value *e =
+  if (const lightusd::next::Value *e =
           surf.GetPropertyValue("inputs:emissiveColor"))
     if (const float *f = e->as_float3())
       if (emission) *emission = Vec3{f[0], f[1], f[2]};
   if (emission_tex_id) {
-    tinyusdz::next::UsdPrim etex =
+    lightusd::next::UsdPrim etex =
         ConnectedPrimNext(stage, surf, "inputs:emissiveColor");
     if (etex.IsValid()) {
-      if (const tinyusdz::next::Value *fv =
+      if (const lightusd::next::Value *fv =
               etex.GetPropertyValue("inputs:file")) {
         const std::string *ap = fv->as_asset_path();
         if (!ap) ap = fv->as_string();
         if (ap && !ap->empty()) {
           WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-          if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
+          if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
             if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-          if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
+          if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
             if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
           int32_t id = LoadTextureCached(tc, AnchorAssetNext(etex, *ap), ws, wt, /*srgb=*/true);
           if (id >= 0) {
@@ -1404,7 +1404,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   }
 
   // Constant diffuse color (also the texture's fallback tint).
-  if (const tinyusdz::next::Value *diffuseColorVal =
+  if (const lightusd::next::Value *diffuseColorVal =
           surf.GetPropertyValue("inputs:diffuseColor")) {
     if (const float *f = diffuseColorVal->as_float3()) {
       *base_color = Vec3{f[0], f[1], f[2]};
@@ -1412,29 +1412,29 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   }
   // Diffuse texture: inputs:diffuseColor -> UsdUVTexture(inputs:file), honoring
   // its wrapS/wrapT and sourceColorSpace (sRGB by default for color).
-  tinyusdz::next::UsdPrim tex =
+  lightusd::next::UsdPrim tex =
       ConnectedPrimNext(stage, surf, "inputs:diffuseColor");
   if (tex.IsValid()) {
-    if (const tinyusdz::next::Value *fv = tex.GetPropertyValue("inputs:file")) {
+    if (const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file")) {
       const std::string *ap = fv->as_asset_path();
       if (!ap) ap = fv->as_string();
       if (ap && !ap->empty()) {
         WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
+        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
           if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
+        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
           if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
         bool srgb = true;
-        if (const tinyusdz::next::Value *v =
+        if (const lightusd::next::Value *v =
                 tex.GetPropertyValue("inputs:sourceColorSpace")) {
           if (const std::string *t = v->as_token()) srgb = (*t != "raw");
         }
         // inputs:scale/bias tint the sampled color (default identity).
         Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
-        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
+        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
           ReadVec3Value(*v, &sc);
         }
-        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
+        if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
           ReadVec3Value(*v, &bi);
         }
         int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, srgb, sc, bi);
@@ -1452,22 +1452,22 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // Tangent-space normal map: inputs:normal -> UsdUVTexture(inputs:file). Always
   // raw (non-sRGB); scale/bias default to the UsdPreviewSurface convention
   // (2,-1) that unpacks a [0,1] texel to a [-1,1] tangent-space normal.
-  tinyusdz::next::UsdPrim ntex = ConnectedPrimNext(stage, surf, "inputs:normal");
+  lightusd::next::UsdPrim ntex = ConnectedPrimNext(stage, surf, "inputs:normal");
   if (ntex.IsValid()) {
-    if (const tinyusdz::next::Value *fv = ntex.GetPropertyValue("inputs:file")) {
+    if (const lightusd::next::Value *fv = ntex.GetPropertyValue("inputs:file")) {
       const std::string *ap = fv->as_asset_path();
       if (!ap) ap = fv->as_string();
       if (ap && !ap->empty()) {
         WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
-        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:wrapS"))
+        if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:wrapS"))
           if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
-        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:wrapT"))
+        if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:wrapT"))
           if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
         Vec3 scale{2.0f, 2.0f, 2.0f}, bias{-1.0f, -1.0f, -1.0f};
-        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:scale")) {
+        if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:scale")) {
           ReadVec3Value(*v, &scale);
         }
-        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:bias")) {
+        if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:bias")) {
           ReadVec3Value(*v, &bias);
         }
         int32_t id =
@@ -1482,18 +1482,18 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   }
 }
 
-void ApplyDisplayPrimvarsNext(const tinyusdz::next::UsdPrim &mesh,
+void ApplyDisplayPrimvarsNext(const lightusd::next::UsdPrim &mesh,
                               MeshJobNext *job) {
   if (!job) return;
   constexpr double kDefaultTime = std::numeric_limits<double>::quiet_NaN();
-  tinyusdz::tydra::next::ValueArrayRead<float> dc;
-  if (tinyusdz::tydra::next::ReadFloatArray(
+  lightusd::tydra::next::ValueArrayRead<float> dc;
+  if (lightusd::tydra::next::ReadFloatArray(
           mesh, "primvars:displayColor", kDefaultTime, &dc)) {
     if (dc.size() >= 3) job->base_color = Vec3{dc[0], dc[1], dc[2]};
     if (dc.size() > 3) job->vertex_color = true;
   }
-  tinyusdz::tydra::next::ValueArrayRead<float> od;
-  if (tinyusdz::tydra::next::ReadFloatArray(
+  lightusd::tydra::next::ValueArrayRead<float> od;
+  if (lightusd::tydra::next::ReadFloatArray(
           mesh, "primvars:displayOpacity", kDefaultTime, &od)) {
     if (!od.empty()) job->opacity = std::min(1.0f, std::max(0.0f, od[0]));
     if (od.size() > 1) job->vertex_color = true;
@@ -1614,8 +1614,8 @@ TriMat TriMatFromResolved(const ResolvedMat &r) {
   return m;
 }
 
-WrapMode ToTusdrWrap(tinyusdz::tydra::next::WrapMode w) {
-  using NextWrap = tinyusdz::tydra::next::WrapMode;
+WrapMode ToTusdrWrap(lightusd::tydra::next::WrapMode w) {
+  using NextWrap = lightusd::tydra::next::WrapMode;
   switch (w) {
     case NextWrap::Clamp: return WrapMode::Clamp;
     case NextWrap::Mirror: return WrapMode::Mirror;
@@ -1625,8 +1625,8 @@ WrapMode ToTusdrWrap(tinyusdz::tydra::next::WrapMode w) {
   }
 }
 
-uint8_t ToScalarChannel(tinyusdz::tydra::next::RenderTexture::Channel ch) {
-  using Channel = tinyusdz::tydra::next::RenderTexture::Channel;
+uint8_t ToScalarChannel(lightusd::tydra::next::RenderTexture::Channel ch) {
+  using Channel = lightusd::tydra::next::RenderTexture::Channel;
   switch (ch) {
     case Channel::G: return 1;
     case Channel::B: return 2;
@@ -1638,7 +1638,7 @@ uint8_t ToScalarChannel(tinyusdz::tydra::next::RenderTexture::Channel ch) {
   }
 }
 
-bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
+bool LoadRenderTexture(const lightusd::tydra::next::RenderScene &scene,
                        int32_t texture_id, TextureCache &tc, bool srgb,
                        const Vec3 *fallback_scale, const Vec3 *fallback_bias,
                        int32_t *out) {
@@ -1646,7 +1646,7 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
       size_t(texture_id) >= scene.textures.size()) {
     return false;
   }
-  const tinyusdz::tydra::next::RenderTexture &tex =
+  const lightusd::tydra::next::RenderTexture &tex =
       scene.textures[size_t(texture_id)];
   // Prefer the RESOLVED image path: `asset_path` is the raw authored string,
   // which in a nested look layer is relative to THAT layer, not to the scene
@@ -1675,18 +1675,18 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
   if (source_space.empty() || source_space == "auto") {
     source_space = srgb ? "srgb_rec709_scene" : "raw";
   }
-  tinyusdz::color::ColorSpaceDesc source_desc;
-  tinyusdz::color::ColorSpaceDesc display_desc;
-  tinyusdz::color::ColorTransform color_transform;
-  const tinyusdz::color::ColorTransform *color_transform_ptr = nullptr;
+  lightusd::color::ColorSpaceDesc source_desc;
+  lightusd::color::ColorSpaceDesc display_desc;
+  lightusd::color::ColorTransform color_transform;
+  const lightusd::color::ColorTransform *color_transform_ptr = nullptr;
   if (tex.color_transform_valid &&
-      tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene", &display_desc)) {
+      lightusd::color::GetBuiltinColorSpace("lin_rec709_scene", &display_desc)) {
     source_desc.name = source_space;
     source_desc.gamma = tex.source_gamma;
     source_desc.linear_bias = tex.source_linear_bias;
     source_desc.kind = tex.source_color_is_data
-                           ? tinyusdz::color::ColorSpaceKind::Data
-                           : tinyusdz::color::ColorSpaceKind::Color;
+                           ? lightusd::color::ColorSpaceKind::Data
+                           : lightusd::color::ColorSpaceKind::Color;
     color_transform.source = source_desc;
     color_transform.destination = display_desc;
     color_transform.bypass = tex.color_transform_bypass;
@@ -1696,16 +1696,16 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
     effective_srgb = !tex.source_color_is_data &&
                      std::fabs(tex.source_gamma - 2.4f) < 1.0e-5f &&
                      std::fabs(tex.source_linear_bias - 0.055f) < 1.0e-5f;
-  } else if (tinyusdz::color::GetBuiltinColorSpace(source_space, &source_desc) &&
-      tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene", &display_desc) &&
-      tinyusdz::color::BuildColorTransform(source_desc, display_desc,
+  } else if (lightusd::color::GetBuiltinColorSpace(source_space, &source_desc) &&
+      lightusd::color::GetBuiltinColorSpace("lin_rec709_scene", &display_desc) &&
+      lightusd::color::BuildColorTransform(source_desc, display_desc,
                                            &color_transform)) {
     color_transform_ptr = &color_transform;
     // Keep the sRGB hint for linear-light texture resizing. Sampling uses the
     // full transform below (and therefore does not double-decode); linear/data
     // spaces must not fall through to the compatibility sRGB decoder.
     effective_srgb =
-        tinyusdz::color::CanonicalizeToken(source_space).rfind("srgb_", 0) == 0;
+        lightusd::color::CanonicalizeToken(source_space).rfind("srgb_", 0) == 0;
   } else if (source_space == "raw" || source_space == "Raw" ||
              source_space == "linear") {
     effective_srgb = false;
@@ -1721,14 +1721,14 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
   return true;
 }
 
-bool LoadRenderScalarTexture(const tinyusdz::tydra::next::RenderScene &scene,
-                             const tinyusdz::tydra::next::ShaderParam &param,
+bool LoadRenderScalarTexture(const lightusd::tydra::next::RenderScene &scene,
+                             const lightusd::tydra::next::ShaderParam &param,
                              TextureCache &tc, bool srgb, ScalarTex *out) {
   if (!out || param.texture_id < 0 ||
       size_t(param.texture_id) >= scene.textures.size()) {
     return false;
   }
-  const tinyusdz::tydra::next::RenderTexture &tex =
+  const lightusd::tydra::next::RenderTexture &tex =
       scene.textures[size_t(param.texture_id)];
   const uint8_t ch = ToScalarChannel(tex.output_channel);
   int32_t id = -1;
@@ -1745,8 +1745,8 @@ bool LoadRenderScalarTexture(const tinyusdz::tydra::next::RenderScene &scene,
   return true;
 }
 
-void ApplyRenderTextureUvXform(const tinyusdz::next::Stage &stage,
-                               const tinyusdz::tydra::next::RenderScene &scene,
+void ApplyRenderTextureUvXform(const lightusd::next::Stage &stage,
+                               const lightusd::tydra::next::RenderScene &scene,
                                int32_t texture_id, bool only_if_identity,
                                UvXform *out) {
   if (!out || texture_id < 0 || size_t(texture_id) >= scene.textures.size()) {
@@ -1755,13 +1755,13 @@ void ApplyRenderTextureUvXform(const tinyusdz::next::Stage &stage,
   if (only_if_identity && !out->identity) return;
   const std::string &prim_path = scene.textures[size_t(texture_id)].prim_path;
   if (prim_path.empty()) return;
-  tinyusdz::next::UsdPrim tex = stage.GetPrimAtPath(prim_path);
+  lightusd::next::UsdPrim tex = stage.GetPrimAtPath(prim_path);
   if (!tex.IsValid()) return;
   *out = ResolveUvXform(stage, tex);
 }
 
 void ApplyLightRtOpenPBRParamsToJob(
-    const tinyusdz::tydra::LightRtOpenPBRParams &p,
+    const lightusd::tydra::LightRtOpenPBRParams &p,
     MeshJobNext *job) {
   if (!job) return;
   job->base_color = Vec3{p.baseColor[0], p.baseColor[1], p.baseColor[2]};
@@ -1778,8 +1778,8 @@ void ApplyLightRtOpenPBRParamsToJob(
   job->ior = p.specularIor > 0.0f ? p.specularIor : 1.5f;
 }
 
-bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
-                                  const tinyusdz::next::UsdPrim &mesh,
+bool ResolveMeshMaterialTydraNext(const lightusd::next::Stage &stage,
+                                  const lightusd::next::UsdPrim &mesh,
                                   TextureCache &tc, MeshJobNext *job,
                                   std::string *err, bool *degraded,
                                   const std::string &binding_override = {}) {
@@ -1789,26 +1789,26 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
   ApplyDisplayPrimvarsNext(mesh, &resolved);
 
   const std::string bindPath = binding_override.empty()
-                                   ? tinyusdz::next::GetInheritedBoundMaterialPath(
+                                   ? lightusd::next::GetInheritedBoundMaterialPath(
                                          stage, mesh.GetPath().str())
                                    : binding_override;
   if (bindPath.empty()) {
     *job = resolved;
     return true;
   }
-  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath(bindPath);
+  lightusd::next::UsdPrim mat = stage.GetPrimAtPath(bindPath);
   if (!mat.IsValid()) {
     *job = resolved;
     return true;
   }
 
-  tinyusdz::tydra::next::ConverterConfig config;
+  lightusd::tydra::next::ConverterConfig config;
   config.material.load_textures = false;
   config.material.allow_missing_textures = true;
   if (tc.options) config.time_code = tc.options->timecode;
-  tinyusdz::tydra::next::RenderSceneConverter converter(config);
-  tinyusdz::tydra::next::RenderScene scratch;
-  tinyusdz::tydra::next::RenderMaterial rm;
+  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::next::RenderScene scratch;
+  lightusd::tydra::next::RenderMaterial rm;
   if (!converter.ConvertMaterial(stage, mat, &rm, &scratch)) {
     if (err) *err = converter.GetLastError();
     return false;
@@ -1819,7 +1819,7 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
   // discarding those values and switching to the hand-rolled legacy resolver.
   if (degraded) *degraded = rm.default_fallback;
   for (const auto &diagnostic : rm.diagnostics) {
-    using Kind = tinyusdz::tydra::next::MaterialDiagnosticKind;
+    using Kind = lightusd::tydra::next::MaterialDiagnosticKind;
     if (diagnostic.kind == Kind::UnsupportedMaterialXNode &&
         tc.unsupported_mtlx) {
       ++(*tc.unsupported_mtlx);
@@ -1834,12 +1834,12 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
     }
   }
 
-  using NextMat = tinyusdz::tydra::next::RenderMaterial;
+  using NextMat = lightusd::tydra::next::RenderMaterial;
   if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
       rm.preview_surface) {
     const auto &s = *rm.preview_surface;
-    tinyusdz::tydra::LightRtOpenPBRParams p;
-    if (tinyusdz::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
+    lightusd::tydra::LightRtOpenPBRParams p;
+    if (lightusd::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
       ApplyLightRtOpenPBRParamsToJob(p, &resolved);
       resolved.has_openpbr = true;
       resolved.openpbr = p;
@@ -1887,8 +1887,8 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
   } else if (rm.shader_type == NextMat::ShaderType::OpenPBR && rm.openpbr) {
     const auto &s = *rm.openpbr;
     resolved.materialx_graph_json = s.nodegraph_json;
-    tinyusdz::tydra::LightRtOpenPBRParams p;
-    if (tinyusdz::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
+    lightusd::tydra::LightRtOpenPBRParams p;
+    if (lightusd::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
       ApplyLightRtOpenPBRParamsToJob(p, &resolved);
       resolved.has_openpbr = true;
       resolved.openpbr = p;
@@ -2076,18 +2076,18 @@ void ReportMaterialResolverDiff(const std::string &key,
 // pure function of the bound material (+ shared texture cache), so a cache hit
 // skips the shader-graph walk entirely. Unbound meshes keep MeshJobNext defaults.
 void ResolveMeshMaterialCached(
-    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh_in,
+    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &mesh_in,
     TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
     MeshJobNext *job) {
   // A GeomSubset job resolves its binding from the SUBSET prim: the inheritance
   // walk finds the subset's own material:binding first, then falls back up the
   // ancestry (mesh, Xform, ...) -- exact UsdShade semantics for face subsets.
-  const tinyusdz::next::UsdPrim &mesh =
+  const lightusd::next::UsdPrim &mesh =
       job->bind_prim.IsValid() ? job->bind_prim : mesh_in;
   const MeshJobNext input_job = *job;
   job->back_material.reset();
   const std::string key =
-      tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
+      lightusd::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
   bool front_cached = false;
   if (!key.empty()) {
     auto it = cache.find(key);
@@ -2156,7 +2156,7 @@ void ResolveMeshMaterialCached(
   // front resolver is legacy, because that converter is what preserves a
   // degraded UsdPreviewSurface for unsupported shader implementations.
   const std::string back_key =
-      tinyusdz::next::GetInheritedBoundMaterialPathForPurpose(
+      lightusd::next::GetInheritedBoundMaterialPathForPurpose(
           stage, mesh.GetPath().str(), "back");
   if (back_key.empty()) return;
 
@@ -2189,7 +2189,7 @@ void ResolveMeshMaterialCached(
 // this is what makes per-face material bindings render: without it every
 // triangle of the mesh took the single whole-mesh material (or the default
 // gray). Meshes without bound face subsets pass through untouched.
-void ExpandGeomSubsetJobsNext(const tinyusdz::next::Stage &stage, double time,
+void ExpandGeomSubsetJobsNext(const lightusd::next::Stage &stage, double time,
                               std::vector<MeshJobNext> *jobs) {
   (void)stage;
   if (!jobs) return;
@@ -2202,26 +2202,26 @@ void ExpandGeomSubsetJobsNext(const tinyusdz::next::Stage &stage, double time,
       continue;
     }
     struct Sub {
-      tinyusdz::next::UsdPrim prim;
+      lightusd::next::UsdPrim prim;
       std::vector<int32_t> faces;
     };
     std::vector<Sub> subs;
-    for (const tinyusdz::next::UsdPrim &c : job.prim.GetChildren()) {
+    for (const lightusd::next::UsdPrim &c : job.prim.GetChildren()) {
       if (c.GetTypeName() != "GeomSubset") continue;
       // elementType defaults to "face"; other element types don't split faces.
       bool is_face = true;
-      if (const tinyusdz::next::Value *et = c.GetPropertyValue("elementType"))
+      if (const lightusd::next::Value *et = c.GetPropertyValue("elementType"))
         if (const std::string *t = et->as_token())
           is_face = t->empty() || *t == "face";
       if (!is_face) continue;
       // Material subsets are familyName "materialBind" (accept unauthored).
-      if (const tinyusdz::next::Value *fn = c.GetPropertyValue("familyName"))
+      if (const lightusd::next::Value *fn = c.GetPropertyValue("familyName"))
         if (const std::string *t = fn->as_token())
           if (!t->empty() && *t != "materialBind") continue;
       // Only subsets that bind a material split faces; an unbound subset keeps
       // falling back to the whole-mesh material (no ancestor walk here -- that
       // is the mesh's own binding, i.e. the remainder job).
-      if (tinyusdz::next::GetBoundMaterialPath(c).empty()) continue;
+      if (lightusd::next::GetBoundMaterialPath(c).empty()) continue;
       std::vector<int32_t> faces = ReadIntArrayLazy(c, "indices", time);
       if (faces.empty()) continue;
       subs.push_back({c, std::move(faces)});
@@ -2298,8 +2298,8 @@ bool PathMatchesMask(const std::string &path,
 
 // True if any of the prim's authored xform ops are time-sampled (so its local
 // transform varies with time).
-bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
-  const tinyusdz::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
+bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim) {
+  const lightusd::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
   const std::vector<std::string> *order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order) return false;
@@ -2316,10 +2316,10 @@ bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
 // topology affect the BVH directly; authored normals affect the parallel
 // smooth-shading buffer, which is rebuilt alongside geometry when `-smooth` is
 // active.
-bool GeometryPrimHasAnimatedData(const tinyusdz::next::UsdPrim &prim) {
+bool GeometryPrimHasAnimatedData(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
   if (type == "Mesh") {
-    const std::vector<tinyusdz::next::Path> *blend_targets =
+    const std::vector<lightusd::next::Path> *blend_targets =
         prim.GetRelationship("skel:blendShapeTargets");
     return prim.HasTimeSamples("points") ||
            prim.HasTimeSamples("faceVertexIndices") ||
@@ -2353,7 +2353,7 @@ bool GeometryPrimHasAnimatedData(const tinyusdz::next::UsdPrim &prim) {
   return false;
 }
 
-bool IsRenderableGeometryPrim(const tinyusdz::next::UsdPrim &prim) {
+bool IsRenderableGeometryPrim(const lightusd::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
   return type == "Mesh" || type == "BasisCurves" ||
          type == "HermiteCurves" || type == "NurbsCurves" || type == "Points" ||
@@ -2361,7 +2361,7 @@ bool IsRenderableGeometryPrim(const tinyusdz::next::UsdPrim &prim) {
          type == "PointInstancer" || type == "UsdGeomPointInstancer";
 }
 
-bool RenderablePrimHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
+bool RenderablePrimHasAnimatedGeom(const lightusd::next::UsdPrim &prim) {
   return GeometryPrimHasAnimatedData(prim);
 }
 
@@ -2369,7 +2369,7 @@ bool RenderablePrimHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
 // data varies with time: authored geometry or some xform op on the path (this
 // prim or an ancestor) is animated. Cameras and non-rendered prims are ignored,
 // so camera-only animation does not flag the BVH as dynamic.
-bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
+bool SubtreeGeometryAnimated(const lightusd::next::UsdPrim &prim,
                              const std::vector<std::string> &mask,
                              bool ancestor_xform_animated) {
   const bool xform_anim =
@@ -2378,15 +2378,15 @@ bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
       PathMatchesMask(prim.GetPath().str(), mask)) {
     if (xform_anim || RenderablePrimHasAnimatedGeom(prim)) return true;
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     if (SubtreeGeometryAnimated(child, mask, xform_anim)) return true;
   }
   return false;
 }
 
-bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
+bool SceneGeometryAnimated(const lightusd::next::Stage &stage,
                            const std::vector<std::string> &mask) {
-  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+  for (const lightusd::next::UsdPrim &root : stage.GetRootPrims()) {
     if (SubtreeGeometryAnimated(root, mask, false)) return true;
   }
   return false;
@@ -2401,9 +2401,9 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // appends a world-space MeshJobNext. Exactly one of jobs/sink is non-null.
 static inline void EmitPlacementNext(std::vector<MeshJobNext> *jobs,
                                      const RtInstanceSink *sink, size_t *emitted,
-                                     const tinyusdz::next::UsdPrim &prim,
+                                     const lightusd::next::UsdPrim &prim,
                                      const matrix4d &world,
-                                     tinyusdz::Purpose purpose) {
+                                     lightusd::Purpose purpose) {
   if (sink) {
     (*sink)(prim, world, purpose);
     if (emitted) ++*emitted;
@@ -2426,41 +2426,41 @@ static inline size_t EmittedCountNext(const std::vector<MeshJobNext> *jobs,
 // path (mutually recursive with CollectPreviewImplNext for nesting). `jobs`/`sink`
 // select flat-vector vs streaming emit (see EmitPlacementNext).
 static void ExpandPointInstancerJobsNext(
-    const tinyusdz::next::Stage &stage,
-    const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
-    tinyusdz::Purpose purpose, double time,
+    const lightusd::next::Stage &stage,
+    const lightusd::next::UsdPrim &instancer, const matrix4d &instancer_world,
+    lightusd::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
     const RtInstanceSink *sink, size_t *emitted, size_t max_jobs);
 // Native (scenegraph instanceable) instance: place the prototype's geometry at the
 // instance proxy's world transform.
-static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
+static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
-                                         tinyusdz::Purpose purpose, double time,
+                                         lightusd::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *jobs,
                                          const RtInstanceSink *sink,
                                          size_t *emitted);
 // Collect a prototype's mesh jobs in prototype-LOCAL space (root at identity),
 // expanding any nested instancers. Shared by both expanders above.
-static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
-                                         const tinyusdz::next::UsdPrim &proto,
-                                         tinyusdz::Purpose purpose, double time,
+static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
+                                         const lightusd::next::UsdPrim &proto,
+                                         lightusd::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *out);
 // Shared body behind the public vector collector and the streaming placement
 // collector.
-static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
-                                   const tinyusdz::next::UsdPrim &prim,
+static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
+                                   const lightusd::next::UsdPrim &prim,
                                    const matrix4d &parent_world,
-                                   tinyusdz::Purpose inherited_purpose, double time,
+                                   lightusd::Purpose inherited_purpose, double time,
                                    const std::vector<std::string> &mask,
                                    std::vector<MeshJobNext> *jobs,
                                    const RtInstanceSink *sink, size_t *emitted,
                                    bool expand_instancers, size_t max_jobs);
 
-static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
-                                   const tinyusdz::next::UsdPrim &prim,
+static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
+                                   const lightusd::next::UsdPrim &prim,
                                    const matrix4d &parent_world,
-                                   tinyusdz::Purpose inherited_purpose, double time,
+                                   lightusd::Purpose inherited_purpose, double time,
                                    const std::vector<std::string> &mask,
                                    std::vector<MeshJobNext> *jobs,
                                    const RtInstanceSink *sink, size_t *emitted,
@@ -2469,7 +2469,7 @@ static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
   // visibility="invisible" prunes the prim and its subtree, exactly like the
   // legacy path (BuildLegacyPurposeVisibility) and per UsdGeomImageable. It
   // used to be ignored here, so invisible prims rendered.
-  if (const tinyusdz::next::Value *vv = prim.GetPropertyValue("visibility")) {
+  if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
     if (const std::string *t = vv->as_token()) {
       if (*t == "invisible") return;
     }
@@ -2477,20 +2477,20 @@ static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
   if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
     return;  // instance budget reached
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
-  tinyusdz::Purpose purpose = inherited_purpose;
-  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+  lightusd::Purpose purpose = inherited_purpose;
+  if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (const std::string *t = pv->as_token()) {
       if (*t == "render") {
-        purpose = tinyusdz::Purpose::Render;
+        purpose = lightusd::Purpose::Render;
       } else if (*t == "proxy") {
-        purpose = tinyusdz::Purpose::Proxy;
+        purpose = lightusd::Purpose::Proxy;
       } else if (*t == "guide") {
-        purpose = tinyusdz::Purpose::Guide;
+        purpose = lightusd::Purpose::Guide;
       }
       // "default"/unknown: keep the inherited purpose.
     }
@@ -2511,7 +2511,7 @@ static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
     return;
   }
   {
-    const tinyusdz::next::PrimSpec *ispec = prim.GetPrimSpec();
+    const lightusd::next::PrimSpec *ispec = prim.GetPrimSpec();
     if (ispec && !ispec->meta().instance_prototype().empty()) {
       // Scenegraph (instanceable) native instance proxy: its children come from
       // the prototype. GPU flatten path expands it; two-level callers stop here.
@@ -2527,17 +2527,17 @@ static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
       PathMatchesMask(prim.GetPath().str(), mask)) {
     EmitPlacementNext(jobs, sink, emitted, prim, world, purpose);
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs) break;
     CollectPreviewImplNext(stage, child, world, purpose, time, mask, jobs, sink,
                            emitted, expand_instancers, max_jobs);
   }
 }
 
-void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
-                                const tinyusdz::next::UsdPrim &prim,
+void CollectRTPreviewMeshesNext(const lightusd::next::Stage &stage,
+                                const lightusd::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
-                                tinyusdz::Purpose inherited_purpose, double time,
+                                lightusd::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
                                 bool expand_instancers, size_t max_jobs) {
@@ -2546,10 +2546,10 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                          expand_instancers, max_jobs);
 }
 
-size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
-                                       const tinyusdz::next::UsdPrim &prim,
+size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
+                                       const lightusd::next::UsdPrim &prim,
                                        const matrix4d &parent_world,
-                                       tinyusdz::Purpose inherited_purpose,
+                                       lightusd::Purpose inherited_purpose,
                                        double time,
                                        const std::vector<std::string> &mask,
                                        const RtInstanceSink &sink,
@@ -2570,20 +2570,20 @@ size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
 // collected once (with nested instancers expanded recursively) and re-placed per
 // instance.
 static void ExpandPointInstancerJobsNext(
-    const tinyusdz::next::Stage &stage,
-    const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
-    tinyusdz::Purpose purpose, double time,
+    const lightusd::next::Stage &stage,
+    const lightusd::next::UsdPrim &instancer, const matrix4d &instancer_world,
+    lightusd::Purpose purpose, double time,
     const std::vector<std::string> &mask, std::vector<MeshJobNext> *jobs,
     const RtInstanceSink *sink, size_t *emitted, size_t max_jobs) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
-  const std::vector<tinyusdz::next::Path> *targets =
+  const std::vector<lightusd::next::Path> *targets =
       instancer.GetRelationship("prototypes");
   if (!targets || targets->empty()) return;
 
   // Resolve each prototype target to a live prim (leaf name among the instancer's
   // children first, then an absolute stage lookup -- robust to re-rooting).
-  std::unordered_map<std::string, tinyusdz::next::UsdPrim> children_by_name;
-  for (const tinyusdz::next::UsdPrim &c : instancer.GetChildren())
+  std::unordered_map<std::string, lightusd::next::UsdPrim> children_by_name;
+  for (const lightusd::next::UsdPrim &c : instancer.GetChildren())
     children_by_name.emplace(c.GetName(), c);
 
   // Per-prototype local mesh jobs (root at identity), collected lazily on first
@@ -2591,9 +2591,9 @@ static void ExpandPointInstancerJobsNext(
   // recursively, so the GPU path renders nested scatters.
   std::vector<std::vector<MeshJobNext>> proto_jobs(targets->size());
   std::vector<bool> proto_done(targets->size(), false);
-  std::vector<tinyusdz::next::UsdPrim> proto_prim(targets->size());
+  std::vector<lightusd::next::UsdPrim> proto_prim(targets->size());
   for (size_t pi = 0; pi < targets->size(); ++pi) {
-    const tinyusdz::next::Path &tp = (*targets)[pi];
+    const lightusd::next::Path &tp = (*targets)[pi];
     auto cit = children_by_name.find(tp.name());
     proto_prim[pi] = (cit != children_by_name.end())
                          ? cit->second
@@ -2652,9 +2652,9 @@ static void ExpandPointInstancerJobsNext(
 // root at identity; the instance transform is applied by the caller). Mirrors
 // CollectProtoJobs but expands nested instancers (expand_instancers=true) so the
 // flatten path renders instancers nested inside a prototype.
-static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
-                                         const tinyusdz::next::UsdPrim &proto,
-                                         tinyusdz::Purpose purpose, double time,
+static void CollectExpandedProtoJobsNext(const lightusd::next::Stage &stage,
+                                         const lightusd::next::UsdPrim &proto,
+                                         lightusd::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *out) {
   if (!proto.IsValid()) return;
   static const std::vector<std::string> kNoMask;
@@ -2667,7 +2667,7 @@ static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
     j.purpose = purpose;
     out->push_back(std::move(j));
   }
-  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
+  for (const lightusd::next::UsdPrim &child : proto.GetChildren())
     CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), purpose, time,
                                kNoMask, out, /*expand_instancers=*/true);
 }
@@ -2680,14 +2680,14 @@ static void CollectExpandedProtoJobsNext(const tinyusdz::next::Stage &stage,
 // This mirrors the CPU two-level CollectSceneSplit native-instance branch (which
 // records an InstanceRT at `world` referencing the deduped prototype BLAS), but
 // flattens to world space instead.
-static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
+static void ExpandNativeInstanceJobsNext(const lightusd::next::Stage &stage,
                                          const std::string &proto_path,
                                          const matrix4d &world,
-                                         tinyusdz::Purpose purpose, double time,
+                                         lightusd::Purpose purpose, double time,
                                          std::vector<MeshJobNext> *jobs,
                                          const RtInstanceSink *sink,
                                          size_t *emitted) {
-  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   std::vector<MeshJobNext> proto_jobs;
   CollectExpandedProtoJobsNext(stage, proto, purpose, time, &proto_jobs);
@@ -2760,32 +2760,32 @@ static bool FitNextVolumeDensity(VolumeData *volume, size_t max_bytes) {
   return true;
 }
 
-void ResolveVolumeMaterialNext(const tinyusdz::next::Stage &stage,
-                               const tinyusdz::next::UsdPrim &volume,
+void ResolveVolumeMaterialNext(const lightusd::next::Stage &stage,
+                               const lightusd::next::UsdPrim &volume,
                                VolumeData *out) {
   if (!out) return;
   const std::string material_path =
-      tinyusdz::next::GetInheritedBoundMaterialPath(stage,
+      lightusd::next::GetInheritedBoundMaterialPath(stage,
                                                      volume.GetPath().str());
   if (material_path.empty()) return;
-  const tinyusdz::next::UsdPrim material = stage.GetPrimAtPath(material_path);
+  const lightusd::next::UsdPrim material = stage.GetPrimAtPath(material_path);
   if (!material) return;
   const std::string shader_path =
-      tinyusdz::next::GetVolumeShader(stage, material);
+      lightusd::next::GetVolumeShader(stage, material);
   if (shader_path.empty()) return;
-  const tinyusdz::next::UsdPrim shader = stage.GetPrimAtPath(shader_path);
+  const lightusd::next::UsdPrim shader = stage.GetPrimAtPath(shader_path);
   if (!shader) return;
 
   auto scalar = [&](const char *name, float *dst) {
-    tinyusdz::next::Value value;
-    if (!tinyusdz::next::ResolveShaderPortValue(stage, shader, name, &value))
+    lightusd::next::Value value;
+    if (!lightusd::next::ResolveShaderPortValue(stage, shader, name, &value))
       return;
     if (const float *f = value.as_float()) *dst = *f;
     else if (const double *d = value.as_double()) *dst = float(*d);
   };
   auto color = [&](const char *name, Vec3 *dst) {
-    tinyusdz::next::Value value;
-    if (!tinyusdz::next::ResolveShaderPortValue(stage, shader, name, &value))
+    lightusd::next::Value value;
+    if (!lightusd::next::ResolveShaderPortValue(stage, shader, name, &value))
       return;
     if (const float *f = value.as_float3()) *dst = Vec3{f[0], f[1], f[2]};
   };
@@ -2804,17 +2804,17 @@ void ResolveVolumeMaterialNext(const tinyusdz::next::Stage &stage,
   out->emission_scale = std::max(0.0f, out->emission_scale);
 }
 
-void CollectVolumesNext(const tinyusdz::next::Stage &stage,
-                        const tinyusdz::next::UsdPrim &prim,
+void CollectVolumesNext(const lightusd::next::Stage &stage,
+                        const lightusd::next::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
                         const std::string &baseDir,
                         std::vector<VolumeData> *out,
                         size_t max_density_bytes, size_t *density_bytes_used) {
   if (!prim.IsActive()) return;
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
   if (prim.GetTypeName() == "Volume") {
@@ -2829,32 +2829,32 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       // are attached below. Preserve the old first-field fallback when density
       // was not authored.
       if (has_density_relationship && relName != "field:density") continue;
-      const std::vector<tinyusdz::next::Path> *targets =
+      const std::vector<lightusd::next::Path> *targets =
           prim.GetRelationship(relName);
       if (!targets || targets->empty()) continue;
-      tinyusdz::next::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
+      lightusd::next::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
       if (!field) continue;
 
-      const tinyusdz::next::Value *fp = field.GetPropertyValue("filePath");
+      const lightusd::next::Value *fp = field.GetPropertyValue("filePath");
       const std::string *ap = fp ? fp->as_asset_path() : nullptr;
       if (!ap || ap->empty()) continue;
       std::string fieldName = relName.substr(std::strlen("field:"));
-      if (const tinyusdz::next::Value *fn = field.GetPropertyValue("fieldName")) {
+      if (const lightusd::next::Value *fn = field.GetPropertyValue("fieldName")) {
         if (const std::string *tk = fn->as_token()) fieldName = *tk;
       }
       std::string vpath = *ap;
       if (!vpath.empty() &&
-          !tinyusdz::next::AssetResolver::IsAbsolutePath(vpath) &&
+          !lightusd::next::AssetResolver::IsAbsolutePath(vpath) &&
           !baseDir.empty()) {
         vpath = baseDir + "/" + vpath;
       }
-      std::vector<tinyusdz::usdVol::VDBGrid> grids;
+      std::vector<lightusd::usdVol::VDBGrid> grids;
       std::string vw, ve;
-      if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) ||
+      if (!lightusd::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) ||
           grids.empty()) {
         continue;
       }
-      tinyusdz::usdVol::VDBGrid *g = nullptr;
+      lightusd::usdVol::VDBGrid *g = nullptr;
       for (auto &gg : grids)
         if (gg.name == fieldName) { g = &gg; break; }
       if (!g) g = &grids[0];
@@ -2904,7 +2904,7 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       vd.bmin = Vec3{lo[0], lo[1], lo[2]};
       vd.bmax = Vec3{hi[0], hi[1], hi[2]};
       matrix4d invw;
-      if (!tinyusdz::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
+      if (!lightusd::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
       vd.background = g->background;
       ResolveVolumeMaterialNext(stage, prim, &vd);
@@ -2933,16 +2933,16 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       out->push_back(std::move(vd));
     }
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     CollectVolumesNext(stage, child, world, time, baseDir, out,
                        max_density_bytes, density_bytes_used);
   }
 }
 
 // Read a UsdGeomCamera attribute (float, with double fallback).
-float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+float ReadCamFloatNext(const lightusd::next::UsdPrim &prim, const char *name,
                        float fallback) {
-  if (const tinyusdz::next::Value *v = prim.GetPropertyValue(name)) {
+  if (const lightusd::next::Value *v = prim.GetPropertyValue(name)) {
     if (const float *f = v->as_float()) return *f;
     if (const double *d = v->as_double()) return float(*d);
   }
@@ -2953,15 +2953,15 @@ float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
 // its aperture aspect (horizontal/vertical). An empty query matches the first
 // camera. Mirrors CameraFrameFromGeomCamera but on the next stage with
 // bit-exact world transforms.
-bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
-                                  const tinyusdz::next::UsdPrim &prim,
+bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
+                                  const lightusd::next::UsdPrim &prim,
                                   const matrix4d &parent_world,
                                   const std::string &query, double time,
                                   CameraFrame *frame, float *aspect) {
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
   if (prim.GetTypeName() == "Camera") {
@@ -2977,11 +2977,11 @@ bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
       const float vap = ReadCamFloatNext(prim, "verticalAperture", 15.2908f);
       const float hap = ReadCamFloatNext(prim, "horizontalAperture", 20.955f);
       float znear = 0.1f, zfar = 1.0e6f;
-      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("clippingRange")) {
+      if (const lightusd::next::Value *v = prim.GetPropertyValue("clippingRange")) {
         if (const float *f = v->as_float2()) { znear = f[0]; zfar = f[1]; }
       }
       std::string proj = "perspective";
-      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("projection")) {
+      if (const lightusd::next::Value *v = prim.GetPropertyValue("projection")) {
         if (const std::string *t = v->as_token()) proj = *t;
       }
       frame->origin = Vec3{float(world.m[3][0]), float(world.m[3][1]),
@@ -2999,7 +2999,7 @@ bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
       return true;
     }
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     if (FindNextCameraFrameRecursive(stage, child, world, query, time, frame,
                                      aspect)) {
       return true;
@@ -3008,10 +3008,10 @@ bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
   return false;
 }
 
-bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
+bool FindNextCameraFrame(const lightusd::next::Stage &stage,
                          const std::string &query, double time,
                          CameraFrame *frame, float *aspect) {
-  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+  for (const lightusd::next::UsdPrim &root : stage.GetRootPrims()) {
     if (FindNextCameraFrameRecursive(stage, root, matrix4d::identity(), query,
                                      time, frame, aspect)) {
       return true;
@@ -3026,7 +3026,7 @@ bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
 // perspective camera on the depth axis so the bbox fits the horizontal FOV,
 // front-on for Y-up and rotated for Z-up. Writes the aperture-derived image
 // height (width / aspect) to `out_height`.
-CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::Axis up_axis,
                                 int width, int *out_height) {
   constexpr float kPi = 3.14159265358979323846f;
   const float focal = 50.0f, hap = 20.955f, vap = 15.2908f;
@@ -3050,12 +3050,12 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
   // Plane corner (half-extents in the focal plane) and the depth half-extent.
   float plane_x, plane_y, depth;
   Vec3 pos_dir, up_vec, fwd;
-  if (up_axis == tinyusdz::Axis::Z) {
+  if (up_axis == lightusd::Axis::Z) {
     plane_x = dim.x * 0.5f; plane_y = dim.z * 0.5f; depth = dim.y * 0.5f;
     pos_dir = Vec3{0.0f, -1.0f, 0.0f};  // back up along -Y
     fwd = Vec3{0.0f, 1.0f, 0.0f};
     up_vec = Vec3{0.0f, 0.0f, 1.0f};
-  } else if (up_axis == tinyusdz::Axis::X) {
+  } else if (up_axis == lightusd::Axis::X) {
     plane_x = dim.y * 0.5f; plane_y = dim.z * 0.5f; depth = dim.x * 0.5f;
     pos_dir = Vec3{-1.0f, 0.0f, 0.0f};
     fwd = Vec3{1.0f, 0.0f, 0.0f};
@@ -3084,16 +3084,16 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
     }
   }
   // The axis the default view above already looks down.
-  const int view_axis = (up_axis == tinyusdz::Axis::Z)   ? 1
-                        : (up_axis == tinyusdz::Axis::X) ? 0
+  const int view_axis = (up_axis == lightusd::Axis::Z)   ? 1
+                        : (up_axis == lightusd::Axis::X) ? 0
                                                          : 2;
   if (flat >= 0 && flat != view_axis) {
     auto unit = [](int a) {
       return Vec3{a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f,
                   a == 2 ? 1.0f : 0.0f};
     };
-    const int up_idx = (up_axis == tinyusdz::Axis::Z)   ? 2
-                       : (up_axis == tinyusdz::Axis::X) ? 0
+    const int up_idx = (up_axis == lightusd::Axis::Z)   ? 2
+                       : (up_axis == lightusd::Axis::X) ? 0
                                                         : 1;
     pos_dir = unit(flat);          // stand off on the + side of the plane...
     fwd = Mul(unit(flat), -1.0f);  // ...and look back down at it
@@ -3170,17 +3170,17 @@ void ResolveCameraNext(RenderContext &ctx) {
 void ResolveBackPlateNext(RenderContext &ctx) {
   ctx.backplates.clear();
   if (ctx.opt.camera.empty()) return;
-  tinyusdz::next::UsdPrim camera = ctx.stage.GetPrimAtPath(ctx.opt.camera);
+  lightusd::next::UsdPrim camera = ctx.stage.GetPrimAtPath(ctx.opt.camera);
   if (!camera.IsValid()) {
-    std::vector<tinyusdz::next::UsdPrim> stack = ctx.stage.GetRootPrims();
+    std::vector<lightusd::next::UsdPrim> stack = ctx.stage.GetRootPrims();
     while (!stack.empty()) {
-      const tinyusdz::next::UsdPrim prim = stack.back();
+      const lightusd::next::UsdPrim prim = stack.back();
       stack.pop_back();
       if (prim.GetTypeName() == "Camera" && prim.GetName() == ctx.opt.camera) {
         camera = prim;
         break;
       }
-      for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
         stack.push_back(child);
     }
   }
@@ -3188,8 +3188,8 @@ void ResolveBackPlateNext(RenderContext &ctx) {
   constexpr const char *prefix = "BackPlateAPI:";
   for (const std::string &schema : camera.GetMeta().apiSchemas()) {
     if (schema.rfind(prefix, 0) != 0) continue;
-    tinyusdz::next::BackPlateData data;
-    if (!tinyusdz::next::GetBackPlateData(
+    lightusd::next::BackPlateData data;
+    if (!lightusd::next::GetBackPlateData(
             ctx.stage, camera, schema.substr(std::strlen(prefix)), &data,
             ctx.frame_time) || data.image.empty() ||
         data.plate_visibility == "invisible") continue;
@@ -3225,7 +3225,7 @@ void ResolveBackPlateNext(RenderContext &ctx) {
 // built into the RenderContext's DirectScene (shared by the flat and TLAS render
 // paths) — see BuildNextCurves.
 
-bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
+bool IsCurvePrimNext(const lightusd::next::UsdPrim &prim) {
   const std::string &t = prim.GetTypeName();
   return t == "BasisCurves" || t == "HermiteCurves" || t == "NurbsCurves";
 }
@@ -3242,15 +3242,15 @@ unsigned HermiteTessellationSegmentsNext() {
 }
 
 struct CurvePointViewNext {
-  tinyusdz::tydra::next::ValueArrayRead<float> view;
+  lightusd::tydra::next::ValueArrayRead<float> view;
   // Value clips are materialized here because their temporary Value/ArrayScratch
   // cannot outlive the resolver call. Authored lazy arrays remain borrowed.
   std::vector<float> clipped;
 };
 
 bool ReadCurvePointViewNext(
-    const tinyusdz::next::UsdPrim &prim, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+    const lightusd::next::UsdPrim &prim, double time,
+    const lightusd::next::ValueClipStageLoader &clip_loader,
     CurvePointViewNext *out) {
   if (!out) return false;
   *out = CurvePointViewNext{};
@@ -3259,21 +3259,21 @@ bool ReadCurvePointViewNext(
     return out->view.size() >= 3;
   }
   if (clip_loader) {
-    for (tinyusdz::next::UsdPrim owner = prim; owner.IsValid();
+    for (lightusd::next::UsdPrim owner = prim; owner.IsValid();
          owner = owner.GetParent()) {
-      const tinyusdz::next::PrimSpec *spec = owner.GetPrimSpec();
+      const lightusd::next::PrimSpec *spec = owner.GetPrimSpec();
       if (!spec || !spec->meta().clips().is_dictionary()) continue;
-      std::vector<tinyusdz::next::ValueClipSet> sets;
-      if (!tinyusdz::next::ParseValueClipSets(owner, &sets, nullptr)) break;
+      std::vector<lightusd::next::ValueClipSet> sets;
+      if (!lightusd::next::ParseValueClipSets(owner, &sets, nullptr)) break;
       for (auto &set : sets) set.prim_path = prim.GetPath().str();
-      tinyusdz::next::Value clipped;
-      if (!tinyusdz::next::ResolveValueClipFromSets(
+      lightusd::next::Value clipped;
+      if (!lightusd::next::ResolveValueClipFromSets(
               sets, prim, "points", time, clip_loader, &clipped)) {
         break;
       }
-      tinyusdz::next::ArrayScratch<float> scratch;
-      tinyusdz::next::ArrayView<float> view;
-      if (!tinyusdz::next::GetFloatArrayView(clipped, &scratch, &view)) break;
+      lightusd::next::ArrayScratch<float> scratch;
+      lightusd::next::ArrayView<float> view;
+      if (!lightusd::next::GetFloatArrayView(clipped, &scratch, &view)) break;
       out->clipped.assign(view.begin(), view.end());
       out->view.view.data = out->clipped.data();
       out->view.view.size = out->clipped.size();
@@ -3286,14 +3286,14 @@ bool ReadCurvePointViewNext(
 // Read a curve prim's `points` into a point3f vector for legacy callers that
 // need an owning representation. The main chunked path consumes the view above
 // directly and avoids this conversion copy.
-std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
-    const tinyusdz::next::UsdPrim &prim, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader) {
+std::vector<lightusd::value::point3f> ReadCurvePointsNext(
+    const lightusd::next::UsdPrim &prim, double time,
+    const lightusd::next::ValueClipStageLoader &clip_loader) {
   CurvePointViewNext source;
   if (!ReadCurvePointViewNext(prim, time, clip_loader, &source)) return {};
   const float *pf = source.view.begin();
   const size_t pn = source.view.size();
-  std::vector<tinyusdz::value::point3f> pts(pn / 3);
+  std::vector<lightusd::value::point3f> pts(pn / 3);
   for (size_t i = 0; i < pts.size(); ++i)
     pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
   return pts;
@@ -3447,7 +3447,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     std::vector<TriInfo> curve_info;
     size_t curve_info_offset = 0;
     const bool hermite = job.prim.GetTypeName() == "HermiteCurves";
-    tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+    lightusd::tydra::next::ValueArrayRead<float> tangents;
     const bool have_tangents =
         hermite && ReadFloatArrayViewLazy(job.prim, "tangents", time, &tangents);
     if (have_tangents && tangents.size() == point_source.view.size()) {
@@ -3491,7 +3491,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+    const lightusd::next::ValueClipStageLoader &clip_loader,
     const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors) {
   if (!geos || !base_colors) return false;
@@ -3549,7 +3549,7 @@ bool BuildNextFlatCurveMeshes(
     std::vector<float> curve_points, curve_radii;
     std::vector<uint32_t> strand_first, strand_count;
     if (job.prim.GetTypeName() == "HermiteCurves") {
-      tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+      lightusd::tydra::next::ValueArrayRead<float> tangents;
       const bool have_tangents = ReadFloatArrayViewLazy(
           job.prim, "tangents", time, &tangents);
       if (have_tangents && tangents.size() == point_source.view.size()) {
@@ -3612,7 +3612,7 @@ bool BuildNextFlatCurveMeshes(
 
 bool BuildNextFlatCurveBounds(
     const std::vector<CurveJobNext> &jobs, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader, Bounds *bounds) {
+    const lightusd::next::ValueClipStageLoader &clip_loader, Bounds *bounds) {
   if (!bounds) return false;
   for (const CurveJobNext &job : jobs) {
     if (job.prim.GetPropertyValue("normals") == nullptr) continue;
@@ -3635,7 +3635,7 @@ bool BuildNextFlatCurveBounds(
 // point field instead. The DC SH coefficient is used as the direct primitive's
 // albedo; opacity is folded into it until the integrator grows true
 // front-to-back splat compositing.
-bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
+bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
                                RenderContext &ctx, double time,
                                bool defer_gpu_bvh) {
   std::vector<float> centers;
@@ -3698,17 +3698,17 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
     return true;
   };
   size_t count_seen = 0;
-  auto visit = [&](const auto &self, const tinyusdz::next::UsdPrim &prim,
+  auto visit = [&](const auto &self, const lightusd::next::UsdPrim &prim,
                    const matrix4d &parent) -> void {
     if (!prim.IsActive() || !build_ok) return;
     double dmat[16];
-    tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+    lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
     const matrix4d local = Mat4FromArray(dmat);
     const matrix4d world = local * parent;
     if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
-      tinyusdz::next::ParticleFieldData field;
+      lightusd::next::ParticleFieldData field;
       std::string field_warning;
-      if (!tinyusdz::next::GetParticleFieldData(
+      if (!lightusd::next::GetParticleFieldData(
               stage, prim, &field, time, &field_warning)) {
         build_ok = false;
         return;
@@ -3718,11 +3718,11 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
       // (and decode compressed/lazy values only into the ValueArrayRead's
       // bounded scratch). The previous Copy helper held five complete source
       // arrays live while the final ellipse arrays were being built.
-      tinyusdz::tydra::next::ValueArrayRead<float> p;
-      tinyusdz::tydra::next::ValueArrayRead<float> s;
-      tinyusdz::tydra::next::ValueArrayRead<float> qv;
-      tinyusdz::tydra::next::ValueArrayRead<float> op;
-      tinyusdz::tydra::next::ValueArrayRead<float> sh;
+      lightusd::tydra::next::ValueArrayRead<float> p;
+      lightusd::tydra::next::ValueArrayRead<float> s;
+      lightusd::tydra::next::ValueArrayRead<float> qv;
+      lightusd::tydra::next::ValueArrayRead<float> op;
+      lightusd::tydra::next::ValueArrayRead<float> sh;
       const bool have_p = !field.positions_property.empty() &&
           ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
                                  &p);
@@ -3742,7 +3742,7 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
         std::cerr << "Gaussian splat: skipping oversized compressed SH payload at "
                   << prim.GetPath().str() << "; using fallback color.\n";
       if (!have_p || !have_s || p.size() < 3 || s.size() < 3) {
-        for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+        for (const lightusd::next::UsdPrim &child : prim.GetChildren())
           self(self, child, world);
         return;
       }
@@ -3769,7 +3769,7 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
           continue;
         const Vec3 c = TransformPoint(world, Vec3{pp[i * 3], pp[i * 3 + 1],
                                                    pp[i * 3 + 2]});
-        tinyusdz::value::quatf q;
+        lightusd::value::quatf q;
         q.real = 1.0f;
         q.imag[0] = q.imag[1] = q.imag[2] = 0.0f;
         const size_t orientation_index = qv.size() == 4 ? 0 : i * 4;
@@ -3777,9 +3777,9 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
           q.real = qq[orientation_index]; q.imag[0] = qq[orientation_index + 1];
           q.imag[1] = qq[orientation_index + 2]; q.imag[2] = qq[orientation_index + 3];
         }
-        const tinyusdz::value::matrix3d r = tinyusdz::to_matrix3x3(q);
-        const tinyusdz::value::matrix4d r4 = tinyusdz::to_matrix(
-            r, tinyusdz::value::double3{0.0, 0.0, 0.0});
+        const lightusd::value::matrix3d r = lightusd::to_matrix3x3(q);
+        const lightusd::value::matrix4d r4 = lightusd::to_matrix(
+            r, lightusd::value::double3{0.0, 0.0, 0.0});
         const Vec3 nx = TransformVector(world, TransformVector(r4, Vec3{1, 0, 0}));
         const Vec3 ny = TransformVector(world, TransformVector(r4, Vec3{0, 1, 0}));
         const Vec3 nz = Normalize(TransformVector(world, TransformVector(r4, Vec3{0, 0, 1})));
@@ -3811,10 +3811,10 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
         }
       }
     }
-    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+    for (const lightusd::next::UsdPrim &child : prim.GetChildren())
       self(self, child, world);
   };
-  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims())
+  for (const lightusd::next::UsdPrim &root : stage.GetRootPrims())
     visit(visit, root, matrix4d::identity());
   if (!build_ok) return false;
   if (!flush_chunk()) return false;
@@ -3874,46 +3874,46 @@ bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk) {
 // per-axis scale and translation.
 matrix4d InstanceTRS(const float *pos, const float *quat_wxyz,
                      const float *scale3) {
-  tinyusdz::value::quatf q;
+  lightusd::value::quatf q;
   q.real = quat_wxyz[0];
   q.imag[0] = quat_wxyz[1];
   q.imag[1] = quat_wxyz[2];
   q.imag[2] = quat_wxyz[3];
   // 3x3 rotation in the same convention as the rest of the xform stack.
-  tinyusdz::value::matrix3d rot = tinyusdz::to_matrix3x3(q);
+  lightusd::value::matrix3d rot = lightusd::to_matrix3x3(q);
   // p * S * R with S diagonal scales row i of R by scale[i].
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) rot.m[i][j] *= double(scale3[i]);
-  tinyusdz::value::double3 t{double(pos[0]), double(pos[1]), double(pos[2])};
-  return tinyusdz::to_matrix(rot, t);  // translation into row 3
+  lightusd::value::double3 t{double(pos[0]), double(pos[1]), double(pos[2])};
+  return lightusd::to_matrix(rot, t);  // translation into row 3
 }
 
 // Recursively collect curve prims under `prim`, accumulating world transforms in
 // the row-vector convention. Used both at scene level and to gather a
 // PointInstancer prototype's curves (relative to the prototype root).
-void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
+void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
                           const matrix4d &parent_world,
-                          tinyusdz::Purpose inherited_purpose, double time,
+                          lightusd::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   // visibility="invisible" prunes the prim and its subtree (parity with the
   // legacy path and UsdGeomImageable).
-  if (const tinyusdz::next::Value *vv = prim.GetPropertyValue("visibility")) {
+  if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
     if (const std::string *t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
-  tinyusdz::Purpose purpose = inherited_purpose;
-  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+  lightusd::Purpose purpose = inherited_purpose;
+  if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (const std::string *t = pv->as_token()) {
-      if (*t == "render") purpose = tinyusdz::Purpose::Render;
-      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
-      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+      if (*t == "render") purpose = lightusd::Purpose::Render;
+      else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
+      else if (*t == "guide") purpose = lightusd::Purpose::Guide;
     }
   }
   // Nested instancers under a prototype are NOT baked into its curve BLAS -- their
@@ -3922,7 +3922,7 @@ void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
   // prototypes.
   if (prim.GetTypeName() == "PointInstancer") return;
   {
-    const tinyusdz::next::PrimSpec *s = prim.GetPrimSpec();
+    const lightusd::next::PrimSpec *s = prim.GetPrimSpec();
     if (s && !s->meta().instance_prototype().empty()) return;
   }
   if (IsCurvePrimNext(prim)) {
@@ -3932,17 +3932,17 @@ void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
     cj.purpose = purpose;
     out->push_back(std::move(cj));
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
     CollectCurvesNextRec(child, world, purpose, time, out);
 }
 
 // Collect a PointInstancer prototype's curves with transforms relative to the
 // prototype root (root at identity, replaced by the instance transform).
-void CollectProtoCurves(const tinyusdz::next::Stage &stage,
+void CollectProtoCurves(const lightusd::next::Stage &stage,
                         const std::string &proto_path,
-                        tinyusdz::Purpose start_purpose, double time,
+                        lightusd::Purpose start_purpose, double time,
                         std::vector<CurveJobNext> *out) {
-  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   if (IsCurvePrimNext(proto)) {
     CurveJobNext cj;
@@ -3951,16 +3951,16 @@ void CollectProtoCurves(const tinyusdz::next::Stage &stage,
     cj.purpose = start_purpose;
     out->push_back(std::move(cj));
   }
-  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren())
+  for (const lightusd::next::UsdPrim &child : proto.GetChildren())
     CollectCurvesNextRec(child, matrix4d::identity(), start_purpose, time, out);
 }
 
 // Reserve (deduped by path+purpose) a curve BLAS for a prototype's curves, shared
 // by PointInstancer and native-instance placements. Returns its index in
 // curve_inst->protos, or -1 if curve_inst is null or the prototype has no curves.
-int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
+int32_t ReserveCurveProto(const lightusd::next::Stage &stage,
                           const std::string &proto_path,
-                          tinyusdz::Purpose purpose, double time,
+                          lightusd::Purpose purpose, double time,
                           CurveProtoCollect *curve_inst) {
   if (!curve_inst) return -1;
   const std::string key =
@@ -3987,10 +3987,10 @@ int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
 // instancer's children are the prototypes, so the caller must NOT descend into
 // it. Curve prototypes are deduped into a curve BLAS and instanced through the
 // same TLAS as meshes.
-void CollectPointInstancer(const tinyusdz::next::Stage &stage,
-                           const tinyusdz::next::UsdPrim &instancer,
+void CollectPointInstancer(const lightusd::next::Stage &stage,
+                           const lightusd::next::UsdPrim &instancer,
                            const matrix4d &instancer_world,
-                           tinyusdz::Purpose purpose, double time,
+                           lightusd::Purpose purpose, double time,
                            const std::vector<std::string> &mask,
                            std::vector<InstanceRT> *instances,
                            std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -4003,7 +4003,7 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
                            // still deduped into curve_inst.
                            std::vector<CurveInstanceRT> *curve_out) {
   if (!PathMatchesMask(instancer.GetPath().str(), mask)) return;
-  const std::vector<tinyusdz::next::Path> *targets =
+  const std::vector<lightusd::next::Path> *targets =
       instancer.GetRelationship("prototypes");
   if (!targets || targets->empty()) return;
 
@@ -4011,14 +4011,14 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
   // id (deduped by path + purpose, matching the native-instance path) and, if the
   // prototype has curves, a curve BLAS id (also deduped) — both stored once and
   // instanced via the TLAS rather than baked per instance.
-  std::unordered_map<std::string, tinyusdz::next::UsdPrim> children_by_name;
-  for (const tinyusdz::next::UsdPrim &c : instancer.GetChildren())
+  std::unordered_map<std::string, lightusd::next::UsdPrim> children_by_name;
+  for (const lightusd::next::UsdPrim &c : instancer.GetChildren())
     children_by_name.emplace(c.GetName(), c);
   std::vector<int32_t> proto_blas(targets->size(), -1);
   std::vector<int32_t> proto_curve(targets->size(), -1);  // CurveProtoCollect idx
   for (size_t pi = 0; pi < targets->size(); ++pi) {
-    const tinyusdz::next::Path &tp = (*targets)[pi];
-    tinyusdz::next::UsdPrim proto;
+    const lightusd::next::Path &tp = (*targets)[pi];
+    lightusd::next::UsdPrim proto;
     auto cit = children_by_name.find(tp.name());
     if (cit != children_by_name.end()) proto = cit->second;
     else proto = stage.GetPrimAtPath(tp.str());
@@ -4103,10 +4103,10 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
 // into; instead each placement is recorded as an InstanceRT and its prototype
 // (deduped by path+purpose) is queued for a BLAS build. This keeps each
 // prototype's geometry stored once. Honors `mask`.
-void CollectSceneSplit(const tinyusdz::next::Stage &stage,
-                       const tinyusdz::next::UsdPrim &prim,
+void CollectSceneSplit(const lightusd::next::Stage &stage,
+                       const lightusd::next::UsdPrim &prim,
                        const matrix4d &parent_world,
-                       tinyusdz::Purpose inherited_purpose, double time,
+                       lightusd::Purpose inherited_purpose, double time,
                        const std::vector<std::string> &mask,
                        std::vector<MeshJobNext> *base_jobs,
                        std::vector<InstanceRT> *instances,
@@ -4118,27 +4118,27 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   // visibility="invisible" prunes the prim and its subtree (parity with the
   // legacy path and UsdGeomImageable).
-  if (const tinyusdz::next::Value *vv = prim.GetPropertyValue("visibility")) {
+  if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
     if (const std::string *t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
-  tinyusdz::Purpose purpose = inherited_purpose;
-  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+  lightusd::Purpose purpose = inherited_purpose;
+  if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (const std::string *t = pv->as_token()) {
-      if (*t == "render") purpose = tinyusdz::Purpose::Render;
-      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
-      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+      if (*t == "render") purpose = lightusd::Purpose::Render;
+      else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
+      else if (*t == "guide") purpose = lightusd::Purpose::Guide;
     }
   }
 
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
   std::string proto_path = spec ? spec->meta().instance_prototype() : std::string();
   // A prototype HOLDER (the target of some instance_prototype) is itself a placed
   // instanceable prim -- Pixar renders every instanceable sibling, including the one
@@ -4212,7 +4212,7 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
     cj.purpose = purpose;
     curve_jobs->push_back(std::move(cj));
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     CollectSceneSplit(stage, child, world, purpose, time, mask, base_jobs,
                       instances, proto_ids, protos, curve_jobs, curve_inst,
                       stats, proto_holders);
@@ -4228,8 +4228,8 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
 // renders once via the per-prototype curve BLAS). Mirrors the instance branches of
 // CollectSceneSplit; base meshes are left to CollectProtoJobs.
 void CollectProtoMeshNestingRec(
-    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
-    const matrix4d &parent_world, tinyusdz::Purpose inherited_purpose, double time,
+    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
+    const matrix4d &parent_world, lightusd::Purpose inherited_purpose, double time,
     const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
     std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -4238,22 +4238,22 @@ void CollectProtoMeshNestingRec(
     const std::unordered_set<std::string> *proto_holders) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
-  tinyusdz::Purpose purpose = inherited_purpose;
-  if (const tinyusdz::next::Value *pv = prim.GetPropertyValue("purpose")) {
+  lightusd::Purpose purpose = inherited_purpose;
+  if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
     if (const std::string *t = pv->as_token()) {
-      if (*t == "render") purpose = tinyusdz::Purpose::Render;
-      else if (*t == "proxy") purpose = tinyusdz::Purpose::Proxy;
-      else if (*t == "guide") purpose = tinyusdz::Purpose::Guide;
+      if (*t == "render") purpose = lightusd::Purpose::Render;
+      else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
+      else if (*t == "guide") purpose = lightusd::Purpose::Guide;
     }
   }
 
   // Nested scenegraph instance: record a placement + queue its prototype.
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
   const std::string proto_path =
       spec ? spec->meta().instance_prototype() : std::string();
   if (!proto_path.empty()) {
@@ -4296,7 +4296,7 @@ void CollectProtoMeshNestingRec(
     return;
   }
 
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
     if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
     CollectProtoMeshNestingRec(stage, child, world, purpose, time, mask, nested,
                                nested_curves, proto_ids, protos, curve_inst, stats,
@@ -4308,16 +4308,16 @@ void CollectProtoMeshNestingRec(
 // world (the prototype root's own transform is replaced by each outer placement,
 // matching CollectProtoJobs). Appends prototype-local placements to `nested`.
 void CollectProtoMeshNesting(
-    const tinyusdz::next::Stage &stage, const std::string &proto_path,
-    tinyusdz::Purpose purpose, double time, const std::vector<std::string> &mask,
+    const lightusd::next::Stage &stage, const std::string &proto_path,
+    lightusd::Purpose purpose, double time, const std::vector<std::string> &mask,
     std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
     std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
     RTPreviewStats *stats,
     const std::unordered_set<std::string> *proto_holders) {
-  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
-  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : proto.GetChildren()) {
     if (proto_holders && proto_holders->count(child.GetPath().str())) continue;
     CollectProtoMeshNestingRec(stage, child, matrix4d::identity(), purpose, time,
                                mask, nested, nested_curves, proto_ids, protos,
@@ -4329,16 +4329,16 @@ void CollectProtoMeshNesting(
 // of instance_prototype()). Walks the same prims CollectSceneSplit collects as
 // base geometry -- it stops at instance proxies and PointInstancers, so its cost
 // is one base-graph traversal (no instance multiplicity), not the expanded set.
-void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
+void CollectPrototypePaths(const lightusd::next::UsdPrim &prim,
                            std::unordered_set<std::string> *out) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
   if (spec && !spec->meta().instance_prototype().empty()) {
     out->insert(spec->meta().instance_prototype());
     return;  // proxy children come from the prototype; don't descend
   }
   if (prim.GetTypeName() == "PointInstancer") return;
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
     CollectPrototypePaths(child, out);
 }
 
@@ -4347,11 +4347,11 @@ void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
 // GetChildren() transparently expands any nested instances inline (bounded —
 // built once per unique prototype). The instance's world transform is applied
 // later by the TLAS.
-void CollectProtoJobs(const tinyusdz::next::Stage &stage,
+void CollectProtoJobs(const lightusd::next::Stage &stage,
                       const std::string &proto_path,
-                      tinyusdz::Purpose start_purpose, double time,
+                      lightusd::Purpose start_purpose, double time,
                       std::vector<MeshJobNext> *jobs) {
-  tinyusdz::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
+  lightusd::next::UsdPrim proto = stage.GetPrimAtPath(proto_path);
   if (!proto.IsValid()) return;
   static const std::vector<std::string> kNoMask;
   // A prototype root is placed at identity (its own transform is replaced by the
@@ -4364,7 +4364,7 @@ void CollectProtoJobs(const tinyusdz::next::Stage &stage,
     job.purpose = start_purpose;
     jobs->push_back(std::move(job));
   }
-  for (const tinyusdz::next::UsdPrim &child : proto.GetChildren()) {
+  for (const lightusd::next::UsdPrim &child : proto.GetChildren()) {
     CollectRTPreviewMeshesNext(stage, child, matrix4d::identity(), start_purpose,
                                time, kNoMask, jobs);
   }
@@ -4375,10 +4375,10 @@ void CollectProtoJobs(const tinyusdz::next::Stage &stage,
 // is applied later by the TLAS. Instanced curves are treated as round (the common
 // XGen case; per-instance flat/ribbon curves are not separated). Returns false
 // only on a LightRT build failure.
-bool BuildCurveBlasUnbounded(const tinyusdz::next::Stage &stage,
-                    const std::string &proto_path, tinyusdz::Purpose purpose,
+bool BuildCurveBlasUnbounded(const lightusd::next::Stage &stage,
+                    const std::string &proto_path, lightusd::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
-                    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+                    const lightusd::next::ValueClipStageLoader &clip_loader,
                     Blas *out, Bounds *local,
                     // Sub-BLAS split: a large curve prototype is split into
                     // several disjoint sub-BLAS so their (serial) LBVH collapses
@@ -4414,7 +4414,7 @@ bool BuildCurveBlasUnbounded(const tinyusdz::next::Stage &stage,
     std::vector<int> c(c32.begin(), c32.end());
     std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
     if (job.prim.GetTypeName() == "HermiteCurves") {
-      tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+      lightusd::tydra::next::ValueArrayRead<float> tangents;
       const bool have_tangents = ReadFloatArrayViewLazy(
           job.prim, "tangents", time, &tangents);
       if (have_tangents && tangents.size() == point_source.view.size()) {
@@ -4559,10 +4559,10 @@ bool BuildCurveBlasUnbounded(const tinyusdz::next::Stage &stage,
 // retained temporarily as a reference for the split/hit-index layout; this
 // implementation avoids retaining the complete transformed prototype while
 // LightRT builds its sub-BLASes.
-bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
-                    const std::string &proto_path, tinyusdz::Purpose purpose,
+bool BuildCurveBlas(const lightusd::next::Stage &stage,
+                    const std::string &proto_path, lightusd::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
-                    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+                    const lightusd::next::ValueClipStageLoader &clip_loader,
                     Blas *out, Bounds *local,
                     std::vector<Blas> *extra_blas = nullptr,
                     std::vector<Bounds> *extra_bounds = nullptr) {
@@ -4650,7 +4650,7 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
     std::vector<float> prim_points, prim_radii;
     std::vector<uint32_t> prim_first, prim_count;
     if (job.prim.GetTypeName() == "HermiteCurves") {
-      tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+      lightusd::tydra::next::ValueArrayRead<float> tangents;
       const bool have_tangents = ReadFloatArrayViewLazy(
           job.prim, "tangents", time, &tangents);
       if (have_tangents && tangents.size() == point_source.view.size()) {
@@ -4708,7 +4708,7 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
 // (sum of max(0, c-2) over faceVertexCounts). Invalid/degenerate/purpose-culled
 // triangles only reduce the actual count, so this never under-reserves -- used to
 // reserve the stream output up front so the chunked append never reallocates.
-inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
+inline size_t EstimateTrisForJob(const lightusd::next::UsdPrim &prim,
                                  double time) {
   const std::vector<int32_t> counts =
       ReadIntArrayLazy(prim, "faceVertexCounts", time);
@@ -4727,12 +4727,12 @@ inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
 // instead of letting the process get OOM-killed.
 template <class FVec, class TVec>
 bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
-                    const tinyusdz::next::Stage *stage, double time,
+                    const lightusd::next::Stage *stage, double time,
                     bool want_uvs, bool purpose_cull, int threads,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
                     std::vector<TriMat> *out_mat_table = nullptr,
-                    std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                    std::vector<lightusd::tydra::LightRtOpenPBRParams>
                         *out_openpbr_table = nullptr,
                     bool want_colors = false, ByteVec *out_tri_colors = nullptr,
                     bool want_normals = false, FVec *out_tri_normals = nullptr,
@@ -4760,7 +4760,7 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
     TriMat back_mat;
     bool has_back{false};
     bool has_openpbr{false};
-    tinyusdz::tydra::LightRtOpenPBRParams openpbr;
+    lightusd::tydra::LightRtOpenPBRParams openpbr;
   };
   const unsigned nthreads =
       std::min<unsigned>(WorkerThreadCount(threads),
@@ -4990,10 +4990,10 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // Gather native-instance prototype holders up front so the base-geometry
   // traversal can skip them (they are rendered via their instance proxies).
   std::unordered_set<std::string> proto_holders;
-  tinyusdz::tydra::next::CollectPrototypePaths(ctx.stage, &proto_holders);
-  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
+  lightusd::tydra::next::CollectPrototypePaths(ctx.stage, &proto_holders);
+  for (const lightusd::next::UsdPrim &root : ctx.stage.GetRootPrims()) {
     CollectSceneSplit(ctx.stage, root, matrix4d::identity(),
-                      tinyusdz::Purpose::Default, time, opt.mask, &base_jobs,
+                      lightusd::Purpose::Default, time, opt.mask, &base_jobs,
                       &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
                       &ctx.stats, &proto_holders);
   }
@@ -5019,8 +5019,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // Embedded textures: if the input is a .usdz package, open it so material
   // resolution can pull packed textures from the archive (else nullptr -> the
   // texture cache falls back to the filesystem).
-  tinyusdz::next::USDZReader usdz_archive;
-  const tinyusdz::next::USDZReader *usdz_ptr = nullptr;
+  lightusd::next::USDZReader usdz_archive;
+  const lightusd::next::USDZReader *usdz_ptr = nullptr;
   {
     const std::string &in = opt.input;
     if (in.size() >= 5 && in.compare(in.size() - 5, 5, ".usdz") == 0 &&
@@ -5152,7 +5152,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   std::vector<std::vector<CurveInstanceRT>> proto_nested_curves;
   for (size_t i = 0; i < protos.size(); ++i) {
     const std::string ppath = protos[i].path;
-    const tinyusdz::Purpose ppurpose = protos[i].purpose;
+    const lightusd::Purpose ppurpose = protos[i].purpose;
     std::vector<MeshJobNext> jobs;
     std::vector<InstanceRT> nested;
     std::vector<CurveInstanceRT> nested_curves;
@@ -5986,14 +5986,14 @@ void CollectMeshLightsNext(RenderContext &ctx) {
   AppendPowerCdf(&ctx.lights.mesh, &ctx.lights.mesh_cdf);
 }
 
-void CollectLightsNext(const tinyusdz::next::Stage &stage,
-                       const tinyusdz::next::UsdPrim &prim,
+void CollectLightsNext(const lightusd::next::Stage &stage,
+                       const lightusd::next::UsdPrim &prim,
                        const matrix4d &parent_world, double time,
                        LightCache *cache) {
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
 
   const std::string &t = prim.GetTypeName();
@@ -6010,7 +6010,7 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     const float intensity = ReadCamFloatNext(prim, "inputs:intensity", 1.0f);
     const float exposure = ReadCamFloatNext(prim, "inputs:exposure", 0.0f);
     Vec3 color{1.0f, 1.0f, 1.0f};
-    if (const tinyusdz::next::Value *v = prim.GetPropertyValue("inputs:color"))
+    if (const lightusd::next::Value *v = prim.GetPropertyValue("inputs:color"))
       if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
     const float scale = intensity * std::pow(2.0f, exposure);
     PreviewLight dst;
@@ -6027,7 +6027,7 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     // surface lit nothing at all, and only lit what was behind it.
     dst.normal = dst.direction;
     dst.radiance = Mul(color, scale);
-    if (const tinyusdz::next::Value *v =
+    if (const lightusd::next::Value *v =
             prim.GetPropertyValue("inputs:shadow:enable")) {
       if (const bool *b = v->as_bool()) dst.shadow_enable = *b;
     }
@@ -6063,7 +6063,7 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     // the undivided intensity: it is shaded as a point light (I/d^2), where
     // the division would blow up as r -> 0.
     bool normalize = false;
-    if (const tinyusdz::next::Value *v =
+    if (const lightusd::next::Value *v =
             prim.GetPropertyValue("inputs:normalize"))
       if (const bool *b = v->as_bool()) normalize = *b;
     if (normalize && dst.area > 1.0e-8f &&
@@ -6073,7 +6073,7 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     dst.power = std::max(0.0f, Luminance(dst.radiance) * std::max(1.0f, dst.area));
     cache->finite.push_back(std::move(dst));
   }
-  for (const tinyusdz::next::UsdPrim &c : prim.GetChildren())
+  for (const lightusd::next::UsdPrim &c : prim.GetChildren())
     CollectLightsNext(stage, c, world, time, cache);
 }
 
@@ -6081,33 +6081,33 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
 // First UsdLuxDomeLight in the composed stage (depth-first), or an invalid prim.
 // Accumulates the world transform along the way so the caller can read the dome's
 // world-space orientation (out_world is the found dome's local-to-world matrix).
-tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim,
+lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim,
                                          const matrix4d &parent_world,
                                          double time, matrix4d *out_world) {
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : (local * parent_world);
   if (prim.GetTypeName() == "DomeLight") {
     if (out_world) *out_world = world;
     return prim;
   }
-  for (const tinyusdz::next::UsdPrim &c : prim.GetChildren()) {
+  for (const lightusd::next::UsdPrim &c : prim.GetChildren()) {
     matrix4d cw;
-    tinyusdz::next::UsdPrim r = FindDomeLightRec(c, world, time, &cw);
+    lightusd::next::UsdPrim r = FindDomeLightRec(c, world, time, &cw);
     if (r.IsValid()) {
       if (out_world) *out_world = cw;
       return r;
     }
   }
-  return tinyusdz::next::UsdPrim();
+  return lightusd::next::UsdPrim();
 }
 
 // Build the IBL cache from the --env override or a DomeLight; returns false (and
 // leaves ibl invalid) if there is no env, so the renderer falls back to the
 // headlight.
-bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
+bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl) {
   std::string env_path = opt.env_file;
   Vec3 scale{1.0f, 1.0f, 1.0f};
@@ -6116,19 +6116,19 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
   int probe_format = 0;    // texture:format: 2 mirroredBall / 3 angular
   Vec3 rx{1.0f, 0.0f, 0.0f}, ry{0.0f, 1.0f, 0.0f}, rz{0.0f, 0.0f, 1.0f};
   if (env_path.empty()) {
-    for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
+    for (const lightusd::next::UsdPrim &root : stage.GetRootPrims()) {
       matrix4d dome_world = matrix4d::identity();
-      tinyusdz::next::UsdPrim dome =
+      lightusd::next::UsdPrim dome =
           FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
       if (!dome.IsValid()) continue;
       have_dome = true;
-      if (const tinyusdz::next::Value *v =
+      if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:file")) {
         const std::string *ap = v->as_asset_path();
         if (!ap) ap = v->as_string();
         if (ap) env_path = *ap;
       }
-      if (const tinyusdz::next::Value *v =
+      if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:format")) {
         const std::string *t = v->as_token();
         if (!t) t = v->as_string();
@@ -6138,13 +6138,13 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
         }
       }
       float intensity = 1.0f;
-      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:intensity"))
+      if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:intensity"))
         if (const float *f = v->as_float()) intensity = *f;
       float exposure = 0.0f;
-      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:exposure"))
+      if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:exposure"))
         if (const float *f = v->as_float()) exposure = *f;
       Vec3 color{1.0f, 1.0f, 1.0f};
-      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:color"))
+      if (const lightusd::next::Value *v = dome.GetPropertyValue("inputs:color"))
         if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
       const float e = intensity * std::exp2(exposure);
       scale = Vec3{color.x * e, color.y * e, color.z * e};
@@ -6189,7 +6189,7 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
     env.pixels.assign(size_t(env.width) * size_t(env.height), scale);
   } else {
     std::string path = env_path;
-    if (!tinyusdz::next::AssetResolver::IsAbsolutePath(path) &&
+    if (!lightusd::next::AssetResolver::IsAbsolutePath(path) &&
         !base_dir.empty()) {
       path = base_dir + "/" + path;
     }
@@ -6224,14 +6224,14 @@ bool PayloadIntersectsMask(const std::string &payload_path,
   return false;
 }
 
-bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
+bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
                            std::string *warn, std::string *err,
-                           tinyusdz::next::ValueClipStageLoader *clip_loader) {
+                           lightusd::next::ValueClipStageLoader *clip_loader) {
   if (!stage) {
     if (err) *err = "null Stage output";
     return false;
   }
-  tinyusdz::next::StageSessionOptions session_options;
+  lightusd::next::StageSessionOptions session_options;
   session_options.compose = true;
   session_options.composition.variant_overrides = opt.variant_overrides;
   // A render mask is also a composition boundary. Loading every payload and
@@ -6242,21 +6242,21 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
     const std::vector<std::string> payload_mask = opt.mask;
     session_options.composition.load_payloads = false;
     session_options.composition.payload_policy =
-        [payload_mask](const tinyusdz::next::Path &prim_path,
+        [payload_mask](const lightusd::next::Path &prim_path,
                        const std::string &) {
           return PayloadIntersectsMask(prim_path.str(), payload_mask);
         };
   }
   session_options.max_total_memory = MemBudget::Get().Cap() * 55 / 100;
-  session_options.cache_retention = tinyusdz::next::CacheRetention::LayersOnly;
-  tinyusdz::next::StageSession session;
+  session_options.cache_retention = lightusd::next::CacheRetention::LayersOnly;
+  lightusd::next::StageSession session;
   if (!session.OpenFile(opt.input, session_options)) {
     if (warn) *warn = session.GetWarning();
     if (err) *err = session.GetError();
     return false;
   }
   if (!opt.mask.empty()) {
-    const std::vector<tinyusdz::next::Path> deferred =
+    const std::vector<lightusd::next::Path> deferred =
         session.GetDeferredPayloadPaths();
     if (!deferred.empty()) {
       std::cerr << "next: " << deferred.size()
@@ -6265,10 +6265,10 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
   }
   if (clip_loader) {
     const std::vector<std::string> dependencies = session.GetLayerDependencies();
-    const tinyusdz::next::ResolverConfig resolver_config = session_options.resolver;
+    const lightusd::next::ResolverConfig resolver_config = session_options.resolver;
     const std::string input = opt.input;
     *clip_loader = [resolver_config, dependencies, input](
-        const std::string &asset, tinyusdz::next::Stage *clip_stage,
+        const std::string &asset, lightusd::next::Stage *clip_stage,
         std::string *clip_warn, std::string *clip_err) {
       if (!clip_stage) return false;
       auto base_dir = [](const std::string &file) {
@@ -6276,7 +6276,7 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
         return slash == std::string::npos ? std::string(".")
                                           : file.substr(0, slash);
       };
-      tinyusdz::next::AssetResolver resolver(resolver_config);
+      lightusd::next::AssetResolver resolver(resolver_config);
       std::vector<std::string> candidates;
       candidates.push_back(resolver.ResolvePath(
           asset, base_dir(input), resolver_config.enable_suffix_fallback));
@@ -6296,10 +6296,10 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
         if (clip_err) *clip_err = "asset not found: " + asset;
         return false;
       }
-      tinyusdz::next::StageSessionOptions clip_options;
+      lightusd::next::StageSessionOptions clip_options;
       clip_options.resolver = resolver_config;
       clip_options.composition.load_payloads = true;
-      tinyusdz::next::StageSession clip_session;
+      lightusd::next::StageSession clip_session;
       if (!clip_session.OpenFile(resolved, clip_options)) {
         if (clip_warn) *clip_warn = clip_session.GetWarning();
         if (clip_err) *clip_err = clip_session.GetError();
@@ -6315,9 +6315,9 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
   return true;
 }
 
-bool HasAuthoredProperty(const tinyusdz::next::UsdPrim &prim,
+bool HasAuthoredProperty(const lightusd::next::UsdPrim &prim,
                          const char *name) {
-  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const lightusd::next::PrimSpec *spec = prim.GetPrimSpec();
   return spec && spec->property(name);
 }
 
@@ -6332,8 +6332,8 @@ uint32_t RenderPurposeMask(const std::vector<std::string> &purposes) {
   return mask;
 }
 
-void AppendCollectionMask(const std::vector<tinyusdz::next::Path> &includes,
-                          const std::vector<tinyusdz::next::Path> &excludes,
+void AppendCollectionMask(const std::vector<lightusd::next::Path> &includes,
+                          const std::vector<lightusd::next::Path> &excludes,
                           bool include_root, std::vector<std::string> *mask) {
   if (!mask) return;
   if (!include_root) {
@@ -6344,10 +6344,10 @@ void AppendCollectionMask(const std::vector<tinyusdz::next::Path> &includes,
   }
 }
 
-bool ApplyUsdRenderOptions(const tinyusdz::next::Stage &stage,
+bool ApplyUsdRenderOptions(const lightusd::next::Stage &stage,
                            Options *opt) {
   if (!opt) return false;
-  using namespace tinyusdz::next;
+  using namespace lightusd::next;
 
   UsdPrim pass;
   RenderPassData pass_data;
@@ -6483,7 +6483,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
       std::min<size_t>(size_t(512) << 20,
                        MemBudget::Get().Cap() / 16));
   size_t volume_density_bytes = 0;
-  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+  for (const lightusd::next::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
                        DirName(ctx.opt.input), &ctx.volumes, volume_budget_bytes,
                        &volume_density_bytes);
@@ -6508,7 +6508,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   // Finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) -> ctx.lights, so the
   // shading path lights interiors that the dome can't reach (e.g. ALab's shot rig).
   ctx.lights.finite.clear();
-  for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
+  for (const lightusd::next::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectLightsNext(ctx.stage, root, matrix4d::identity(), init_time,
                       &ctx.lights);
   AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
@@ -6525,7 +6525,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   // animated scenes intact: later -frames extraction must still read defaults
   // and time samples from the Stage.
   if (!ctx.geometry_animated) {
-    const tinyusdz::next::Stage::StaticGeometryReleaseStats released =
+    const lightusd::next::Stage::StaticGeometryReleaseStats released =
         ctx.stage.ReleaseStaticGeometryArrays();
     ctx.released_static_geometry_bytes = released.estimated_payload_bytes;
     if (released.property_count != 0) {
@@ -6546,7 +6546,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
 double RenderFrameTo(RenderContext &ctx, const std::string &path) {
   ctx.opt.width = ctx.width;
   const auto t0 = std::chrono::steady_clock::now();
-  tinyusdz::Image img = RenderImage(
+  lightusd::Image img = RenderImage(
       ctx.scene, &ctx.direct, ctx.tris, ctx.flat_mats, ctx.lights,
       ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
       ctx.textures.empty() ? nullptr : &ctx.textures,
@@ -6561,9 +6561,9 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks,
       ctx.backplates.empty() ? nullptr : &ctx.backplates);
   const auto t1 = std::chrono::steady_clock::now();
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(path, img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(path, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
     return -1.0;

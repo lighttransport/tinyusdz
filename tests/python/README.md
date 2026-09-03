@@ -1,4 +1,4 @@
-Unit test codes for python binding of TinyUSDZ.
+Unit test codes for python binding of LightUSD.
 
 ## Requirements
 
@@ -15,5 +15,5 @@ $ python -m pip install --upgrade pytest
 
 ```
 # Add ../../python and ../../sandbox/python to find modules.
-$ PYTHONPATH=$PYTHONPATH:../../sandbox/python:../../python python -m unittest 
+$ PYTHONPATH=$PYTHONPATH:../../sandbox/python:../../python python -m unittest
 ```

@@ -7,7 +7,7 @@
 
 #include "sha256.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -154,4 +154,4 @@ std::string sha256(const char *binary, size_t size) {
     return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

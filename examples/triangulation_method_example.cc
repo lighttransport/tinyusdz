@@ -1,4 +1,4 @@
-// Example demonstrating the new triangulation method option in TinyUSDZ Tydra
+// Example demonstrating the new triangulation method option in LightUSD Tydra
 //
 // This example shows how to use either:
 // - Earcut algorithm (default): Robust for complex/concave polygons
@@ -7,7 +7,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
@@ -39,9 +39,9 @@ int main(int argc, char** argv) {
     }
 
     // Load USD file
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     std::string warn, err;
-    bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDFromFile(filename, &stage, &warn, &err);
 
     if (!warn.empty()) {
         std::cerr << "Warning: " << warn << "\n";
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
     }
 
     // Set up render scene converter with triangulation method
-    tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::tydra::RenderSceneConverterEnv env(stage);
 
     // Configure mesh conversion
     env.mesh_config.triangulate = true;  // Enable triangulation
@@ -61,15 +61,15 @@ int main(int argc, char** argv) {
     // Set the triangulation method
     if (use_fan) {
         env.mesh_config.triangulation_method =
-            tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
+            lightusd::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
     } else {
         env.mesh_config.triangulation_method =
-            tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
+            lightusd::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
     }
 
     // Convert to render scene
-    tinyusdz::tydra::RenderSceneConverter converter;
-    tinyusdz::tydra::RenderScene render_scene;
+    lightusd::tydra::RenderSceneConverter converter;
+    lightusd::tydra::RenderScene render_scene;
 
     if (!converter.ConvertToRenderScene(env, &render_scene)) {
         std::cerr << "Failed to convert to render scene: "

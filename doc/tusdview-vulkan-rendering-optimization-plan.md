@@ -145,7 +145,7 @@ are asserted exactly and are suitable for regression testing across machines.
 
 ## Interfaces and Observability
 
-- No TinyUSDZ library API changes. The viewer gains the transparency CLI/config
+- No LightUSD library API changes. The viewer gains the transparency CLI/config
   option and internal canonical material/submission structures.
 - Define optimization statistics as source conversion attempts, preserved
   logical materials, canonical raster payloads, and logical records sharing a

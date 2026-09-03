@@ -82,7 +82,7 @@ active TODO. For the broader memory/performance picture see
 - `any_value_raw_cast` (the unchecked force-cast) was moved into `value::detail` so it
   cannot be reached without intent; the 8 internal callers (`Value::as`/`get` role
   branches) qualify it. The **checked** `any_value_cast` stays public (external callers in
-  crate-writer / c-tinyusd). It was hardened/relocated, not removed.
+  crate-writer / c-lightusd). It was hardened/relocated, not removed.
 
 ---
 
@@ -93,7 +93,7 @@ active TODO. For the broader memory/performance picture see
 | `TypedTimeSamples<T>` struct + `get()` explicit instantiations | ~231 (+ duplicated across 5 inst TUs) | **0** |
 | `timesamples.cc` isolated compile (clang) | ~47 s | 16.6 s (Phase 3) → 8.6 s → ~5.6/3.5 s after `timesamples-eval.cc` split |
 | split instantiation TUs | 5 | 0 (deleted) |
-| `libtinyusdz_static.a` | 48,718,744 B | 48,607,894 B |
+| `liblightusd_static.a` | 48,718,744 B | 48,607,894 B |
 | ODR hazard (`.cc` body ≠ `.inc` body) | present | fixed (`.inc` deleted) |
 | `_data_offsets` ceiling | 4 GiB (uint32) | none (size_t) |
 

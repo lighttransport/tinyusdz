@@ -32,7 +32,7 @@ tusddiff --help
 - `--json` - Output differences in JSON format instead of text
 - `-f`, `--flatten` - Compose both inputs before semantic comparison
 - `-q`, `--brief` - Suppress diff output and use the exit status only
-- `-n`, `--noeffect` - OpenUSD-compatible no-edit flag (TinyUSDZ is always read-only)
+- `-n`, `--noeffect` - OpenUSD-compatible no-edit flag (LightUSD is always read-only)
 - `--help`, `-h` - Display help information
 
 ### Supported File Formats
@@ -109,7 +109,7 @@ tusddiff models/Kitchen_set/Kitchen_set.usd models/Kitchen_set/Kitchen_set_insta
 
 ### Cross-implementation comparison: normalizing package-anchored asset paths
 
-When validating a TinyUSDZ-produced `.usdz` against OpenUSD (pxr), a common
+When validating a LightUSD-produced `.usdz` against OpenUSD (pxr), a common
 workflow is to flatten the same package with both `usdcat -f` (pxr) and
 `tusdcat -f` (native) and diff the results. `tusdcat` cannot flatten a `.usdz`
 directly (`--flatten is ignored for USDZ`), so unpack the archive first and
@@ -160,7 +160,7 @@ The `tusddiff` tool is built when tools are enabled:
 
 ```bash
 mkdir build && cd build
-cmake -DTINYUSDZ_BUILD_TOOLS=ON ..
+cmake -DLIGHTUSD_BUILD_TOOLS=ON ..
 make tusddiff
 ```
 
@@ -168,10 +168,10 @@ The executable will be created at `build/tusddiff`.
 
 ## Implementation Details
 
-- Uses TinyUSDZ's Layer abstraction for efficient USD file processing
+- Uses LightUSD's Layer abstraction for efficient USD file processing
 - Implements recursive diff algorithm with configurable depth limits
 - Memory-safe implementation with proper error handling
-- Supports all USD file formats through TinyUSDZ's unified loader
+- Supports all USD file formats through LightUSD's unified loader
 
 ## Limitations
 
@@ -179,7 +179,7 @@ The executable will be created at `build/tusddiff`.
   stage comparison.
 - Directory-pair and recursive per-entry USDZ workflows from OpenUSD `usddiff`
   are not implemented yet.
-- TinyUSDZ never writes externally edited temporary USDA back to an input, so
+- LightUSD never writes externally edited temporary USDA back to an input, so
   `--noeffect` is accepted but is always the effective behavior.
 
 ## Future Enhancements
@@ -191,6 +191,6 @@ The executable will be created at `build/tusddiff`.
 
 ## See Also
 
-- [TinyUSDZ Documentation](../../README.md)
+- [LightUSD Documentation](../../README.md)
 - [USD Specification](https://openusd.org/)
 - [Diff and Compare Implementation](../../src/tydra/diff-and-compare.cc)

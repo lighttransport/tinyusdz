@@ -18,7 +18,7 @@
 #include "color-space.hh"
 #include "render-data.hh"  // For SpectralData, SpectralIOR, SpectralEmission
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 std::string EscapeJsonString(const std::string &input) {
@@ -296,7 +296,7 @@ bool ConvertShaderWithNodeGraphToJson(
     *json_str = "";
     return true;
   }
-  
+
   std::string parent_path = shader_path.substr(0, last_slash);
   const Prim *parent_prim = nullptr;
   std::string lookup_err;
@@ -427,7 +427,7 @@ bool ConvertShaderWithNodeGraphToJson(
 
     ss << "      {\n";
     ss << "        \"name\": \"" << EscapeJsonString(ng_child.element_name()) << "\",\n";
-    
+
     // Get node type from info:id
     std::string node_type = node_shader->info_id;
     // Extract category from info:id (e.g., "ND_multiply_color3" -> "multiply")
@@ -459,9 +459,9 @@ bool ConvertShaderWithNodeGraphToJson(
     for (const auto &prop_pair : *props) {
       const std::string &prop_name = prop_pair.first;
       if (prop_name.find("inputs:") != 0) continue;
-      
+
       std::string input_name = prop_name.substr(7); // Remove "inputs:" prefix
-      
+
       if (!first_input) ss << ",\n";
       first_input = false;
 
@@ -470,7 +470,7 @@ bool ConvertShaderWithNodeGraphToJson(
 
       if (prop_pair.second.is_attribute()) {
         const Attribute &attr = prop_pair.second.get_attribute();
-        
+
         // Check for connection
         if (attr.has_connections()) {
           const auto &conns = attr.connections();
@@ -499,7 +499,7 @@ bool ConvertShaderWithNodeGraphToJson(
         } else {
           // Direct value
           ss << ",\n            \"type\": \"" << attr.type_name() << "\"";
-          
+
           // Serialize value based on type
           if (auto vf = attr.get_value<float>()) {
             ss << ",\n            \"value\": " << vf.value();
@@ -546,9 +546,9 @@ bool ConvertShaderWithNodeGraphToJson(
   for (const auto &prop_pair : nodegraph->props) {
     const std::string &prop_name = prop_pair.first;
     if (prop_name.find("outputs:") != 0) continue;
-    
+
     std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
-    
+
     if (!first_output) ss << ",\n";
     first_output = false;
 
@@ -558,7 +558,7 @@ bool ConvertShaderWithNodeGraphToJson(
     if (prop_pair.second.is_attribute()) {
       const Attribute &attr = prop_pair.second.get_attribute();
       ss << ",\n        \"type\": \"" << attr.type_name() << "\"";
-      
+
       if (attr.has_connections()) {
         const auto &conns = attr.connections();
         if (!conns.empty()) {
@@ -798,4 +798,4 @@ std::string SpectralEmissionToJson(const SpectralEmission &data) {
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

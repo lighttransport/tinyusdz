@@ -16,7 +16,7 @@
 #include <memory>
 #include <fstream>
 
-// TinyUSDZ crate format definitions
+// LightUSD crate format definitions
 #include "crate-format.hh"
 #include "stage.hh"
 #include "usdGeom.hh"
@@ -30,7 +30,7 @@
 #include "crate-path-utils/path_sort.hh"
 #include "crate-path-utils/tree_encode.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 // Maximum prim nesting depth supported by the USDC writer. The path-tree
@@ -224,24 +224,24 @@ public:
   void Close();
 
   ///
-  /// Convert a TinyUSDZ Stage to Crate specs and add them to the file
+  /// Convert a LightUSD Stage to Crate specs and add them to the file
   ///
   /// This traverses the stage hierarchy and converts all prims and
   /// their properties to Crate format specs.
   ///
-  /// @param stage The TinyUSDZ Stage to convert
+  /// @param stage The LightUSD Stage to convert
   /// @param err Optional error message output
   /// @return true on success, false on failure
   ///
   bool ConvertStageToSpecs(const Stage& stage, std::string* err = nullptr);
 
   ///
-  /// Convert a TinyUSDZ Layer to Crate specs and add them to the file
+  /// Convert a LightUSD Layer to Crate specs and add them to the file
   ///
   /// This traverses the Layer's PrimSpecs and converts them along with
   /// their properties, relationships, and connections to Crate format.
   ///
-  /// @param layer The TinyUSDZ Layer to convert
+  /// @param layer The LightUSD Layer to convert
   /// @param err Optional error message output
   /// @return true on success, false on failure
   ///
@@ -656,7 +656,7 @@ private:
   /// Creates separate Attribute specs for each xformOp property
   bool ExtractXformOpsFromXformable(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
-  /// Convert TinyUSDZ value to CrateValue
+  /// Convert LightUSD value to CrateValue
   bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
 
   /// Convert a value::Value to CrateValue and append to fields.
@@ -1033,7 +1033,7 @@ private:
   int64_t bytes_written_ = 0;           // Current file size in bytes
   // Estimated memory usage (tokens, strings, paths, specs, etc.). Atomic:
   // the parallel stage->specs conversion accounts from worker threads.
-  // (Unconditionally atomic — TINYUSDZ_ENABLE_THREAD is a private compile
+  // (Unconditionally atomic — LIGHTUSD_ENABLE_THREAD is a private compile
   // definition, so class layout must not depend on it.)
   std::atomic<int64_t> memory_used_estimate_{0};
 
@@ -1047,11 +1047,11 @@ private:
   std::vector<std::string> validation_warnings_;  // Collected validation warnings
 
   // Deduplication tables
-  tinyusdz::HashMap<std::string, crate::TokenIndex> token_to_index_;
+  lightusd::HashMap<std::string, crate::TokenIndex> token_to_index_;
   std::vector<std::string> tokens_;  // Index -> token string
   std::map<int32_t, uint32_t> path_tree_token_remap_;  // Maps path tree token index -> our token index
 
-  tinyusdz::HashMap<std::string, crate::StringIndex> string_to_index_;
+  lightusd::HashMap<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
 
   // Open-addressed index over paths_: slot = (hash32, index into paths_ + 1;
@@ -1068,10 +1068,10 @@ private:
   std::vector<Path> paths_;  // Index -> path
 
 
-  tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
+  lightusd::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
 
-  tinyusdz::HashMap<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
+  lightusd::HashMap<std::vector<crate::FieldIndex>, crate::FieldSetIndex, crate::FieldSetHasher> fieldset_to_index_;
   std::vector<std::vector<crate::FieldIndex>> fieldsets_;  // Index -> fieldset
 
   // Spec data (accumulated before writing)
@@ -1089,7 +1089,7 @@ private:
     return sink ? *sink : spec_data_;
   }
   // Parallel whole-stage prim conversion (called by ConvertStageToSpecs when
-  // the stage is large and TINYUSDZ_ENABLE_THREAD is on). Byte-identical to
+  // the stage is large and LIGHTUSD_ENABLE_THREAD is on). Byte-identical to
   // the serial DFS.
   bool ConvertRootPrimsParallel(const Stage& stage, std::string* err);
 
@@ -1171,7 +1171,7 @@ private:
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
   size_t value_dedup_bytes_ = 0;
 
-  // Finalize phase profiling, enabled by TINYUSDZ_CRATE_PROFILE=1 (stderr
+  // Finalize phase profiling, enabled by LIGHTUSD_CRATE_PROFILE=1 (stderr
   // report at the end of Finalize). Accumulators are only touched when
   // profile_finalize_ is set, so the default path pays one branch.
   bool profile_finalize_ = false;
@@ -1185,4 +1185,4 @@ private:
 };
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd

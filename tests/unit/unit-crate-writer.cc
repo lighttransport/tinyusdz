@@ -6,7 +6,7 @@
 #include "acutest.h"
 
 #include "unit-crate-writer.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 #include "value-types.hh"
@@ -21,8 +21,8 @@
 #include "pprint-enum.hh"
 #include <cstdio>
 
-using namespace tinyusdz;
-using namespace tinyusdz::experimental;
+using namespace lightusd;
+using namespace lightusd::experimental;
 
 // Helper function to create a temporary filename
 static std::string get_temp_filename(const std::string& prefix) {
@@ -62,7 +62,7 @@ void crate_writer_basic_creation_test(void) {
 
   // Verify file exists and has PXR-USDC header
   std::vector<uint8_t> data;
-  TEST_CHECK(tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr));
+  TEST_CHECK(lightusd::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr));
 
   // Check magic header
   TEST_CHECK(data.size() >= 8);
@@ -112,7 +112,7 @@ void crate_writer_simple_prim_test(void) {
 
   // Verify file exists
   std::vector<uint8_t> data;
-  TEST_CHECK(tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr));
+  TEST_CHECK(lightusd::io::ReadWholeFile(&data, &err, filename, 0, nullptr));
   TEST_CHECK(data.size() > 72); // Should be larger than just header
 
   cleanup_file(filename);
@@ -154,7 +154,7 @@ void crate_writer_typename_encoding_test(void) {
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -238,7 +238,7 @@ void crate_writer_timesamples_test(void) {
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -296,7 +296,7 @@ void crate_writer_pseudoroot_ordering_test(void) {
   // Read back - should not get PseudoRoot error
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -358,7 +358,7 @@ void crate_writer_roundtrip_test(void) {
   // Read back
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -460,7 +460,7 @@ void crate_writer_stage_composition_arcs_test(void) {
   // Read back.
   Stage loaded;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -604,7 +604,7 @@ void crate_writer_multiple_prims_test(void) {
   // Read back
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   TEST_CHECK(loaded_stage.root_prims().size() == 10);
@@ -656,7 +656,7 @@ void crate_writer_nested_prims_test(void) {
   // Read back
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (ret) {
@@ -758,7 +758,7 @@ void crate_writer_material_shader_test(void) {
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -816,7 +816,7 @@ void crate_writer_material_shader_test(void) {
 }
 
 void crate_writer_layer_metadata_test(void) {
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   std::string filename = "test_layer_metadata.usdc";
 
@@ -876,7 +876,7 @@ void crate_writer_layer_metadata_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1013,7 +1013,7 @@ void crate_writer_usd_preview_surface_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1163,7 +1163,7 @@ void crate_writer_usd_uv_texture_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1270,7 +1270,7 @@ void crate_writer_usd_primvar_reader_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1389,7 +1389,7 @@ void crate_writer_usd_transform2d_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1487,7 +1487,7 @@ void crate_writer_cone_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1571,7 +1571,7 @@ void crate_writer_cylinder_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1680,7 +1680,7 @@ void crate_writer_capsule_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1782,7 +1782,7 @@ void crate_writer_points_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -1867,7 +1867,7 @@ void crate_writer_camera_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2007,7 +2007,7 @@ void crate_writer_basis_curves_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2176,7 +2176,7 @@ void crate_writer_nurbs_curves_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2378,7 +2378,7 @@ void crate_writer_geom_subset_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2524,7 +2524,7 @@ void crate_writer_point_instancer_test(void) {
     stage.root_prims().push_back(instancer_prim);
 
     // Write to crate
-    tinyusdz::experimental::CrateWriter writer(filename);
+    lightusd::experimental::CrateWriter writer(filename);
     TEST_CHECK(writer.Open());
     TEST_CHECK(writer.ConvertStageToSpecs(stage));
     TEST_CHECK(writer.Finalize());
@@ -2535,9 +2535,9 @@ void crate_writer_point_instancer_test(void) {
 
   // Now read it back and verify
   {
-    tinyusdz::Stage loaded_stage;
+    lightusd::Stage loaded_stage;
     std::string err, warn;
-    bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+    bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
     TEST_CHECK(ret);
     if (!ret) {
       TEST_MSG("Failed to load: %s", err.c_str());
@@ -2743,7 +2743,7 @@ void crate_writer_material_binding_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2852,7 +2852,7 @@ void crate_writer_xform_hierarchy_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -2951,7 +2951,7 @@ void crate_writer_model_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3037,7 +3037,7 @@ void crate_writer_scope_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3172,7 +3172,7 @@ void crate_writer_mesh_advanced_features_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3375,7 +3375,7 @@ void crate_writer_blend_shape_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   if (!ret) {
     std::cerr << "FAILED TO LOAD: " << err << "\n";
@@ -3565,7 +3565,7 @@ void crate_writer_relationship_features_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -3736,7 +3736,7 @@ void crate_writer_material_shader_enhancements_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -3870,7 +3870,7 @@ void crate_writer_layer_composition_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4050,7 +4050,7 @@ void crate_writer_skeletal_animation_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4187,7 +4187,7 @@ void crate_writer_advanced_attributes_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4286,7 +4286,7 @@ void crate_writer_assetinfo_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4401,7 +4401,7 @@ void crate_writer_shader_types_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4530,7 +4530,7 @@ void crate_writer_skelBinding_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4625,7 +4625,7 @@ void crate_writer_references_payloads_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4728,7 +4728,7 @@ void crate_writer_custom_metadata_types_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4856,7 +4856,7 @@ void crate_writer_complex_hierarchy_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -4955,7 +4955,7 @@ void crate_writer_advanced_geometry_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5068,7 +5068,7 @@ void crate_writer_normal_interpolation_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5187,7 +5187,7 @@ void crate_writer_visibility_purpose_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5302,7 +5302,7 @@ void crate_writer_instance_offsets_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5449,7 +5449,7 @@ void crate_writer_large_array_types_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5567,7 +5567,7 @@ void crate_writer_sphere_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -5619,7 +5619,7 @@ static void check_light_base_roundtrip(const char* tname) {
   writer.Close();
 
   Stage loaded; std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded, &warn, &err);
   TEST_CHECK_(ret, "%s load failed: %s", tname, err.c_str());
   if (!ret) { cleanup_file(filename); return; }
 
@@ -5707,7 +5707,7 @@ void crate_writer_mesh_velocities_roundtrip_test(void) {
   writer.Close();
 
   Stage loaded; std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) { TEST_MSG("load failed: %s", err.c_str()); cleanup_file(filename); return; }
 
@@ -5773,7 +5773,7 @@ void crate_writer_rect_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
 
   auto loaded_light = loaded_stage.GetPrimAtPath(Path("/RectLightPrim", ""));
@@ -5825,7 +5825,7 @@ void crate_writer_distant_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
 
   auto loaded_light = loaded_stage.GetPrimAtPath(Path("/DistantLightPrim", ""));
@@ -5877,7 +5877,7 @@ void crate_writer_dome_light_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
 
   auto loaded_light = loaded_stage.GetPrimAtPath(Path("/DomeLightPrim", ""));
@@ -5960,7 +5960,7 @@ void crate_writer_multiple_lights_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6055,7 +6055,7 @@ void crate_writer_light_filters_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6165,7 +6165,7 @@ void crate_writer_nodegraph_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6247,7 +6247,7 @@ void crate_writer_error_context_test(void) {
 
   // Verify file exists
   std::vector<uint8_t> data;
-  TEST_CHECK(tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr));
+  TEST_CHECK(lightusd::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr));
   TEST_CHECK(data.size() > 0);
 
   std::cerr << "Error context test successful!\n";
@@ -6336,7 +6336,7 @@ void crate_writer_filesize_limit_test(void) {
 
   // Check file size is reasonable
   std::vector<uint8_t> data;
-  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
+  ret = lightusd::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
   TEST_CHECK(ret == true);
 
   int64_t file_size = static_cast<int64_t>(data.size());
@@ -6386,7 +6386,7 @@ void crate_writer_limit_disable_test(void) {
 
   // Verify file was created
   std::vector<uint8_t> data;
-  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
+  ret = lightusd::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
   TEST_CHECK(ret == true);
   TEST_CHECK(data.size() > 0);
 
@@ -6545,7 +6545,7 @@ void crate_writer_compression_test(void) {
 
   // Get file size
   std::vector<uint8_t> data;
-  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
+  ret = lightusd::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
   TEST_CHECK(ret == true);
   TEST_CHECK(data.size() > 0);
 
@@ -6623,7 +6623,7 @@ void crate_writer_compressed_int_array_roundtrip_test(void) {
 
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -6730,7 +6730,7 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   }
 
   std::vector<uint8_t> data;
-  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr);
+  ret = lightusd::io::ReadWholeFile(&data, &err, filename, 0, nullptr);
   TEST_CHECK(ret == true);
   if (!ret) {
     cleanup_file(filename);
@@ -6738,9 +6738,9 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  tinyusdz::crate::CrateReaderConfig config;
+  lightusd::crate::CrateReaderConfig config;
   config.numThreads = 1;
-  tinyusdz::crate::CrateReader reader(&sr, config);
+  lightusd::crate::CrateReader reader(&sr, config);
 
   TEST_CHECK(reader.ReadBootStrap());
   TEST_CHECK(reader.ReadTOC());
@@ -6769,7 +6769,7 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
 
     found_spec = true;
 
-    tinyusdz::crate::FieldValuePairVector pairs;
+    lightusd::crate::FieldValuePairVector pairs;
     TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
     if (!pairs.empty()) {
       for (const auto& pair : pairs) {
@@ -6789,9 +6789,9 @@ void crate_writer_compressed_uint_array_roundtrip_test(void) {
     const auto& fieldset_indices = reader.GetFieldsetIndices();
     for (size_t idx = spec.fieldset_index.value;
          idx < fieldset_indices.size() &&
-         fieldset_indices[idx] != tinyusdz::crate::Index();
+         fieldset_indices[idx] != lightusd::crate::Index();
          ++idx) {
-      const tinyusdz::crate::Index field_index = fieldset_indices[idx];
+      const lightusd::crate::Index field_index = fieldset_indices[idx];
       if (field_index.value >= reader.GetFields().size()) {
         continue;
       }
@@ -6949,7 +6949,7 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
   };
 
   std::vector<uint8_t> data;
-  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr);
+  ret = lightusd::io::ReadWholeFile(&data, &err, filename, 0, nullptr);
   TEST_CHECK(ret == true);
   if (!ret) {
     cleanup_file(filename);
@@ -6957,7 +6957,7 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  tinyusdz::crate::CrateReader reader(&sr, {});
+  lightusd::crate::CrateReader reader(&sr, {});
   TEST_CHECK(reader.ReadBootStrap());
   TEST_CHECK(reader.ReadTOC());
   TEST_CHECK(reader.ReadTokens());
@@ -6991,7 +6991,7 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
       continue;
     }
 
-    tinyusdz::crate::FieldValuePairVector pairs;
+    lightusd::crate::FieldValuePairVector pairs;
     TEST_CHECK(reader.DecodeFieldSet(spec.fieldset_index, &pairs));
     if (pairs.empty()) {
       continue;
@@ -7028,9 +7028,9 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
 
     for (size_t idx = spec.fieldset_index.value;
          idx < reader.GetFieldsetIndices().size() &&
-         reader.GetFieldsetIndices()[idx] != tinyusdz::crate::Index();
+         reader.GetFieldsetIndices()[idx] != lightusd::crate::Index();
          ++idx) {
-      const tinyusdz::crate::Index field_index = reader.GetFieldsetIndices()[idx];
+      const lightusd::crate::Index field_index = reader.GetFieldsetIndices()[idx];
       if (field_index.value >= reader.GetFields().size()) {
         continue;
       }
@@ -7069,7 +7069,7 @@ void crate_writer_compressed_string_token_asset_array_test(void) {
 
   Stage loaded_stage;
   std::string warn;
-  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("LoadUSDFromFile failed: %s", err.c_str());
@@ -7139,16 +7139,16 @@ void crate_reader_parallel_inlined_fieldsets_test(void) {
   writer.Close();
 
   std::vector<uint8_t> data;
-  TEST_CHECK(tinyusdz::io::ReadWholeFile(&data, &err, filename, 0, nullptr));
+  TEST_CHECK(lightusd::io::ReadWholeFile(&data, &err, filename, 0, nullptr));
   if (data.empty()) {
     cleanup_file(filename);
     return;
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  tinyusdz::crate::CrateReaderConfig config;
+  lightusd::crate::CrateReaderConfig config;
   config.numThreads = 4;
-  tinyusdz::crate::CrateReader reader(&sr, config);
+  lightusd::crate::CrateReader reader(&sr, config);
 
   TEST_CHECK(reader.ReadBootStrap());
   TEST_CHECK(reader.ReadTOC());
@@ -7235,7 +7235,7 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
     writer.Close();
 
     Stage loaded; std::string warn;
-    if (tinyusdz::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
+    if (lightusd::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
       auto r = loaded.GetPrimAtPath(Path("/Curve", ""));
       if (r.has_value() && r.value()) {
         if (const GeomBasisCurves* c = r.value()->data().as<GeomBasisCurves>()) {
@@ -7276,7 +7276,7 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
     writer.Close();
 
     Stage loaded; std::string warn;
-    if (tinyusdz::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
+    if (lightusd::LoadUSDFromFile(fn, &loaded, &warn, &err)) {
       auto r = loaded.GetPrimAtPath(Path("/Nurbs", ""));
       if (r.has_value() && r.value()) {
         if (const GeomNurbsCurves* c = r.value()->data().as<GeomNurbsCurves>()) {
@@ -7373,7 +7373,7 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
           writer.Finalize(&err)) {
         writer.Close();
         std::vector<uint8_t> data;
-        if (tinyusdz::io::ReadWholeFile(&data, &err, fn, 0, nullptr)) {
+        if (lightusd::io::ReadWholeFile(&data, &err, fn, 0, nullptr)) {
           sz = data.size();
         }
       } else {
@@ -7466,7 +7466,7 @@ void crate_writer_specializes_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
 
   TEST_CHECK(ret == true);
   if (!ret) {
@@ -7586,8 +7586,8 @@ void crate_writer_nan_dedup_test(void) {
 
   // Compare file sizes
   std::vector<uint8_t> dedup_data, no_dedup_data;
-  TEST_CHECK(tinyusdz::io::ReadWholeFile(&dedup_data, &err, dedup_file, 0, nullptr));
-  TEST_CHECK(tinyusdz::io::ReadWholeFile(&no_dedup_data, &err, no_dedup_file, 0, nullptr));
+  TEST_CHECK(lightusd::io::ReadWholeFile(&dedup_data, &err, dedup_file, 0, nullptr));
+  TEST_CHECK(lightusd::io::ReadWholeFile(&no_dedup_data, &err, no_dedup_file, 0, nullptr));
 
   TEST_MSG("NaN dedup file: %zu bytes, no-dedup file: %zu bytes",
            dedup_data.size(), no_dedup_data.size());
@@ -7603,12 +7603,12 @@ void crate_writer_nan_dedup_test(void) {
   {
     Stage loaded_stage;
     std::string warn;
-    bool ret = tinyusdz::LoadUSDFromFile(dedup_file, &loaded_stage, &warn, &err);
+    bool ret = lightusd::LoadUSDFromFile(dedup_file, &loaded_stage, &warn, &err);
     if (!ret) {
       std::cerr << "[NaN dedup test] dedup file roundtrip: " << err << "\n";
     }
     Stage loaded_stage2;
-    bool ret2 = tinyusdz::LoadUSDFromFile(no_dedup_file, &loaded_stage2, &warn, &err);
+    bool ret2 = lightusd::LoadUSDFromFile(no_dedup_file, &loaded_stage2, &warn, &err);
     if (!ret2) {
       std::cerr << "[NaN dedup test] no-dedup file roundtrip: " << err << "\n";
     }
@@ -7700,7 +7700,7 @@ void crate_writer_prim_meta_roundtrip_test(void) {
   // Load and verify roundtrip
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -7921,7 +7921,7 @@ void crate_writer_props_map_roundtrip_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -8003,7 +8003,7 @@ void crate_writer_raw_dict_value_pack_test(void) {
   dict["matrix"] = raw_matrix;
   dict["nested"] = nested;
 
-  tinyusdz::crate::FieldValuePairVector pseudo_fields;
+  lightusd::crate::FieldValuePairVector pseudo_fields;
   bool added_pseudo =
       writer.AddSpec(Path("/", ""), SpecType::PseudoRoot, pseudo_fields, &err);
   TEST_CHECK(added_pseudo);
@@ -8011,14 +8011,14 @@ void crate_writer_raw_dict_value_pack_test(void) {
     TEST_MSG("AddSpec pseudo-root failed: %s", err.c_str());
   }
 
-  tinyusdz::crate::CrateValue specifier_value;
+  lightusd::crate::CrateValue specifier_value;
   specifier_value.Set(Specifier::Def);
-  tinyusdz::crate::CrateValue type_name_value;
+  lightusd::crate::CrateValue type_name_value;
   type_name_value.Set(value::token("Xform"));
-  tinyusdz::crate::CrateValue dict_value;
+  lightusd::crate::CrateValue dict_value;
   dict_value.Set(dict);
 
-  tinyusdz::crate::FieldValuePairVector fields;
+  lightusd::crate::FieldValuePairVector fields;
   fields.push_back({"specifier", specifier_value});
   fields.push_back({"typeName", type_name_value});
   fields.push_back({"customData", dict_value});
@@ -8098,7 +8098,7 @@ void crate_writer_skeleton_properties_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -8215,7 +8215,7 @@ void crate_writer_skelanim_properties_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
@@ -8349,7 +8349,7 @@ void crate_writer_prim_children_test(void) {
   // Load and verify
   Stage loaded_stage;
   std::string warn;
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());

@@ -7,10 +7,10 @@
 
 #include "unit-prim-api.h"
 #include "core/prim.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void prim_type_check_test(void) {
   // Create Xform and wrap in Prim

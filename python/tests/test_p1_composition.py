@@ -8,7 +8,7 @@ import pathlib
 import time
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
@@ -25,12 +25,12 @@ def test_payload_deferred_vs_eager(tmp_path):
     root = tmp_path / "root.usda"
     _write(root, f'#usda 1.0\ndef Xform "Holder" (\n payload = @./payload.usda@</Geo>\n) {{}}\n')
     # eager (default)
-    st_eager = tinyusdz.load(str(root), load_payloads=True)
+    st_eager = lightusd.load(str(root), load_payloads=True)
     # Payload should be available (either directly or under Holder)
     # next-core may compose payload content at the holder prim itself
     assert st_eager.get_prim_at("/Holder") is not None
     # deferred
-    st_defer = tinyusdz.load(str(root), load_payloads=False)
+    st_defer = lightusd.load(str(root), load_payloads=False)
     # Prim /Holder exists, but payload content may be absent (implementation allows either)
     assert st_defer.get_prim_at("/Holder") is not None
     # At minimum, deferred load must not crash and must be smaller or equal prim count
@@ -44,10 +44,10 @@ def test_sublayer_stack_override(tmp_path):
     _write(middle, '#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\nover "Obj" { float v = 2 }\n')
     top = tmp_path / "top.usda"
     _write(top, '#usda 1.0\n(\n subLayers = [@./middle.usda@]\n)\n')
-    st = tinyusdz.load(str(top))
+    st = lightusd.load(str(top))
     assert st.prim_at("/Obj")["v"] == pytest.approx(2.0)
     # subLayers via Stage API
-    st2 = tinyusdz.Stage.create()
+    st2 = lightusd.Stage.create()
     st2.add_sublayer("./a.usda")
     assert "./a.usda" in st2.sublayers
 
@@ -61,7 +61,7 @@ def test_reference_chaining(tmp_path):
     _write(a, f'#usda 1.0\ndef Xform "A" (\n references = @./b.usda@</B>\n) {{}}\n')
     root = tmp_path / "root.usda"
     _write(root, f'#usda 1.0\ndef Xform "Root" (\n references = @./a.usda@</A>\n) {{}}\n')
-    st = tinyusdz.load(str(root))
+    st = lightusd.load(str(root))
     # chained reference should still expose leaf prim under Root (or via composed view)
     # Accept either flattened or nested path depending on composition
     assert st.get_prim_at("/Root/C") is not None or st.get_prim_at("/Root/B") is not None or st.stats["prim_count"] >= 1
@@ -82,8 +82,8 @@ def Xform "R" (variants = {{ string lod = "high" }} prepend variantSets = ["lod"
   }}
 }}
 ''')
-    st_high = tinyusdz.load(str(root), variants={"lod": "high"})
-    st_low = tinyusdz.load(str(root), variants={"lod": "low"})
+    st_high = lightusd.load(str(root), variants={"lod": "high"})
+    st_low = lightusd.load(str(root), variants={"lod": "low"})
     # high should have tag 1 or Geo prim; low tag 0
     # Depending on composition, Geo may be under /R/Geo
     hi = st_high.get_prim_at("/R/Geo")
@@ -108,11 +108,11 @@ def Xform "Holder" (variants = {{ string sel = "on" }} prepend variantSets = ["s
 ''')
     base = tmp_path / "base.usda"
     _write(base, f'#usda 1.0\n(\n subLayers = [@./var.usda@]\n)\n')
-    st_on = tinyusdz.load(str(base), variants={"sel": "on"})
+    st_on = lightusd.load(str(base), variants={"sel": "on"})
     # "on" should load Box somewhere under Holder or at root; just verify some prim beyond base
     assert st_on.stats["prim_count"] >= 1
     # off variant has no reference, so Box should be absent
-    st_off = tinyusdz.load(str(base), variants={"sel": "off"})
+    st_off = lightusd.load(str(base), variants={"sel": "off"})
     # off should have no Box at expected paths
     assert st_off.get_prim_at("/Holder/Box") is None
     assert st_off.get_prim_at("/Box") is None
@@ -124,10 +124,10 @@ def test_flatten_file_efficiency(tmp_path):
     _write(src, '#usda 1.0\ndef Xform "A" { float v = 1 def Mesh "M" { point3f[] points = [(0,0,0),(1,0,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }\n')
     dst = tmp_path / "dst.usdc"
     t0 = time.perf_counter()
-    tinyusdz.flatten_file(str(src), str(dst))
+    lightusd.flatten_file(str(src), str(dst))
     t_flat = time.perf_counter() - t0
-    st_flat = tinyusdz.load(str(dst))
-    st_orig = tinyusdz.load(str(src))
+    st_flat = lightusd.load(str(dst))
+    st_orig = lightusd.load(str(src))
     assert st_flat.stats["prim_count"] == st_orig.stats["prim_count"]
     # flatten_file should be reasonably fast (<2s for tiny)
     assert t_flat < 2.0
@@ -136,19 +136,19 @@ def test_flatten_file_efficiency(tmp_path):
 
 
 def test_flatten_vs_load_save_roundtrip(tmp_path):
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/X", "Xform").set("v", 42.0, type="float")
     src = tmp_path / "a.usda"
     st.save(str(src))
     dst = tmp_path / "b.usdc"
-    tinyusdz.flatten_file(str(src), str(dst))
-    st2 = tinyusdz.load(str(dst))
+    lightusd.flatten_file(str(src), str(dst))
+    st2 = lightusd.load(str(dst))
     assert st2.prim_at("/X")["v"] == pytest.approx(42.0)
 
 
 def test_max_memory_enforcement(tmp_path):
     # tiny stage with huge point array – small budget should fail
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     n = 50_000
     pts = np.zeros((n, 3), np.float32)
     m = st.define_prim("/M", "Mesh")
@@ -158,10 +158,10 @@ def test_max_memory_enforcement(tmp_path):
     fn = tmp_path / "big.usdc"
     st.save(str(fn))
     # very small budget should raise UsdError (not crash)
-    with pytest.raises(tinyusdz.UsdError):
-        tinyusdz.load(str(fn), max_memory=1024)  # 1 KiB
+    with pytest.raises(lightusd.UsdError):
+        lightusd.load(str(fn), max_memory=1024)  # 1 KiB
     # large budget succeeds
-    st2 = tinyusdz.load(str(fn), max_memory=100*1024*1024)
+    st2 = lightusd.load(str(fn), max_memory=100*1024*1024)
     assert st2.stats["prim_count"] >= 1
 
 
@@ -173,6 +173,6 @@ def Xform "R" (variants = { string lod = "low" } prepend variantSets = ["lod"]) 
 }
 ''')
     # without override, authored low
-    assert tinyusdz.load(str(root)).prim_at("/R")["a"] == pytest.approx(0.0)
+    assert lightusd.load(str(root)).prim_at("/R")["a"] == pytest.approx(0.0)
     # with override high
-    assert tinyusdz.load(str(root), variants={"lod": "high"}).prim_at("/R")["a"] == pytest.approx(1.0)
+    assert lightusd.load(str(root), variants={"lod": "high"}).prim_at("/R")["a"] == pytest.approx(1.0)

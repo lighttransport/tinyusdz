@@ -3,7 +3,7 @@
 //
 // cache-parallel.cc - optional multithreaded batch building for pcp::Cache.
 //
-// The entire worker machinery is gated on TINYUSDZ_ENABLE_THREAD and compiled
+// The entire worker machinery is gated on LIGHTUSD_ENABLE_THREAD and compiled
 // out on wasm. When threads are disabled this translation unit is essentially
 // empty and Cache::Impl::BuildParallel is never referenced (PrewarmPrimIndices
 // only calls it inside the same #if), so there is no missing-symbol concern.
@@ -19,7 +19,7 @@
 //
 #include "pcp/cache.hh"
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
 
 #include <atomic>
 #include <memory>
@@ -28,7 +28,7 @@
 
 #include "pcp/cache-impl.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pcp {
 
 nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
@@ -124,6 +124,6 @@ nonstd::expected<bool, std::string> Cache::Impl::BuildParallel(
 }
 
 }  // namespace pcp
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_ENABLE_THREAD && !__EMSCRIPTEN__
+#endif  // LIGHTUSD_ENABLE_THREAD && !__EMSCRIPTEN__

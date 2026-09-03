@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache parallel source warming and index prewarm.
+// LightUSD Next - PCP Cache parallel source warming and index prewarm.
 // Included inside Cache::Impl.
 
   bool BuildStage(Stage *stage, std::string *warn, std::string *err,
@@ -46,7 +46,7 @@
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
     prof_source_hits_ = prof_source_misses_ = prof_structure_nodes_ = 0;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     // Resolve independent namespace subtrees concurrently before the serial
     // structure walk. ParallelWarmSources was previously implemented but never
     // invoked, leaving num_threads effective only for the much cheaper opinion
@@ -389,7 +389,7 @@
     }
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // --- parallel-build merge helpers (main thread only) --------------------
 
   // Adopt a worker's prebuilt LayerStack into the main table (dedup by the
@@ -588,7 +588,7 @@
                   " delta=" + UIntToStr(worker_delta_entries));
     }
   }
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
   // Batch build. With threads enabled and num_threads != 1, this first prefetches
   // first-level reference/payload layers into the (thread-safe) registry in
@@ -599,7 +599,7 @@
   // num_threads <= 1) use the plain serial loop.
   bool PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn,
                            std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     // Use unique_lock (not lock_guard) so we can release api_mu_ during the
     // parallel build and reacquire it for the merge.
     std::unique_lock<PcpMutex> wlk(api_mu_);
@@ -736,7 +736,7 @@
       for (const Path &p : paths) ComputePrimIndex_locked(p, warn, err);
     }
 #endif
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     // The thread-enabled serial fallback reaches here with `wlk` already
     // holding api_mu_. Do not take NEXT_PCP_LOCK again: the default mutex is
     // intentionally non-recursive.

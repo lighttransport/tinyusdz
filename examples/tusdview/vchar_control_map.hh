@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 class Stage;
 namespace next { class Stage; }
 }
@@ -19,7 +19,7 @@ struct VcharControl {
   float defaultValue{0.0f};
 };
 
-std::vector<VcharControl> ReadVcharControls(const tinyusdz::Stage& stage);
-std::vector<VcharControl> ReadVcharControls(const tinyusdz::next::Stage& stage);
+std::vector<VcharControl> ReadVcharControls(const lightusd::Stage& stage);
+std::vector<VcharControl> ReadVcharControls(const lightusd::next::Stage& stage);
 
 }  // namespace tusdview

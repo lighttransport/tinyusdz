@@ -1,6 +1,6 @@
 # tinysubdiv (tsd)
 
-Clean-room, dependency-free subdivision surface library for TinyUSDZ.
+Clean-room, dependency-free subdivision surface library for LightUSD.
 C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 
 ## Features
@@ -53,7 +53,7 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 | `tsd-refine.cc` | per-level driver (`Refine`) |
 | `tsd-stream.cc` | streaming driver (`RefineStream`): bounded-memory emission |
 | `tsd-limit.cc` | limit positions/normals |
-| `tsd-tinyusdz.{hh,cc}` | `GeomMesh` adapter (the only tinyusdz-typed file); refines UV/display/tangent primvars, skin weights and blendshape offsets in lockstep with geometry |
+| `tsd-lightusd.{hh,cc}` | `GeomMesh` adapter (the only lightusd-typed file); refines UV/display/tangent primvars, skin weights and blendshape offsets in lockstep with geometry |
 
 ## Testing
 
@@ -63,8 +63,8 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
   OpenSubdiv **source checkout** (no pre-build needed):
 
 ```sh
-cmake -B build -DTINYUSDZ_BUILD_TESTS=ON \
-      -DTINYUSDZ_TSD_VERIFY_WITH_OSD=ON \
+cmake -B build -DLIGHTUSD_BUILD_TESTS=ON \
+      -DLIGHTUSD_TSD_VERIFY_WITH_OSD=ON \
       -DOpenSubdiv_ROOT=/path/to/OpenSubdiv
 cmake --build build -j --target feat-subdiv-verify
 ctest --test-dir build -L osd-verify

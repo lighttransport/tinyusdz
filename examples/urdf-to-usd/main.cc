@@ -7,7 +7,7 @@
 
 #include "jsonhpp/nlohmann/json.hpp"
 #include "pugixml.hpp"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/urdf-to-usd.hh"
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
@@ -31,14 +31,14 @@
 
 // Local (file-scope) PNG/image decoder for <asset><hfield file="...png">.
 // STB_IMAGE_STATIC keeps the implementation private to this TU so it cannot
-// collide with any copy linked into libtinyusdz_static.
+// collide with any copy linked into liblightusd_static.
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include "stb_image.h"
 
 // Use the vendored ghc::filesystem (a portable std::filesystem replacement, the
-// same one tinyusdz::io uses internally) so this example does not depend on
+// same one lightusd::io uses internally) so this example does not depend on
 // std::filesystem. This file relies on the fs::path value type pervasively, so
 // it keeps the filesystem API rather than the string-based io-util helpers.
 // ghc/filesystem.hpp pulls in <windows.h> on Windows; keep it from defining the
@@ -241,7 +241,7 @@ bool ParseArgs(int argc, char **argv, Options *opts, std::string *err) {
 
 bool ReadFile(const fs::path &filename, std::string *text, std::string *err) {
   std::ifstream ifs;
-  tinyusdz::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
+  lightusd::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open: " + filename.string();
     return false;
@@ -255,7 +255,7 @@ bool ReadFile(const fs::path &filename, std::string *text, std::string *err) {
 bool WriteFile(const fs::path &filename, const std::vector<uint8_t> &bytes,
                std::string *err) {
   std::ofstream ofs;
-  tinyusdz::io::OpenOutputFile(&ofs, filename.string(), std::ios::binary);
+  lightusd::io::OpenOutputFile(&ofs, filename.string(), std::ios::binary);
   if (!ofs) {
     if (err) *err = "Failed to open output: " + filename.string();
     return false;
@@ -708,7 +708,7 @@ float ReadFloatLE(const std::vector<uint8_t> &bytes, size_t offset) {
 
 bool LoadBinarySTL(const fs::path &filename, MeshData *mesh, std::string *err) {
   std::ifstream ifs;
-  tinyusdz::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
+  lightusd::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open STL: " + filename.string();
     return false;
@@ -752,7 +752,7 @@ bool LoadBinarySTL(const fs::path &filename, MeshData *mesh, std::string *err) {
 
 bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
   std::ifstream ifs;
-  tinyusdz::io::OpenInputFile(&ifs, filename.string());
+  lightusd::io::OpenInputFile(&ifs, filename.string());
   if (!ifs) {
     if (err) *err = "Failed to open OBJ: " + filename.string();
     return false;
@@ -780,7 +780,7 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
       std::string tok;
       while (ss >> tok) {
         const size_t slash = tok.find('/');
-        nonstd::optional<int> idx_opt = tinyusdz::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
+        nonstd::optional<int> idx_opt = lightusd::atoi(slash == std::string::npos ? tok : tok.substr(0, slash));
         if (!idx_opt.has_value()) {
           std::cerr << "Invalid face vertex index: " << tok << "\n";
           return false;
@@ -793,7 +793,7 @@ bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
           const size_t slash2 = tok.find('/', slash + 1);
           const std::string vt_str = tok.substr(
               slash + 1, slash2 == std::string::npos ? std::string::npos : slash2 - slash - 1);
-          nonstd::optional<int> vt_opt = vt_str.empty() ? nonstd::nullopt : tinyusdz::atoi(vt_str);
+          nonstd::optional<int> vt_opt = vt_str.empty() ? nonstd::nullopt : lightusd::atoi(vt_str);
           if (vt_opt.has_value()) {
             vt = vt_opt.value() > 0 ? vt_opt.value() - 1
                                     : static_cast<int>(texcoords.size()) + vt_opt.value();
@@ -2594,20 +2594,20 @@ fs::path OutputPath(const Options &opts, const std::string &format) {
   return out;
 }
 
-bool SaveStage(const tinyusdz::Stage &stage, const fs::path &filename,
+bool SaveStage(const lightusd::Stage &stage, const fs::path &filename,
                const std::string &format,
                const std::map<std::string, std::vector<uint8_t>> &assets,
                std::string *err) {
   std::string warn;
   bool ok = false;
   if (format == "usda") {
-    ok = tinyusdz::usda::SaveAsUSDA(filename.string(), stage, &warn, err);
+    ok = lightusd::usda::SaveAsUSDA(filename.string(), stage, &warn, err);
   } else if (format == "usdc") {
-    ok = tinyusdz::usdc::SaveAsUSDCToFile(filename.string(), stage, &warn, err);
+    ok = lightusd::usdc::SaveAsUSDCToFile(filename.string(), stage, &warn, err);
   } else if (format == "usdz") {
     // Embed referenced textures so the .usdz is self-contained; the archive
     // names match the (relative) inputs:file references in the stage.
-    ok = tinyusdz::SaveAsUSDZToFile(filename.string(), stage, assets, &warn, err);
+    ok = lightusd::SaveAsUSDZToFile(filename.string(), stage, assets, &warn, err);
   }
   if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
   return ok;
@@ -2649,13 +2649,13 @@ int main(int argc, char **argv) {
 
   if (!opts.dump_json_filename.empty()) {
     std::ofstream ofs;
-    tinyusdz::io::OpenOutputFile(&ofs, opts.dump_json_filename);
+    lightusd::io::OpenOutputFile(&ofs, opts.dump_json_filename);
     ofs << payload.dump(2) << "\n";
   }
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
-  if (!tinyusdz::tydra::ConvertURDFJsonToUSDStage(payload.dump(), &stage, &warn,
+  if (!lightusd::tydra::ConvertURDFJsonToUSDStage(payload.dump(), &stage, &warn,
                                                   &err)) {
     std::cerr << "urdf-to-usd: " << err << "\n";
     return EXIT_FAILURE;

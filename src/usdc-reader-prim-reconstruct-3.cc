@@ -6,7 +6,7 @@
 #include "usdc-reader-impl.hh"
 #include "usdc-reader-prim-detail.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 INSTANTIATE_RECONSTRUCT_PRIM(PluginLightFilter);
@@ -25,4 +25,4 @@ INSTANTIATE_RECONSTRUCT_PRIM(PhysicsSphericalJoint);
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsFixedJoint);
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

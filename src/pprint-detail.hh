@@ -17,7 +17,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations — defined in pprint-meta.cc
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
@@ -369,7 +369,7 @@ inline std::string print_str_attr(
 
         std::string a;
         if (pv.value().get_scalar(&a)) {
-          ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
+          ss << " = " << lightusd::buildEscapedAndQuotedStringForUSDA(a);
         } else {
           ss << " = [InternalError]";
         }
@@ -901,4 +901,4 @@ inline std::string print_axis_attr(const GeomT &geom, uint32_t indent) {
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

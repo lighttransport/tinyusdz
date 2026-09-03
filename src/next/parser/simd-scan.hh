@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - SIMD scanning helpers for the USDA parser
+// LightUSD Next - SIMD scanning helpers for the USDA parser
 //
 // Bulk byte scanning for the array-literal hot path. The lexer captures an array
 // `[...]` by walking it byte-by-byte to find the matching `]`; on a flattened
@@ -13,7 +13,7 @@
 
 #include <cstddef>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace simdscan {
 
@@ -29,4 +29,4 @@ const char* Backend();
 
 }  // namespace simdscan
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

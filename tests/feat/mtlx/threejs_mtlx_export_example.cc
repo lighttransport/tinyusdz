@@ -11,8 +11,8 @@
 #include "tydra/render-data.hh"
 #include "tydra/threejs-exporter.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 int main(int argc, char** argv) {
   std::cout << "=== Three.js MaterialX Export Example ===" << std::endl;

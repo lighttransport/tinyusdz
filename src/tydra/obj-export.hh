@@ -5,7 +5,7 @@
 /// @file obj-export.hh
 /// @brief Export Tydra render data to Wavefront OBJ format
 ///
-/// Provides utilities for exporting TinyUSDZ render scene data to
+/// Provides utilities for exporting LightUSD render scene data to
 /// industry-standard Wavefront OBJ/MTL format for use in 3D modeling
 /// and rendering applications.
 ///
@@ -24,7 +24,7 @@
 /// ```cpp
 /// std::string obj_content, mtl_content;
 /// std::string warn, err;
-/// bool success = tinyusdz::tydra::export_to_obj(
+/// bool success = lightusd::tydra::export_to_obj(
 ///   render_scene, mesh_id, obj_content, mtl_content, &warn, &err);
 /// ```
 ///
@@ -32,7 +32,7 @@
 
 #include "render-data.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -57,4 +57,4 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
                    std::string *warn, std::string *err);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

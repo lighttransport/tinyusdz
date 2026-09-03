@@ -20,10 +20,10 @@
 #include "core/prim-spec.hh"   // PrimSpec, Property (transitively: composition-types, prim-enums, prim-metas, variant-types)
 #include "core/model-scope.hh" // Model, Scope
 #include "layer.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-types.hh"
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
@@ -63,7 +63,7 @@
 
 //
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace prim {
 
@@ -210,7 +210,7 @@ class USDCReader::Impl {
   void set_reader_config(const USDCReaderConfig &config) {
     _config = config;
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     if (_config.numThreads == -1) {
       _config.numThreads =
           (std::max)(1, int(std::thread::hardware_concurrency()));
@@ -314,7 +314,7 @@ class USDCReader::Impl {
                                   Stage *stage,
                                   std::unique_ptr<Prim> *out_root_prim = nullptr);
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   ///
   /// Parallel prim reconstruction: non-variant subtrees are reconstructed on
   /// worker threads (per-thread crate stream/scratch state), shells (split
@@ -344,7 +344,7 @@ class USDCReader::Impl {
                                   Layer *stage,
                                   PrimSpec *top_level_sink = nullptr);
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   /// Parallel PrimSpec-hierarchy reconstruction — the Layer analog of
   /// ReconstructPrimHierarchyParallel above (same shells/jobs split).
   /// Produces byte-equal Layer content to the serial walk.
@@ -439,7 +439,7 @@ class USDCReader::Impl {
     PrimMeta primMeta;
     Path elemPath;
     std::string prim_name;      // from elemPath.prim_part()
-    std::string pTyName;        // TinyUSDZ prim type ("Model" if missing)
+    std::string pTyName;        // LightUSD prim type ("Model" if missing)
     std::string primTypeName;   // raw type name ("" if missing or __AnyType__)
   };
 
@@ -676,4 +676,4 @@ class USDCReader::Impl {
 };
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

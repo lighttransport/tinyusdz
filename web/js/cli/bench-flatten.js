@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(__dirname, 'usdzconvert.js');
-const WASM64_GLUE = path.join(__dirname, '../src/tinyusdz/tinyusdz_64.js');
+const WASM64_GLUE = path.join(__dirname, '../src/lightusd/lightusd_64.js');
 
 function parseArgs() {
   const a = process.argv.slice(2);
@@ -60,7 +60,7 @@ function runOne(model, pipeline, opts, wasm64) {
   if (opts.maxMemMb) args.push('--max-mem-mb', String(opts.maxMemMb));
   if (opts.streamTextures) args.push('--stream-textures');
   const env = { ...process.env };
-  if (wasm64) env.TINYUSDZ_WASM64 = '1';
+  if (wasm64) env.LIGHTUSD_WASM64 = '1';
   const t0 = Date.now();
   const r = spawnSync('/usr/bin/time', args, {
     env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,

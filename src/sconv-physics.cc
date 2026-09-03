@@ -9,7 +9,7 @@
 #include "mjcPhysics.hh"
 #include "newtonPhysics.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 // Helper macro: extract a TypedAttribute<T> as a crate field.
@@ -494,4 +494,4 @@ bool CrateWriter::ExtractMjcSensorProperties(
 #undef EXTRACT_JOINT_BASE
 
 }  // namespace experimental
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -12,8 +12,8 @@
 #include <functional>
 
 
-using namespace tinyusdz;
-using namespace tinyusdz_test;
+using namespace lightusd;
+using namespace lightusd_test;
 
 void handle_allocator_test(void) {
 
@@ -31,7 +31,7 @@ void handle_allocator_test(void) {
     uint64_t handle;
     if (!allocator.Allocate(&handle)) {
       ok = false;
-      break; 
+      break;
     }
 
     perm_handles.push_back(handle);
@@ -65,7 +65,7 @@ void handle_allocator_test(void) {
   TEST_CHECK(ok);
   //std::cout << "del done\n";
   TEST_CHECK(allocator.Size() == 0);
-  
+
   // no handle exists
   ok = true;
   for (size_t i = 0; i < perm_handles.size(); i++) {
@@ -92,7 +92,7 @@ void handle_allocator_test(void) {
   // uniqueness check
   std::sort(handles.begin(), handles.end());
   // array items = [1, ..., n]
-  TEST_CHECK(handles.front() == 1); 
+  TEST_CHECK(handles.front() == 1);
   uint64_t &last = handles.back();
   TEST_CHECK(last == n);
   handles.erase(std::unique(handles.begin(), handles.end()), handles.end());

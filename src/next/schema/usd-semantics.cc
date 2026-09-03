@@ -6,7 +6,7 @@
 #include "../eval/attribute-eval.hh"
 #include "../prim/identifier.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool HasSemanticsLabelsAPI(const UsdPrim& prim,
@@ -36,4 +36,4 @@ bool GetSemanticsLabels(const Stage& stage, const UsdPrim& prim,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

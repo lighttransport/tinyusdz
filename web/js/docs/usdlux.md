@@ -1,6 +1,6 @@
 # UsdLux Lighting Support (WASM / JS)
 
-This document covers the JavaScript/WASM side of UsdLux lighting in TinyUSDZ: the Emscripten bindings, JS utility APIs, Three.js integration, and CLI tools.
+This document covers the JavaScript/WASM side of UsdLux lighting in LightUSD: the Emscripten bindings, JS utility APIs, Three.js integration, and CLI tools.
 
 For C++ core and Tydra internals, see [doc/usdLux.md](../../../doc/usdLux.md).
 
@@ -9,8 +9,8 @@ For C++ core and Tydra internals, see [doc/usdLux.md](../../../doc/usdLux.md).
 | File | Description |
 |------|-------------|
 | `web/binding.cc` | Emscripten bindings: `getLight()`, `numLights()`, `getAllLights()`, `getLightWithFormat()` |
-| `web/js/src/tinyusdz/TinyUSDZLoaderUtils.js` | DomeLight loading, PMREM generation, texture helpers |
-| `web/js/src/tinyusdz/SceneHelpers.js` | Light visualization helpers for Three.js |
+| `web/js/src/lightusd/LightUSDLoaderUtils.js` | DomeLight loading, PMREM generation, texture helpers |
+| `web/js/src/lightusd/SceneHelpers.js` | Light visualization helpers for Three.js |
 | `web/js/usdlux.js` | Interactive UsdLux demo (Three.js scene, spectral, HDRI projection) |
 | `web/js/light-hdri-projection.js` | Analytical light-to-HDRI projection engine |
 | `web/js/cli/dump-usdlux-cli.js` | CLI tool: dump light data (JSON/YAML/summary/XML) |
@@ -119,7 +119,7 @@ Shadows are enabled for DirectionalLight, SpotLight, and PointLight:
 
 ## DomeLight / Environment Map Pipeline
 
-`TinyUSDZLoaderUtils` provides a multi-stage pipeline for loading DomeLight environment maps:
+`LightUSDLoaderUtils` provides a multi-stage pipeline for loading DomeLight environment maps:
 
 ### `loadDomeLightFromUSD(usdLoader, pmremGenerator) → object|null`
 
@@ -148,10 +148,10 @@ Main entry point. Iterates all lights, finds the first DomeLight, and processes 
 ### Usage
 
 ```javascript
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
-const dome = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usdLoader, pmremGenerator);
+const dome = await LightUSDLoaderUtils.loadDomeLightFromUSD(usdLoader, pmremGenerator);
 
 if (dome) {
   scene.environment = dome.texture;

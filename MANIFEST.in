@@ -1,4 +1,4 @@
-# sdist contents for the tinyusdz PyPI package.
+# sdist contents for the lightusd PyPI package.
 # Everything needed to run `python -m build --wheel` from a fresh checkout.
 # The wheel builds ONLY the "next" core (src/next + src/tydra/next), the C API
 # (src/c-api) and the extension sources (src/python); the legacy core is not

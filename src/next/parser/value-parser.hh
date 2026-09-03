@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Value Parser
+// LightUSD Next - Value Parser
 // Parses USD values from tokenized input
 
 #pragma once
@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 class Lexer;
@@ -72,4 +72,4 @@ ParseResult ParseDict(Lexer& lexer);
 TypeId ParseTypeName(const std::string& type_name, bool& is_array);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

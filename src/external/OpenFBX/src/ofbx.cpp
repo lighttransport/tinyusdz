@@ -4,7 +4,7 @@
 #endif
 
 #include "ofbx.h"
-// include <tinyusdz>/src/external/miniz.h
+// include <lightusd>/src/external/miniz.h
 #include "external/miniz.h"
 #include <cassert>
 #include <math.h>

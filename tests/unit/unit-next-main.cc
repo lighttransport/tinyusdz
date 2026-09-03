@@ -1,7 +1,7 @@
 // Standalone acutest runner for the `next` schema tests.
 //
-// These live in their OWN executable rather than in unit-test-tinyusdz: linking
-// tinyusdz_next into that binary alongside tinyusdz_static made its concurrency
+// These live in their OWN executable rather than in unit-test-lightusd: linking
+// lightusd_next into that binary alongside lightusd_static made its concurrency
 // tests fail intermittently (the two static libs carry overlapping objects), so
 // the next tests are kept isolated instead of destabilizing 997 existing ones.
 #include "acutest.h"

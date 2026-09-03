@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
 
 def build_stage():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.up_axis = "Z"
     st.meters_per_unit = 1.0
     world = st.define_prim("/World", "Xform")
@@ -50,32 +50,32 @@ def test_author_and_usda_roundtrip():
     # `custom` is a deprecated USDA qualifier the writer omits by default,
     # so assert it on the authoring stage only.
     assert st.prim_at("/World/Grid").attribute("radius").is_custom
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     verify(st2, pts)
 
 
 def test_author_and_usdc_roundtrip():
     st, pts = build_stage()
-    st2 = tinyusdz.load_bytes(st.export_usdc())
+    st2 = lightusd.load_bytes(st.export_usdc())
     verify(st2, pts)
 
 
 def test_define_prim_variants_roundtrip():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     w = st.define_prim("/World", "Xform")
     w.add_variant_set("lod")
     vs = w.variant_sets["lod"]
     vs.add_variant("high")
     vs.add_variant("low")
     vs.selection = "high"
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     vs2 = st2.prim_at("/World").variant_sets["lod"]
     assert set(vs2.names) == {"high", "low"}
     assert vs2.selection == "high"
 
 
 def test_arcs_roundtrip():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     w = st.define_prim("/World", "Xform")
     w.add_reference("./library.usda", "/Proto")
     w.add_inherit("/_class_base")
@@ -85,7 +85,7 @@ def test_arcs_roundtrip():
 
 
 def test_value_types():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/p", "Xform")
     p.set("a_bool", True)
     p.set("a_int", 7)
@@ -96,7 +96,7 @@ def test_value_types():
     p.set("a_ints", np.arange(5, dtype=np.int32))
     p.set("a_doubles", np.linspace(0, 1, 3))
     p.set("a_matrix", np.eye(4), type="matrix4d")
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     p2 = st2.prim_at("/p")
     assert p2["a_bool"] is True
     assert p2["a_int"] == 7
@@ -113,26 +113,26 @@ def test_value_types():
 
 
 def test_attribute_set_and_block():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/p", "Xform")
     p.set("radius", 1.0)
     attr = p.attribute("radius")
     attr.set(9.0)
     assert p["radius"] == 9.0
     attr.block()
-    assert p["radius"] is tinyusdz.ValueBlock
+    assert p["radius"] is lightusd.ValueBlock
     p.remove_property("radius")
     assert "radius" not in p
 
 
 def test_remove_prim_and_staleness():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/a/b/c", "Xform")
     b = st.prim_at("/a/b")
     st.define_prim("/a/d", "Xform")  # structural edit: handle self-heals
     assert b.name == "b"
     st.remove_prim("/a/b")
-    with pytest.raises(tinyusdz.StaleHandleError):
+    with pytest.raises(lightusd.StaleHandleError):
         _ = b.name
     assert "/a/b/c" not in st
     with pytest.raises(KeyError):
@@ -140,7 +140,7 @@ def test_remove_prim_and_staleness():
 
 
 def test_attribute_metadata_integer_range():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/p", "Xform")
     p.set("count", 1)
     attr = p.attribute("count")
@@ -152,7 +152,7 @@ def test_attribute_metadata_integer_range():
 
 
 def test_metadata_and_sublayers():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.set_metadata("doc", "my doc")
     st.set_metadata("startTimeCode", 1.0)
     st.set_metadata("endTimeCode", 100.0)
@@ -174,8 +174,8 @@ def test_flatten_file(tmp_path, simple_stage):
     src = tmp_path / "in.usda"
     dst = tmp_path / "out.usdc"
     simple_stage.save(str(src))
-    tinyusdz.flatten_file(str(src), str(dst))
-    st = tinyusdz.load(dst)
+    lightusd.flatten_file(str(src), str(dst))
+    st = lightusd.load(dst)
     assert st.prim_at("/World/Quad")["radius"] == 2.5
 
 
@@ -192,19 +192,19 @@ def test_refcount_sanity(simple_stage):
 
 
 def test_variants_usdc_roundtrip():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     w = st.define_prim("/World", "Xform")
     w.add_variant_set("lod")
     vs = w.variant_sets["lod"]
     vs.add_variant("high")
     vs.add_variant("low")
     vs.selection = "high"
-    st2 = tinyusdz.load_bytes(st.export_usdc())
+    st2 = lightusd.load_bytes(st.export_usdc())
     vs2 = st2.prim_at("/World").variant_sets["lod"]
     assert set(vs2.names) == {"high", "low"}
     assert vs2.selection == "high"
     # second generation stays stable
-    st3 = tinyusdz.load_bytes(st2.export_usdc())
+    st3 = lightusd.load_bytes(st2.export_usdc())
     vs3 = st3.prim_at("/World").variant_sets["lod"]
     assert set(vs3.names) == {"high", "low"} and vs3.selection == "high"
 
@@ -226,27 +226,27 @@ def Xform "root" (
 
 @pytest.mark.parametrize("ext", ["usda", "usdc"])
 def test_variant_content_and_override(tmp_path, ext):
-    st = tinyusdz.loads(VARIANT_SRC)
+    st = lightusd.loads(VARIANT_SRC)
     fn = tmp_path / f"v.{ext}"
     st.save(str(fn))
 
-    hi = tinyusdz.load(fn)  # composed with authored selection
+    hi = lightusd.load(fn)  # composed with authored selection
     assert hi.prim_at("/root").get("a") == 1.0
     assert hi.prim_at("/root/Extra").get("b") == 2.0
 
-    lo = tinyusdz.load(fn, variants={"lod": "low"})
+    lo = lightusd.load(fn, variants={"lod": "low"})
     assert lo.prim_at("/root").get("a") == 0.0
     assert lo.get_prim_at("/root/Extra") is None
 
 
 def test_variant_cross_format_chain(tmp_path):
     # usda -> usdc -> usda: names, selection and content all survive.
-    st = tinyusdz.loads(VARIANT_SRC)
-    mid = tinyusdz.load_bytes(st.export_usdc())
-    final = tinyusdz.loads(mid.export_usda())
+    st = lightusd.loads(VARIANT_SRC)
+    mid = lightusd.load_bytes(st.export_usdc())
+    final = lightusd.loads(mid.export_usda())
     fn = tmp_path / "chain.usda"
     final.save(str(fn))
-    comp = tinyusdz.load(fn)
+    comp = lightusd.load(fn)
     assert comp.prim_at("/root").get("a") == 1.0
     assert comp.prim_at("/root/Extra").get("b") == 2.0
 
@@ -266,19 +266,19 @@ def Xform "p" (variants = { string outer = "o1" } prepend variantSets = ["outer"
 
 @pytest.mark.parametrize("ext", ["usda", "usdc"])
 def test_nested_variants_compose(tmp_path, ext):
-    st = tinyusdz.loads(NESTED_VARIANT_SRC)
+    st = lightusd.loads(NESTED_VARIANT_SRC)
     fn = tmp_path / f"n.{ext}"
     st.save(str(fn))
-    comp = tinyusdz.load(fn)
+    comp = lightusd.load(fn)
     assert comp.prim_at("/p").get("a") == 1.0
     assert comp.prim_at("/p").get("b") == 3.0
-    ov = tinyusdz.load(fn, variants={"inner": "i1"})
+    ov = lightusd.load(fn, variants={"inner": "i1"})
     assert ov.prim_at("/p").get("b") == 2.0
 
 
 @pytest.mark.parametrize("ext", ["usda", "usdc"])
 def test_variant_timesamples_and_connect(tmp_path, ext):
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Material "m" (variants = { string s = "a" } prepend variantSets = ["s"]) {
     variantSet "s" = {
         "a" { double h = 0
@@ -291,7 +291,7 @@ def Material "m" (variants = { string s = "a" } prepend variantSets = ["s"]) {
 ''')
     fn = tmp_path / f"tc.{ext}"
     st.save(str(fn))
-    comp = tinyusdz.load(fn)
+    comp = lightusd.load(fn)
     attr = comp.prim_at("/m").attribute("h")
     assert attr.has_timesamples and len(attr.timesamples) == 2
     assert abs(attr.get(time=5.0) - 6.0) < 1e-9
@@ -301,20 +301,20 @@ def Material "m" (variants = { string s = "a" } prepend variantSets = ["s"]) {
 
 @pytest.mark.parametrize("ext", ["usda", "usdc"])
 def test_variant_active_false_prunes(tmp_path, ext):
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Xform "p" (variants = { string s = "off" } prepend variantSets = ["s"]) {
     variantSet "s" = { "on" { float a = 1 } "off" (active = false) { } }
 }
 ''')
     fn = tmp_path / f"act.{ext}"
     st.save(str(fn))
-    assert tinyusdz.load(fn).prim_at("/p").active is False
-    on = tinyusdz.load(fn, variants={"s": "on"})
+    assert lightusd.load(fn).prim_at("/p").active is False
+    on = lightusd.load(fn, variants={"s": "on"})
     assert on.prim_at("/p").active is True and on.prim_at("/p").get("a") == 1.0
 
 
 def test_variant_arrays_and_qualified_rel(tmp_path):
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Mesh "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
     variantSet "s" = {
         "a" { point3f[] points = [(0,0,0),(1,1,1)]
@@ -324,13 +324,13 @@ def Mesh "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
     }
 }
 ''')
-    for reload in (lambda: tinyusdz.loads(st.export_usda()),
-                   lambda: tinyusdz.load_bytes(st.export_usdc())):
+    for reload in (lambda: lightusd.loads(st.export_usda()),
+                   lambda: lightusd.load_bytes(st.export_usdc())):
         st2 = reload()
         assert set(st2.prim_at("/p").variant_sets["s"].names) == {"a", "b"}
     fn = tmp_path / "q.usdc"
     st.save(str(fn))
-    comp = tinyusdz.load(fn)
+    comp = lightusd.load(fn)
     assert len(comp.prim_at("/p")["points"]) == 2
     assert comp.prim_at("/p").get("after") == 3.0
     assert list(comp.prim_at("/p").relationship("myrel")) == ["/p"]
@@ -345,12 +345,12 @@ def Xform "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
     variantSet "s" = { "a" (delete references = @./ref.usda@</Ball>) { } "b" { } }
 }
 ''')
-    comp = tinyusdz.load(scene)
+    comp = lightusd.load(scene)
     assert comp.prim_at("/p").get("radius") is None
 
 
 def test_multi_set_selection_crate_to_usda():
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Xform "p" (
     variants = { string shape = "a"  string color = "red" }
     prepend variantSets = ["shape", "color"]
@@ -359,18 +359,18 @@ def Xform "p" (
     variantSet "color" = { "red" { float tint = 1 } "blue" { } }
 }
 ''')
-    usda2 = tinyusdz.load_bytes(st.export_usdc()).export_usda()
+    usda2 = lightusd.load_bytes(st.export_usdc()).export_usda()
     assert 'string shape = "a"' in usda2
     assert 'string color = "red"' in usda2
 
 
 def test_dotted_variant_names_crate():
-    st = tinyusdz.loads('''#usda 1.0
+    st = lightusd.loads('''#usda 1.0
 def Xform "p" (variants = { string lod = "hi_res-2.0" } prepend variantSets = ["lod"]) {
     variantSet "lod" = { "hi_res-2.0" { float a = 1 } "low.1" { float a = 0 } }
 }
 ''')
-    st2 = tinyusdz.load_bytes(st.export_usdc())
+    st2 = lightusd.load_bytes(st.export_usdc())
     vs = st2.prim_at("/p").variant_sets["lod"]
     assert set(vs.names) == {"hi_res-2.0", "low.1"}
     assert vs.selection == "hi_res-2.0"
@@ -393,10 +393,10 @@ def Xform "c" (
     variants = { string model = "B" }
 ) { }
 ''')
-    st = tinyusdz.load(tmp_path / "scene.usda", composed=False)
+    st = lightusd.load(tmp_path / "scene.usda", composed=False)
     fn = tmp_path / "scene.usdc"
     st.save(str(fn))
-    comp = tinyusdz.load(fn)
+    comp = lightusd.load(fn)
     assert comp.prim_at("/c").get("w") == 2.0
 
 
@@ -412,7 +412,7 @@ def Xform "p" (
 }
 ''')
     dst = tmp_path / "m.usdc"
-    tinyusdz.flatten_file(str(src), str(dst))
-    flat = tinyusdz.load(dst)
+    lightusd.flatten_file(str(src), str(dst))
+    flat = lightusd.load(dst)
     assert flat.prim_at("/p").get("va") == 1.0
     assert flat.prim_at("/p").get("vb") == 4.0

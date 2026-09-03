@@ -9,10 +9,10 @@
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::crate::Index &i);
+std::ostream &operator<<(std::ostream &os, const lightusd::crate::Index &i);
 
 } // namespace std
 
-namespace tinyusdz {
+namespace lightusd {
 
-} // namespace tinyusdz
+} // namespace lightusd

@@ -3,10 +3,10 @@
 #include <vector>
 
 #include "tydra/render-data.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 static bool nearlyEqual(float a, float b, float eps = 1e-5f) {
   return std::fabs(a - b) <= eps;
@@ -217,13 +217,13 @@ static bool run_custom_property_test(const char *label, bool use_sample_rate,
 
   for (size_t i = 0; i < anim.channels.size(); i++) {
     const auto &ch = anim.channels[i];
-    if (ch.path == tinyusdz::tydra::AnimationPath::Translation) {
+    if (ch.path == lightusd::tydra::AnimationPath::Translation) {
       found_translation = true;
-    } else if (ch.path == tinyusdz::tydra::AnimationPath::Rotation) {
+    } else if (ch.path == lightusd::tydra::AnimationPath::Rotation) {
       found_rotation = true;
-    } else if (ch.path == tinyusdz::tydra::AnimationPath::Scale) {
+    } else if (ch.path == lightusd::tydra::AnimationPath::Scale) {
       found_scale = true;
-    } else if (ch.path == tinyusdz::tydra::AnimationPath::CustomProperty) {
+    } else if (ch.path == lightusd::tydra::AnimationPath::CustomProperty) {
       if (ch.property_name == "physics:radius") {
         found_radius = true;
         radius_sampler = static_cast<size_t>(ch.sampler);

@@ -1,5 +1,5 @@
 #usda 1.0
 (
-  # Need to escape '\' even in single-quote. 
-  'C:\Users\TinyUSDZ\bora/dora/"hello"muda.png'
+  # Need to escape '\' even in single-quote.
+  'C:\Users\LightUSD\bora/dora/"hello"muda.png'
 )

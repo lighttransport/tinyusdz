@@ -14,7 +14,7 @@ extern "C" {
 
 namespace {
 
-namespace tydra = tinyusdz::tydra;
+namespace tydra = lightusd::tydra;
 
 bool Near(float a, float b, float eps = 1.0e-6f) {
   return std::fabs(a - b) <= eps;

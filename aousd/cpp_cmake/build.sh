@@ -25,8 +25,8 @@ echo -e "${YELLOW}Configuring with CMake...${NC}"
 CC=clang-20 CXX=clang++-20 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DOPENUSD_ROOT=../../dist \
-    -DTINYUSDZ_ROOT=../../.. \
-    -DTINYUSDZ_BUILD=../../../build
+    -DLIGHTUSD_ROOT=../../.. \
+    -DLIGHTUSD_BUILD=../../../build
 
 # Build
 echo -e "${YELLOW}Building...${NC}"

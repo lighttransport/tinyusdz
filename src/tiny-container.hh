@@ -12,7 +12,7 @@
 #include <cstring>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Simple small vector optimization implementation.
 // Pre-allocates N elements on the stack, falls back to heap for larger sizes.
@@ -229,4 +229,4 @@ class StackVector {
   std::vector<T> _heap;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

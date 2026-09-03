@@ -8,7 +8,7 @@ Marked slow: run with `pytest -m "not slow"` to skip in CI.
 import random
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
@@ -35,13 +35,13 @@ def test_fuzz_random_bytes_no_crash():
         size = rnd.randint(0, 4096)
         blob = bytes(rnd.getrandbits(8) for _ in range(size))
         try:
-            tinyusdz.load_bytes(blob)
-        except (tinyusdz.UsdError, ValueError):
+            lightusd.load_bytes(blob)
+        except (lightusd.UsdError, ValueError):
             pass
         # also try with max_memory tiny
         try:
-            tinyusdz.load_bytes(blob, max_memory=1024)
-        except (tinyusdz.UsdError, ValueError):
+            lightusd.load_bytes(blob, max_memory=1024)
+        except (lightusd.UsdError, ValueError):
             pass
 
 
@@ -56,14 +56,14 @@ def test_fuzz_random_usda_no_crash():
         if rnd.random() < 0.2:
             txt += "\x00\xff" * rnd.randint(1, 10)
         try:
-            tinyusdz.loads(txt)
-        except (tinyusdz.UsdError, ValueError):
+            lightusd.loads(txt)
+        except (lightusd.UsdError, ValueError):
             pass
 
 
 @pytest.mark.slow
 def test_fuzz_usdc_truncation_and_max_memory():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/X", "Xform").set("v", 1.0, type="float")
     blob = st.export_usdc()
     assert blob[:8] == b"PXR-USDC"
@@ -72,27 +72,27 @@ def test_fuzz_usdc_truncation_and_max_memory():
         cut = rnd.randint(0, len(blob))
         truncated = blob[:cut]
         try:
-            tinyusdz.load_bytes(truncated)
-        except (tinyusdz.UsdError, ValueError):
+            lightusd.load_bytes(truncated)
+        except (lightusd.UsdError, ValueError):
             pass
         # max_memory enforcement
         try:
-            tinyusdz.load_bytes(blob, max_memory=1024)
-        except (tinyusdz.UsdError, ValueError):
+            lightusd.load_bytes(blob, max_memory=1024)
+        except (lightusd.UsdError, ValueError):
             pass
 
 
 def test_fuzz_overlong_token():
     tok = "a" * 10000
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     p.set("tok", tok, type="token")
     txt = st.export_usda()
     # either preserves or errors, but must not crash
     try:
-        st2 = tinyusdz.loads(txt)
+        st2 = lightusd.loads(txt)
         assert st2.prim_at("/P") is not None
-    except (tinyusdz.UsdError, ValueError):
+    except (lightusd.UsdError, ValueError):
         pass
 
 
@@ -104,8 +104,8 @@ def test_fuzz_hypothesis_if_available():
     @given(st.binary(min_size=0, max_size=2048))
     def inner(blob):
         try:
-            tinyusdz.load_bytes(blob)
-        except (tinyusdz.UsdError, ValueError):
+            lightusd.load_bytes(blob)
+        except (lightusd.UsdError, ValueError):
             pass
     # run a small number of examples
     inner.hypothesis.inner_test._hypothesis_internal_settings = None  # avoid warning

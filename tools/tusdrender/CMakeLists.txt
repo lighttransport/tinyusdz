@@ -8,7 +8,7 @@ include(CheckCCompilerFlag)
 # tusdrender pulls several large static archives into one executable. GNU
 # ld.bfd spends most of a RelWithDebInfo relink rescanning symbols and merging
 # DWARF; prefer an installed parallel linker for this target without changing
-# the linker used by the rest of TinyUSDZ. Set this OFF when diagnosing a
+# the linker used by the rest of LightUSD. Set this OFF when diagnosing a
 # platform linker issue or when a toolchain already selects its own linker.
 option(TUSDRENDER_USE_FAST_LINKER
        "Use mold, LLD, or gold for tusdrender when available" ON)
@@ -86,13 +86,13 @@ if(NOT TARGET tusd_gpu_rt_common)
       ${TUSD_GPU_RT_KERNEL_DIR})
   endif()
   target_link_libraries(tusd_gpu_rt_common PUBLIC
-    ${TINYUSDZ_TARGET_STATIC} ${CMAKE_DL_LIBS})
-  if(TINYUSDZ_WITH_TEXTOOLS)
-    target_link_libraries(tusd_gpu_rt_common PUBLIC tinyusdz_textools)
+    ${LIGHTUSD_TARGET_STATIC} ${CMAKE_DL_LIBS})
+  if(LIGHTUSD_WITH_TEXTOOLS)
+    target_link_libraries(tusd_gpu_rt_common PUBLIC lightusd_textools)
     target_compile_definitions(tusd_gpu_rt_common PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
-    if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
       target_compile_definitions(tusd_gpu_rt_common PRIVATE
-        TINYUSDZ_WITH_ZSTD_COMPRESSION)
+        LIGHTUSD_WITH_ZSTD_COMPRESSION)
     endif()
   endif()
 endif()
@@ -214,7 +214,7 @@ if(TUSDRENDER_USE_FAST_LINKER AND UNIX AND NOT APPLE AND
 endif()
 
 target_link_libraries(tusdrender
-  ${TINYUSDZ_TARGET_STATIC}
+  ${LIGHTUSD_TARGET_STATIC}
   lightrt_c
 )
 
@@ -223,8 +223,8 @@ if(COMMAND add_sanitizers)
 endif()
 
 # Vendored texture tools: the opt-in `-ibl envmap` DomeLight IBL backend.
-if(TINYUSDZ_WITH_TEXTOOLS)
-  target_link_libraries(tusdrender tinyusdz_textools)
+if(LIGHTUSD_WITH_TEXTOOLS)
+  target_link_libraries(tusdrender lightusd_textools)
   target_compile_definitions(tusdrender PRIVATE TUSDR_WITH_TEXTOOLS)
 endif()
 
@@ -234,16 +234,16 @@ endif()
 # Parallel composition (per-prim opinion fill across cores) needs the next lib's
 # std::thread paths; output is byte-identical to the serial fill. Force it on for
 # tusdrender's on-demand next build.
-set(TINYUSDZ_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET tinyusdz_next)
+set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET lightusd_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
                    ${CMAKE_BINARY_DIR}/tusdrender_next_build)
 endif()
-target_link_libraries(tusdrender tinyusdz_next tydra_next)
+target_link_libraries(tusdrender lightusd_next tydra_next)
 # tydra_next's lazy Ptex decoder uses symbols supplied by the main static
 # library.  Keep that archive after tydra_next so single-pass static linkers
 # resolve the dependency (the initial common-library link above precedes it).
-target_link_libraries(tusdrender ${TINYUSDZ_TARGET_STATIC})
+target_link_libraries(tusdrender ${LIGHTUSD_TARGET_STATIC})
 
 # tusdrender itself spawns std::thread workers for the mesh-stream and render
 # passes, so link the threading runtime explicitly (not just transitively via
@@ -274,12 +274,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Wno-switch-default")
   endif()
-  if(NOT TINYUSDZ_NO_WERROR)
+  if(NOT LIGHTUSD_NO_WERROR)
     set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Werror")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   set(TUSDRENDER_CXX_FLAGS "-Wall")
-  if(NOT TINYUSDZ_NO_WERROR)
+  if(NOT LIGHTUSD_NO_WERROR)
     set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Werror")
   endif()
 endif()
@@ -318,10 +318,10 @@ set_source_files_properties(
 
 # When the project is built with QuickJS, enable tusdrender's -js (scripting)
 # and -mcp (MCP stdio control) modes for memory-persistent / interactive
-# rendering. The library defines TINYUSDZ_WITH_QJS PRIVATEly, so re-declare it
-# for the tool. The JS engine + MCP plumbing come from tinyusdz_static.
-if(TINYUSDZ_WITH_QJS)
-  target_compile_definitions(tusdrender PRIVATE TINYUSDZ_WITH_QJS)
+# rendering. The library defines LIGHTUSD_WITH_QJS PRIVATEly, so re-declare it
+# for the tool. The JS engine + MCP plumbing come from lightusd_static.
+if(LIGHTUSD_WITH_QJS)
+  target_compile_definitions(tusdrender PRIVATE LIGHTUSD_WITH_QJS)
 endif()
 
 # --- WebSocket browser streaming server (-streamHttp) -----------------------

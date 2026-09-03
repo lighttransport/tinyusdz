@@ -1,4 +1,4 @@
-# OffscreenCanvas + Web Worker + TinyUSDZ WASM
+# OffscreenCanvas + Web Worker + LightUSD WASM
 
 `offscreengl.*` and `progress-offscreenwebgl.*` — USD viewers that run all
 WebGL rendering and WASM processing inside a dedicated Web Worker, leaving
@@ -11,7 +11,7 @@ the main thread entirely free for UI interactions.
 
 ## Motivation
 
-The original `materialx.js` demo runs Three.js and the TinyUSDZ WASM module
+The original `materialx.js` demo runs Three.js and the LightUSD WASM module
 on the **main thread**. This causes observable jank:
 
 - The browser tab is unresponsive while Emscripten initialises the WASM heap
@@ -51,9 +51,9 @@ this work touches the main-thread task queue.
 │  PMREMGenerator  ──►  IBL env map        │
 │  HDRLoader (fetch + createImageBitmap)   │
 │                                          │
-│  TinyUSDZLoader.init()  (WASM 32-bit)   │
-│   └─ TinyUSDZLoaderNative.loadFromBinary │
-│   └─ TinyUSDZLoaderUtils.buildThreeNode  │
+│  LightUSDLoader.init()  (WASM 32-bit)   │
+│   └─ LightUSDLoaderNative.loadFromBinary │
+│   └─ LightUSDLoaderUtils.buildThreeNode  │
 │        (MaterialX / OpenPBR → THREE mat) │
 │   └─ loadDomeLightFromUSD                │
 │                                          │
@@ -95,7 +95,7 @@ Extends the base architecture with real-time progress reporting:
 │  THREE.WebGLRenderer({ canvas: offscreen })       │
 │  PMREMGenerator  ──►  IBL env map                 │
 │                                                   │
-│  TinyUSDZLoader.init({                            │
+│  LightUSDLoader.init({                            │
 │    onTydraProgress: ──► sendProgress()            │
 │    onTydraComplete: ──► sendProgress()            │
 │  })                                               │
@@ -159,7 +159,7 @@ position = target + (radius · sin(φ)sin(θ),  radius · cos(φ),  radius · si
 
 Two issues arise from moving Three.js into a Worker:
 
-1. **`document` is undefined.** `TinyUSDZLoaderUtils` calls
+1. **`document` is undefined.** `LightUSDLoaderUtils` calls
    `document.createElement('canvas')` when building environment textures.
    A minimal `globalThis.document` stub is injected at the very top of the
    worker module (before any imports take effect at runtime).
@@ -191,7 +191,7 @@ Two issues arise from moving Three.js into a Worker:
 
 ### WASM progress callback: coroutine vs. WebWorker
 
-The TinyUSDZ WASM build has two mechanisms for reporting progress during
+The LightUSD WASM build has two mechanisms for reporting progress during
 Tydra scene conversion:
 
 **1. Synchronous EM_JS callbacks** (`binding.cc`)
@@ -209,7 +209,7 @@ receives it only when the worker's event loop ticks.
 
 **2. C++20 coroutine yields** (`co_await yieldToEventLoop()`)
 
-Optional (`-DTINYUSDZ_WASM_COROUTINE=ON`, default OFF). Suspends the C++
+Optional (`-DLIGHTUSD_WASM_COROUTINE=ON`, default OFF). Suspends the C++
 coroutine between phases (format detection → parsing → setup → conversion →
 complete), returning a Promise that resolves on `requestAnimationFrame`.
 This lets the worker's event loop flush queued `postMessage` calls and
@@ -240,7 +240,7 @@ smooth and responsive even without coroutine yields.
 
 **When coroutines are still useful in a worker:**
 
-If `TINYUSDZ_WASM_COROUTINE=ON`, the worker's own `requestAnimationFrame`
+If `LIGHTUSD_WASM_COROUTINE=ON`, the worker's own `requestAnimationFrame`
 render loop can continue running between `co_await` suspension points. This
 means the 3D viewport keeps rendering (e.g. showing a spinning grid) while
 USD parsing is in progress. Without coroutines, the viewport freezes during
@@ -251,13 +251,13 @@ blocked.
 |---|---|---|
 | Progress to main thread UI | Smooth | Smooth |
 | Worker render loop during parse | **Frozen** | Keeps running |
-| Build requirement | Default build | `TINYUSDZ_WASM_COROUTINE=ON` |
+| Build requirement | Default build | `LIGHTUSD_WASM_COROUTINE=ON` |
 | API used | `loadFromBinary` (sync) | `loadFromBinaryAsync` (Promise) |
 
 ### WASM loading
 
-`USE_MEMORY64 = false` selects `tinyusdz.js` (32-bit WASM, ≤ 2 GB heap).
-Set to `true` to use `tinyusdz_64.js` (64-bit WASM, ≤ 8 GB heap) when
+`USE_MEMORY64 = false` selects `lightusd.js` (32-bit WASM, ≤ 2 GB heap).
+Set to `true` to use `lightusd_64.js` (64-bit WASM, ≤ 8 GB heap) when
 loading very large scenes on capable browsers.
 
 ---
@@ -348,7 +348,7 @@ requires both COOP and COEP response headers on every page that uses it.
   header — can be difficult to deploy in production
 - Manual synchronisation with `Atomics` is error-prone (deadlock, torn reads)
 - WASM threads require a pthreads-enabled WASM build; the standard
-  `tinyusdz.wasm` is single-threaded
+  `lightusd.wasm` is single-threaded
 
 ---
 
@@ -433,12 +433,12 @@ web/js/
 ├── progress-offscreenwebgl.html        Progress demo: HTML with progress UI + memory panel
 ├── progress-offscreenwebgl.js          Progress demo: main thread (progress bar + memory graph)
 ├── progress-offscreenwebgl.worker.js   Progress demo: worker (+ Tydra progress + texture loading)
-├── src/tinyusdz/
-│   ├── TinyUSDZLoader.js               WASM loader (sync + coroutine async)
-│   ├── TinyUSDZLoaderUtils.js          Scene graph builder
-│   ├── TinyUSDZMaterialX.js            MaterialX / OpenPBR material converter
-│   ├── TinyUSDZWorker.js               Parse-only worker (for progress-demo.js worker mode)
-│   └── TinyUSDZWorkerLoader.js         Worker loader bridge (main-thread API)
+├── src/lightusd/
+│   ├── LightUSDLoader.js               WASM loader (sync + coroutine async)
+│   ├── LightUSDLoaderUtils.js          Scene graph builder
+│   ├── LightUSDMaterialX.js            MaterialX / OpenPBR material converter
+│   ├── LightUSDWorker.js               Parse-only worker (for progress-demo.js worker mode)
+│   └── LightUSDWorkerLoader.js         Worker loader bridge (main-thread API)
 └── docs/
     └── offscreenwebgl.md               This document
 ```
@@ -450,4 +450,4 @@ web/js/
 - `vite.config.ts` — COOP/COEP headers (required for other demos, not this one)
 - `web/binding.cc` — C++ WASM bindings (EM_JS progress callbacks, coroutine yields)
 - `src/tydra/render-data.hh` — `DetailedProgressCallback` type definitions
-- `web/CMakeLists.txt` — `TINYUSDZ_WASM_COROUTINE` build option
+- `web/CMakeLists.txt` — `LIGHTUSD_WASM_COROUTINE` build option

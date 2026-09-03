@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdLux Schema APIs
+// LightUSD Next - UsdLux Schema APIs
 // Convenience accessors for USD light types
 
 #pragma once
@@ -9,7 +9,7 @@
 #include "../stage/stage.hh"
 #include "../eval/attribute-eval.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Light type enumeration
@@ -143,4 +143,4 @@ bool GetCylinderLightData(const Stage& stage, const UsdPrim& prim,
                           CylinderLightData* out, double time = 0.0);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

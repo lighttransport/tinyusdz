@@ -13,7 +13,7 @@
 #endif
 
 #include "crate-writer.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "value-types.hh"
 
@@ -42,7 +42,7 @@ std::string TempUsdcPath(const char *label) {
     tmpdir = "/tmp";
 #endif
   }
-  return std::string(tmpdir) + "/tinyusdz_dedp_" + label + "_" +
+  return std::string(tmpdir) + "/lightusd_dedp_" + label + "_" +
          std::to_string(ProcessId()) + ".usdc";
 }
 
@@ -54,10 +54,10 @@ size_t FileSize(const std::string &filename) {
   return static_cast<size_t>(ifs.tellg());
 }
 
-bool LoadStage(const std::string &filename, tinyusdz::Stage *stage) {
+bool LoadStage(const std::string &filename, lightusd::Stage *stage) {
   std::string warn;
   std::string err;
-  bool ok = tinyusdz::LoadUSDFromFile(filename, stage, &warn, &err);
+  bool ok = lightusd::LoadUSDFromFile(filename, stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "warning while loading " << filename << ": " << warn << "\n";
   }
@@ -67,10 +67,10 @@ bool LoadStage(const std::string &filename, tinyusdz::Stage *stage) {
   return ok;
 }
 
-bool WriteStageUsdc(const tinyusdz::Stage &stage, const std::string &filename,
+bool WriteStageUsdc(const lightusd::Stage &stage, const std::string &filename,
                     bool dedup) {
-  tinyusdz::experimental::CrateWriter writer(filename);
-  tinyusdz::experimental::CrateWriter::Options opts;
+  lightusd::experimental::CrateWriter writer(filename);
+  lightusd::experimental::CrateWriter::Options opts;
   opts.enable_deduplication = dedup;
   opts.enable_compression = false;
   writer.SetOptions(opts);
@@ -94,15 +94,15 @@ bool WriteStageUsdc(const tinyusdz::Stage &stage, const std::string &filename,
   return true;
 }
 
-const tinyusdz::Attribute *FindXformProperty(const tinyusdz::Stage &stage,
+const lightusd::Attribute *FindXformProperty(const lightusd::Stage &stage,
                                              const std::string &name) {
-  const tinyusdz::Prim *prim = nullptr;
-  if (!stage.find_prim_at_path(tinyusdz::Path("/DedupRoot", ""), prim) ||
+  const lightusd::Prim *prim = nullptr;
+  if (!stage.find_prim_at_path(lightusd::Path("/DedupRoot", ""), prim) ||
       !prim) {
     return nullptr;
   }
 
-  const tinyusdz::Xform *xform = prim->as<tinyusdz::Xform>();
+  const lightusd::Xform *xform = prim->as<lightusd::Xform>();
   if (!xform) {
     return nullptr;
   }
@@ -118,9 +118,9 @@ bool NearlyEqual(double a, double b) {
   return std::abs(a - b) < 1.0e-12;
 }
 
-bool CheckLoadedDedupScene(const tinyusdz::Stage &stage,
+bool CheckLoadedDedupScene(const lightusd::Stage &stage,
                            const std::string &label) {
-  const tinyusdz::Attribute *scalar = FindXformProperty(stage, "scalarA");
+  const lightusd::Attribute *scalar = FindXformProperty(stage, "scalarA");
   if (!scalar) {
     std::cerr << label << ": missing scalarA\n";
     return false;
@@ -131,12 +131,12 @@ bool CheckLoadedDedupScene(const tinyusdz::Stage &stage,
     return false;
   }
 
-  const tinyusdz::Attribute *vector = FindXformProperty(stage, "vectorA");
+  const lightusd::Attribute *vector = FindXformProperty(stage, "vectorA");
   if (!vector) {
     std::cerr << label << ": missing vectorA\n";
     return false;
   }
-  auto vector_value = vector->get_value<tinyusdz::value::double3>();
+  auto vector_value = vector->get_value<lightusd::value::double3>();
   if (!vector_value || !NearlyEqual(vector_value.value()[0], 1.25) ||
       !NearlyEqual(vector_value.value()[1], 2.5) ||
       !NearlyEqual(vector_value.value()[2], 3.75)) {
@@ -144,14 +144,14 @@ bool CheckLoadedDedupScene(const tinyusdz::Stage &stage,
     return false;
   }
 
-  const tinyusdz::Attribute *array =
+  const lightusd::Attribute *array =
       FindXformProperty(stage, "vectorArrayA");
   if (!array) {
     std::cerr << label << ": missing vectorArrayA\n";
     return false;
   }
   auto array_value =
-      array->get_value<std::vector<tinyusdz::value::double3>>();
+      array->get_value<std::vector<lightusd::value::double3>>();
   if (!array_value || array_value.value().size() != 4 ||
       !NearlyEqual(array_value.value()[3][0], 10.0) ||
       !NearlyEqual(array_value.value()[3][1], 11.0) ||
@@ -160,12 +160,12 @@ bool CheckLoadedDedupScene(const tinyusdz::Stage &stage,
     return false;
   }
 
-  const tinyusdz::Attribute *anim = FindXformProperty(stage, "animA");
+  const lightusd::Attribute *anim = FindXformProperty(stage, "animA");
   if (!anim || !anim->has_timesamples()) {
     std::cerr << label << ": missing animA timeSamples\n";
     return false;
   }
-  const tinyusdz::value::TimeSamples &ts = anim->get_var().ts_raw();
+  const lightusd::value::TimeSamples &ts = anim->get_var().ts_raw();
   const std::vector<double> &times = ts.get_times();
   if (times.size() != 8 || !NearlyEqual(times.front(), 0.0) ||
       !NearlyEqual(times.back(), 7.0)) {
@@ -173,7 +173,7 @@ bool CheckLoadedDedupScene(const tinyusdz::Stage &stage,
     return false;
   }
 
-  tinyusdz::value::double3 sample{};
+  lightusd::value::double3 sample{};
   if (!ts.get(&sample, 7.0) || !NearlyEqual(sample[0], 7.0) ||
       !NearlyEqual(sample[1], 8.0) || !NearlyEqual(sample[2], 9.0)) {
     std::cerr << label << ": unexpected animA sample value\n";
@@ -183,8 +183,8 @@ bool CheckLoadedDedupScene(const tinyusdz::Stage &stage,
   return true;
 }
 
-bool TestTinyUsdcWriteDedup() {
-  tinyusdz::Stage stage;
+bool TestLightUsdcWriteDedup() {
+  lightusd::Stage stage;
   if (!LoadStage(kUsdaFixture, &stage)) {
     return false;
   }
@@ -204,10 +204,10 @@ bool TestTinyUsdcWriteDedup() {
 
   const size_t dedup_size = FileSize(dedup_path);
   const size_t no_dedup_size = FileSize(no_dedup_path);
-  std::cout << "TinyUSDZ USDC sizes: dedup=" << dedup_size
+  std::cout << "LightUSD USDC sizes: dedup=" << dedup_size
             << " no_dedup=" << no_dedup_size << "\n";
   if (dedup_size == 0 || no_dedup_size == 0 || dedup_size >= no_dedup_size) {
-    std::cerr << "expected TinyUSDZ dedup USDC to be smaller\n";
+    std::cerr << "expected LightUSD dedup USDC to be smaller\n";
     std::remove(dedup_path.c_str());
     std::remove(no_dedup_path.c_str());
     return false;
@@ -225,7 +225,7 @@ bool TestTinyUsdcWriteDedup() {
       : (openusd_size - dedup_size);
   const size_t tolerance = 128;
   if (delta > tolerance) {
-    std::cerr << "TinyUSDZ dedup USDC size drifted from OpenUSD: tiny="
+    std::cerr << "LightUSD dedup USDC size drifted from OpenUSD: tiny="
               << dedup_size << " openusd=" << openusd_size
               << " delta=" << delta << "\n";
     std::remove(dedup_path.c_str());
@@ -233,16 +233,16 @@ bool TestTinyUsdcWriteDedup() {
     return false;
   }
 
-  tinyusdz::Stage reloaded;
+  lightusd::Stage reloaded;
   const bool reload_ok = LoadStage(dedup_path, &reloaded) &&
-                         CheckLoadedDedupScene(reloaded, "TinyUSDZ dedup USDC");
+                         CheckLoadedDedupScene(reloaded, "LightUSD dedup USDC");
   std::remove(dedup_path.c_str());
   std::remove(no_dedup_path.c_str());
   return reload_ok;
 }
 
 bool TestOpenUsdUsdcReadDedup() {
-  tinyusdz::Stage usda_stage;
+  lightusd::Stage usda_stage;
   if (!LoadStage(kUsdaFixture, &usda_stage)) {
     return false;
   }
@@ -256,7 +256,7 @@ bool TestOpenUsdUsdcReadDedup() {
   const size_t openusd_size = FileSize(kOpenUsdUsdcFixture);
   const size_t no_dedup_size = FileSize(no_dedup_path);
   std::cout << "OpenUSD fixture size=" << openusd_size
-            << " TinyUSDZ no_dedup=" << no_dedup_size << "\n";
+            << " LightUSD no_dedup=" << no_dedup_size << "\n";
   std::remove(no_dedup_path.c_str());
 
   if (openusd_size == 0 || no_dedup_size == 0 ||
@@ -265,7 +265,7 @@ bool TestOpenUsdUsdcReadDedup() {
     return false;
   }
 
-  tinyusdz::Stage openusd_stage;
+  lightusd::Stage openusd_stage;
   if (!LoadStage(kOpenUsdUsdcFixture, &openusd_stage)) {
     return false;
   }
@@ -276,7 +276,7 @@ bool TestOpenUsdUsdcReadDedup() {
 
 int main() {
   bool ok = true;
-  ok = TestTinyUsdcWriteDedup() && ok;
+  ok = TestLightUsdcWriteDedup() && ok;
   ok = TestOpenUsdUsdcReadDedup() && ok;
   if (!ok) {
     return 1;

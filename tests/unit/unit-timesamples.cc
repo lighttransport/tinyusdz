@@ -11,7 +11,7 @@
 #include "core/animatable.hh"
 #include "math-util.inc"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void timesamples_test(void) {
 
@@ -934,7 +934,7 @@ void timesamples_test(void) {
   // ==========================================================================
   // OpenUSD Behavior Compatibility Tests
   // ==========================================================================
-  // These tests ensure TinyUSDZ matches OpenUSD's timeSamples evaluation behavior
+  // These tests ensure LightUSD matches OpenUSD's timeSamples evaluation behavior
 
   // Test 1: Single TimeSample Behavior (should be held constant for all times)
   {

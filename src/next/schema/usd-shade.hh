@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdShade Schema APIs
+// LightUSD Next - UsdShade Schema APIs
 // Convenience accessors for USD materials and shaders
 
 #pragma once
@@ -10,7 +10,7 @@
 #include "../eval/attribute-eval.hh"
 #include <map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Shader input/output info
@@ -198,4 +198,4 @@ std::string GetPrimvarReaderVarname(const UsdPrim& shader);
 std::string GetPrimvarReaderVarname(const Stage& stage, const UsdPrim& shader);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

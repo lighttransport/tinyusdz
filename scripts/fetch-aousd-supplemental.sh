@@ -4,9 +4,9 @@
 # The corpus is intentionally NOT vendored into this repository (it has its
 # own license and release cadence). This script clones the public release
 # repo at a pinned tag into a stable cache path and prints the suite root to
-# pass as -DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT / AOUSD_CORE_SUPPLEMENTAL_ROOT:
+# pass as -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT / AOUSD_CORE_SUPPLEMENTAL_ROOT:
 #
-#   ~/.cache/tinyusdz/core-spec-supplemental-release_dec2025/releases/1.0.1
+#   ~/.cache/lightusd/core-spec-supplemental-release_dec2025/releases/1.0.1
 #
 # Pin: tag release/1.0.1.post0 = commit c15ae0cad3ed9e07a25dffd6699627d2c166cab0
 # (the dec2025 release; its releases/1.0.1 payload dirs are byte-identical to
@@ -17,7 +17,7 @@ set -euo pipefail
 REPO_URL="https://github.com/aousd/core-spec-supplemental-public"
 PIN_TAG="release/1.0.1.post0"
 PIN_COMMIT="c15ae0cad3ed9e07a25dffd6699627d2c166cab0"
-CACHE_DIR="${AOUSD_SUPPLEMENTAL_CACHE:-${HOME}/.cache/tinyusdz/core-spec-supplemental-release_dec2025}"
+CACHE_DIR="${AOUSD_SUPPLEMENTAL_CACHE:-${HOME}/.cache/lightusd/core-spec-supplemental-release_dec2025}"
 SUITE_ROOT="${CACHE_DIR}/releases/1.0.1"
 
 current_commit() {

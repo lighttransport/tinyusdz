@@ -1,7 +1,7 @@
 // require nodejs v24.0 or later(to load wasm)
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { TinyUSDZComposer } from 'tinyusdz/TinyUSDZComposer.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { LightUSDComposer } from 'lightusd/LightUSDComposer.js';
 
 import fs from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -39,42 +39,42 @@ async function streamFileToAsset(filename, loader, assetName) {
     const stats = fs.statSync(filename);
     const fileSize = stats.size;
     const chunkSize = 65536; // 64KB chunks
-    
+
     console.log(`Starting streaming asset: ${assetName}, size: ${fileSize} bytes`);
-    
+
     // Start the streaming asset
-    if (!loader.native_ || !loader.native_.TinyUSDZLoaderNative) {
+    if (!loader.native_ || !loader.native_.LightUSDLoaderNative) {
       reject(new Error('Native module not initialized'));
       return;
     }
-    
-    const usd = new loader.native_.TinyUSDZLoaderNative();
-    
+
+    const usd = new loader.native_.LightUSDLoaderNative();
+
     // Initialize streaming for this asset
     if (!usd.startStreamingAsset(assetName, fileSize)) {
       reject(new Error('Failed to start streaming asset'));
       return;
     }
-    
+
     const stream = fs.createReadStream(filename, {
       highWaterMark: chunkSize
     });
-    
+
     let bytesRead = 0;
-    
+
     stream.on('data', (chunk) => {
       // Convert chunk to Uint8Array then to string for the API
       const uint8Array = new Uint8Array(chunk);
-      
+
       // Append the chunk to the streaming asset
       if (!usd.appendAssetChunk(assetName, uint8Array)) {
         stream.destroy();
         reject(new Error('Failed to append asset chunk'));
         return;
       }
-      
+
       bytesRead += chunk.length;
-      
+
       // Check progress
       const progress = usd.getStreamingProgress(assetName);
       if (progress && progress.exists) {
@@ -84,20 +84,20 @@ async function streamFileToAsset(filename, loader, assetName) {
         console.log(`Progress: ${progress.current}/${expectedBytes} bytes (${percentage}%)`);
       }
     });
-    
+
     stream.on('end', () => {
       console.log(`Stream ended, finalizing asset: ${assetName}`);
-      
+
       // Finalize the streaming asset
       if (!usd.finalizeStreamingAsset(assetName)) {
         reject(new Error('Failed to finalize streaming asset'));
         return;
       }
-      
+
       console.log(`Asset ${assetName} successfully loaded via streaming`);
       resolve(usd);
     });
-    
+
     stream.on('error', (err) => {
       console.error('Stream error:', err);
       reject(err);
@@ -187,7 +187,7 @@ if (!fs.existsSync(usd_filename)) {
 
 async function initScene() {
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({useMemory64});
   loader.setMaxMemoryLimitMB(200);
 
@@ -217,22 +217,22 @@ async function initScene() {
     // Stream the file content to the asset cache
     const assetName = "streamed_model.usdc";
     const streamedUsd = await streamFileToAsset(usd_filename, loader, assetName);
-    
+
     // Now the asset is in the cache and can be used
     if (streamedUsd.hasAsset(assetName)) {
       console.log(`Asset ${assetName} is now available in cache`);
-      
+
       // Get UUID of the streamed asset
       const uuid = streamedUsd.getAssetUUID(assetName);
       console.log(`Asset UUID: ${uuid}`);
-      
+
       // You can now load from the cached asset
       // The asset is already in memory and can be accessed via the resolver
       // Skip loadTest for now - just verify streaming worked
       // const testResult = streamedUsd.loadTest(assetName, assetData);
       // console.log(`Load test result: ${testResult}`);
     }
-    
+
     console.log("Streaming loading completed");
     reportMemUsage();
   } catch (err) {

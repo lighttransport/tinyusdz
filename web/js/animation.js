@@ -3,25 +3,25 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
 	readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
+} from 'lightusd/NextRenderSceneUtils.js';
 import {
 	getAssetUriFromURL,
 	getBackendFromURL,
 	LOADER_BACKEND_CHOICES,
 	makeStaticNextParseOptions,
 	setBackendAndReload
-} from 'tinyusdz/LoaderConfigUtils.js';
-import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
-import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
-import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
-import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
-import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
+} from 'lightusd/LoaderConfigUtils.js';
+import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
+import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
+import { applyUSDSceneSkinningPipeline } from 'lightusd/USDSceneSkinningPipeline.js';
+import { buildNodeIndexMap } from 'lightusd/USDAnimationConverter.js';
+import { extractUSDSceneAnimations } from 'lightusd/USDSceneAnimationPipeline.js';
 
 const LOADER_BACKEND = getBackendFromURL();
 const VERBOSE_LOAD_LOGS = new URLSearchParams(window.location.search).get('traceLoad') === 'true';
@@ -403,7 +403,7 @@ let envMap = null;
 // Texture cache for material conversion
 let textureCache = new Map();
 
-// TinyUSDZ loader and scene references for cleanup
+// LightUSD loader and scene references for cleanup
 let currentLoader = null;
 let currentUSDScene = null;
 let currentTextureLoadingManager = null;
@@ -667,7 +667,7 @@ function buildDirectAnimationData(usdLoader, sceneRoot) {
 /**
  * Convert USD animation data to Three.js AnimationClip
  * Supports both channel/sampler and track-based animation structures
- * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {Object} usdLoader - LightUSD loader instance
  * @param {THREE.Object3D} sceneRoot - Three.js scene containing the loaded geometry
  * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
  */
@@ -1243,12 +1243,12 @@ function updateToneMapping(value) {
 
 /**
  * Load DomeLight from USD and apply to scene
- * Uses TinyUSDZLoaderUtils.loadDomeLightFromUSD for the heavy lifting
- * @param {Object} usdScene - USD scene object from TinyUSDZLoader
+ * Uses LightUSDLoaderUtils.loadDomeLightFromUSD for the heavy lifting
+ * @param {Object} usdScene - USD scene object from LightUSDLoader
  * @returns {Promise<Object|null>} DomeLight data or null if not found
  */
 async function loadDomeLightFromUSD(usdScene) {
-	const result = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usdScene, pmremGenerator);
+	const result = await LightUSDLoaderUtils.loadDomeLightFromUSD(usdScene, pmremGenerator);
 
 	if (result) {
 		// Apply result to app state
@@ -1296,7 +1296,7 @@ async function reloadMaterials() {
 	console.log(`Reloading materials with type: ${materialSettings.materialType}`);
 
 	// Get the current USD scene loader
-	const loader = new TinyUSDZLoader();
+	const loader = new LightUSDLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Clear texture cache for fresh reload
@@ -1306,7 +1306,7 @@ async function reloadMaterials() {
 	usdContentNode.traverse(async (child) => {
 		if (child.isMesh && child.userData.materialData) {
 			try {
-				const newMaterial = await TinyUSDZLoaderUtils.convertMaterial(
+				const newMaterial = await LightUSDLoaderUtils.convertMaterial(
 					child.userData.materialData,
 					child.userData.usdScene,
 					{
@@ -1347,7 +1347,7 @@ async function loadUSDModel() {
 		await loadEnvironment(materialSettings.envMapPreset);
 	}
 
-	const loader = new TinyUSDZLoader();
+	const loader = new LightUSDLoader();
 
 	// Initialize the loader (wait for WASM module to load)
 	// Use memory64: false for browser compatibility
@@ -1420,7 +1420,7 @@ async function loadUSDModel() {
 	};
 
 	// Build Three.js node from USD with MaterialX/OpenPBR support
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	const threeNode = await LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
 	// Store USD scene reference for material reloading
 	threeNode.traverse((child) => {
@@ -3142,7 +3142,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	// Clear USD DomeLight data
 	usdDomeLightData = null;
 
-	const loader = new TinyUSDZLoader();
+	const loader = new LightUSDLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 	currentLoader = loader; // Store reference for cleanup
 
@@ -3399,7 +3399,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	};
 
 	// Build Three.js node from USD with MaterialX/OpenPBR support
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	const threeNode = await LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 	if (options.textureLoadingManager) {
 		startTrackedTextureLoading(options.textureLoadingManager, stats, 'textureQueue');
 	}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test suite for TinyUSDZ Python bindings.
+Test suite for LightUSD Python bindings.
 
 Run with: python3 test_python_api.py
 """
@@ -11,78 +11,78 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-# Add parent directory to path to import tinyusdz
+# Add parent directory to path to import lightusd
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    import tinyusdz
+    import lightusd
 except ImportError as e:
-    print(f"Error importing tinyusdz: {e}")
+    print(f"Error importing lightusd: {e}")
     print("Make sure to build the C API library first:")
     print("  cd sandbox/new-c-api && mkdir build && cd build && cmake .. && make")
     sys.exit(1)
 
 
-class TestTinyUSDZPython(unittest.TestCase):
-    """Test cases for TinyUSDZ Python API"""
+class TestLightUSDPython(unittest.TestCase):
+    """Test cases for LightUSD Python API"""
 
     @classmethod
     def setUpClass(cls):
         """Setup test suite"""
-        tinyusdz.init()
+        lightusd.init()
 
     @classmethod
     def tearDownClass(cls):
         """Cleanup test suite"""
-        tinyusdz.shutdown()
+        lightusd.shutdown()
 
     def test_version(self):
         """Test getting version"""
-        version = tinyusdz.get_version()
+        version = lightusd.get_version()
         self.assertIsNotNone(version)
         self.assertIsInstance(version, str)
         self.assertTrue(len(version) > 0)
-        print(f"\nTinyUSDZ Version: {version}")
+        print(f"\nLightUSD Version: {version}")
 
     def test_result_strings(self):
         """Test result code string conversion"""
-        success_str = tinyusdz.Result.to_string(tinyusdz.Result.SUCCESS)
+        success_str = lightusd.Result.to_string(lightusd.Result.SUCCESS)
         self.assertEqual(success_str, "Success")
 
-        error_str = tinyusdz.Result.to_string(tinyusdz.Result.ERROR_FILE_NOT_FOUND)
+        error_str = lightusd.Result.to_string(lightusd.Result.ERROR_FILE_NOT_FOUND)
         self.assertIsNotNone(error_str)
 
     def test_prim_type_strings(self):
         """Test prim type string conversion"""
-        mesh_str = tinyusdz.PrimType.to_string(tinyusdz.PrimType.MESH)
+        mesh_str = lightusd.PrimType.to_string(lightusd.PrimType.MESH)
         self.assertEqual(mesh_str, "Mesh")
 
-        xform_str = tinyusdz.PrimType.to_string(tinyusdz.PrimType.XFORM)
+        xform_str = lightusd.PrimType.to_string(lightusd.PrimType.XFORM)
         self.assertEqual(xform_str, "Xform")
 
     def test_value_type_strings(self):
         """Test value type string conversion"""
-        float_str = tinyusdz.ValueType.to_string(tinyusdz.ValueType.FLOAT)
+        float_str = lightusd.ValueType.to_string(lightusd.ValueType.FLOAT)
         self.assertEqual(float_str, "Float")
 
-        float3_str = tinyusdz.ValueType.to_string(tinyusdz.ValueType.FLOAT3)
+        float3_str = lightusd.ValueType.to_string(lightusd.ValueType.FLOAT3)
         self.assertEqual(float3_str, "Float3")
 
     def test_detect_format(self):
         """Test format detection"""
-        fmt = tinyusdz.detect_format("test.usda")
-        self.assertEqual(fmt, tinyusdz.Format.USDA)
+        fmt = lightusd.detect_format("test.usda")
+        self.assertEqual(fmt, lightusd.Format.USDA)
 
-        fmt = tinyusdz.detect_format("test.usdc")
-        self.assertEqual(fmt, tinyusdz.Format.USDC)
+        fmt = lightusd.detect_format("test.usdc")
+        self.assertEqual(fmt, lightusd.Format.USDC)
 
-        fmt = tinyusdz.detect_format("test.usdz")
-        self.assertEqual(fmt, tinyusdz.Format.USDZ)
+        fmt = lightusd.detect_format("test.usdz")
+        self.assertEqual(fmt, lightusd.Format.USDZ)
 
     def test_invalid_file(self):
         """Test loading nonexistent file"""
         with self.assertRaises(RuntimeError):
-            tinyusdz.load_from_file("nonexistent_file.usd")
+            lightusd.load_from_file("nonexistent_file.usd")
 
     def test_load_from_memory_simple(self):
         """Test loading from memory with simple USDA data"""
@@ -111,10 +111,10 @@ def Xform "World"
 """
 
         try:
-            stage = tinyusdz.load_from_memory(usda_data, tinyusdz.Format.USDA)
+            stage = lightusd.load_from_memory(usda_data, lightusd.Format.USDA)
             self.assertIsNotNone(stage)
         except RuntimeError as e:
-            # This might fail if TinyUSDZ isn't fully built
+            # This might fail if LightUSD isn't fully built
             print(f"Note: load_from_memory test skipped: {e}")
 
     def test_prim_wrapper_properties(self):
@@ -124,7 +124,7 @@ def Xform "World" {}
 """
 
         try:
-            stage = tinyusdz.load_from_memory(usda_data)
+            stage = lightusd.load_from_memory(usda_data)
             root = stage.root_prim
 
             if root:
@@ -147,7 +147,7 @@ def Xform "World" {
 """
 
         try:
-            stage = tinyusdz.load_from_memory(usda_data)
+            stage = lightusd.load_from_memory(usda_data)
             root = stage.root_prim
 
             if root:
@@ -172,7 +172,7 @@ def Xform "World" {
 """
 
         try:
-            stage = tinyusdz.load_from_memory(usda_data)
+            stage = lightusd.load_from_memory(usda_data)
             root = stage.root_prim
 
             if root:
@@ -199,7 +199,7 @@ def Xform "World" {}
 """
 
         try:
-            stage = tinyusdz.load_from_memory(usda_data)
+            stage = lightusd.load_from_memory(usda_data)
 
             # Test has_animation
             has_anim = stage.has_animation
@@ -224,13 +224,13 @@ def Xform "World" {
 """
 
         try:
-            stage = tinyusdz.load_from_memory(usda_data)
+            stage = lightusd.load_from_memory(usda_data)
             root = stage.root_prim
 
             if root:
                 # Check types
-                is_xform = root.is_type(tinyusdz.PrimType.XFORM)
-                is_mesh = root.is_type(tinyusdz.PrimType.MESH)
+                is_xform = root.is_type(lightusd.PrimType.XFORM)
+                is_mesh = root.is_type(lightusd.PrimType.MESH)
 
                 # Root should be Xform, not Mesh
                 # This might need adjustment based on actual type resolution
@@ -245,7 +245,7 @@ def Xform "World" {
 def Xform "World" {}
 """
             try:
-                stage = tinyusdz.load_from_memory(usda_data)
+                stage = lightusd.load_from_memory(usda_data)
                 # Stage should be automatically cleaned up when deleted
                 del stage
             except RuntimeError:
@@ -255,18 +255,18 @@ def Xform "World" {}
         self.assertTrue(True)
 
 
-class TestTinyUSDZIntegration(unittest.TestCase):
+class TestLightUSDIntegration(unittest.TestCase):
     """Integration tests with actual USD files (if available)"""
 
     @classmethod
     def setUpClass(cls):
         """Setup integration tests"""
-        tinyusdz.init()
+        lightusd.init()
 
     @classmethod
     def tearDownClass(cls):
         """Cleanup"""
-        tinyusdz.shutdown()
+        lightusd.shutdown()
 
     def test_load_sample_file(self):
         """Test loading a sample USD file if it exists"""
@@ -274,7 +274,7 @@ class TestTinyUSDZIntegration(unittest.TestCase):
 
         if sample_file.exists():
             try:
-                stage = tinyusdz.load_from_file(str(sample_file))
+                stage = lightusd.load_from_file(str(sample_file))
                 self.assertIsNotNone(stage)
                 self.assertIsNotNone(stage.root_prim)
                 print(f"\nSuccessfully loaded: {sample_file}")
@@ -287,7 +287,7 @@ class TestTinyUSDZIntegration(unittest.TestCase):
 def print_summary():
     """Print test summary"""
     print("\n" + "=" * 60)
-    print("TinyUSDZ Python Binding Tests")
+    print("LightUSD Python Binding Tests")
     print("=" * 60)
 
 

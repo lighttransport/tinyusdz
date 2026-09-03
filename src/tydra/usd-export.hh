@@ -5,7 +5,7 @@
 /// @file usd-export.hh
 /// @brief Export Tydra render data back to USD format
 ///
-/// Provides "round-trip" functionality for exporting TinyUSDZ render scenes
+/// Provides "round-trip" functionality for exporting LightUSD render scenes
 /// back to USD format. This is primarily useful for debugging and validating
 /// that RenderScene data structures are correctly constructed from USD input.
 ///
@@ -15,7 +15,7 @@
 /// - ❌ Subdivision surfaces
 /// - ❌ Skeletal animation and skinning
 /// - ❌ Blend shapes
-/// - ❌ Time-sampled animations  
+/// - ❌ Time-sampled animations
 /// - ❌ Hair/curves
 /// - ❌ USDC binary output
 ///
@@ -25,8 +25,8 @@
 /// Usage:
 /// ```cpp
 /// std::string usda_content;
-/// std::string warn, err;  
-/// bool success = tinyusdz::tydra::export_to_usda(
+/// std::string warn, err;
+/// bool success = lightusd::tydra::export_to_usda(
 ///   render_scene, usda_content, &warn, &err);
 /// ```
 ///
@@ -34,7 +34,7 @@
 
 #include "render-data.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -47,9 +47,9 @@ namespace tydra {
 ///
 /// @return true upon success.
 ///
-bool export_to_usda(const RenderScene &scene, 
+bool export_to_usda(const RenderScene &scene,
                    std::string &usda_str,
                    std::string *warn, std::string *err);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

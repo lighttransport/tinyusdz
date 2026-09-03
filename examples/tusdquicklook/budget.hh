@@ -15,10 +15,10 @@
 
 namespace tusdql {
 
-using MemBudget = tinyusdz::tydra::next::MemBudget;
-using MemPool = tinyusdz::tydra::next::MemPool;
+using MemBudget = lightusd::tydra::next::MemBudget;
+using MemPool = lightusd::tydra::next::MemPool;
 template <class T>
-using PoolAlloc = tinyusdz::tydra::next::PoolAlloc<T>;
+using PoolAlloc = lightusd::tydra::next::PoolAlloc<T>;
 
 // How the cap is divided. These are advisory ceilings for the individual
 // phases; the hard stop is the shared MemBudget cap, which counts every

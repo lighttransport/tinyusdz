@@ -1,5 +1,5 @@
 /**
- * TinyUSDZ MaterialX WebGL2 Demo
+ * LightUSD MaterialX WebGL2 Demo
  *
  * Demonstrates MaterialX node graph support for WebGL2 using Three.js.
  * Features:
@@ -10,20 +10,20 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import {
     MtlxNodeEval,
     MtlxNodeGraphProcessor,
     MtlxMaterialConverter,
     createOpenPBRMaterial,
     DEFAULT_OPENPBR_PARAMS
-} from 'tinyusdz/TinyUSDZOpenPBR_WebGL.js';
+} from 'lightusd/LightUSDOpenPBR_WebGL.js';
 import {
     optimizeNodeGraph,
     analyzeNodeGraph,
     getOptimizationSummary,
     NodeGraphOptimizationLevel
-} from 'tinyusdz/TinyUSDZMaterialX.js';
+} from 'lightusd/LightUSDMaterialX.js';
 
 // ============================================================================
 // Global State
@@ -98,9 +98,9 @@ async function init() {
     const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
     state.scene.add(gridHelper);
 
-    // Initialize TinyUSDZ loader
+    // Initialize LightUSD loader
     updateStatus('Initializing USD loader...');
-    state.loader = new TinyUSDZLoader();
+    state.loader = new LightUSDLoader();
     await state.loader.init({ useMemory64: false });
     state.loader.setMaxMemoryLimitMB(500);
 

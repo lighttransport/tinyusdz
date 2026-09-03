@@ -3,14 +3,14 @@
 
 Data roots (tried in order, first existing wins; override via env):
 
-* $TINYUSDZ_LARGE_SCENE_ROOT / $LARGE_SCENE_ROOT / $TINYUSDZ_TEST_LARGE_ASSETS
+* $LIGHTUSD_LARGE_SCENE_ROOT / $LARGE_SCENE_ROOT / $LIGHTUSD_TEST_LARGE_ASSETS
 * /mnt/disk1/data/{island,caldera,alab,alab/_merged_ALab}
 * /mnt/disk1/data  (legacy single-root layout)
 
 If no root is found the whole module is skipped. Tests that need a
 specific scene file skip individually when that file is missing. Heavy
 scenes are *not* loaded by default in CI unless the env flag is set;
-use TINYUSDZ_RUN_LARGE=1 to force the full set.
+use LIGHTUSD_RUN_LARGE=1 to force the full set.
 """
 import os
 import pathlib
@@ -21,14 +21,14 @@ except ImportError:
     resource = None  # Windows has no resource module
 import pytest
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 
 np = pytest.importorskip("numpy")
 
 
 def _find_large_root():
-    for env in ("TINYUSDZ_LARGE_SCENE_ROOT", "LARGE_SCENE_ROOT", "TINYUSDZ_TEST_LARGE_ASSETS"):
+    for env in ("LIGHTUSD_LARGE_SCENE_ROOT", "LARGE_SCENE_ROOT", "LIGHTUSD_TEST_LARGE_ASSETS"):
         v = os.environ.get(env)
         if v and pathlib.Path(v).is_dir():
             return pathlib.Path(v)
@@ -85,7 +85,7 @@ pytestmark = [
     pytest.mark.large,
     pytest.mark.skipif(
         LARGE_ROOT is None or _first_existing() is None,
-        reason="large-scene data not mounted (set TINYUSDZ_LARGE_SCENE_ROOT or mount /mnt/disk1/data)",
+        reason="large-scene data not mounted (set LIGHTUSD_LARGE_SCENE_ROOT or mount /mnt/disk1/data)",
     ),
 ]
 
@@ -115,7 +115,7 @@ def test_large_scene_lightweight_measure():
     rss0 = _rss_mb()
     # Try load with payload deferral (smaller working set) then without
     # The Python binding exposes load_payloads bool.
-    st_defer = tinyusdz.load(str(src), load_payloads=False)
+    st_defer = lightusd.load(str(src), load_payloads=False)
     t_defer = time.perf_counter() - t0
     rss1 = _rss_mb()
     stats = st_defer.stats
@@ -148,15 +148,15 @@ def test_large_scene_lightweight_measure():
     except Exception as e:
         pytest.skip(f"tydra conversion failed (expected for some large scenes): {e}")
     st_defer.close()
-    # Also test eager load if TINYUSDZ_RUN_LARGE=1 or file under 200 MB
-    if src.stat().st_size < 200 * 1024 * 1024 or os.environ.get("TINYUSDZ_RUN_LARGE") == "1":
+    # Also test eager load if LIGHTUSD_RUN_LARGE=1 or file under 200 MB
+    if src.stat().st_size < 200 * 1024 * 1024 or os.environ.get("LIGHTUSD_RUN_LARGE") == "1":
         t2 = time.perf_counter()
-        st_full = tinyusdz.load(str(src), load_payloads=True)
+        st_full = lightusd.load(str(src), load_payloads=True)
         t_full = time.perf_counter() - t2
         print(f"[large] eager load {t_full:.2f}s (defer was {t_defer:.2f}s)")
         st_full.close()
     else:
-        print("[large] skip eager load (file >200 MB, set TINYUSDZ_RUN_LARGE=1 to force)")
+        print("[large] skip eager load (file >200 MB, set LIGHTUSD_RUN_LARGE=1 to force)")
 
 
 @pytest.mark.parametrize("scene_name", ["island", "caldera", "alab"])
@@ -175,7 +175,7 @@ def test_large_scene_individual_elements(scene_name):
         pytest.skip(f"{scene_name} element not found at {p}")
     # Single-element load should be fast (<5s) and show zero-copy
     t0 = time.perf_counter()
-    st = tinyusdz.load(str(p), load_payloads=False)
+    st = lightusd.load(str(p), load_payloads=False)
     elapsed = time.perf_counter() - t0
     print(f"[large:{scene_name}] {p} -> {elapsed:.2f}s prims={st.stats['prim_count']} rss={_rss_mb():.1f} MiB")
     assert elapsed < 30.0, f"{scene_name} element load too slow: {elapsed}"
@@ -198,7 +198,7 @@ def test_synthetic_stress_zero_copy_and_timing():
     """
     n = 100_000  # ~1.2 MB points; keep CI under 2s
     pts = np.random.rand(n, 3).astype(np.float32)
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     m = st.define_prim("/Stress", "Mesh")
     m.set("points", pts, type="point3f[]")
     m.set("faceVertexCounts", np.full(n // 3, 3, dtype=np.int32))
@@ -207,7 +207,7 @@ def test_synthetic_stress_zero_copy_and_timing():
     blob = st.export_usdc()
     t_exp = time.perf_counter() - t0
     t0 = time.perf_counter()
-    st2 = tinyusdz.load_bytes(blob)
+    st2 = lightusd.load_bytes(blob)
     t_load = time.perf_counter() - t0
     arr = st2.prim_at("/Stress")["points"]
     a = np.asarray(arr)

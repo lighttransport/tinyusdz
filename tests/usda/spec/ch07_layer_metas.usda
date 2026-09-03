@@ -9,11 +9,11 @@
     framesPerSecond = 24
     documentation = "Test AOUSD Core Spec layer metadata fields"
     customLayerData = {
-        string creator = "TinyUSDZ spec conformance test"
+        string creator = "LightUSD spec conformance test"
     }
     colorConfiguration = @ocio://default@
     colorManagementSystem = "ocio"
-    owner = "tinyusdz-test"
+    owner = "lightusd-test"
     hasOwnedSubLayers = false
     expressionVariables = {
         string PROD = "/prod/shot01"

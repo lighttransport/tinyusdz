@@ -18,7 +18,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 /// Convert a value::Value to structured JSON representation.
@@ -67,4 +67,4 @@ std::vector<std::string> GetRoleTypeNames();
 std::vector<std::string> GetPrimTypeNames();
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

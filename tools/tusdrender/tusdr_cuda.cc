@@ -494,15 +494,15 @@ bool RunSharedRT(const char *backend, const Options &opt,
   if (path_trace.enabled) {
     rgba = ToneMapLinear(linear_rgba, w, h, 1.0f);
   }
-  tinyusdz::Image image;
+  lightusd::Image image;
   image.width = w;
   image.height = h;
   image.channels = 4;
   image.bpp = 8;
   image.data = std::move(rgba);
-  tinyusdz::image::WriteOption write_opt;
-  write_opt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto written = tinyusdz::image::WriteImageToFile(opt.output, image, write_opt);
+  lightusd::image::WriteOption write_opt;
+  write_opt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto written = lightusd::image::WriteImageToFile(opt.output, image, write_opt);
   if (!written) {
     std::cerr << "Failed to write " << backend << " RT image: "
               << written.error() << "\n";

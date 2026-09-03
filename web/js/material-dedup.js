@@ -1,9 +1,9 @@
-// TinyUSDZ Material / Mesh Dedup demo.
+// LightUSD Material / Mesh Dedup demo.
 //
 // Demonstrates the Tydra render-scene optimizations exposed through the WASM
 // binding: material/texture deduplication, mesh merging (with transform
 // baking) and render-tree flattening. Each toggle re-runs the native
-// conversion (TinyUSDZLoader.parse with the corresponding options) and rebuilds
+// conversion (LightUSDLoader.parse with the corresponding options) and rebuilds
 // the Three.js scene so the mesh / material / draw-call reduction is visible
 // live.
 //
@@ -32,10 +32,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { dedupMaterialsByContent, batchByMaterial } from 'tinyusdz/MeshBatching.js';
-import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
+import { dedupMaterialsByContent, batchByMaterial } from 'lightusd/MeshBatching.js';
+import { getAssetUriFromURL } from 'lightusd/LoaderConfigUtils.js';
 import { parseUSDZEntries } from './src/usdzconvert.js';
 import {
 	buildNextThreeNode,
@@ -44,7 +44,7 @@ import {
 	nextArchiveUDIMLayout,
 	nextCountsFromScene,
 	readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
+} from 'lightusd/NextRenderSceneUtils.js';
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -52,7 +52,7 @@ import {
 
 let renderer, scene, camera, controls, gui;
 let usdSceneRoot; // group that holds the converted USD scene (scaled/oriented)
-let loader = null; // reused TinyUSDZLoader instance
+let loader = null; // reused LightUSDLoader instance
 let loaderModuleBackend = null; // 'legacy' combined module or 'next' next-only module
 let currentUsd = null; // current native scene (embind object)
 let raycaster, pointerNdc;
@@ -550,7 +550,7 @@ function setupCameraMovementKeys() {
 async function ensureLoader(backend = 'legacy') {
 	const moduleBackend = backend === 'next' ? 'next' : 'legacy';
 	if (loader && loaderModuleBackend === moduleBackend) return loader;
-	loader = new TinyUSDZLoader();
+	loader = new LightUSDLoader();
 	await loader.init({
 		useZstdCompressedWasm: false,
 		useMemory64: false,
@@ -566,8 +566,8 @@ function hasLegacyAsyncSupport() {
 	legacyAsyncSupport = false;
 	try {
 		const native = loader?.native_;
-		if (native && typeof native.TinyUSDZLoaderNative === 'function') {
-			const usd = new native.TinyUSDZLoaderNative();
+		if (native && typeof native.LightUSDLoaderNative === 'function') {
+			const usd = new native.LightUSDLoaderNative();
 			legacyAsyncSupport = typeof usd.loadFromBinaryAsync === 'function';
 			if (typeof usd.delete === 'function') usd.delete();
 		}
@@ -693,7 +693,7 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 			hasLegacyAsyncSupport()) {
 		return loader.parseAsync(bytes, name, {
 			...options,
-			onTinyUSDZDebug: report,
+			onLightUSDDebug: report,
 			onTydraProgress: report,
 			onPhaseStart: (info = {}) => {
 				report({
@@ -709,7 +709,7 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 		loader.parse(bytes, name, resolve, reject, {
 			...options,
 			onProgress: report,
-			onTinyUSDZDebug: report,
+			onLightUSDDebug: report,
 			onTydraProgress: report,
 			progressBase: base,
 			progressRange: range
@@ -989,7 +989,7 @@ function workerConversionInput(bytes, name) {
 			return { bytes: layers[0].data, name: layers[0].name };
 		}
 	} catch (_) {
-		// Let TinyUSDZLoader produce the authoritative malformed-archive error.
+		// Let LightUSDLoader produce the authoritative malformed-archive error.
 	}
 	return { bytes: source, name };
 }
@@ -1094,7 +1094,7 @@ function applySceneTransform() {
 function setSingleSidedBackfaceNormals(material, enabled) {
 	if (!material) return;
 	material.userData ||= {};
-	const patchKey = '__tinyusdzSingleSidedBackfacePatch';
+	const patchKey = '__lightusdSingleSidedBackfacePatch';
 	const state = material.userData[patchKey];
 	if (enabled) {
 		if (state) return;
@@ -1112,7 +1112,7 @@ function setSingleSidedBackfaceNormals(material, enabled) {
 			shader.fragmentShader = '#undef DOUBLE_SIDED\n' + shader.fragmentShader;
 		};
 		material.customProgramCacheKey = function() {
-			return `${originalProgramCacheKey.call(this)}|tinyusdz-single-sided-backface-normal`;
+			return `${originalProgramCacheKey.call(this)}|lightusd-single-sided-backface-normal`;
 		};
 	} else if (state) {
 		material.onBeforeCompile = state.onBeforeCompile;
@@ -1137,7 +1137,7 @@ function applyCullBackfaces() {
 			// forceSinglePass is set. CullStyleNothing is one unculled raster pass,
 			// so avoid doubling transparent draw calls while this view policy is
 			// active. Restore the material's original preference when culling is on.
-			const singlePassKey = '__tinyusdzOriginalForceSinglePass';
+			const singlePassKey = '__lightusdOriginalForceSinglePass';
 			if (!Object.prototype.hasOwnProperty.call(m.userData, singlePassKey)) {
 				m.userData[singlePassKey] = m.forceSinglePass;
 			}
@@ -1146,13 +1146,13 @@ function applyCullBackfaces() {
 			// BatchedMesh does not retain one top-level usdMesh record. Its
 			// material was already keyed by effective sideness, so remember that
 			// initial state before this view policy changes Material.side.
-			if (m.userData.__tinyusdzEffectiveDoubleSided === undefined) {
-				m.userData.__tinyusdzEffectiveDoubleSided =
+			if (m.userData.__lightusdEffectiveDoubleSided === undefined) {
+				m.userData.__lightusdEffectiveDoubleSided =
 					typeof o.userData?.usdMesh?.doubleSided === 'boolean'
 						? o.userData.usdMesh.doubleSided
 						: m.side === THREE.DoubleSide;
 			}
-			const doubleSided = m.userData.__tinyusdzEffectiveDoubleSided === true;
+			const doubleSided = m.userData.__lightusdEffectiveDoubleSided === true;
 			const side = (!params.cullBackfaces || doubleSided)
 				? THREE.DoubleSide : THREE.FrontSide;
 			setSingleSidedBackfaceNormals(
@@ -1391,7 +1391,7 @@ async function mountScene(usd,
 	// scene appears immediately and textures stream in afterwards.
 	const manager = (lazyTextures && !skipTextures) ? new TextureLoadingManager() : null;
 
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+	const threeNode = await LightUSDLoaderUtils.buildThreeNode(
 		usdRootNode, defaultMtl, usd, {
 			overrideMaterial: false,
 			preferredMaterialType: 'auto',
@@ -1439,7 +1439,7 @@ function startLazyTextureLoading() {
 	});
 	updateDebugHandle();
 	mgr.startLoading({
-		concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+		concurrency: LightUSDLoaderUtils.defaultTextureConcurrency(),
 		yieldInterval: 16,
 		onTextureLoaded: (material) => { material.needsUpdate = true; },
 		onProgress: (info) => {

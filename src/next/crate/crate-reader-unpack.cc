@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Reader scalar/value unpackers
+// LightUSD Next - USDC Crate Reader scalar/value unpackers
 
 #include "crate-reader-internal.hh"
 #include "../writer/value-printer.hh"
@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -75,7 +75,7 @@ bool CrateReader::Impl::UnpackInt64(ValueRep rep, Value& out) {
     // negative value has all-ones low 32 bits with ZERO high bits, so
     // sign-extending from bit 47 (payload_as_offset) would decode -1 as
     // +4294967295. Reinterpret the low 32 bits as int32 when the high
-    // payload bits are clear; keep the old-TinyUSDZ 48-bit sign extension
+    // payload bits are clear; keep the old-LightUSD 48-bit sign extension
     // only when they are set.
     const uint64_t payload48 = rep.payload();
     int64_t value = 0;
@@ -730,4 +730,4 @@ bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
 
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

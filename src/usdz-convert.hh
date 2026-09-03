@@ -21,7 +21,7 @@
 #include "core/prim-enums.hh"  // Axis
 #include "image-writer.hh"     // image::PngEncoder
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdz {
 
 ///
@@ -240,4 +240,4 @@ bool RepackTextureFiles(const RepackSpec &spec, const std::string &outputFile,
                         std::string *err);
 
 }  // namespace usdz
-}  // namespace tinyusdz
+}  // namespace lightusd

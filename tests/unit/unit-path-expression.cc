@@ -8,7 +8,7 @@
 #include "unit-path-expression.h"
 #include "core/path-expression.hh"
 #include "core/path-expression-eval.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/render-data.hh"
 #include "tydra/attribute-eval.hh"
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 static bool Matches(const char *expr_text, const char *path,
                     const PathExpressionEvalContext &ctx = {}) {
@@ -295,7 +295,7 @@ void path_expression_collection_membership_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
@@ -382,7 +382,7 @@ void path_expression_light_linking_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
@@ -440,7 +440,7 @@ void path_expression_crate_roundtrip_test(void) {
 
   Stage stage;
   std::string w, e;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &w, &e);
   TEST_CHECK_(ok, "USDA parse failed: %s", e.c_str());
@@ -448,7 +448,7 @@ void path_expression_crate_roundtrip_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w2, e2;
-  bool sret = tinyusdz::usdc::SaveAsUSDCToMemory(stage, &usdc, &w2, &e2);
+  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w2, &e2);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e2.c_str());
   if (!sret) return;
 
@@ -459,7 +459,7 @@ void path_expression_crate_roundtrip_test(void) {
 
   Stage stage2;
   std::string w3, e3;
-  bool lret = tinyusdz::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w3, &e3);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e3.c_str());
   if (!lret) return;
@@ -494,7 +494,7 @@ void path_expression_usda_roundtrip_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
@@ -644,7 +644,7 @@ void path_expression_predicate_library_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       &stage, &warn, &err);
   TEST_CHECK_(ok, "USDA parse failed: %s", err.c_str());
@@ -700,7 +700,7 @@ void path_expression_predicate_library_test(void) {
 // ---------------------------------------------------------------------------
 namespace {
 std::string PEFixture(const std::string &rel) {
-  if (const char *root = std::getenv("TINYUSDZ_TEST_FIXTURE_DIR")) {
+  if (const char *root = std::getenv("LIGHTUSD_TEST_FIXTURE_DIR")) {
     if (*root != '\0') {
       const std::string candidate = std::string(root) + "/" + rel;
       std::ifstream f(candidate, std::ios::binary);
@@ -730,7 +730,7 @@ void path_expression_openusd_crate_read_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDCFromFile(path, &stage, &warn, &err);
+  bool ok = lightusd::LoadUSDCFromFile(path, &stage, &warn, &err);
   TEST_CHECK_(ok, "LoadUSDCFromFile(%s) failed: %s", path.c_str(), err.c_str());
   if (!ok) return;
 

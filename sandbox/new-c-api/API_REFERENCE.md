@@ -1,6 +1,6 @@
-# TinyUSDZ C99 API Reference
+# LightUSD C99 API Reference
 
-Complete reference documentation for the TinyUSDZ C API.
+Complete reference documentation for the LightUSD C API.
 
 ## Table of Contents
 
@@ -19,7 +19,7 @@ Complete reference documentation for the TinyUSDZ C API.
 
 ### tusdz_init()
 
-Initialize the TinyUSDZ library. Must be called before using any other functions.
+Initialize the LightUSD library. Must be called before using any other functions.
 
 ```c
 tusdz_result tusdz_init(void);
@@ -60,7 +60,7 @@ const char* tusdz_get_version(void);
 
 **Example:**
 ```c
-printf("TinyUSDZ version: %s\n", tusdz_get_version());
+printf("LightUSD version: %s\n", tusdz_get_version());
 ```
 
 ## Loading
@@ -633,7 +633,7 @@ tusdz_format tusdz_detect_format(const char* filepath);
 
 ### tusdz_free()
 
-Free memory allocated by TinyUSDZ.
+Free memory allocated by LightUSD.
 
 ```c
 void tusdz_free(void* ptr);

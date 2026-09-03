@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USD Path representation
+// LightUSD Next - USD Path representation
 // Lightweight path class for USD scene hierarchy
 
 #pragma once
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Path - represents a USD scene path
@@ -123,13 +123,13 @@ inline std::ostream& operator<<(std::ostream& os, const Path& path) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 // Hash specialization for use in unordered containers
 namespace std {
 template <>
-struct hash<tinyusdz::next::Path> {
-  size_t operator()(const tinyusdz::next::Path& path) const {
+struct hash<lightusd::next::Path> {
+  size_t operator()(const lightusd::next::Path& path) const {
     return hash<string>()(path.str());
   }
 };

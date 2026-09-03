@@ -5,7 +5,7 @@
 
 #include "tsd-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 namespace {
@@ -318,4 +318,4 @@ void MapCreasesToEdges(const Topology &topo, const CreaseEdges &creases,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

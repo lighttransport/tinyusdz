@@ -48,7 +48,7 @@
 // guard the operands to a finite range before comparing).
 #include "math-util.inc"
 
-// Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
+// Namespace alias to avoid collision between lightusd::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
 // Disable specific clang warnings for this file
@@ -70,7 +70,7 @@ namespace pathlib = ::crate;
 #endif
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 CrateWriter::InternSink::~InternSink() = default;
@@ -312,7 +312,7 @@ namespace {
 
 // Flattened crate-path sort key; plain byte comparison of two keys reproduces
 // pathlib::CompareParsedPaths ordering (see the sort in Finalize).
-std::string BuildCratePathSortKey(const tinyusdz::Path& path) {
+std::string BuildCratePathSortKey(const lightusd::Path& path) {
   const std::string& prim = path.prim_part();
   const std::string& prop = path.prop_part();
   std::string key;
@@ -359,7 +359,7 @@ inline void SortOrderByKeys(std::vector<uint32_t>& order,
     return c != 0 ? c < 0 : a < b;
   };
   const size_t n = order.size();
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Round P down to a power of two so the pairwise tree merge consumes runs
   // cleanly; need enough work per chunk to pay for the threads.
   size_t P = 1;
@@ -421,10 +421,10 @@ inline void SortOrderByKeys(std::vector<uint32_t>& order,
 
 }  // namespace
 
-// Scoped ns accumulator for the TINYUSDZ_CRATE_PROFILE Finalize report.
+// Scoped ns accumulator for the LIGHTUSD_CRATE_PROFILE Finalize report.
 // Zero-cost (one branch) when disabled.
 namespace {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 // Writer worker-thread budget (same cap as the two-pass field packing).
 size_t WriterParallelThreads() {
   const unsigned hw = std::thread::hardware_concurrency();
@@ -455,7 +455,7 @@ void ParallelForRanges(size_t n, size_t nthreads, Fn&& fn) {
     th.join();
   }
 }
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 struct ProfScope {
   bool on;
@@ -486,11 +486,11 @@ bool CrateWriter::Finalize(std::string* err) {
     return false;
   }
 
-  // Finalize phase profiling (TINYUSDZ_CRATE_PROFILE=1): stderr report of the
+  // Finalize phase profiling (LIGHTUSD_CRATE_PROFILE=1): stderr report of the
   // sort / path-rebuild / field-pack split, with PackValue further split into
   // inline/dedup/write/other. Timer overhead inflates the profiled run; use
   // the shares, not the absolute wall.
-  profile_finalize_ = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+  profile_finalize_ = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
   const auto prof_now = []() { return std::chrono::steady_clock::now(); };
   const auto prof_ns = [](std::chrono::steady_clock::time_point a,
                           std::chrono::steady_clock::time_point b) -> uint64_t {
@@ -535,7 +535,7 @@ bool CrateWriter::Finalize(std::string* err) {
     // serial path is byte-identical (same total order); both fall back to
     // serial when nthreads==1 or n is small.
     size_t nthreads = 1;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     {
       const unsigned hw = std::thread::hardware_concurrency();
       nthreads = (std::max<size_t>)(1, (std::min<size_t>)(hw ? hw : 1, 16));
@@ -544,7 +544,7 @@ bool CrateWriter::Finalize(std::string* err) {
     std::vector<std::string> keys(n);
     // Parallel Schwartzian key build (BuildCratePathSortKey is pure; keys[i]
     // slots are written disjointly).
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (nthreads > 1 && n >= 8192) {
       const size_t chunk = (n + nthreads - 1) / nthreads;
       std::vector<std::thread> ths;
@@ -617,7 +617,7 @@ bool CrateWriter::Finalize(std::string* err) {
     // precompute it in parallel and keep only the order-dependent slot
     // insertion serial.
     std::vector<uint32_t> spec_path_hashes(spec_data_.size());
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     ParallelForRanges(spec_data_.size(), WriterParallelThreads(),
                       [&](size_t b, size_t e) {
                         for (size_t i = b; i < e; i++) {
@@ -730,13 +730,13 @@ bool CrateWriter::Finalize(std::string* err) {
     return true;
   };
 
-  // Deferred-interning two-pass (round 14), gated on TINYUSDZ_ENABLE_THREAD:
+  // Deferred-interning two-pass (round 14), gated on LIGHTUSD_ENABLE_THREAD:
   // pass A precomputes pure per-field work in parallel (see BuildPackPlan),
   // pass B replays shared-state effects in exact serial order. Windowed so
   // the prebuilt out-of-line buffers never hold more than a slice of the
   // VALUE section at once.
   bool two_pass_pack = false;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   size_t pack_nthreads = 1;
   {
     const unsigned hw = std::thread::hardware_concurrency();
@@ -753,7 +753,7 @@ bool CrateWriter::Finalize(std::string* err) {
       }
     }
   }
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   else {
     const size_t kWindowSpecs = 65536;
     const size_t total = spec_data_.size();
@@ -916,7 +916,7 @@ bool CrateWriter::Finalize(std::string* err) {
   if (!WriteSpecsSection(err)) return false;
   prof_section("SPECS");
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     // All sections that consume spec data are written — release the heavy
     // per-spec payload (fields hold the CrateValues, i.e. the attribute
@@ -1342,7 +1342,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
           !p.variant_selection_raw().empty()) {
         all_simple = false;
       } else {
-        const tinyusdz::tstring_view prim = p.prim_part();
+        const lightusd::tstring_view prim = p.prim_part();
         const char* pd = prim.c_str();
         for (size_t ci = 0; ci < prim.size(); ci++) {
           const char c = pd[ci];
@@ -1360,7 +1360,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
           }
         }
         if (all_simple) {
-          const tinyusdz::tstring_view prop = p.prop_part();
+          const lightusd::tstring_view prop = p.prop_part();
           const char* qd = prop.c_str();
           for (size_t ci = 0; ci < prop.size(); ci++) {
             if (static_cast<unsigned char>(qd[ci]) <= '/') {
@@ -1382,7 +1382,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Full path names in ids order (both modes need them). Pure per-slot
   // string builds — parallel.
   std::vector<std::string> fulls(num_encoded_paths);
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   ParallelForRanges(num_encoded_paths, WriterParallelThreads(),
                     [&](size_t b, size_t e) {
                       for (size_t k = b; k < e; k++) {
@@ -1403,7 +1403,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     // can break it) — verify in O(N) and skip the N-log-N string sort in
     // the common case.
     bool presorted = true;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (num_encoded_paths > 1) {
       std::atomic<bool> sorted_flag{true};
       ParallelForRanges(num_encoded_paths - 1, WriterParallelThreads(),
@@ -1493,7 +1493,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // (the historical behavior — interning order must be the DFS build order).
   std::vector<int32_t> node_elem_tokens(num_encoded_paths);
   bool elem_tokens_ok = true;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     std::atomic<bool> all_found{true};
     ParallelForRanges(
@@ -1758,7 +1758,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
                     : Usd_IntegerCompression::CompressToBuffer(
                           c.i32, num_encoded_paths, c.comp.data(), &c.cerr);
     };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     {
       std::thread t1([&]() { compress_one(comps[1]); });
       std::thread t2([&]() { compress_one(comps[2]); });
@@ -1879,7 +1879,7 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     c.csz = Usd_IntegerCompression::CompressToBuffer(
         c.data->data(), c.data->size(), c.comp.data(), &c.cerr);
   };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     std::thread t1([&]() { compress_one(comps[1]); });
     std::thread t2([&]() { compress_one(comps[2]); });
@@ -3064,7 +3064,7 @@ std::string CrateWriter::GetValidationSummary() const {
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

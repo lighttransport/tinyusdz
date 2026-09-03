@@ -6,8 +6,8 @@
 #include <cassert>
 #include <vector>
 
-using namespace tinyusdz;
-using namespace tinyusdz::value;
+using namespace lightusd;
+using namespace lightusd::value;
 
 void test_timesamples_binary_view() {
     std::cout << "Testing TimeSamples TypedArrayView for binary float arrays...\n";

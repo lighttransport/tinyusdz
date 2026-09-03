@@ -12,13 +12,13 @@
 #include "value-pprint.hh"
 #include "pprinter.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void value_type_pprint_test(void) {
 
   {
     std::stringstream ss;
-    tinyusdz::Interpolation interp = tinyusdz::Interpolation::Vertex;
+    lightusd::Interpolation interp = lightusd::Interpolation::Vertex;
     ss << interp;
     TEST_CHECK(ss.str() == "vertex");
   }

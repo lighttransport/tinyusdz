@@ -33,7 +33,7 @@
 #include "pprint-meta.hh"
 #include "core/prim-spec.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "tiny-format.hh"
@@ -55,7 +55,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 #define kTag "[Crate]"
@@ -1026,4 +1026,4 @@ template bool CrateReader::ReadIntArrayTyped<int64_t>(bool, TypedArray<int64_t>*
 template bool CrateReader::ReadIntArrayTyped<uint64_t>(bool, TypedArray<uint64_t>*);
 
 } // namespace crate
-} // namespace tinyusdz
+} // namespace lightusd

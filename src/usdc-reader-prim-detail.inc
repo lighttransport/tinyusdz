@@ -20,7 +20,7 @@
       const Specifier &, PropertyMap &, const ReferenceList &, \
       __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 // Placeholder schema prim types (UsdVol / UsdRender / UsdProc): defined in
@@ -67,9 +67,9 @@ EXTERN_RECONSTRUCT_PRIM(SpatialAudio);
 #undef EXTERN_RECONSTRUCT_PRIM
 
 } // namespace prim
-} // namespace tinyusdz
+} // namespace lightusd
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 template <typename T>
@@ -219,7 +219,7 @@ USDC_EXTERN_RECONSTRUCT_PRIM(SpatialAudio);
 #undef USDC_EXTERN_RECONSTRUCT_PRIM
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 // Explicit template instantiations for ReconstructPrim<T> + ReconstructTypedPrim<T>
 #define INSTANTIATE_RECONSTRUCT_PRIM(__ty) \

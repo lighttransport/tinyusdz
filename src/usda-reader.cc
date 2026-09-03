@@ -40,7 +40,7 @@
 #include "enum-handlers.hh"
 
 //
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 //
 
@@ -76,7 +76,7 @@
 #include "primvar.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
@@ -85,7 +85,7 @@
 #include "common-macros.inc"
 #include "usda-reader-impl.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 
 namespace usda {
@@ -1002,7 +1002,7 @@ bool USDAReader::Impl::reportReconstructPrimError(
 ///
 
 bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
-  TINYUSDZ_PROFILE_FUNCTION("usda-reader");
+  LIGHTUSD_PROFILE_FUNCTION("usda-reader");
 
   ///
   /// Convert parser option.
@@ -1151,8 +1151,8 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
     return false;
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  lightusd::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  lightusd::ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
 }
@@ -1204,11 +1204,11 @@ void USDAReader::SetProgressCallback(std::function<bool(float progress, void *us
 }
 
 }  // namespace usda
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #else
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usda {
 
 USDAReader::USDAReader(StreamReader *sr) {
@@ -1261,6 +1261,6 @@ void USDAReader::SetProgressCallback(std::function<bool(float progress, void *us
 }
 
 }  // namespace usda
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #endif

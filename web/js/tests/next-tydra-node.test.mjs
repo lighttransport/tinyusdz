@@ -1,6 +1,6 @@
 // Node.js parity test for 1.0.0 next+tydra-next WASM (preview).
 //   node tests/next-tydra-node.test.mjs
-//   TINYUSDZ_WASM64=1 node tests/next-tydra-node.test.mjs
+//   LIGHTUSD_WASM64=1 node tests/next-tydra-node.test.mjs
 //
 // Checks:
 // - HEAPU8 exported runtime (zero-copy)
@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
-const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js' : '../src/tinyusdz/tinyusdz_next.js';
+const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
+const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
 const gluePath = path.resolve(__dirname, glue);
 if (!fs.existsSync(gluePath)) {
   console.log(`skip - ${glue} not built (run web build)`);

@@ -7,7 +7,7 @@
 
 #include "security-policy.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 namespace mcp {
@@ -35,9 +35,9 @@ class MCPServer
  private:
   class Impl;
   Impl *impl_ = nullptr; // Pointer to implementation details
- 
+
 };
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

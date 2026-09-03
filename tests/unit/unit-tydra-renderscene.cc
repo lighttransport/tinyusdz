@@ -11,7 +11,7 @@
 #include <cmath>
 
 #include "math-util.inc"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/color-management.hh"
 #include "tydra/render-data.hh"
 #include "tydra/render-data-converter.hh"
@@ -21,7 +21,7 @@
 #include "usdLux.hh"
 #include "stage.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

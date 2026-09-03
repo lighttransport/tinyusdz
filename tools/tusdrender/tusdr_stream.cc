@@ -464,7 +464,7 @@ class StreamRenderServer {
       h = std::max(1, int(h * s));
     }
     rc_->opt.width = w;
-    tinyusdz::Image img = RenderImage(
+    lightusd::Image img = RenderImage(
         rc_->scene, &rc_->direct, rc_->tris, rc_->flat_mats, rc_->lights,
         rc_->ibl.valid ? &rc_->ibl : nullptr, rc_->camera, rc_->opt, h,
         rc_->textures.empty() ? nullptr : &rc_->textures,
@@ -476,16 +476,16 @@ class StreamRenderServer {
         rc_->tri_normals.empty() ? nullptr : &rc_->tri_normals,
         rc_->volumes.empty() ? nullptr : &rc_->volumes);
 
-    tinyusdz::image::WriteOption wopt;
+    lightusd::image::WriteOption wopt;
     if (motion) {
-      wopt.format = tinyusdz::image::WriteImageFormat::JPEG;
+      wopt.format = lightusd::image::WriteImageFormat::JPEG;
       wopt.jpeg_quality = motion_q_;
     } else if (idle_codec_ == "qoi") {
-      wopt.format = tinyusdz::image::WriteImageFormat::QOI;
+      wopt.format = lightusd::image::WriteImageFormat::QOI;
     } else {
-      wopt.format = tinyusdz::image::WriteImageFormat::PNG;
+      wopt.format = lightusd::image::WriteImageFormat::PNG;
     }
-    auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+    auto enc = lightusd::image::WriteImageToMemory(img, wopt);
     if (!enc) {
       std::cerr << "stream: encode failed: " << enc.error() << "\n";
       return;

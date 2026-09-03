@@ -5,7 +5,7 @@
 /// @file json-export.hh
 /// @brief Export Tydra render data to JSON format
 ///
-/// Provides JSON export functionality for TinyUSDZ render scenes, with a
+/// Provides JSON export functionality for LightUSD render scenes, with a
 /// schema designed for web applications and Three.js compatibility. Supports
 /// both embedded and binary asset formats similar to glTF.
 ///
@@ -25,12 +25,12 @@
 
 #include "render-data.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
 /// Export RenderScene to JSON.
-/// JSON schema is TinyUSDZ specific, but Three.js' JSON Object scene format in mind.
+/// JSON schema is LightUSD specific, but Three.js' JSON Object scene format in mind.
 ///
 /// https://github.com/mrdoob/three.js/wiki/JSON-Object-Scene-format-4
 ///
@@ -53,4 +53,4 @@ bool export_to_json(const RenderScene &scene, bool asset_as_binary,
                    std::string *warn, std::string *err);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

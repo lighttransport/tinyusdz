@@ -20,7 +20,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -56,7 +56,7 @@ bool DiffText(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 bool DiffJson(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
               std::string &err);
 
-// --- Shared query helpers (also used by the tinyusdz.diff.* JS bindings) ---
+// --- Shared query helpers (also used by the lightusd.diff.* JS bindings) ---
 // These operate on an already-computed DiffSession and never fail.
 
 void DiffComputeSummary(const DiffSession &d, nlohmann::json &out);
@@ -69,4 +69,4 @@ void DiffComputeTree(const DiffSession &d, const std::string &root, int depth,
 
 }  // namespace mcp
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

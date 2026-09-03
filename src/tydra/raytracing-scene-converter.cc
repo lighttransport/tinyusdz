@@ -10,13 +10,13 @@
 
 #include "core/prim.hh"
 #include "scene-access.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 void RaytracingSceneConverter::SetProgressCallback(
@@ -374,4 +374,4 @@ bool RaytracingSceneConverter::ComputeTangents(RTGeometry* geom) {
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

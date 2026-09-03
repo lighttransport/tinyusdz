@@ -6,7 +6,7 @@
 #include <cmath>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace color_management {
 namespace {
@@ -120,7 +120,7 @@ bool ReadDefinition(const UsdPrim &prim, const DefinitionInstance &instance,
       !GetFloat2(prim, DefProp(instance, "whitePoint"), w_default, w) ||
       !GetFloat(prim, DefProp(instance, "gamma"), 1.0f, &gamma) ||
       !GetFloat(prim, DefProp(instance, "linearBias"), 0.0f, &bias) ||
-      !::tinyusdz::color::MakeColorSpaceFromChromaticities(
+      !::lightusd::color::MakeColorSpaceFromChromaticities(
           requested, r, g, b, w, gamma, bias, out)) {
     Append(error, "Invalid ColorSpaceDefinitionAPI for `" + requested +
                       "` at " + prim.GetPath().str());
@@ -138,7 +138,7 @@ bool ComputeColorSpaceName(const UsdPrim &prim, const std::string &property,
   if (!property.empty()) {
     if (const PropMeta *meta = prim.GetPropertyMeta(property)) {
       if ((meta->authored & PropMeta::kColorSpace) && !meta->colorSpace.empty()) {
-        *name = ::tinyusdz::color::CanonicalizeToken(meta->colorSpace);
+        *name = ::lightusd::color::CanonicalizeToken(meta->colorSpace);
         if (authored) *authored = true;
         return true;
       }
@@ -148,7 +148,7 @@ bool ComputeColorSpaceName(const UsdPrim &prim, const std::string &property,
     if (!HasApplied(current, "ColorSpaceAPI")) continue;
     std::string token;
     if (GetStringLike(current, "colorSpace:name", &token) && !token.empty()) {
-      *name = ::tinyusdz::color::CanonicalizeToken(token);
+      *name = ::lightusd::color::CanonicalizeToken(token);
       if (authored) *authored = true;
       return true;
     }
@@ -162,8 +162,8 @@ bool ResolveColorSpaceDefinition(const UsdPrim &context,
                                  ColorSpaceDesc *definition,
                                  std::string *error) {
   if (!definition) return false;
-  const std::string canonical = ::tinyusdz::color::CanonicalizeToken(name);
-  if (::tinyusdz::color::GetBuiltinColorSpace(canonical, definition)) return true;
+  const std::string canonical = ::lightusd::color::CanonicalizeToken(name);
+  if (::lightusd::color::GetBuiltinColorSpace(canonical, definition)) return true;
   for (UsdPrim current = context; current.IsValid(); current = current.GetParent()) {
     int matches = 0;
     ColorSpaceDesc candidate;
@@ -197,7 +197,7 @@ bool BuildColorTransform(const UsdPrim &context,
       !ResolveColorSpaceDefinition(context, destination, &dst, error)) {
     return false;
   }
-  if (!::tinyusdz::color::BuildColorTransform(src, dst, transform)) {
+  if (!::lightusd::color::BuildColorTransform(src, dst, transform)) {
     Append(error, "Cannot build color transform from `" + source + "` to `" +
                       destination + "`");
     return false;
@@ -217,7 +217,7 @@ bool ResolveRenderingColorConfig(const Stage &stage,
     path = stage.GetMeta().renderSettingsPrimPath;
   }
   if (path.empty()) {
-    ::tinyusdz::color::GetBuiltinColorSpace(config->working_space,
+    ::lightusd::color::GetBuiltinColorSpace(config->working_space,
                                             &config->working_definition);
     return true;
   }
@@ -226,7 +226,7 @@ bool ResolveRenderingColorConfig(const Stage &stage,
   if (!settings.IsValid() || settings.GetTypeName() != "RenderSettings") {
     Append(warning, "Invalid RenderSettings path `" + path +
                         "`; using lin_rec709_scene");
-    ::tinyusdz::color::GetBuiltinColorSpace(config->working_space,
+    ::lightusd::color::GetBuiltinColorSpace(config->working_space,
                                             &config->working_definition);
     return true;
   }
@@ -234,15 +234,15 @@ bool ResolveRenderingColorConfig(const Stage &stage,
   if (!GetStringLike(settings, "renderingColorSpace", &token) || token.empty()) {
     token = "lin_rec709_scene";
   }
-  token = ::tinyusdz::color::CanonicalizeToken(token);
+  token = ::lightusd::color::CanonicalizeToken(token);
   ColorSpaceDesc definition;
   std::string resolve_error;
   if (!ResolveColorSpaceDefinition(settings, token, &definition, &resolve_error) ||
-      !::tinyusdz::color::IsLinear(definition)) {
+      !::lightusd::color::IsLinear(definition)) {
     Append(warning, "RenderSettings `" + path + "` has unsupported nonlinear "
                     "or unknown working space `" + token +
                     "`; using lin_rec709_scene");
-    ::tinyusdz::color::GetBuiltinColorSpace(config->working_space,
+    ::lightusd::color::GetBuiltinColorSpace(config->working_space,
                                             &config->working_definition);
     return true;
   }
@@ -255,4 +255,4 @@ bool ResolveRenderingColorConfig(const Stage &stage,
 
 }  // namespace color_management
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

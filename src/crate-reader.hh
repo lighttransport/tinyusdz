@@ -20,7 +20,7 @@
 #include "stream-reader.hh"
 #include "typed-array-core.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 ///
@@ -33,7 +33,7 @@ using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 // Use the iterative PathIndex tree decoder. It avoids recursion depth risk on
 // attacker-controlled crate path tables.
-#define TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
+#define LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
 
 ///
 /// Configuration for secure USDC (Crate binary) parsing.
@@ -79,27 +79,27 @@ struct CrateReaderConfig {
 
 // Enable SoA (Struct of Arrays) layout for TypedTimeSamples
 // Default is AoS (Array of Structs) layout
-// #define TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+// #define LIGHTUSD_CRATE_TIMESAMPLES_USE_SOA
 
 
 ///
 /// Secure USDC (Crate binary format) reader.
-/// 
+///
 /// This reader provides memory-safe parsing of USD binary files with extensive
 /// security checks and configurable limits to prevent malicious file attacks.
 /// The Crate format is Pixar's binary serialization of USD data.
 ///
 /// Key security features:
 /// - Memory budget enforcement
-/// - Bounds checking on all reads  
+/// - Bounds checking on all reads
 /// - Configurable limits on data structures
 /// - Protection against infinite loops and recursion
 ///
 /// Usage:
 /// ```cpp
-/// tinyusdz::StreamReader reader(filename);
-/// tinyusdz::crate::CrateReader cratereader(&reader);
-/// tinyusdz::Layer layer;
+/// lightusd::StreamReader reader(filename);
+/// lightusd::crate::CrateReader cratereader(&reader);
+/// lightusd::Layer layer;
 /// if (cratereader.Read(&layer)) {
 ///   // Success - use the layer
 /// } else {
@@ -402,7 +402,7 @@ class CrateReader {
   /// Report progress during parsing
   bool ReportProgress(float progress);
 
-#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
+#if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   // To save stack usage
   struct BuildDecompressedPathsArg {
     std::vector<uint32_t> *pathIndexes{};
@@ -511,7 +511,7 @@ class CrateReader {
   // integral array
   template <typename T>
   bool ReadIntArray(bool is_compressed, std::vector<T> *d);
-  
+
   // TypedArray versions for mmap support
   template <typename T>
   bool ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d);
@@ -519,7 +519,7 @@ class CrateReader {
   bool ReadHalfArray(bool is_compressed, std::vector<value::half> *d);
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
-  
+
   // TypedArray versions for mmap support
   bool ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d);
   bool ReadFloat2ArrayTyped(TypedArray<value::float2> *d);
@@ -717,4 +717,4 @@ extern template bool CrateReader::ReadListOp<std::string>(ListOp<std::string>*);
 extern template bool CrateReader::ReadListOp<Token>(ListOp<Token>*);
 
 }  // namespace crate
-}  // namespace tinyusdz
+}  // namespace lightusd

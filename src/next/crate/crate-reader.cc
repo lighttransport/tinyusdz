@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Reader Implementation
+// LightUSD Next - USDC Crate Reader Implementation
 
 #include "crate-reader-internal.hh"
 #include "../layer/array-edit.hh"
@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -457,4 +457,4 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

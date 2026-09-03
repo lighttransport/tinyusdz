@@ -80,11 +80,11 @@ Observed wasm32 low-heap flattened result before direct-to-JS USDC export:
 Observed wasm64 flattened result:
 
 ```console
-cmake --build web/build_64_ninja --target tinyusdz_64.js
+cmake --build web/build_64_ninja --target lightusd_64.js
 ```
 
 Then force the shared converter through the flattened path by importing
-`web/js/src/tinyusdz/tinyusdz_64.js` and passing:
+`web/js/src/lightusd/lightusd_64.js` and passing:
 
 ```js
 {
@@ -148,7 +148,7 @@ For CLI users (see the 2026-06-09 section for the lowest-memory flattened path):
   path. This creates a new flattened USDZ while copying unchanged non-root
   entries from the original archive.
 - Use the wasm64 build for large flattened exports. The build target is
-  `tinyusdz_64.js`; the web build uses `-sMEMORY64 -sMAXIMUM_MEMORY=8GB`.
+  `lightusd_64.js`; the web build uses `-sMEMORY64 -sMAXIMUM_MEMORY=8GB`.
 - Keep `--max-usdc-mb` and `--max-mem-mb` explicit for large test scenes so the
   writer caps are not the first failure mode.
 
@@ -198,7 +198,7 @@ node web/js/cli/usdzconvert.js \
 
 ### Phase-0 attribution: the write stage is the entire peak
 
-Built with `-DTINYUSDZ_FLATTEN_MEMLOG` (compile-gated; an env gate can't be used
+Built with `-DLIGHTUSD_FLATTEN_MEMLOG` (compile-gated; an env gate can't be used
 because emscripten `getenv()` does not see `process.env`), the flatten logs the
 wasm linear-heap high-water — which is monotonic, so per-stage deltas attribute
 the peak. Measured (32-bit wasm, `--pipeline next`, buffered writer):
@@ -279,7 +279,7 @@ roughly halves on the large scenes:
 
 `--stream-write` is the **default** for the `next` pipeline when writing to a
 file (it transparently falls back to buffering without a seekable sink). Disable
-with `--no-stream-write` or `TINYUSDZ_STREAM_WRITE=0`. Output is byte-identical
+with `--no-stream-write` or `LIGHTUSD_STREAM_WRITE=0`. Output is byte-identical
 either way; streaming only lowers memory.
 
 Relevant commits: zero-copy cap (`4abf2ed87`), arc-free skip + attribution aid

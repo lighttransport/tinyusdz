@@ -1,6 +1,6 @@
 # UsdLux Lighting Support (C++ Core / Tydra)
 
-TinyUSDZ supports the full USD lighting schema (UsdLux) including parsing, reconstruction, pretty-printing, and conversion to a rendering-friendly representation via Tydra.
+LightUSD supports the full USD lighting schema (UsdLux) including parsing, reconstruction, pretty-printing, and conversion to a rendering-friendly representation via Tydra.
 
 ## Source Files
 
@@ -239,7 +239,7 @@ Property tables are organized as:
 
 ## LTE Spectral Emission (Extension)
 
-TinyUSDZ includes an experimental SpectralAPI for wavelength-dependent light emission. The `SpectralEmission` struct now lives in `src/tydra/render-data-shader.hh` (shared by the shader/light pipeline) and is carried through to `RenderLight::spd_emission` (`src/tydra/render-data.hh`):
+LightUSD includes an experimental SpectralAPI for wavelength-dependent light emission. The `SpectralEmission` struct now lives in `src/tydra/render-data-shader.hh` (shared by the shader/light pipeline) and is carried through to `RenderLight::spd_emission` (`src/tydra/render-data.hh`):
 
 ```cpp
 struct SpectralEmission {

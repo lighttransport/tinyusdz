@@ -9,7 +9,7 @@
 #include "tiny-format.hh"
 #include "../safe-arithmetic.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace utils {
 
@@ -32,7 +32,7 @@ nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
 
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     size_t cnt = faceVertexCounts[i];
-    
+
     // Repeat cnt times
     for (size_t j = 0; j < cnt; j++) {
       dst.push_back(inputs[i]);
@@ -47,7 +47,7 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
     const std::vector<T> &inputs,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices) {
-  
+
   if (inputs.size() != faceVertexCounts.size()) {
     return nonstd::make_unexpected(
         "inputs.size must be equal to faceVertexCounts.size");
@@ -58,29 +58,29 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     maxVertexIndex = (std::max)(maxVertexIndex, faceVertexIndices[i]);
   }
-  
+
   size_t numVertices = size_t(maxVertexIndex) + 1;
   std::vector<T> dst(numVertices);
-  
+
   // Second pass: assign uniform values to vertices
   size_t faceVertexIndexOffset = 0;
   for (size_t faceId = 0; faceId < faceVertexCounts.size(); faceId++) {
     uint32_t faceVertexCount = faceVertexCounts[faceId];
-    
+
     for (uint32_t v = 0; v < faceVertexCount; v++) {
       size_t faceVertexIndexId = faceVertexIndexOffset + v;
       if (faceVertexIndexId >= faceVertexIndices.size()) {
         return nonstd::make_unexpected("Invalid face vertex index access");
       }
-      
+
       uint32_t vertexIndex = faceVertexIndices[faceVertexIndexId];
       if (vertexIndex >= numVertices) {
         return nonstd::make_unexpected("Vertex index out of bounds");
       }
-      
+
       dst[vertexIndex] = inputs[faceId];
     }
-    
+
     faceVertexIndexOffset += faceVertexCount;
   }
 
@@ -91,19 +91,19 @@ template <typename T>
 nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
     const std::vector<T> &inputs,
     const std::vector<uint32_t> &faceVertexIndices) {
-  
+
   std::vector<T> dst;
   dst.reserve(faceVertexIndices.size());
 
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vertexIndex = faceVertexIndices[i];
-    
+
     if (vertexIndex >= inputs.size()) {
       return nonstd::make_unexpected(
           fmt::format("Vertex index {} is out of bounds (input size: {})",
                       vertexIndex, inputs.size()));
     }
-    
+
     dst.push_back(inputs[vertexIndex]);
   }
 
@@ -112,23 +112,23 @@ nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
 
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
-    const std::vector<T> &src, 
+    const std::vector<T> &src,
     const std::vector<uint32_t> &faceVertexCounts) {
-  
+
   if (src.empty()) {
     return nonstd::make_unexpected("Source data is empty");
   }
-  
+
   std::vector<T> dst;
-  
+
   // Calculate total face vertices
   size_t totalFaceVertices = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     totalFaceVertices += faceVertexCounts[i];
   }
-  
+
   dst.reserve(totalFaceVertices);
-  
+
   // Replicate constant value for each face vertex
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     uint32_t count = faceVertexCounts[i];
@@ -136,25 +136,25 @@ nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
       dst.push_back(src[0]); // Use first element as constant
     }
   }
-  
+
   return std::move(dst);
 }
 
 nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
-    const std::vector<uint8_t> &src, 
-    uint32_t elementSize, 
+    const std::vector<uint8_t> &src,
+    uint32_t elementSize,
     size_t numVertices) {
-  
+
   if (src.empty()) {
     return nonstd::make_unexpected("Source data is empty");
   }
-  
+
   if (src.size() < elementSize) {
     return nonstd::make_unexpected(
-        fmt::format("Source size {} is less than element size {}", 
+        fmt::format("Source size {} is less than element size {}",
                     src.size(), elementSize));
   }
-  
+
   size_t dstBytes;
   if (!safe::mul(numVertices, size_t(elementSize), &dstBytes)) {
     return nonstd::make_unexpected(
@@ -172,20 +172,20 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
 }
 
 nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
-    const std::vector<uint8_t> &src, 
+    const std::vector<uint8_t> &src,
     uint32_t elementSize,
     const std::vector<uint32_t> &faceVertexCounts) {
-  
+
   if (src.empty()) {
     return nonstd::make_unexpected("Source data is empty");
   }
-  
+
   if (src.size() < elementSize) {
     return nonstd::make_unexpected(
-        fmt::format("Source size {} is less than element size {}", 
+        fmt::format("Source size {} is less than element size {}",
                     src.size(), elementSize));
   }
-  
+
   // Calculate total face vertices
   size_t totalFaceVertices = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
@@ -200,11 +200,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
   }
 
   std::vector<uint8_t> dst(dstBytes);
-  
+
   for (size_t i = 0; i < totalFaceVertices; i++) {
     std::memcpy(dst.data() + i * elementSize, src.data(), elementSize);
   }
-  
+
   return std::move(dst);
 }
 
@@ -213,37 +213,37 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
 //
 template nonstd::expected<std::vector<float>, std::string> UniformToFaceVarying(
     const std::vector<float>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float2>, std::string> UniformToFaceVarying(
     const std::vector<value::float2>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float3>, std::string> UniformToFaceVarying(
     const std::vector<value::float3>&, const std::vector<uint32_t>&);
 
 template nonstd::expected<std::vector<float>, std::string> UniformToVertex(
     const std::vector<float>&, const std::vector<uint32_t>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float2>, std::string> UniformToVertex(
     const std::vector<value::float2>&, const std::vector<uint32_t>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float3>, std::string> UniformToVertex(
     const std::vector<value::float3>&, const std::vector<uint32_t>&, const std::vector<uint32_t>&);
 
 template nonstd::expected<std::vector<float>, std::string> VertexToFaceVarying(
     const std::vector<float>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float2>, std::string> VertexToFaceVarying(
     const std::vector<value::float2>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float3>, std::string> VertexToFaceVarying(
     const std::vector<value::float3>&, const std::vector<uint32_t>&);
 
 template nonstd::expected<std::vector<float>, std::string> ConstantToFaceVarying(
     const std::vector<float>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float2>, std::string> ConstantToFaceVarying(
     const std::vector<value::float2>&, const std::vector<uint32_t>&);
-    
+
 template nonstd::expected<std::vector<value::float3>, std::string> ConstantToFaceVarying(
     const std::vector<value::float3>&, const std::vector<uint32_t>&);
 
@@ -256,7 +256,7 @@ std::string ChannelToString(int channel_value) {
   switch (channel_value) {
     case 0: return "rgb";   // RGB
     case 1: return "r";     // R
-    case 2: return "g";     // G  
+    case 2: return "g";     // G
     case 3: return "b";     // B
     case 4: return "a";     // A
     default: return "[[InternalError. Invalid Channel]]";
@@ -328,4 +328,4 @@ std::string SanitizeAssetPath(const std::string& path, bool allow_parent_refs) {
 
 }  // namespace utils
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

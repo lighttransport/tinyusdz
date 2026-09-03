@@ -1,6 +1,6 @@
-# TinyUSDZ C99 API - Quick Start Guide
+# LightUSD C99 API - Quick Start Guide
 
-Get up and running with the TinyUSDZ C API in 5 minutes.
+Get up and running with the LightUSD C API in 5 minutes.
 
 ## Installation
 
@@ -29,7 +29,7 @@ cmake --install .
 Create `hello_usd.c`:
 
 ```c
-#include <tinyusdz_c.h>
+#include <lightusd_c.h>
 #include <stdio.h>
 
 int main() {
@@ -75,11 +75,11 @@ int main() {
 
 ```bash
 # With pkg-config
-gcc hello_usd.c `pkg-config --cflags --libs tinyusdz_c` -o hello_usd
+gcc hello_usd.c `pkg-config --cflags --libs lightusd_c` -o hello_usd
 
 # Or manual
-gcc hello_usd.c -I/usr/local/include/tinyusdz \
-    -L/usr/local/lib -ltinyusdz_c -lm -lstdc++ -o hello_usd
+gcc hello_usd.c -I/usr/local/include/lightusd \
+    -L/usr/local/lib -llightusd_c -lm -lstdc++ -o hello_usd
 
 # Run
 ./hello_usd model.usd
@@ -92,13 +92,13 @@ Create `hello_usd.py`:
 ```python
 #!/usr/bin/env python3
 
-import tinyusdz
+import lightusd
 
 # Initialize
-tinyusdz.init()
+lightusd.init()
 
 # Load USD file
-stage = tinyusdz.load_from_file("model.usd")
+stage = lightusd.load_from_file("model.usd")
 
 # Get root prim
 root = stage.root_prim
@@ -110,7 +110,7 @@ print(f"Children: {root.child_count}")
 for child in root.get_children():
     print(f"  - {child.name} [{child.type_name}]")
 
-tinyusdz.shutdown()
+lightusd.shutdown()
 ```
 
 ### Run
@@ -133,7 +133,7 @@ tusdz_stage_free(stage);
 
 **Python:**
 ```python
-stage = tinyusdz.load_from_file("model.usd")
+stage = lightusd.load_from_file("model.usd")
 root = stage.root_prim
 root.print_hierarchy()
 ```
@@ -266,7 +266,7 @@ if (result != TUSDZ_SUCCESS) {
 **Python:**
 ```python
 try:
-    stage = tinyusdz.load_from_file("model.usd")
+    stage = lightusd.load_from_file("model.usd")
 except RuntimeError as e:
     print(f"Error: {e}")
 ```
@@ -329,7 +329,7 @@ python3 test_python_api.py
 
 ## Troubleshooting
 
-### "Cannot find libtinyusdz_c"
+### "Cannot find liblightusd_c"
 ```bash
 # Make sure to install:
 cd build && sudo make install
@@ -338,7 +338,7 @@ cd build && sudo make install
 export LD_LIBRARY_PATH=./build:$LD_LIBRARY_PATH
 ```
 
-### "Cannot import tinyusdz"
+### "Cannot import lightusd"
 ```bash
 # Python needs to find the library:
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
@@ -349,7 +349,7 @@ python3 test_python_api.py
 ```bash
 # Make sure pkg-config can find the file:
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-pkg-config --cflags --libs tinyusdz_c
+pkg-config --cflags --libs lightusd_c
 ```
 
 ## Next Steps
@@ -394,10 +394,10 @@ pkg-config --cflags --libs tinyusdz_c
 
 ## License
 
-Same as TinyUSDZ - MIT License
+Same as LightUSD - MIT License
 
 ---
 
-Ready to use TinyUSDZ! Start with the examples and build from there.
+Ready to use LightUSD! Start with the examples and build from there.
 
 For advanced features, see the full API reference and design documentation.

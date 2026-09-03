@@ -1,6 +1,6 @@
-# TinyUSDZ Web Tests
+# LightUSD Web Tests
 
-This directory contains Node.js tests for the TinyUSDZ WebAssembly bindings.
+This directory contains Node.js tests for the LightUSD WebAssembly bindings.
 
 ## Tests
 
@@ -46,14 +46,14 @@ Tests USD value clip loading and retime behavior in the WebAssembly API.
 
 ### Prerequisites
 
-1. Build the TinyUSDZ WebAssembly module first:
+1. Build the LightUSD WebAssembly module first:
    ```bash
    cd ../
    ./bootstrap-linux.sh
    cd build && make
    ```
 
-2. Make sure the generated files are available at `../js/src/tinyusdz/`
+2. Make sure the generated files are available at `../js/src/lightusd/`
 
 ### Run Tests
 
@@ -79,7 +79,7 @@ node test-value-clip.js         # Value clip WebAssembly test
 ## Test Structure
 
 Each test file:
-- Loads the TinyUSDZ WebAssembly module
+- Loads the LightUSD WebAssembly module
 - Creates test scenarios with various data types
 - Validates method behavior and edge cases
 - Reports results clearly with ✓/❌ indicators

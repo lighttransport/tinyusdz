@@ -32,7 +32,7 @@
 #include <vector>
 
 //
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 //
 
@@ -69,18 +69,18 @@
 #include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "timesamples.hh"  // For unified binary storage
 //
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace ascii {
 
-#define TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(X) \
+#define LIGHTUSD_FOR_EACH_BINARY_TIMESAMPLE_TYPE(X) \
   X(int32_t)                                        \
   X(uint32_t)                                       \
   X(int64_t)                                        \
@@ -323,7 +323,7 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   }
 
   // Try binary-storage numeric, role, quaternion, and matrix types.
-  TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(TRY_BINARY_TYPE)
+  LIGHTUSD_FOR_EACH_BINARY_TIMESAMPLE_TYPE(TRY_BINARY_TYPE)
 
 #undef TRY_BINARY_TYPE
 
@@ -443,14 +443,14 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
 #define INSTANTIATE_BINARY_TIMESAMPLE_TYPE(__type) \
   template bool AsciiParser::ParseTypedTimeSamples<__type>(value::TimeSamples*);
 
-TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(INSTANTIATE_BINARY_TIMESAMPLE_TYPE)
+LIGHTUSD_FOR_EACH_BINARY_TIMESAMPLE_TYPE(INSTANTIATE_BINARY_TIMESAMPLE_TYPE)
 
 #undef INSTANTIATE_BINARY_TIMESAMPLE_TYPE
-#undef TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE
+#undef LIGHTUSD_FOR_EACH_BINARY_TIMESAMPLE_TYPE
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#else  // LIGHTUSD_DISABLE_MODULE_USDA_READER
 
-#endif  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // LIGHTUSD_DISABLE_MODULE_USDA_READER

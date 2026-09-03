@@ -21,7 +21,7 @@ case ":${PATH}:" in
   *) export PATH="${NODE_BIN_DIR}:${PATH}" ;;
 esac
 
-export TINYUSDZ_NPM_NODEJS_ROOT="${NODE_ROOT}"
+export LIGHTUSD_NPM_NODEJS_ROOT="${NODE_ROOT}"
 
 node_major="$("${NODE_BIN_DIR}/node" -p "Number(process.versions.node.split('.')[0])")"
 if (( node_major < 24 )); then

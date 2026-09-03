@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run tinyusdz-next against an external AOUSD Core supplemental release.
+"""Run lightusd-next against an external AOUSD Core supplemental release.
 
 The corpus is intentionally not vendored. Point --suite-root (or
 AOUSD_CORE_SUPPLEMENTAL_ROOT) at core-spec-supplemental-release_dec2025.

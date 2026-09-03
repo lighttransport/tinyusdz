@@ -43,7 +43,7 @@
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 namespace {
 

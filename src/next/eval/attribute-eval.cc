@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Attribute Evaluation Implementation
+// LightUSD Next - Attribute Evaluation Implementation
 
 #include "attribute-eval.hh"
 #include "value-clip.hh"
@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -592,4 +592,4 @@ bool GetMatrix4d(const Stage& stage, const UsdPrim& prim,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -30,7 +30,7 @@
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 namespace {
@@ -535,7 +535,7 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value,
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

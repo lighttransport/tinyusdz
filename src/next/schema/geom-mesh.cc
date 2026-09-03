@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdGeomMesh Schema Implementation
+// LightUSD Next - UsdGeomMesh Schema Implementation
 
 #include "geom-mesh.hh"
 
 #include <cmath>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 UsdGeomMesh::UsdGeomMesh(const UsdPrim& prim) : prim_(prim) {
@@ -300,4 +300,4 @@ std::vector<UsdGeomMesh> GetAllMeshes(const Stage& stage) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

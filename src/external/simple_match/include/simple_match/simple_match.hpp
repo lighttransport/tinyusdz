@@ -119,7 +119,7 @@ namespace simple_match {
 			}
 			else {
                 //throw no_match{};
-                // tinyusdz: todo: report an error in another way.
+                // lightusd: todo: report an error in another way.
 			}
 		}
 

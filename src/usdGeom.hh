@@ -40,7 +40,7 @@
 #include "xform.hh"                 // Xformable, Identity functions
 #include "usdShade.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // From schema definition.
 constexpr auto kGPrim = "GPrim";
@@ -197,14 +197,14 @@ class GeomPrimvar {
   /// Returns empty when appropriate indices does not exist for timecode 't'.
   ///
   std::vector<int32_t> get_indices(const double t = value::TimeCode::Default()) const;
-  
+
   const std::vector<int32_t> &get_default_indices() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _indices;
   }
 
   const value::TimeSamples &get_timesampled_indices() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _ts_indices;
   }
 
@@ -307,7 +307,7 @@ class GeomPrimvar {
     _ts_indices = indices;
   }
 
-  const Attribute &get_attribute() const TINYUSDZ_LIFETIMEBOUND {
+  const Attribute &get_attribute() const LIGHTUSD_LIFETIMEBOUND {
     return _attr;
   }
 
@@ -337,7 +337,7 @@ class GeomPrimvar {
 //
 // Note: In OpenUSD, UsdGeomGprim inherits UsdGeomBoundable -> UsdGeomImageable
 // -> UsdTyped. It does NOT inherit from UsdShadePrim; shading is accessed via
-// MaterialBinding API schema (which TinyUSDZ already mixes in).
+// MaterialBinding API schema (which LightUSD already mixes in).
 
 struct GPrim : Xformable, MaterialBinding, Collection {
   std::string name;
@@ -351,12 +351,12 @@ struct GPrim : Xformable, MaterialBinding, Collection {
     name = name_;
   }
 
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND {
     return name;
   }
 
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   // Gprim
 
@@ -437,40 +437,40 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   ///
   /// Aux infos
   ///
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND {
     return _propertyNames;
   }
 
   const std::vector<value::token> &primChildrenNames() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND {
     return _propertyNames;
   }
 
   const std::map<std::string, VariantSet> &variantSetList() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _variantSetMap;
   }
 
-  std::map<std::string, VariantSet> &variantSetList() TINYUSDZ_LIFETIMEBOUND {
+  std::map<std::string, VariantSet> &variantSetList() LIGHTUSD_LIFETIMEBOUND {
     return _variantSetMap;
   }
 
   // Prim metadataum.
   PrimMeta meta; // TODO: Move to private
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND {
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND {
     return meta;
   }
 
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND {
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND {
     return meta;
   }
 
@@ -536,20 +536,20 @@ struct GeomSubset : public MaterialBinding, Collection {
   std::map<std::string, Property> props;  // custom Properties
   PrimMeta meta;
 
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND {
     return _propertyNames;
   }
 
   const std::vector<value::token> &primChildrenNames() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND {
     return _propertyNames;
   }
 
@@ -704,7 +704,7 @@ struct GeomMesh : GPrim {
 
   // Note: In OpenUSD, skel:jointIndices and skel:jointWeights are primvars
   // accessed via UsdGeomPrimvarsAPI (a NonAppliedAPI schema), not first-class
-  // struct members. TinyUSDZ follows the same approach: these are stored in
+  // struct members. LightUSD follows the same approach: these are stored in
   // the `props` map and accessed via get_primvar()/GeomPrimvar.
 
 
@@ -778,7 +778,7 @@ struct GeomCamera : public GPrim {
 
   //
   // Properties
-  // 
+  //
   // NOTE: fallback value is in [mm](tenth of scene unit)
   //
 
@@ -1070,7 +1070,7 @@ struct GeomPoints : public GPrim {
 // Point instancer.
 // In OpenUSD, UsdGeomPointInstancer provides ComputeExtentAtTime() which
 // evaluates instance transforms at a given time and computes a union of
-// transformed prototype extents. TinyUSDZ stores the raw attributes;
+// transformed prototype extents. LightUSD stores the raw attributes;
 // extent computation requires resolving prototype prims and is handled
 // at the Tydra/application level.
 struct GeomPointInstancer : public GPrim {
@@ -1275,7 +1275,7 @@ DEFINE_TYPE_TRAIT(Field3DAsset, kField3DAsset, TYPE_ID_FIELD3D_ASSET, 1);
 //
 
 // NOTE: `bool` type seems not supported on pxrUSD
-// NOTE: `string` type need special treatment when `idFrom` Relationship exists( https://github.com/syoyo/tinyusdz/issues/113 )
+// NOTE: `string` type need special treatment when `idFrom` Relationship exists( https://github.com/syoyo/lightusd/issues/113 )
 #define APPLY_GEOMPRIVAR_TYPE_SCALAR_A(__FUNC) \
   __FUNC(bool) __FUNC(std::string) __FUNC(value::half) __FUNC(value::half2) \
   __FUNC(value::half3) __FUNC(value::half4) __FUNC(int)
@@ -1328,4 +1328,4 @@ APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
 //#undef APPLY_GEOMPRIVAR_TYPE
 
 
-}  // namespace tinyusdz
+}  // namespace lightusd

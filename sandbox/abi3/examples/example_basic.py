@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Basic usage example for TinyUSDZ ABI3 binding
+Basic usage example for LightUSD ABI3 binding
 
 This example demonstrates:
 1. Loading USD files
@@ -16,9 +16,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    import tinyusdz_abi3 as tusd
+    import lightusd_abi3 as tusd
 except ImportError as e:
-    print(f"Error: Could not import tinyusdz_abi3: {e}")
+    print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
     print("  python3 setup.py build_ext --inplace")
     sys.exit(1)
@@ -148,7 +148,7 @@ def example_memory_management():
 
 def main():
     print("\n" + "=" * 60)
-    print("TinyUSDZ ABI3 Binding - Basic Examples")
+    print("LightUSD ABI3 Binding - Basic Examples")
     print("=" * 60 + "\n")
 
     # Run all examples

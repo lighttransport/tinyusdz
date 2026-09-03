@@ -24,7 +24,7 @@
 #include "scene_loader.hh"
 #include "vchar_control_map.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 class Prim;
 namespace next {
 class Stage;
@@ -33,7 +33,7 @@ class UsdPrim;
 namespace tydra {
 struct Node;
 }
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 namespace tusdview {
 
@@ -115,7 +115,7 @@ class Gui {
     domeDirty_ = false;
   }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
-  void setNextStage(const tinyusdz::next::Stage* stage) { nextStage_ = stage; }
+  void setNextStage(const lightusd::next::Stage* stage) { nextStage_ = stage; }
   // StageSession owns the authoritative deferred set. The composed next Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
   void setDeferredPayloadPaths(std::vector<std::string> paths) {
@@ -458,10 +458,10 @@ class Gui {
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  bool drawPrimTree(const tinyusdz::Prim& prim);
-  bool drawNextPrimTree(const tinyusdz::next::UsdPrim& prim);
+  bool drawPrimTree(const lightusd::Prim& prim);
+  bool drawNextPrimTree(const lightusd::next::UsdPrim& prim);
   void drawNextInspector();
-  bool drawNodeTree(const tinyusdz::tydra::Node& node);
+  bool drawNodeTree(const lightusd::tydra::Node& node);
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
   // selection, an ancestor, or a descendant mesh carries blendshape targets).
@@ -547,8 +547,8 @@ class Gui {
     std::string selectedPath;
   };
 
-  const tinyusdz::Prim* selPrim_{nullptr};
-  const tinyusdz::next::Stage* nextStage_{nullptr};
+  const lightusd::Prim* selPrim_{nullptr};
+  const lightusd::next::Stage* nextStage_{nullptr};
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
@@ -803,7 +803,7 @@ class Gui {
     bool hasColor{false};
     float color[4]{0.0f, 0.0f, 0.0f, 1.0f};
   };
-  const tinyusdz::Prim* inspectorCachePrim_{nullptr};
+  const lightusd::Prim* inspectorCachePrim_{nullptr};
   std::string inspectorCachePath_;
   std::string inspectorCacheType_;
   std::string inspectorCacheMeta_;

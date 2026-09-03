@@ -1420,7 +1420,7 @@ fi
 # -------------------------------------------------------------------------
 # 24. OpenUSD must be able to read a variant hierarchy out of our .usdc.
 #
-# Four independent wire-format bugs, all invisible to tinyusdz-only tests (our
+# Four independent wire-format bugs, all invisible to lightusd-only tests (our
 # reader tolerated or mirrored every one of them):
 #   - the path-table element token for /A{v=sel} was the whole slash-segment
 #     ("A{v=sel}"), not the bare "{v=sel}" element -> "Invalid prim name";
@@ -1486,7 +1486,7 @@ fi
 # 25. Unregistered (unknown-schema) metadata must survive at EVERY level.
 #
 # OpenUSD preserves metadata it does not recognise (SdfUnregisteredValue) at
-# the layer, prim, attribute, and relationship level. tinyusdz used to parse
+# the layer, prim, attribute, and relationship level. lightusd used to parse
 # and DISCARD three of the four: only the prim level survived. The raw USDA
 # text of the value is kept verbatim (quotes included for strings) in the
 # unregisteredMetas maps on LayerMetas / PrimMeta / AttrMetas, and travels
@@ -1560,7 +1560,7 @@ fi
 # -------------------------------------------------------------------------
 # 26. OpenUSD must SEE the sublayers in our .usdc.
 #
-# Two wire bugs, both invisible to tinyusdz-only tests:
+# Two wire bugs, both invisible to lightusd-only tests:
 #   - `subLayers` must be the dedicated StringVector crate type. As a
 #     VtArray<string> the field decodes but SdfLayer does not recognise it,
 #     so pxr silently composed NOTHING from any sublayer we wrote.

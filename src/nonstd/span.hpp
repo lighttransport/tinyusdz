@@ -1,7 +1,7 @@
 //
 // Simple span implementation for C++14 compatibility
 //
-// Based on C++20 std::span and span-lite, but simplified for TinyUSDZ needs
+// Based on C++20 std::span and span-lite, but simplified for LightUSD needs
 //
 
 #ifndef NONSTD_SPAN_HPP
@@ -43,16 +43,16 @@ public:
     using const_iterator = const_pointer;
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
-    
+
     static constexpr std::ptrdiff_t extent = Extent;
 
     // Constructors
-    constexpr span() noexcept 
+    constexpr span() noexcept
         : data_(nullptr), size_(0) {
         static_assert(Extent <= 0, "Cannot default construct a fixed-size span with positive extent");
     }
 
-    constexpr span(pointer ptr, size_type count) 
+    constexpr span(pointer ptr, size_type count)
         : data_(ptr), size_(count) {
 #if ! NONSTD_SPAN_CONFIG_NO_EXCEPTIONS
         if (Extent != dynamic_extent && count != static_cast<size_type>(Extent)) {
@@ -73,7 +73,7 @@ public:
     template<std::size_t N>
     constexpr span(element_type (&arr)[N]) noexcept
         : data_(arr), size_(N) {
-        static_assert(Extent == dynamic_extent || N == static_cast<std::size_t>(Extent), 
+        static_assert(Extent == dynamic_extent || N == static_cast<std::size_t>(Extent),
                      "Array size must match span extent");
     }
 
@@ -195,7 +195,7 @@ public:
         return span<element_type, dynamic_extent>(data_ + (size_ - count), count);
     }
 
-    constexpr span<element_type, dynamic_extent> subspan(size_type offset, 
+    constexpr span<element_type, dynamic_extent> subspan(size_type offset,
                                                          size_type count = static_cast<size_type>(dynamic_extent)) const {
 #if ! NONSTD_SPAN_CONFIG_NO_EXCEPTIONS
         if (offset > size_) {

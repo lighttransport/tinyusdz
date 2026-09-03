@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "nonstd/expected.hpp"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace image {
 
 //
@@ -20,7 +20,7 @@ namespace image {
 enum class WriteImageFormat { Autodetect, BMP, PNG, JPEG, EXR, TIFF, DNG, QOI };
 
 // PNG encoder backend selection.
-// Auto  : use fpnge(veluca93) when available(TINYUSDZ_HAVE_FPNGE), otherwise fpng.
+// Auto  : use fpnge(veluca93) when available(LIGHTUSD_HAVE_FPNGE), otherwise fpng.
 // Fpnge : force fpnge. Falls back to fpng when fpnge is not compiled in.
 // Fpng  : force fpng(portable).
 enum class PngEncoder { Auto, Fpnge, Fpng };
@@ -61,4 +61,4 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
     const Image &image, const WriteOption option = WriteOption());
 
 }  // namespace image
-}  // namespace tinyusdz
+}  // namespace lightusd

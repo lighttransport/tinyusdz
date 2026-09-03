@@ -13,4 +13,4 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
   ${PROJECT_SOURCE_DIR}/src/external
 )
 
-target_link_libraries(${EXAMPLE_TARGET} tinyusdz_static)
+target_link_libraries(${EXAMPLE_TARGET} lightusd_static)

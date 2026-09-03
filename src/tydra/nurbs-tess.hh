@@ -16,8 +16,8 @@
 ///
 /// Usage:
 /// ```cpp
-/// tinyusdz::tydra::NurbsTesselator tesselator;
-/// tinyusdz::tydra::RenderMesh mesh;
+/// lightusd::tydra::NurbsTesselator tesselator;
+/// lightusd::tydra::RenderMesh mesh;
 /// bool success = tesselator.tesselate(nurbs_surface, 32, 32, mesh);
 /// ```
 ///
@@ -25,7 +25,7 @@
 
 #include "render-data.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -33,7 +33,7 @@ struct Nurbs;
 
 ///
 /// NURBS surface tessellator for generating render-ready polygonal meshes.
-/// 
+///
 /// Converts parametric NURBS surfaces into triangle meshes with specified
 /// tessellation density. The tessellator evaluates the NURBS surface at
 /// regular intervals and generates vertex positions, normals, and texture
@@ -44,9 +44,9 @@ class NurbsTesselator
 public:
   ///
   /// Tessellate NURBS surface into triangular mesh.
-  /// 
+  ///
   /// @param[in] nurbs NURBS surface definition
-  /// @param[in] u_divs Number of divisions in U parameter direction  
+  /// @param[in] u_divs Number of divisions in U parameter direction
   /// @param[in] v_divs Number of divisions in V parameter direction
   /// @param[out] dst Output render mesh with tessellated geometry
   /// @return true on successful tessellation, false on error
@@ -56,4 +56,4 @@ public:
 
 } // namespace tydra
 
-} // namespace tinyusdz
+} // namespace lightusd

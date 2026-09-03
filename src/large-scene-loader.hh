@@ -3,10 +3,10 @@
 //
 // large-scene-loader.hh - Memory-bounded loading of very large USD scenes.
 //
-// Two backends, selected at compile time by TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE:
+// Two backends, selected at compile time by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE:
 //
 //   Default (no define):      CompositionGraph (old, stable).
-//   TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE:
+//   LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE:
 //                             next::pcp::Cache (new, incremental payload
 //                             load/unload without full stage rebuild).
 //
@@ -19,7 +19,7 @@
 
 #include "stage.hh"
 
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #else
@@ -27,7 +27,7 @@
 #include "pcp/layer-registry.hh"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct LargeSceneLoadOptions {
   // How payload arcs are handled during the initial composition.
@@ -99,7 +99,7 @@ class LargeSceneLoader {
   bool Load(const std::string &filename, const LargeSceneLoadOptions &options,
             std::string *warn, std::string *err);
 
-#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   Stage &stage() { return *_stage; }
   const Stage &stage() const { return *_stage; }
 
@@ -143,7 +143,7 @@ class LargeSceneLoader {
   size_t layer_parse_count() const;
 
  private:
-#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   std::shared_ptr<Stage> _stage{std::make_shared<Stage>()};
 #else
   std::shared_ptr<next::Stage> _stage{std::make_shared<next::Stage>()};
@@ -154,7 +154,7 @@ class LargeSceneLoader {
   // Caller must hold _mutex.
   bool RebuildStageLocked(std::string *warn, std::string *err);
 
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   std::unique_ptr<next::AssetResolver> _resolver;
   std::unique_ptr<next::pcp::Cache> _cache;
 #else
@@ -174,10 +174,10 @@ class LargeSceneLoader {
 // on-demand payload streaming (use LargeSceneLoader for that).
 // Available only in the old backend path (CompositionGraph).
 // In the new backend path use LargeSceneLoader or next::pcp::ComposeStageFromFile.
-#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        std::string *warn, std::string *err,
                        const LargeSceneLoadOptions &options = {});
 #endif
 
-}  // namespace tinyusdz
+}  // namespace lightusd

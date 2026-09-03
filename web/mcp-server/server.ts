@@ -4,7 +4,7 @@ import { z } from "zod";
 
 // Create an MCP server
 const server = new McpServer({
-  name: "tinyusdz-mcp-server",
+  name: "lightusd-mcp-server",
   version: "1.0.0"
 });
 
@@ -24,7 +24,7 @@ server.registerTool("add",
 server.registerResource(
   "greeting",
   new ResourceTemplate("greeting://{name}", { list: undefined }),
-  { 
+  {
     title: "Greeting Resource",      // Display name for UI
     description: "Dynamic greeting generator"
   },

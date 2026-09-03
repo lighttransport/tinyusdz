@@ -25,7 +25,7 @@
 #include "tiny-format.hh"
 
 //
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 //
 
@@ -64,12 +64,12 @@
 #include "core/material-binding.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "array-edit.hh"  // value::ArrayEdit + op helpers
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace ascii {
 
@@ -375,7 +375,7 @@ AsciiParser::ParsePrimMeta() {
     return nonstd::nullopt;
   }
 
-  tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
+  lightusd::ListEditQual qual{ListEditQual::ResetToExplicit};
 
   // May be string only(varname is "comment")
   // For some reason, string-only data is just stored in `MetaVariable` and
@@ -402,7 +402,7 @@ AsciiParser::ParsePrimMeta() {
     return nonstd::nullopt;
   }
 
-  DCOUT("list-edit qual: " << tinyusdz::to_string(qual));
+  DCOUT("list-edit qual: " << lightusd::to_string(qual));
 
   if (!SkipWhitespaceAndNewline()) {
     return nonstd::nullopt;
@@ -532,7 +532,7 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
     // ty = std::pair<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
       DCOUT("PrimMeta: list-edit qual = "
-            << tinyusdz::to_string(std::get<0>(m.value()))
+            << lightusd::to_string(std::get<0>(m.value()))
             << ", name = " << std::get<1>(m.value()).get_name());
 
       if (std::get<1>(m.value()).get_name().empty()) {
@@ -853,8 +853,8 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
     return false;
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  lightusd::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  lightusd::ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
 }
@@ -1571,7 +1571,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
   }
 
   bool varying_authored{false};
-  tinyusdz::Variability variability{tinyusdz::Variability::Varying};
+  lightusd::Variability variability{lightusd::Variability::Varying};
 
   if (!MaybeVariability(&variability, &varying_authored)) {
     return false;
@@ -2723,6 +2723,6 @@ bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
 }
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#endif  // !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)

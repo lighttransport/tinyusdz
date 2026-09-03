@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PrimSpec Implementation
+// LightUSD Next - PrimSpec Implementation
 
 #include "prim-spec.hh"
 #include "../prim/identifier.hh"
 #include <algorithm>
 #include <cstring>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <mutex>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -132,7 +132,7 @@ VariantData::~VariantData() {
 // ============================================================
 
 TypeNameId TypeNameTable::intern(const std::string& name) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   {
     std::shared_lock<std::shared_mutex> rlk(mu_);
     auto hit = name_to_id_.find(name);
@@ -159,7 +159,7 @@ TypeNameId TypeNameTable::intern(const std::string& name) {
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // names_ is a deque: elements never relocate on push_back, so the returned
   // reference stays valid after the lock is released.
   std::shared_lock<std::shared_mutex> rlk(mu_);
@@ -169,7 +169,7 @@ const std::string& TypeNameTable::get(TypeNameId id) const {
 }
 
 TypeNameId TypeNameTable::find(const std::string& name) const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
   auto it = name_to_id_.find(name);
@@ -1289,4 +1289,4 @@ size_t PrimSpec::memory_usage() const {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

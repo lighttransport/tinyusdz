@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Writer Test
+// LightUSD Next - Writer Test
 
 #include <iostream>
 #include <cstring>
@@ -26,7 +26,7 @@
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // Helper to check if string contains substring
 bool contains(const std::string& str, const std::string& substr) {
@@ -839,7 +839,7 @@ void test_usda_backend_parity() {
   assert(ostream_result.bytes_written == expected.size());
   assert(oss.str() == expected);
 
-  const char* path = "/tmp/tinyusdz_next_writer_backend_parity.usda";
+  const char* path = "/tmp/lightusd_next_writer_backend_parity.usda";
   USDAWriteResult file_result = WriteUSDAToFile(path, stage, opts);
   assert(file_result.success);
   assert(file_result.bytes_written == expected.size());
@@ -906,7 +906,7 @@ void test_usda_layer_backend_parity() {
   assert(ostream_result.bytes_written == expected.size());
   assert(oss.str() == expected);
 
-  const std::string path = "/tmp/tinyusdz_next_layer_backend_parity.usda";
+  const std::string path = "/tmp/lightusd_next_layer_backend_parity.usda";
   USDAWriteResult file_result = WriteLayerToFile(path, layer, opts);
   assert(file_result.success);
   assert(file_result.bytes_written == expected.size());
@@ -1279,7 +1279,7 @@ def Scope "V"
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Writer Tests ===\n\n";
+  std::cout << "=== LightUSD Next Writer Tests ===\n\n";
 
   try {
     test_value_printer();

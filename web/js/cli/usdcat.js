@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// usdcat CLI — TinyUSDZ WASM
+// usdcat CLI — LightUSD WASM
 //
 // Load a USD asset, (optionally) flatten/compose it, and write USDA / USDC / USDZ.
 // A JS/WASM counterpart to the native `tusdcat` tool (examples/tusdcat/main.cc),
@@ -41,18 +41,18 @@ import {
 } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
-// CLI runs with plain `node`. Honors TINYUSDZ_WASM64=1 like usdzconvert.js.
+// CLI runs with plain `node`. Honors LIGHTUSD_WASM64=1 like usdzconvert.js.
 function selectWasmGlue() {
-  if (process.env.TINYUSDZ_WASM64 === '1') {
-    const url64 = new URL('../src/tinyusdz/tinyusdz_64.js', import.meta.url);
+  if (process.env.LIGHTUSD_WASM64 === '1') {
+    const url64 = new URL('../src/lightusd/lightusd_64.js', import.meta.url);
     if (fs.existsSync(url64)) return url64.href;
-    console.error('[usdcat] TINYUSDZ_WASM64=1 but tinyusdz_64.js not found; using wasm32.');
+    console.error('[usdcat] LIGHTUSD_WASM64=1 but lightusd_64.js not found; using wasm32.');
   }
-  return new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+  return new URL('../src/lightusd/lightusd.js', import.meta.url).href;
 }
 
 function printUsage() {
-  console.log(`usdcat — TinyUSDZ WASM (load + flatten + write USDA/USDC/USDZ)
+  console.log(`usdcat — LightUSD WASM (load + flatten + write USDA/USDC/USDZ)
 
 USAGE:
   node cli/usdcat.js <input.usd|input.usdz|input-dir> [options]
@@ -174,7 +174,7 @@ export function buildInput(inputPath, preferredRoot) {
 // Exported so tests can drive it without spawning a process.
 export function runUsdcat(native, { map, rootName, flatten = true, format = 'usda',
                                     maxUsdcMb = 0, maxMemMb = 0, log = () => {} }) {
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   try {
     if ((maxUsdcMb > 0 || maxMemMb > 0) && typeof usd.setUSDCExportLimitMB === 'function') {
       usd.setUSDCExportLimitMB(maxUsdcMb, maxMemMb);

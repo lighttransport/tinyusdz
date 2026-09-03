@@ -96,17 +96,17 @@ uint16_t U16(const uint8_t* p) {
   return static_cast<uint16_t>(value);
 }
 
-float Component(const tinyusdz::ptx::FaceImage& face, size_t pixel,
+float Component(const lightusd::ptx::FaceImage& face, size_t pixel,
                 uint16_t channel) {
   const size_t component = pixel * face.channels + channel;
   switch (face.dataType) {
-    case tinyusdz::ptx::DataType::UInt8:
+    case lightusd::ptx::DataType::UInt8:
       return float(face.data[component]) / 255.0f;
-    case tinyusdz::ptx::DataType::UInt16:
+    case lightusd::ptx::DataType::UInt16:
       return float(U16(face.data.data() + component * 2)) / 65535.0f;
-    case tinyusdz::ptx::DataType::Half:
+    case lightusd::ptx::DataType::Half:
       return HalfToFloat(U16(face.data.data() + component * 2));
-    case tinyusdz::ptx::DataType::Float: {
+    case lightusd::ptx::DataType::Float: {
       float value = 0.0f;
       std::memcpy(&value, face.data.data() + component * 4, sizeof(value));
       return value;
@@ -121,7 +121,7 @@ uint8_t Byte(float value) {
   return static_cast<uint8_t>(std::lround(value * 255.0f));
 }
 
-light3d::Image ConvertFace(const tinyusdz::ptx::FaceImage& face) {
+light3d::Image ConvertFace(const lightusd::ptx::FaceImage& face) {
   light3d::Image out;
   out.width = static_cast<int>(face.width);
   out.height = static_cast<int>(face.height);
@@ -272,7 +272,7 @@ void CopyWithClampGutter(const light3d::Image& face, const Placement& p,
 // selected mip. Avoid allocating a temporary Image and converting every pixel
 // before copying into the atlas. The atlas still uses the same vertically
 // flipped convention and clamp gutters as the generic path.
-void CopyRgba8FaceWithClampGutter(const tinyusdz::ptx::FaceImage& face,
+void CopyRgba8FaceWithClampGutter(const lightusd::ptx::FaceImage& face,
                                   const Placement& p, uint32_t gutter,
                                   light3d::Image* atlas) {
   for (uint32_t y = 0; y < p.height; ++y) {
@@ -309,8 +309,8 @@ void CopyRgba8FaceWithClampGutter(const tinyusdz::ptx::FaceImage& face,
 
 }  // namespace
 
-const tinyusdz::ptx::FaceImage* PtexFacePageCache::Fetch(
-    const tinyusdz::ptx::Reader& reader, uint32_t face, uint32_t mip,
+const lightusd::ptx::FaceImage* PtexFacePageCache::Fetch(
+    const lightusd::ptx::Reader& reader, uint32_t face, uint32_t mip,
     size_t maxDecodedFaceBytes, std::string* err) {
   const uint64_t key = (uint64_t(face) << 32u) | uint64_t(mip);
   const auto found = byKey_.find(key);
@@ -321,7 +321,7 @@ const tinyusdz::ptx::FaceImage* PtexFacePageCache::Fetch(
   }
 
   ++stats_.misses;
-  tinyusdz::ptx::FaceImage decoded;
+  lightusd::ptx::FaceImage decoded;
   if (!reader.ReadFace(face, mip, maxDecodedFaceBytes, &decoded, err)) {
     return nullptr;
   }
@@ -350,11 +350,11 @@ const tinyusdz::ptx::FaceImage* PtexFacePageCache::Fetch(
 void PtexFacePageCache::Clear() {
   entries_.clear();
   byKey_.clear();
-  transient_ = tinyusdz::ptx::FaceImage{};
+  transient_ = lightusd::ptx::FaceImage{};
   stats_.residentBytes = 0;
 }
 
-bool BuildPtexPage(const tinyusdz::ptx::Reader& reader, uint32_t face,
+bool BuildPtexPage(const lightusd::ptx::Reader& reader, uint32_t face,
                    uint32_t mip, uint32_t gutter,
                    size_t maxDecodedFaceBytes, light3d::Image* page,
                    DrawPtexFaceRectCPU* inner, std::string* err) {
@@ -363,7 +363,7 @@ bool BuildPtexPage(const tinyusdz::ptx::Reader& reader, uint32_t face,
     return false;
   }
   PtexFacePageCache decodedCache(0);
-  const tinyusdz::ptx::FaceImage* decoded = decodedCache.Fetch(
+  const lightusd::ptx::FaceImage* decoded = decodedCache.Fetch(
       reader, face, mip, maxDecodedFaceBytes, err);
   if (!decoded) return false;
   const uint64_t outerWidth = uint64_t(decoded->width) + gutter * 2u;
@@ -408,7 +408,7 @@ void EncodePtexFaceRectTexels(const DrawPtexFaceRectCPU& rect,
   }
 }
 
-bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
+bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
                     const PtexAtlasOptions& options, bool /*srgb*/,
                     light3d::Image* image,
                     std::vector<DrawPtexFaceRectCPU>* faceRects,
@@ -417,7 +417,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     if (err) *err = "Ptex atlas output is null";
     return false;
   }
-  const tinyusdz::ptx::Info& info = reader.info();
+  const lightusd::ptx::Info& info = reader.info();
   if (info.meshType != 1 || info.faces == 0 || info.channels == 0 ||
       info.channels > 4) {
     if (err) *err = "Ptex atlas requires a non-empty quad texture with 1-4 channels";
@@ -577,7 +577,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
       continue;
     }
     std::string readErr;
-    const tinyusdz::ptx::FaceImage* decoded = pageCache.Fetch(
+    const lightusd::ptx::FaceImage* decoded = pageCache.Fetch(
         reader, p.face, p.mip, options.maxDecodedFaceBytes, &readErr);
     if (!decoded) {
       if (err) *err = "Ptex face " + std::to_string(p.face) + ": " + readErr;
@@ -589,7 +589,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     }
     localStats.decodedFaces++;
     localStats.decodedBytes += decoded->data.size();
-    if (decoded->dataType == tinyusdz::ptx::DataType::UInt8 &&
+    if (decoded->dataType == lightusd::ptx::DataType::UInt8 &&
         decoded->channels == 4 && decoded->width == p.width &&
         decoded->height == p.height) {
       CopyRgba8FaceWithClampGutter(*decoded, p, options.gutter, image);

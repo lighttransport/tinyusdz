@@ -16,7 +16,7 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr auto kSpatialAudio = "SpatialAudio";
 
@@ -26,9 +26,9 @@ struct SpatialAudio {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::AssetPath> filePath;  // asset filePath
   // "spatial", "nonSpatial"
@@ -47,13 +47,13 @@ struct SpatialAudio {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -74,4 +74,4 @@ DEFINE_TYPE_TRAIT(SpatialAudio, kSpatialAudio, TYPE_ID_SPATIAL_AUDIO, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

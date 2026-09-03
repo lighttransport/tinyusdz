@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Test runner for WASM-based USD file loading.
-// Loads .usda files from tests/usda/ via TinyUSDZLoader and verifies:
+// Loads .usda files from tests/usda/ via LightUSDLoader and verifies:
 //   1. Valid files parse without error (loadAsLayerFromBinary — parser only)
 //   2. Geometry files with complete data produce meshes (loadFromBinary + Tydra)
 //   3. Known-bad files (fail-case/) are rejected by the parser
@@ -96,15 +96,15 @@ function collectFailFiles() {
 let loader;
 
 async function initLoader() {
-  const mod = await import(path.join(distDir, 'TinyUSDZLoader.js'));
-  loader = new mod.TinyUSDZLoader();
+  const mod = await import(path.join(distDir, 'LightUSDLoader.js'));
+  loader = new mod.LightUSDLoader();
   await loader.init();
 }
 
 /** Parse-only: uses loadAsLayerFromBinary (no Tydra conversion). */
 function parseAsLayer(filePath, fileName) {
   const data = fs.readFileSync(filePath);
-  const usd = new loader.native_.TinyUSDZLoaderNative();
+  const usd = new loader.native_.LightUSDLoaderNative();
   const ok = usd.loadAsLayerFromBinary(data, fileName);
   if (!ok) {
     throw new Error(`Failed to parse ${fileName}: ${usd.error()}`);
@@ -115,7 +115,7 @@ function parseAsLayer(filePath, fileName) {
 /** Full load: parse + Tydra render-scene conversion via loadFromBinary. */
 function loadFull(filePath, fileName) {
   const data = fs.readFileSync(filePath);
-  const usd = new loader.native_.TinyUSDZLoaderNative();
+  const usd = new loader.native_.LightUSDLoaderNative();
   const ok = usd.loadFromBinary(data, fileName);
   if (!ok) {
     throw new Error(`Failed to load ${fileName}: ${usd.error()}`);

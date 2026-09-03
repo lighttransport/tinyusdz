@@ -275,8 +275,8 @@ function generateReport(results, outputPath) {
 
       <div class="comparison">
         <div>
-          <div class="label">TinyUSDZ Renderer</div>
-          <img src="${path.relative(path.dirname(outputPath), result.tinyusdz)}" alt="TinyUSDZ" />
+          <div class="label">LightUSD Renderer</div>
+          <img src="${path.relative(path.dirname(outputPath), result.lightusd)}" alt="LightUSD" />
         </div>
         <div>
           <div class="label">Reference (MaterialX)</div>
@@ -322,21 +322,21 @@ async function verify(options) {
       console.log(`\n📦 Testing material: ${material}`);
 
       // Paths for test HTML pages
-      const tinyusdHtmlPath = path.join(__dirname, 'tests', 'render-tinyusdz.html');
+      const lightusdHtmlPath = path.join(__dirname, 'tests', 'render-lightusd.html');
       const referencHtmlPath = path.join(__dirname, 'tests', 'render-reference.html');
 
       // Output paths
-      const tinyusdOutput = path.join(SCREENSHOTS_DIR, `tinyusdz-${material}.png`);
+      const lightusdOutput = path.join(SCREENSHOTS_DIR, `lightusd-${material}.png`);
       const referenceOutput = path.join(SCREENSHOTS_DIR, `reference-${material}.png`);
       const diffOutput = path.join(DIFFS_DIR, `diff-${material}.png`);
 
-      // Render with TinyUSDZ
-      console.log('  Rendering with TinyUSDZ...');
+      // Render with LightUSD
+      console.log('  Rendering with LightUSD...');
       const tinySuccess = await renderMaterial(
         browser,
-        tinyusdHtmlPath,
+        lightusdHtmlPath,
         material,
-        tinyusdOutput,
+        lightusdOutput,
         { verbose: options.verbose }
       );
 
@@ -357,11 +357,11 @@ async function verify(options) {
 
       // Compare images
       console.log('  Comparing images...');
-      const comparison = compareImages(tinyusdOutput, referenceOutput, diffOutput);
+      const comparison = compareImages(lightusdOutput, referenceOutput, diffOutput);
 
       const result = {
         material,
-        tinyusdz: tinyusdOutput,
+        lightusd: lightusdOutput,
         reference: referenceOutput,
         diff: diffOutput,
         comparison,

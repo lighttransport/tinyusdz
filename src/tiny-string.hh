@@ -21,7 +21,7 @@
 #include "tiny-container.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // default: Up to 1G char
 static size_t strlen(const char *s, size_t max_len = 1024u*1024u*1024u) {
@@ -53,11 +53,11 @@ struct tstring_n {
     _delete_string();
   }
 
-  tstring_n(const char *s) { 
+  tstring_n(const char *s) {
     _copy_string(s);
   }
 
-  tstring_n(const std::string &s) : tstring_n(s.c_str()) { 
+  tstring_n(const std::string &s) : tstring_n(s.c_str()) {
   }
 
   tstring_n(const tstring_n &rhs) : tstring_n(rhs.c_str()) {
@@ -66,7 +66,7 @@ struct tstring_n {
   tstring_n(tstring_n &&rhs) {
 
     _delete_string();
-    
+
     _u = std::exchange(rhs._u, nullptr);
     _len = std::exchange(rhs._len, 0);
   }
@@ -87,7 +87,7 @@ struct tstring_n {
     }
 
     _delete_string();
-    
+
     _u = std::exchange(rhs._u, nullptr);
     _len = std::exchange(rhs._len, 0);
 
@@ -140,7 +140,7 @@ struct tstring_n {
 
     //char *dst = reinterpret_cast<char *>(_buf);
 
-    _len = strlen(s);    
+    _len = strlen(s);
     if (_len > N) {
       char *dst = new char[_len+1];
       memcpy(dst, s, _len);
@@ -174,19 +174,19 @@ struct tstring_view {
   // tstring_view trivially copyable and avoids -Wdeprecated-copy.
 
   tstring_view(const char *s) {
-    _len = strlen(s);    
+    _len = strlen(s);
     _s = s;
   }
 
-  constexpr tstring_view(const char *s, size_t n) { 
+  constexpr tstring_view(const char *s, size_t n) {
     _len = n;
     _s = s;
   }
 
-  tstring_view(const std::string &s) : tstring_view(s.c_str()) { 
+  tstring_view(const std::string &s) : tstring_view(s.c_str()) {
   }
 
-  tstring_view(const tstring &s) : tstring_view(s.c_str()) { 
+  tstring_view(const tstring &s) : tstring_view(s.c_str()) {
   }
 
   bool operator==(const tstring_view &rhs) const {
@@ -228,8 +228,8 @@ struct tstring_view {
   // guaranteed to be NUL-terminated at c_str()[size()]. Use size()-aware
   // operations (==, <, starts_with, ...). Do not hand c_str() to length-
   // agnostic C functions (strlen, printf("%s"), std::string(const char*));
-  // build an owned copy with tinyusdz::to_string(view) instead.
-  const char *data() const TINYUSDZ_LIFETIMEBOUND {
+  // build an owned copy with lightusd::to_string(view) instead.
+  const char *data() const LIGHTUSD_LIFETIMEBOUND {
     return _s;
   }
 
@@ -264,7 +264,7 @@ struct tstring_view {
       if (_s[i] != sv_str[i]) {
         return false;
       }
-    }   
+    }
     return true;
   }
 
@@ -278,7 +278,7 @@ struct tstring_view {
       if (_s[i] != s[i]) {
         return false;
       }
-    }   
+    }
     return true;
   }
 
@@ -295,7 +295,7 @@ struct tstring_view {
       if (_s[_len - i - 1] != sv_str[sv_size - i - 1]) {
         return false;
       }
-    }   
+    }
     return true;
   }
 
@@ -309,7 +309,7 @@ struct tstring_view {
       if (_s[_len - i - 1] != s[s_size - i - 1]) {
         return false;
       }
-    }   
+    }
     return true;
   }
 
@@ -410,7 +410,7 @@ inline std::string operator+(const tstring_view &a, const char *b) {
 class tostringstream
 {
  public:
-    
+
     tostringstream &operator<<( const tstring &str );
     tostringstream &operator<<( const tstring_view &str );
 
@@ -423,8 +423,8 @@ class tostringstream
     std::string str() const;
     tstring tstr() const;
 
-    
-    const char *data() const TINYUSDZ_LIFETIMEBOUND { return binary_.data(); }
+
+    const char *data() const LIGHTUSD_LIFETIMEBOUND { return binary_.data(); }
 
  private:
   const std::vector<char> binary_;
@@ -446,38 +446,38 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result);
 bool parse_uint_array(const tstring_view &sv, std::vector<uint32_t> *result);
 bool parse_int64_array(const tstring_view &sv, std::vector<int64_t> *result);
 bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result);
-bool parse_half_array(const tstring_view &sv, std::vector<tinyusdz::value::half> *result);
+bool parse_half_array(const tstring_view &sv, std::vector<lightusd::value::half> *result);
 bool parse_float_array(const tstring_view &sv, std::vector<float> *result);
 bool parse_double_array(const tstring_view &sv, std::vector<double> *result);
-bool parse_token_array(const tstring_view &sv, std::vector<tinyusdz::value::token> *result);
-bool parse_string_array(const tstring_view &sv, std::vector<tinyusdz::value::StringData> *result);
+bool parse_token_array(const tstring_view &sv, std::vector<lightusd::value::token> *result);
+bool parse_string_array(const tstring_view &sv, std::vector<lightusd::value::StringData> *result);
 bool parse_std_string_array(const tstring_view &sv, std::vector<std::string> *result);
 
 // Compound-type array parsers
-bool parse_half2_array(const tstring_view &sv, std::vector<tinyusdz::value::half2> *result);
-bool parse_half3_array(const tstring_view &sv, std::vector<tinyusdz::value::half3> *result);
-bool parse_half4_array(const tstring_view &sv, std::vector<tinyusdz::value::half4> *result);
-bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result);
-bool parse_float3_array(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result);
-bool parse_float4_array(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result);
-bool parse_point3f_array(const tstring_view &sv, std::vector<tinyusdz::value::point3f> *result);
-bool parse_normal3f_array(const tstring_view &sv, std::vector<tinyusdz::value::normal3f> *result);
-bool parse_double2_array(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result);
-bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result);
-bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result);
-bool parse_quath_array(const tstring_view &sv, std::vector<tinyusdz::value::quath> *result);
-bool parse_quatf_array(const tstring_view &sv, std::vector<tinyusdz::value::quatf> *result);
-bool parse_quatd_array(const tstring_view &sv, std::vector<tinyusdz::value::quatd> *result);
-bool parse_matrix2f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result);
-bool parse_matrix3f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result);
-bool parse_matrix4f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result);
-bool parse_matrix2d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result);
-bool parse_matrix3d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result);
-bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result);
+bool parse_half2_array(const tstring_view &sv, std::vector<lightusd::value::half2> *result);
+bool parse_half3_array(const tstring_view &sv, std::vector<lightusd::value::half3> *result);
+bool parse_half4_array(const tstring_view &sv, std::vector<lightusd::value::half4> *result);
+bool parse_float2_array(const tstring_view &sv, std::vector<lightusd::value::float2> *result);
+bool parse_float3_array(const tstring_view &sv, std::vector<lightusd::value::float3> *result);
+bool parse_float4_array(const tstring_view &sv, std::vector<lightusd::value::float4> *result);
+bool parse_point3f_array(const tstring_view &sv, std::vector<lightusd::value::point3f> *result);
+bool parse_normal3f_array(const tstring_view &sv, std::vector<lightusd::value::normal3f> *result);
+bool parse_double2_array(const tstring_view &sv, std::vector<lightusd::value::double2> *result);
+bool parse_double3_array(const tstring_view &sv, std::vector<lightusd::value::double3> *result);
+bool parse_double4_array(const tstring_view &sv, std::vector<lightusd::value::double4> *result);
+bool parse_quath_array(const tstring_view &sv, std::vector<lightusd::value::quath> *result);
+bool parse_quatf_array(const tstring_view &sv, std::vector<lightusd::value::quatf> *result);
+bool parse_quatd_array(const tstring_view &sv, std::vector<lightusd::value::quatd> *result);
+bool parse_matrix2f_array(const tstring_view &sv, std::vector<lightusd::value::matrix2f> *result);
+bool parse_matrix3f_array(const tstring_view &sv, std::vector<lightusd::value::matrix3f> *result);
+bool parse_matrix4f_array(const tstring_view &sv, std::vector<lightusd::value::matrix4f> *result);
+bool parse_matrix2d_array(const tstring_view &sv, std::vector<lightusd::value::matrix2d> *result);
+bool parse_matrix3d_array(const tstring_view &sv, std::vector<lightusd::value::matrix3d> *result);
+bool parse_matrix4d_array(const tstring_view &sv, std::vector<lightusd::value::matrix4d> *result);
 
 }
 
-} // namespace tinyusdz
+} // namespace lightusd
 
 namespace std {
 
@@ -488,8 +488,8 @@ namespace std {
 // (= 14695981039346656037) does NOT fit in a 32-bit size_t, so it must not
 // be used as-is on 32-bit platforms (suppresses -Wconstant-conversion).
 template <>
-struct hash<tinyusdz::tstring_view> {
-  size_t operator()(const tinyusdz::tstring_view &v) const noexcept {
+struct hash<lightusd::tstring_view> {
+  size_t operator()(const lightusd::tstring_view &v) const noexcept {
 #if SIZE_MAX >= UINT64_C(0xFFFFFFFFFFFFFFFF)
     // 64-bit FNV-1a
     constexpr size_t kFnvOffsetBasis = static_cast<size_t>(UINT64_C(0xCBF29CE484222325));

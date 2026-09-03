@@ -154,7 +154,7 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   }
 
   // Shade.
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = w; img.height = h; img.channels = 4; img.bpp = 8;
   img.data.resize(npix * 4, 0);
   const float ambient = opt.ambient;
@@ -182,9 +182,9 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     }
   }
 
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write PNG: " << ret.error() << "\n";
     lrt_d3d11_engine_destroy(dev);

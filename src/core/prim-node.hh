@@ -15,7 +15,7 @@
 #include "core/path.hh"
 #include "core/meta-variable.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class Prim;
@@ -111,4 +111,4 @@ class PrimNode {
   std::vector<value::token> variantChildren; // List of child VariantSet nodes.
 };
 
-} // namespace tinyusdz
+} // namespace lightusd

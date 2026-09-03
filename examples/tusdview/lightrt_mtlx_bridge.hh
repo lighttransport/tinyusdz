@@ -9,9 +9,9 @@
 namespace tusdview {
 
 constexpr int kLightRtOpenPBRVec4s =
-    tinyusdz::tydra::kLightRtOpenPBRVec4s;
+    lightusd::tydra::kLightRtOpenPBRVec4s;
 constexpr int kLightRtOpenPBRFloats =
-    tinyusdz::tydra::kLightRtOpenPBRFloats;
+    lightusd::tydra::kLightRtOpenPBRFloats;
 static_assert(kLightRtOpenPBRFloats == TUSD_GPU_OPENPBR_FLOATS,
               "canonical OpenPBR GPU ABI drift");
 // Floats 0-71 are the original 6-slot layout (slots 0-5 = base, metallic,

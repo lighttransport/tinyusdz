@@ -2,8 +2,8 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // Lean Emscripten binding for the next-core + tydra-next render path.
-// This intentionally avoids the legacy tinyusdz_static library and exposes the
-// RenderStream contract consumed by web/js/src/tinyusdz/TinyUSDZLoader.js for
+// This intentionally avoids the legacy lightusd_static library and exposes the
+// RenderStream contract consumed by web/js/src/lightusd/LightUSDLoader.js for
 // first-stage `backend=next` browser coverage.
 
 #include <emscripten/bind.h>
@@ -39,7 +39,7 @@
 #include "next/schema/color-space.hh"
 #include "next/schema/usd-shade.hh"
 #include "next/stage/stage.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/usdz-writer.hh"
@@ -49,8 +49,8 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/urdf-to-usd.hh"
 
-namespace tn = tinyusdz::next;
-namespace tr = tinyusdz::tydra::next;
+namespace tn = lightusd::next;
+namespace tr = lightusd::tydra::next;
 
 namespace {
 
@@ -635,7 +635,7 @@ class SubdivStreamer {
                            int scheme, int boundary, int level, int batchFaces,
                            int blockFaces, int haloRings, bool wantNormals,
                            emscripten::val onBatch) {
-    namespace tsd = tinyusdz::tsd;
+    namespace tsd = lightusd::tsd;
 
     std::vector<float> pts;
     std::vector<uint32_t> counts;
@@ -1809,15 +1809,15 @@ class RenderStream {
     pending_input_bytes_ = 0;
     const double stage_load_start_ms = emscripten_get_now();
     if (IsUSDCBytes(crate)) {
-      tinyusdz::next::USDCLoadOptions opts;
+      lightusd::next::USDCLoadOptions opts;
       opts.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
         reportNextCrateProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
         return true;
       };
-      tinyusdz::next::USDCLoadResult res =
-          tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
+      lightusd::next::USDCLoadResult res =
+          lightusd::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
       if (!res.success) {
         error_ = res.error_summary.empty() ? std::string("USDC load failed")
                                            : res.error_summary;
@@ -1827,7 +1827,7 @@ class RenderStream {
       }
       stage_ = std::move(res.stage);
     } else {
-      tinyusdz::next::LoadUSDOptions opts;
+      lightusd::next::LoadUSDOptions opts;
       opts.usda_options.parse_options.enable_usda_lazy_arrays = true;
       opts.usdc_options.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
@@ -1837,7 +1837,7 @@ class RenderStream {
       };
       std::string warn;
       std::string err;
-      const bool ok = tinyusdz::next::LoadUSDFromMemoryOwned(
+      const bool ok = lightusd::next::LoadUSDFromMemoryOwned(
           std::move(crate), &stage_, opts, &warn, &err);
       if (!ok) {
         error_ = err.empty() ? std::string("USD memory load failed") : err;
@@ -1854,11 +1854,11 @@ class RenderStream {
     // NextFlattenSession instead).
     const double composition_start_ms = emscripten_get_now();
     collectVariantSets_();
-    if (tinyusdz::next::StageNeedsComposition(stage_)) {
-      tinyusdz::next::pcp::CompositionOptions copts;
+    if (lightusd::next::StageNeedsComposition(stage_)) {
+      lightusd::next::pcp::CompositionOptions copts;
       copts.variant_overrides = variant_overrides_;
       std::string cwarn, cerr;
-      if (!tinyusdz::next::ComposeLoadedStage(&stage_, &cwarn, &cerr, &copts,
+      if (!lightusd::next::ComposeLoadedStage(&stage_, &cwarn, &cerr, &copts,
                                               "memory-root")) {
         error_ = cerr.empty() ? std::string("in-memory composition failed")
                               : cerr;
@@ -1869,7 +1869,7 @@ class RenderStream {
     }
     stats_.composition_ms = emscripten_get_now() - composition_start_ms;
     const double mesh_discovery_start_ms = emscripten_get_now();
-    meshes_ = tinyusdz::next::GetAllMeshes(stage_);
+    meshes_ = lightusd::next::GetAllMeshes(stage_);
     stats_.mesh_discovery_ms =
         emscripten_get_now() - mesh_discovery_start_ms;
     stats_.source_mesh_count = meshes_.size();
@@ -2791,7 +2791,7 @@ class RenderStream {
   emscripten::val getSceneMetadata() const {
     emscripten::val metadata = emscripten::val::object();
     if (!loaded_) return metadata;
-    const tinyusdz::next::StageMeta &meta = stage_.GetMeta();
+    const lightusd::next::StageMeta &meta = stage_.GetMeta();
     metadata.set("upAxis", meta.upAxis);
     metadata.set("metersPerUnit", meta.metersPerUnit);
     // MassAPI SI conversion on the web/sim side (parity with the legacy
@@ -2852,7 +2852,7 @@ class RenderStream {
     source_material_keys_.clear();
     source_texture_keys_.clear();
     texture_keys_.clear();
-    stage_ = tinyusdz::next::Stage();
+    stage_ = lightusd::next::Stage();
     freeVec_(s_points_);
     freeVec_(s_normals_);
     freeVec_(s_uv_);
@@ -3006,7 +3006,7 @@ class RenderStream {
     analytic_outputs_.clear();
     if (!render_scene_valid_) return;
     for (const tr::RenderMesh& source : render_scene_.meshes) {
-      const tinyusdz::next::UsdPrim prim =
+      const lightusd::next::UsdPrim prim =
           stage_.GetPrimAtPath(source.prim_path);
       if (!prim.IsValid() || prim.GetTypeName() == "Mesh") continue;
 
@@ -3017,7 +3017,7 @@ class RenderStream {
       out.local_matrix = localMatrix_(prim);
       out.world_matrix = worldMatrixForPrim_(prim);
 
-      tinyusdz::next::UsdPrim material;
+      lightusd::next::UsdPrim material;
       if (source.material_id >= 0 &&
           static_cast<size_t>(source.material_id) <
               render_scene_.materials.size()) {
@@ -3026,7 +3026,7 @@ class RenderStream {
                 .prim_path);
       }
       if (!material.IsValid()) {
-        material = tinyusdz::next::GetBoundMaterial(stage_, prim);
+        material = lightusd::next::GetBoundMaterial(stage_, prim);
       }
       out.material_id = registerMaterial_(material);
 
@@ -3128,7 +3128,7 @@ class RenderStream {
       out.set("error", std::string("invalid source mesh index"));
       return out;
     }
-    const tinyusdz::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
+    const lightusd::next::UsdPrim &prim = meshes_[static_cast<size_t>(i)].GetPrim();
 
     bool soup = false;  // indexed, or non-indexed soup
     std::string mesh_err;
@@ -3481,7 +3481,7 @@ class RenderStream {
     return true;
   }
 
-  bool readFloatArray_(const tinyusdz::next::UsdPrim &prim, const char *name,
+  bool readFloatArray_(const lightusd::next::UsdPrim &prim, const char *name,
                        tr::ValueArrayRead<float> *out) {
     if (!tr::ReadFloatArray(prim, name, 0.0, out)) return false;
     if (out->view.borrowed) {
@@ -3491,7 +3491,7 @@ class RenderStream {
     }
     return true;
   }
-  bool readIntArray_(const tinyusdz::next::UsdPrim &prim, const char *name,
+  bool readIntArray_(const lightusd::next::UsdPrim &prim, const char *name,
                      tr::ValueArrayRead<int32_t> *out) {
     if (!tr::ReadIntArray(prim, name, 0.0, out)) return false;
     if (out->view.borrowed) {
@@ -3501,9 +3501,9 @@ class RenderStream {
     }
     return true;
   }
-  static bool matBool_(const tinyusdz::next::UsdPrim &prim, const char *name,
+  static bool matBool_(const lightusd::next::UsdPrim &prim, const char *name,
                        bool fallback) {
-    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    const lightusd::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return fallback;
     if (const bool *b = v->as_bool()) return *b;
     return fallback;
@@ -3571,7 +3571,7 @@ class RenderStream {
     return true;
   }
 
-  bool effectiveDoubleSided_(const tinyusdz::next::UsdPrim &prim,
+  bool effectiveDoubleSided_(const lightusd::next::UsdPrim &prim,
                              int32_t material_id,
                              const std::vector<float> &points) const {
     // An authored USD opinion always wins, including an explicit false.
@@ -3603,7 +3603,7 @@ class RenderStream {
   //     index + hash-map overhead).
   // The full soup is never materialized in the welded path; at most one mesh is
   // resident at a time either way.
-  bool buildRenderMesh_(const tinyusdz::next::UsdPrim &prim, bool *soup_out,
+  bool buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
                         std::string *err) {
     if (soup_out) *soup_out = false;
     tr::ValueArrayRead<float> P;
@@ -3733,7 +3733,7 @@ class RenderStream {
         mesh_only_triangulation.face_vertex_indices.push_back(
             static_cast<uint32_t>(index));
       }
-      if (const tinyusdz::next::Value *orientation =
+      if (const lightusd::next::Value *orientation =
               prim.GetPropertyValue("orientation")) {
         if (const std::string *token = orientation->as_token()) {
           mesh_only_triangulation.left_handed = (*token == "leftHanded");
@@ -4097,10 +4097,10 @@ class RenderStream {
     const std::string primPath = (dot == std::string::npos)
                                      ? connPath
                                      : connPath.substr(0, dot);
-    tinyusdz::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    lightusd::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
     if (!tex.IsValid()) return meta;
 
-    const tinyusdz::next::Value *file = tex.GetPropertyValue("inputs:file");
+    const lightusd::next::Value *file = tex.GetPropertyValue("inputs:file");
     if (file) {
       if (const std::string *a = file->as_asset_path()) {
         meta.path = *a;
@@ -4110,7 +4110,7 @@ class RenderStream {
     }
     auto read_tokenish = [&](const char *name, std::string *out) {
       if (!out) return;
-      const tinyusdz::next::Value *v = tex.GetPropertyValue(name);
+      const lightusd::next::Value *v = tex.GetPropertyValue(name);
       if (!v) return;
       if (const std::string *tok = v->as_token()) {
         *out = *tok;
@@ -4121,7 +4121,7 @@ class RenderStream {
     read_tokenish("inputs:sourceColorSpace", &meta.source_color_space);
     // colorSpace asset metadata on inputs:file wins over sourceColorSpace
     // (legacy tydra resolution order).
-    if (const tinyusdz::next::PropMeta *file_meta =
+    if (const lightusd::next::PropMeta *file_meta =
             tex.GetPropertyMeta("inputs:file")) {
       if (!file_meta->colorSpace.empty()) {
         meta.source_color_space = file_meta->colorSpace;
@@ -4173,10 +4173,10 @@ class RenderStream {
     }
   }
 
-  static bool populateHairMaterial_(const tinyusdz::next::UsdPrim &prim,
+  static bool populateHairMaterial_(const lightusd::next::UsdPrim &prim,
                                     MaterialRecord *rec) {
     if (!prim.IsValid() || !rec) return false;
-    const tinyusdz::next::Value *id_value = prim.GetPropertyValue("info:id");
+    const lightusd::next::Value *id_value = prim.GetPropertyValue("info:id");
     std::string shader_id;
     if (id_value) {
       if (const std::string *token = id_value->as_token()) shader_id = *token;
@@ -4187,15 +4187,15 @@ class RenderStream {
     if (found) {
       rec->has_hair = true;
       auto color = [&](const char *name, float *out) {
-        const tinyusdz::next::Value *value = prim.GetPropertyValue(name);
+        const lightusd::next::Value *value = prim.GetPropertyValue(name);
         if (value) (void)value->to_float3(out);
       };
       auto pair = [&](const char *name, float *out) {
-        const tinyusdz::next::Value *value = prim.GetPropertyValue(name);
+        const lightusd::next::Value *value = prim.GetPropertyValue(name);
         if (value) (void)value->to_float2(out);
       };
       auto scalar = [&](const char *name, float *out) {
-        const tinyusdz::next::Value *value = prim.GetPropertyValue(name);
+        const lightusd::next::Value *value = prim.GetPropertyValue(name);
         if (value) (void)value->to_float(out);
       };
       color("inputs:tint_R", rec->hair_tint_r);
@@ -4208,13 +4208,13 @@ class RenderStream {
       scalar("inputs:ior", &rec->hair_ior);
       scalar("inputs:cuticle_angle", &rec->hair_cuticle_angle);
     }
-    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
       found = populateHairMaterial_(child, rec) || found;
     }
     return found;
   }
 
-  bool ensureRenderMaterial_(const tinyusdz::next::UsdPrim &mat) {
+  bool ensureRenderMaterial_(const lightusd::next::UsdPrim &mat) {
     if (!mat.IsValid()) return false;
     const std::string path = mat.GetPath().str();
     if (render_scene_.material_by_path.find(path) !=
@@ -4245,36 +4245,36 @@ class RenderStream {
     return true;
   }
 
-  bool requiresRenderMaterial_(const tinyusdz::next::UsdPrim &mat) const {
+  bool requiresRenderMaterial_(const lightusd::next::UsdPrim &mat) const {
     if (!mat.IsValid()) return false;
 
     // PreviewSurface is decoded directly below and does not need the much
     // heavier RenderSceneConverter. Keep that converter for MaterialX and
     // other non-Preview terminals whose graph evaluation is authoritative.
-    if (const tinyusdz::next::PrimSpec *spec = mat.GetPrimSpec()) {
-      const std::vector<tinyusdz::next::Path> *mtlx =
+    if (const lightusd::next::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<lightusd::next::Path> *mtlx =
           spec->connection("outputs:mtlx:surface");
       if (mtlx && !mtlx->empty()) return true;
     }
-    if (const std::vector<tinyusdz::next::Path> *mtlx =
+    if (const std::vector<lightusd::next::Path> *mtlx =
             mat.GetRelationship("outputs:mtlx:surface")) {
       if (!mtlx->empty()) return true;
     }
-    if (const std::vector<tinyusdz::next::Path> *source =
+    if (const std::vector<lightusd::next::Path> *source =
             mat.GetRelationship("mtlx:surface:source")) {
       if (!source->empty()) return true;
     }
 
     const std::string surface_path =
-        tinyusdz::next::GetSurfaceShader(stage_, mat);
+        lightusd::next::GetSurfaceShader(stage_, mat);
     if (surface_path.empty()) return false;
-    const tinyusdz::next::UsdPrim surface =
+    const lightusd::next::UsdPrim surface =
         stage_.GetPrimAtPath(surface_path);
-    return surface.IsValid() && !tinyusdz::next::IsPreviewSurface(surface);
+    return surface.IsValid() && !lightusd::next::IsPreviewSurface(surface);
   }
 
   std::string materialSourceIdentity_(
-      const tinyusdz::next::UsdPrim &mat) const {
+      const lightusd::next::UsdPrim &mat) const {
     if (!mat.IsValid()) return {};
 
     // MaterialX exports often repeat the same local graph under hundreds of
@@ -4282,16 +4282,16 @@ class RenderStream {
     // before conversion so exact semantic duplicates share one
     // RenderMaterial; absolute material paths are normalized by the encoder.
     bool has_mtlx_surface = false;
-    if (const tinyusdz::next::PrimSpec *spec = mat.GetPrimSpec()) {
-      const std::vector<tinyusdz::next::Path> *mtlx =
+    if (const lightusd::next::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<lightusd::next::Path> *mtlx =
           spec->connection("outputs:mtlx:surface");
       has_mtlx_surface = mtlx && !mtlx->empty();
     }
-    if (const std::vector<tinyusdz::next::Path> *mtlx =
+    if (const std::vector<lightusd::next::Path> *mtlx =
             mat.GetRelationship("outputs:mtlx:surface")) {
       has_mtlx_surface = has_mtlx_surface || !mtlx->empty();
     }
-    if (const std::vector<tinyusdz::next::Path> *source =
+    if (const std::vector<lightusd::next::Path> *source =
             mat.GetRelationship("mtlx:surface:source")) {
       has_mtlx_surface = has_mtlx_surface || !source->empty();
     }
@@ -4307,9 +4307,9 @@ class RenderStream {
     if (!canonical_preview.empty()) return "preview:" + canonical_preview;
 
     std::string source_asset;
-    const std::vector<tinyusdz::next::UsdPrim> children = mat.GetChildren();
-    for (const tinyusdz::next::UsdPrim &child : children) {
-      const tinyusdz::next::Value *value =
+    const std::vector<lightusd::next::UsdPrim> children = mat.GetChildren();
+    for (const lightusd::next::UsdPrim &child : children) {
+      const lightusd::next::Value *value =
           child.GetPropertyValue("info:unreal:sourceAsset");
       if (!value) continue;
       if (const std::string *asset = value->as_asset_path()) {
@@ -4336,14 +4336,14 @@ class RenderStream {
     auto append_float = [&](float value) {
       signature.append(reinterpret_cast<const char *>(&value), sizeof(value));
     };
-    for (const tinyusdz::next::UsdPrim &child : children) {
-      if (tinyusdz::next::IsPreviewSurface(child)) {
+    for (const lightusd::next::UsdPrim &child : children) {
+      if (lightusd::next::IsPreviewSurface(child)) {
         has_preview_surface = true;
         const char *scalar_names[] = {
             "inputs:metallic", "inputs:roughness", "inputs:opacity",
             "inputs:occlusion", "inputs:opacityThreshold"};
         for (const char *name : scalar_names) {
-          const tinyusdz::next::Value *scalar_value =
+          const lightusd::next::Value *scalar_value =
               child.GetPropertyValue(name);
           float scalar = 0.0f;
           append_text(name);
@@ -4357,7 +4357,7 @@ class RenderStream {
         const char *color_names[] = {
             "inputs:diffuseColor", "inputs:emissiveColor"};
         for (const char *name : color_names) {
-          const tinyusdz::next::Value *color_value =
+          const lightusd::next::Value *color_value =
               child.GetPropertyValue(name);
           float color[3] = {0.0f, 0.0f, 0.0f};
           append_text(name);
@@ -4374,17 +4374,17 @@ class RenderStream {
             "inputs:diffuseColor", "inputs:normal", "inputs:roughness",
             "inputs:metallic", "inputs:occlusion", "inputs:emissiveColor",
             "inputs:opacity"};
-        const tinyusdz::next::PrimSpec *child_spec = child.GetPrimSpec();
+        const lightusd::next::PrimSpec *child_spec = child.GetPrimSpec();
         for (const char *name : connection_names) {
           append_text(name);
-          const std::vector<tinyusdz::next::Path> *connections =
+          const std::vector<lightusd::next::Path> *connections =
               child_spec ? child_spec->connection(name) : nullptr;
           if (!connections) {
             signature.push_back('\0');
             continue;
           }
           signature.push_back('\1');
-          for (const tinyusdz::next::Path &connection : *connections) {
+          for (const lightusd::next::Path &connection : *connections) {
             std::string target = connection.str();
             if (target.rfind(material_path, 0) == 0) {
               target.erase(0, material_path.size());
@@ -4393,7 +4393,7 @@ class RenderStream {
           }
         }
       }
-      const tinyusdz::next::Value *file =
+      const lightusd::next::Value *file =
           child.GetPropertyValue("inputs:file");
       if (file) {
         const std::string *asset = file->as_asset_path();
@@ -4413,7 +4413,7 @@ class RenderStream {
   }
 
   MaterialRecord materialRecordForPrim_(
-      const tinyusdz::next::UsdPrim &mat) {
+      const lightusd::next::UsdPrim &mat) {
     MaterialRecord rec;
     if (!mat.IsValid()) {
       rec.prim_path = "__default";
@@ -4516,17 +4516,17 @@ class RenderStream {
         }
       }
     }
-    tinyusdz::next::UsdPrim shader;
-    const std::string shaderPath = tinyusdz::next::GetSurfaceShader(stage_, mat);
+    lightusd::next::UsdPrim shader;
+    const std::string shaderPath = lightusd::next::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
     if (!shader.IsValid()) {
       for (const auto &ch : mat.GetChildren()) {
-        if (tinyusdz::next::IsPreviewSurface(ch)) { shader = ch; break; }
+        if (lightusd::next::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
     if (!populated_from_render_scene && shader.IsValid()) {
-      tinyusdz::next::PreviewSurfaceData ps;
-      if (tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps)) {
+      lightusd::next::PreviewSurfaceData ps;
+      if (lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps)) {
         rec.base_color[0] = ps.diffuse_color[0];
         rec.base_color[1] = ps.diffuse_color[1];
         rec.base_color[2] = ps.diffuse_color[2];
@@ -4561,8 +4561,8 @@ class RenderStream {
     // graph. Preserve that cutoff even when the render catalog correctly chose
     // outputs:mtlx:surface above.
     if (rec.opacity_threshold <= 0.0f && shader.IsValid()) {
-      tinyusdz::next::PreviewSurfaceData ps;
-      if (tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps) &&
+      lightusd::next::PreviewSurfaceData ps;
+      if (lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps) &&
           ps.opacity_threshold > 0.0f) {
         rec.opacity_threshold = ps.opacity_threshold;
       }
@@ -4605,7 +4605,7 @@ class RenderStream {
     return rec;
   }
 
-  int32_t registerMaterial_(const tinyusdz::next::UsdPrim &mat) {
+  int32_t registerMaterial_(const lightusd::next::UsdPrim &mat) {
     const std::string mat_path = mat.IsValid() ? mat.GetPath().str()
                                                : std::string("__default");
     const auto path_it = material_path_to_id_.find(mat_path);
@@ -4674,13 +4674,13 @@ class RenderStream {
     return rec.id;
   }
 
-  int32_t materialIdForBoundPrim_(const tinyusdz::next::UsdPrim &prim) {
-    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
+  int32_t materialIdForBoundPrim_(const lightusd::next::UsdPrim &prim) {
+    lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, prim);
     return registerMaterial_(mat);
   }
 
-  static bool hasGeomSubset_(const tinyusdz::next::UsdPrim &prim) {
-    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+  static bool hasGeomSubset_(const lightusd::next::UsdPrim &prim) {
+    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
       if (child.IsValid() && child.GetTypeName() == "GeomSubset") return true;
     }
     return false;
@@ -4757,7 +4757,7 @@ class RenderStream {
     }
     acc->mesh.merged = true;
     acc->mesh.name = "merged_material_" + std::to_string(acc->mesh.material_id);
-    acc->mesh.prim_path = "/__tinyusdz_next_merged/" + acc->mesh.name + "_" +
+    acc->mesh.prim_path = "/__lightusd_next_merged/" + acc->mesh.name + "_" +
                           std::to_string(outputs_.size());
     outputs_.push_back(std::move(acc->mesh));
     stats_.merge_group_count++;
@@ -4767,7 +4767,7 @@ class RenderStream {
     acc->first_source_index = -1;
   }
 
-  bool appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
+  bool appendToAccumulator_(const lightusd::next::UsdPrim &prim,
                             int source_index,
                             int32_t material_id,
                             bool double_sided,
@@ -4857,7 +4857,7 @@ class RenderStream {
     constexpr size_t kMaxGroupIndices = size_t(3) << 20;
 
     for (size_t i = 0; i < meshes_.size(); ++i) {
-      const tinyusdz::next::UsdPrim &prim = meshes_[i].GetPrim();
+      const lightusd::next::UsdPrim &prim = meshes_[i].GetPrim();
       const double material_start_ms = emscripten_get_now();
       const int32_t material_id = materialIdForBoundPrim_(prim);
       stats_.material_ms += emscripten_get_now() - material_start_ms;
@@ -4936,9 +4936,9 @@ class RenderStream {
     const size_t slash = connPath.rfind('/');
     const size_t dot = connPath.find('.', slash == std::string::npos ? 0 : slash);
     const std::string primPath = (dot == std::string::npos) ? connPath : connPath.substr(0, dot);
-    tinyusdz::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    lightusd::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
     if (!tex.IsValid()) return "";
-    const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:file");
+    const lightusd::next::Value *v = tex.GetPropertyValue("inputs:file");
     if (!v) return "";
     if (const std::string *a = v->as_asset_path()) return *a;
     if (const std::string *s = v->as_string()) return *s;
@@ -5032,10 +5032,10 @@ class RenderStream {
   }
 
   static std::vector<int32_t> matIntStatic_(
-      const tinyusdz::next::UsdPrim &prim, const char *name) {
-    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+      const lightusd::next::UsdPrim &prim, const char *name) {
+    const lightusd::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = v->materialized_copy();
+    lightusd::next::Value tmp = v->materialized_copy();
     std::vector<int32_t> *a = tmp.as_int_array();
     return a ? std::move(*a) : std::vector<int32_t>{};
   }
@@ -5143,12 +5143,12 @@ class RenderStream {
     }
   }
   std::array<double, 16> localMatrix_(
-      const tinyusdz::next::UsdPrim &prim) const {
+      const lightusd::next::UsdPrim &prim) const {
     const std::string path = prim.GetPath().str();
     const auto cached = local_matrix_cache_.find(path);
     if (cached != local_matrix_cache_.end()) return cached->second;
     std::array<double, 16> m = identityMatrix_();
-    tinyusdz::next::UsdGeomXform xform(prim);
+    lightusd::next::UsdGeomXform xform(prim);
     double raw[16];
     if (xform.ComputeLocalTransform(raw)) {
       for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
@@ -5158,10 +5158,10 @@ class RenderStream {
   }
 
   std::array<double, 16> worldMatrix_(
-      const tinyusdz::next::UsdPrim &prim) const {
-    std::vector<tinyusdz::next::UsdPrim> chain;
+      const lightusd::next::UsdPrim &prim) const {
+    std::vector<lightusd::next::UsdPrim> chain;
     std::array<double, 16> world = identityMatrix_();
-    for (tinyusdz::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+    for (lightusd::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
       const auto cached = world_matrix_cache_.find(p.GetPath().str());
       if (cached != world_matrix_cache_.end()) {
         world = cached->second;
@@ -5181,7 +5181,7 @@ class RenderStream {
   // hierarchy traversal handles native instances correctly, while the plain
   // GetParent() chain in worldMatrix_ drops the instance root's own xform.
   std::array<double, 16> worldMatrixForPrim_(
-      const tinyusdz::next::UsdPrim &prim) const {
+      const lightusd::next::UsdPrim &prim) const {
     if (render_scene_valid_) {
       const auto it = render_scene_.node_by_path.find(prim.GetPath().str());
       if (it != render_scene_.node_by_path.end() && it->second >= 0 &&
@@ -5200,23 +5200,23 @@ class RenderStream {
   }
 
   emscripten::val materialObjectForPrim_(
-      const tinyusdz::next::UsdPrim &mat) {
+      const lightusd::next::UsdPrim &mat) {
     emscripten::val m = emscripten::val::object();
     if (!mat.IsValid()) return m;
     // Resolve the surface shader: prefer the material's outputs:surface (a
     // connection), but fall back to the first UsdPreviewSurface child shader —
     // the common case and robust when the output connection is not resolved.
-    tinyusdz::next::UsdPrim shader;
-    const std::string shaderPath = tinyusdz::next::GetSurfaceShader(stage_, mat);
+    lightusd::next::UsdPrim shader;
+    const std::string shaderPath = lightusd::next::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
     if (!shader.IsValid()) {
       for (const auto &ch : mat.GetChildren()) {
-        if (tinyusdz::next::IsPreviewSurface(ch)) { shader = ch; break; }
+        if (lightusd::next::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
     if (!shader.IsValid()) return m;
-    tinyusdz::next::PreviewSurfaceData ps;
-    if (!tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps)) return m;
+    lightusd::next::PreviewSurfaceData ps;
+    if (!lightusd::next::GetPreviewSurfaceData(stage_, shader, &ps)) return m;
     m.set("baseColor", arr3_(ps.diffuse_color));
     m.set("metallic", ps.metallic);
     m.set("roughness", ps.roughness);
@@ -5272,13 +5272,13 @@ class RenderStream {
                                        ? render_mat->openpbr->nodegraph_json
                                        : std::string();
       if (nodegraph_json.empty()) {
-        const tinyusdz::next::UsdPrim mat =
+        const lightusd::next::UsdPrim mat =
             stage_.GetPrimAtPath(rec.prim_path);
-        tinyusdz::next::UsdPrim shader;
+        lightusd::next::UsdPrim shader;
         // A material may author both PreviewSurface and MaterialX terminals.
         // Graph reconstruction must prefer outputs:mtlx:surface even when the
         // renderer intentionally chose the generic outputs:surface fallback.
-        const std::vector<tinyusdz::next::Path>* mtlx_connections =
+        const std::vector<lightusd::next::Path>* mtlx_connections =
             NextPropertyConnections(mat, "outputs:mtlx:surface");
         if (mtlx_connections && !mtlx_connections->empty()) {
           shader = stage_.GetPrimAtPath(
@@ -5286,7 +5286,7 @@ class RenderStream {
         }
         if (!shader.IsValid()) {
           const std::string shader_path =
-              tinyusdz::next::GetSurfaceShader(stage_, mat);
+              lightusd::next::GetSurfaceShader(stage_, mat);
           if (!shader_path.empty()) shader = stage_.GetPrimAtPath(shader_path);
         }
         nodegraph_json = BuildNextNodeGraphJson(
@@ -5395,12 +5395,12 @@ class RenderStream {
 
   // Resolve the prim's bound material to UsdPreviewSurface values + texture
   // asset paths (resolved to GPU textures by the JS caller from the archive).
-  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
-    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
+  emscripten::val resolveMaterial_(const lightusd::next::UsdPrim &prim) {
+    lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, prim);
     return materialObjectForPrim_(mat);
   }
 
-  void addGeomSubsetMaterials_(const tinyusdz::next::UsdPrim &prim,
+  void addGeomSubsetMaterials_(const lightusd::next::UsdPrim &prim,
                                emscripten::val &out) {
     // Prefer the converter's triangle-space subset ranges: they account for
     // holes, degenerate faces, earcut splits and topology sanitization,
@@ -5430,7 +5430,7 @@ class RenderStream {
               const std::string &mat_path =
                   render_scene_.materials[static_cast<size_t>(ms.material_id)]
                       .prim_path;
-              tinyusdz::next::UsdPrim mat_prim = stage_.GetPrimAtPath(mat_path);
+              lightusd::next::UsdPrim mat_prim = stage_.GetPrimAtPath(mat_path);
               const int32_t record_id = registerMaterial_(mat_prim);
               mat_index = static_cast<int>(mat_index_by_scene_id.size());
               mat_index_by_scene_id.emplace(ms.material_id, mat_index);
@@ -5457,20 +5457,20 @@ class RenderStream {
     if (fvc.empty()) return;
 
     struct SubsetInfo {
-      tinyusdz::next::UsdPrim prim;
+      lightusd::next::UsdPrim prim;
       std::vector<int32_t> faces;
     };
     std::vector<SubsetInfo> subsets;
-    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+    for (const lightusd::next::UsdPrim &child : prim.GetChildren()) {
       if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
-      const tinyusdz::next::Value *family = child.GetPropertyValue("familyName");
+      const lightusd::next::Value *family = child.GetPropertyValue("familyName");
       if (family) {
         const std::string *tok = family->as_token();
         if (tok && *tok != "materialBind") continue;
       }
       std::vector<int32_t> faces = matIntStatic_(child, "indices");
       if (faces.empty()) continue;
-      tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, child);
+      lightusd::next::UsdPrim mat = lightusd::next::GetBoundMaterial(stage_, child);
       if (!mat.IsValid()) continue;
       subsets.push_back({child, std::move(faces)});
     }
@@ -5485,8 +5485,8 @@ class RenderStream {
           face_material[static_cast<size_t>(face)] = mat_index;
         }
       }
-      tinyusdz::next::UsdPrim mat =
-          tinyusdz::next::GetBoundMaterial(stage_, subsets[i].prim);
+      lightusd::next::UsdPrim mat =
+          lightusd::next::GetBoundMaterial(stage_, subsets[i].prim);
       const int32_t material_id = registerMaterial_(mat);
       materials.set(mat_index, materialObject_(material_id));
     }
@@ -5521,11 +5521,11 @@ class RenderStream {
     out.set("submeshes", groups);
   }
 
-  tinyusdz::next::Stage stage_;
+  lightusd::next::Stage stage_;
   tr::RenderScene render_scene_;
   bool render_scene_valid_ = false;
   std::vector<std::string> render_scene_warnings_;
-  std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
+  std::vector<lightusd::next::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
   std::vector<OutputMesh> analytic_outputs_;
   std::vector<MaterialRecord> materials_;
@@ -5549,7 +5549,7 @@ class RenderStream {
 
   void collectVariantSets_() {
     variant_sets_.clear();
-    const tinyusdz::next::Layer *root = stage_.GetRootLayer();
+    const lightusd::next::Layer *root = stage_.GetRootLayer();
     if (!root) return;
     for (const auto &prim : root->prims()) {
       const auto &meta = prim.meta();
@@ -5723,7 +5723,7 @@ nlohmann::json ValidationResultToJSON(const tn::USDValidationResult& v) {
 }  // namespace
 
 // validateFromBinary(bytes, filename, optionsJson) -> JSON string, matching
-// the legacy TinyUSDZLoaderNative.validateFromBinary contract consumed by
+// the legacy LightUSDLoaderNative.validateFromBinary contract consumed by
 // web/js/validation.js. Runs AOUSD-core validation over next::Layer.
 static std::string validateFromBinary(const emscripten::val& data,
                                       const std::string& filename,
@@ -5838,7 +5838,7 @@ static emscripten::val usddiff(const emscripten::val& opts) {
   return result;
 }
 
-EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
+EMSCRIPTEN_BINDINGS(lightusd_next_render_stream) {
   emscripten::function("usddiff", &usddiff);
   emscripten::function("validateFromBinary", &validateFromBinary);
 

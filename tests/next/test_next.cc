@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Unit tests
+// LightUSD Next - Unit tests
 
 #include <iostream>
 #include <fstream>
@@ -30,13 +30,13 @@
 #include "next/reader/usda-reader.hh"
 #include "next/schema/physics-api.hh"
 #include "next/schema/physics-joint.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 namespace {
 
-#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                             \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
 constexpr bool kExpectUsdaLazyMmap = true;
@@ -660,7 +660,7 @@ def Mesh "MeshA" {
   // POSIX builds, avoiding the extra full-file string copy kept by the string
   // input path above.
   {
-    const char* path = "/tmp/tinyusdz_next_usda_lazy_mmap_test.usda";
+    const char* path = "/tmp/lightusd_next_usda_lazy_mmap_test.usda";
     {
       std::ofstream f(path, std::ios::binary);
       f << input;
@@ -1071,7 +1071,7 @@ def Xform "root" {
 
 void test_stage_session_variants() {
   std::cout << "Testing StageSession path-scoped variants..." << std::endl;
-  const char* path = "/tmp/tinyusdz_next_stage_session.usda";
+  const char* path = "/tmp/lightusd_next_stage_session.usda";
   {
     std::ofstream ofs(path);
     ofs << R"(#usda 1.0
@@ -1166,8 +1166,8 @@ def Mesh "M" {
 void test_stage_session_payloads_and_cancel() {
   std::cout << "Testing StageSession payload edits and cancellation..."
             << std::endl;
-  const char* root_path = "/tmp/tinyusdz_next_session_root.usda";
-  const char* payload_path = "/tmp/tinyusdz_next_session_payload.usda";
+  const char* root_path = "/tmp/lightusd_next_session_root.usda";
+  const char* payload_path = "/tmp/lightusd_next_session_payload.usda";
   {
     std::ofstream ofs(payload_path);
     ofs << "#usda 1.0\ndef Xform \"Payload\" { int loadedValue = 7 }\n";
@@ -1175,9 +1175,9 @@ void test_stage_session_payloads_and_cancel() {
   {
     std::ofstream ofs(root_path);
     ofs << "#usda 1.0\ndef Xform \"P\" (payload = "
-           "@tinyusdz_next_session_payload.usda@</Payload>) {}\n"
+           "@lightusd_next_session_payload.usda@</Payload>) {}\n"
            "def Xform \"Q\" (payload = "
-           "@tinyusdz_next_session_payload.usda@</Payload>) {}\n";
+           "@lightusd_next_session_payload.usda@</Payload>) {}\n";
   }
 
   StageSessionOptions options;
@@ -1261,8 +1261,8 @@ void test_stage_session_payloads_and_cancel() {
 void test_stage_session_preview_and_dependencies() {
   std::cout << "Testing StageSession preview checkpoint/dependencies..."
             << std::endl;
-  const char* root_path = "/tmp/tinyusdz_next_preview_root.usda";
-  const char* sub_path = "/tmp/tinyusdz_next_preview_sub.usda";
+  const char* root_path = "/tmp/lightusd_next_preview_root.usda";
+  const char* sub_path = "/tmp/lightusd_next_preview_sub.usda";
   {
     std::ofstream ofs(sub_path);
     ofs << R"(#usda 1.0
@@ -1276,7 +1276,7 @@ def Mesh "FromSub" {
   }
   {
     std::ofstream ofs(root_path);
-    ofs << "#usda 1.0\n( subLayers = [@tinyusdz_next_preview_sub.usda@] )\n"
+    ofs << "#usda 1.0\n( subLayers = [@lightusd_next_preview_sub.usda@] )\n"
            "def Xform \"Root\" { def Scope \"Child\" {} }\n";
   }
 
@@ -1893,7 +1893,7 @@ void test_hardened_session_profile() {
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Unit Tests ===" << std::endl;
+  std::cout << "=== LightUSD Next Unit Tests ===" << std::endl;
   std::cout << std::endl;
 
   try {

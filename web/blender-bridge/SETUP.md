@@ -6,7 +6,7 @@ Step-by-step instructions to set up and run the Blender Bridge for streaming USD
 
 - Node.js v18+
 - Blender 4.0+ with USD export support
-- TinyUSDZ WASM build (in `web/js/src/tinyusdz/`)
+- LightUSD WASM build (in `web/js/src/lightusd/`)
 
 ## Directory Structure
 
@@ -27,7 +27,7 @@ web/blender-bridge/
     ├── index.html
     ├── viewer.js
     ├── viewer.css
-    ├── tinyusdz/          # Copied from web/js/src/tinyusdz/
+    ├── lightusd/          # Copied from web/js/src/lightusd/
     └── client/            # Copied from ../client/
 ```
 
@@ -40,15 +40,15 @@ cd web/blender-bridge
 npm install
 ```
 
-### 2. Copy TinyUSDZ WASM Files
+### 2. Copy LightUSD WASM Files
 
 Copy the WASM files to the viewer directory (symlinks don't work in browsers):
 
 ```bash
 cd viewer
-mkdir -p tinyusdz
-cp ../../js/src/tinyusdz/*.js tinyusdz/
-cp ../../js/src/tinyusdz/*.wasm tinyusdz/
+mkdir -p lightusd
+cp ../../js/src/lightusd/*.js lightusd/
+cp ../../js/src/lightusd/*.wasm lightusd/
 ```
 
 ### 3. Copy Client Files
@@ -151,7 +151,7 @@ Expected output when connected:
 
 ### WASM MIME Type Error
 If you see "Response has unsupported MIME type '' expected 'application/wasm'":
-- Ensure WASM files are copied (not symlinked) to `viewer/tinyusdz/`
+- Ensure WASM files are copied (not symlinked) to `viewer/lightusd/`
 - The vite config includes the `wasmMimePlugin()`
 
 ### Port Already in Use
@@ -245,8 +245,8 @@ Replace `SERVER_IP` with your bridge server's IP address. This:
 For a UI panel in the sidebar:
 
 1. Copy `blender/bridge_addon.py` to Blender's addons folder
-2. Enable "TinyUSDZ Bridge" in Preferences > Add-ons
-3. Find the panel in View3D > Sidebar > TinyUSDZ
+2. Enable "LightUSD Bridge" in Preferences > Add-ons
+3. Find the panel in View3D > Sidebar > LightUSD
 
 ### How It Works
 

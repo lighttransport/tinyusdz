@@ -4,7 +4,7 @@
 
 #include "value-eval-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 value::matrix2f operator+(const value::matrix2f &a, const double b) {
   value::matrix2f dst;
@@ -957,4 +957,4 @@ value::frame4d operator/(const double a, const value::frame4d &b) {
   return dst;
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

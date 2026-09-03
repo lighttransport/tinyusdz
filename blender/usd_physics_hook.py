@@ -10,7 +10,7 @@
 
 bl_info = {
     "name": "USD Physics Hook (UsdPhysics + MuJoCo)",
-    "author": "TinyUSDZ Contributors",
+    "author": "LightUSD Contributors",
     "version": (1, 0, 0),
     "blender": (4, 0, 0),
     "location": "File > Export/Import USD",

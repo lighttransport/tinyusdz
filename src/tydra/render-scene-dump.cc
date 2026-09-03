@@ -14,7 +14,7 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
@@ -29,7 +29,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -183,8 +183,8 @@ static void DumpNodeImpl(std::stringstream &ss, const Node &node, uint32_t inden
     ss << pprint::Indent(ind + 1) << "prim_name " << quote(n.prim_name) << "\n";
     ss << pprint::Indent(ind + 1) << "abs_path " << quote(n.abs_path) << "\n";
     ss << pprint::Indent(ind + 1) << "display_name " << quote(n.display_name) << "\n";
-    ss << pprint::Indent(ind + 1) << "local_matrix " << quote(tinyusdz::to_string(n.local_matrix)) << "\n";
-    ss << pprint::Indent(ind + 1) << "global_matrix " << quote(tinyusdz::to_string(n.global_matrix)) << "\n";
+    ss << pprint::Indent(ind + 1) << "local_matrix " << quote(lightusd::to_string(n.local_matrix)) << "\n";
+    ss << pprint::Indent(ind + 1) << "global_matrix " << quote(lightusd::to_string(n.global_matrix)) << "\n";
 
     if (n.children.size()) {
       ss << pprint::Indent(ind + 1) << "children {\n";
@@ -268,7 +268,7 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   if (mesh.joint_and_weights.jointIndices.size()) {
     ss << pprint::Indent(indent + 1) << "skin {\n";
     ss << pprint::Indent(indent + 2) << "geomBindTransform "
-       << quote(tinyusdz::to_string(mesh.joint_and_weights.geomBindTransform))
+       << quote(lightusd::to_string(mesh.joint_and_weights.geomBindTransform))
        << "\n";
     ss << pprint::Indent(indent + 2) << "elementSize "
        << mesh.joint_and_weights.elementSize << "\n";
@@ -346,8 +346,8 @@ void DumpSkelNode(std::stringstream &ss, const SkelNode &node, uint32_t indent) 
     ss << pprint::Indent(ind) << n.joint_name << " {\n";
     ss << pprint::Indent(ind + 1) << "joint_path " << quote(n.joint_path) << "\n";
     ss << pprint::Indent(ind + 1) << "joint_id " << n.joint_id << "\n";
-    ss << pprint::Indent(ind + 1) << "bind_transform " << quote(tinyusdz::to_string(n.bind_transform)) << "\n";
-    ss << pprint::Indent(ind + 1) << "rest_transform " << quote(tinyusdz::to_string(n.rest_transform)) << "\n";
+    ss << pprint::Indent(ind + 1) << "bind_transform " << quote(lightusd::to_string(n.bind_transform)) << "\n";
+    ss << pprint::Indent(ind + 1) << "rest_transform " << quote(lightusd::to_string(n.rest_transform)) << "\n";
 
     if (n.children.size()) {
       ss << pprint::Indent(ind + 1) << "children {\n";
@@ -396,9 +396,9 @@ namespace detail {
 
 
 // void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
-// 
+//
 //   ss << pprint::Indent(indent) << name << " {\n";
-// 
+//
 //   for (const auto &channel : channels) {
 //     if (channel.first == AnimationChannel::ChannelType::Translation) {
 //       ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
@@ -408,7 +408,7 @@ namespace detail {
 //       ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
 //     }
 //   }
-// 
+//
 //   ss << pprint::Indent(indent) << "}\n";
 // }
 
@@ -945,8 +945,8 @@ static void DumpNodeYAML(std::stringstream &ss, const Node &node, uint32_t inden
     ss << yaml_indent(ind) << "  prim_name: " << yaml_escape(n.prim_name) << "\n";
     ss << yaml_indent(ind) << "  abs_path: " << yaml_escape(n.abs_path) << "\n";
     ss << yaml_indent(ind) << "  display_name: " << yaml_escape(n.display_name) << "\n";
-    ss << yaml_indent(ind) << "  local_matrix: " << yaml_escape(tinyusdz::to_string(n.local_matrix)) << "\n";
-    ss << yaml_indent(ind) << "  global_matrix: " << yaml_escape(tinyusdz::to_string(n.global_matrix)) << "\n";
+    ss << yaml_indent(ind) << "  local_matrix: " << yaml_escape(lightusd::to_string(n.local_matrix)) << "\n";
+    ss << yaml_indent(ind) << "  global_matrix: " << yaml_escape(lightusd::to_string(n.global_matrix)) << "\n";
     if (!n.children.empty()) {
       ss << yaml_indent(ind) << "  children:\n";
       // Push children in reverse order so first child is processed first
@@ -997,7 +997,7 @@ static void DumpMeshYAML(std::stringstream &ss, const RenderMesh &mesh, uint32_t
   ss << yaml_indent(indent) << "  skel_id: " << mesh.skel_id << "\n";
   if (!mesh.joint_and_weights.jointIndices.empty()) {
     ss << yaml_indent(indent) << "  skin:\n";
-    ss << yaml_indent(indent + 2) << "geomBindTransform: " << yaml_escape(tinyusdz::to_string(mesh.joint_and_weights.geomBindTransform)) << "\n";
+    ss << yaml_indent(indent + 2) << "geomBindTransform: " << yaml_escape(lightusd::to_string(mesh.joint_and_weights.geomBindTransform)) << "\n";
     ss << yaml_indent(indent + 2) << "elementSize: " << mesh.joint_and_weights.elementSize << "\n";
     ss << yaml_indent(indent + 2) << "jointIndices: " << yaml_escape(value::print_array_snipped(mesh.joint_and_weights.jointIndices)) << "\n";
     ss << yaml_indent(indent + 2) << "jointWeights: " << yaml_escape(value::print_array_snipped(mesh.joint_and_weights.jointWeights)) << "\n";
@@ -1043,8 +1043,8 @@ static void DumpSkelNodeYAML(std::stringstream &ss, const SkelNode &node, uint32
     ss << yaml_indent(ind) << "- joint_name: " << yaml_escape(n.joint_name) << "\n";
     ss << yaml_indent(ind) << "  joint_path: " << yaml_escape(n.joint_path) << "\n";
     ss << yaml_indent(ind) << "  joint_id: " << n.joint_id << "\n";
-    ss << yaml_indent(ind) << "  bind_transform: " << yaml_escape(tinyusdz::to_string(n.bind_transform)) << "\n";
-    ss << yaml_indent(ind) << "  rest_transform: " << yaml_escape(tinyusdz::to_string(n.rest_transform)) << "\n";
+    ss << yaml_indent(ind) << "  bind_transform: " << yaml_escape(lightusd::to_string(n.bind_transform)) << "\n";
+    ss << yaml_indent(ind) << "  rest_transform: " << yaml_escape(lightusd::to_string(n.rest_transform)) << "\n";
     if (!n.children.empty()) {
       ss << yaml_indent(ind) << "  children:\n";
       // Push children in reverse order so first child is processed first
@@ -1245,14 +1245,14 @@ static std::string DumpRenderSceneYAML(const RenderScene &scene) {
   std::stringstream ss;
 
   // YAML header comment
-  ss << "# TinyUSDZ RenderScene YAML Output\n";
+  ss << "# LightUSD RenderScene YAML Output\n";
   ss << "# Format: YAML (human-readable)\n";
   ss << "---\n\n";
 
   // Metadata section
   ss << "metadata:\n";
   ss << "  format_version: \"1.0\"\n";
-  ss << "  generator: TinyUSDZ/Tydra\n";
+  ss << "  generator: LightUSD/Tydra\n";
   ss << "  source_file: " << yaml_escape(scene.usd_filename) << "\n";
   ss << "  scene:\n";
   ss << "    upAxis: " << yaml_escape(scene.meta.upAxis) << "\n";
@@ -1382,8 +1382,8 @@ static void DumpNodeJSON(std::stringstream &ss, const Node &node, uint32_t inden
     ss << json_indent(ind + 1) << "\"prim_name\": \"" << json_escape(n.prim_name) << "\",\n";
     ss << json_indent(ind + 1) << "\"abs_path\": \"" << json_escape(n.abs_path) << "\",\n";
     ss << json_indent(ind + 1) << "\"display_name\": \"" << json_escape(n.display_name) << "\",\n";
-    ss << json_indent(ind + 1) << "\"local_matrix\": \"" << json_escape(tinyusdz::to_string(n.local_matrix)) << "\",\n";
-    ss << json_indent(ind + 1) << "\"global_matrix\": \"" << json_escape(tinyusdz::to_string(n.global_matrix)) << "\"";
+    ss << json_indent(ind + 1) << "\"local_matrix\": \"" << json_escape(lightusd::to_string(n.local_matrix)) << "\",\n";
+    ss << json_indent(ind + 1) << "\"global_matrix\": \"" << json_escape(lightusd::to_string(n.global_matrix)) << "\"";
     if (!n.children.empty()) {
       ss << ",\n" << json_indent(ind + 1) << "\"children\": [\n";
       // Push EXIT to close array/object after all children are processed
@@ -1466,8 +1466,8 @@ static void DumpSkelNodeJSON(std::stringstream &ss, const SkelNode &node, uint32
     ss << json_indent(ind + 1) << "\"joint_name\": \"" << json_escape(n.joint_name) << "\",\n";
     ss << json_indent(ind + 1) << "\"joint_path\": \"" << json_escape(n.joint_path) << "\",\n";
     ss << json_indent(ind + 1) << "\"joint_id\": " << n.joint_id << ",\n";
-    ss << json_indent(ind + 1) << "\"bind_transform\": \"" << json_escape(tinyusdz::to_string(n.bind_transform)) << "\",\n";
-    ss << json_indent(ind + 1) << "\"rest_transform\": \"" << json_escape(tinyusdz::to_string(n.rest_transform)) << "\"";
+    ss << json_indent(ind + 1) << "\"bind_transform\": \"" << json_escape(lightusd::to_string(n.bind_transform)) << "\",\n";
+    ss << json_indent(ind + 1) << "\"rest_transform\": \"" << json_escape(lightusd::to_string(n.rest_transform)) << "\"";
     if (!n.children.empty()) {
       ss << ",\n" << json_indent(ind + 1) << "\"children\": [\n";
       // Push EXIT to close array/object after all children are processed
@@ -1628,7 +1628,7 @@ static std::string DumpRenderSceneJSON(const RenderScene &scene) {
   // Metadata section
   ss << json_indent(1) << "\"metadata\": {\n";
   ss << json_indent(2) << "\"format_version\": \"1.0\",\n";
-  ss << json_indent(2) << "\"generator\": \"TinyUSDZ/Tydra\",\n";
+  ss << json_indent(2) << "\"generator\": \"LightUSD/Tydra\",\n";
   ss << json_indent(2) << "\"source_file\": \"" << json_escape(scene.usd_filename) << "\",\n";
   ss << json_indent(2) << "\"scene\": {\n";
   ss << json_indent(3) << "\"upAxis\": \"" << json_escape(scene.meta.upAxis) << "\",\n";
@@ -1817,4 +1817,4 @@ std::string DumpRenderScene(const RenderScene &scene,
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

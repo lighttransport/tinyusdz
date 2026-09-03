@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - generated malformed USDC/crate regressions
+// LightUSD Next - generated malformed USDC/crate regressions
 //
 // These cases are intentionally synthetic. Each buffer is just valid enough to
 // reach the targeted reader guard, then must reject cleanly without crashing or
@@ -21,7 +21,7 @@
 #include "next/crate/crate-format.hh"
 #include "next/reader/usdc-reader.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 namespace {
 
@@ -447,7 +447,7 @@ void ExpectWarningAndStrictReject(const char* name,
 }  // namespace
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Malformed USDC Tests ===" << std::endl;
+  std::cout << "=== LightUSD Next Malformed USDC Tests ===" << std::endl;
 
   {
     std::vector<uint8_t> bytes(kCrateBootstrapSize, 0);

@@ -6,7 +6,7 @@
 
 #include "../../security-policy.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for reading USDZ/ZIP archives.
@@ -69,4 +69,4 @@ private:
 };
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

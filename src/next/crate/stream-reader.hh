@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Binary Stream Reader
+// LightUSD Next - Binary Stream Reader
 // Simple binary file reading interface
 
 #pragma once
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Binary stream reader for USDC files
@@ -244,4 +244,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

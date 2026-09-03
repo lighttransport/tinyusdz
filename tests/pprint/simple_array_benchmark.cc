@@ -9,7 +9,7 @@
 #include "timesamples-pprint.hh"
 #include "typed-array.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Helper to measure time in ms
 double measure_ms(std::function<void()> fn) {

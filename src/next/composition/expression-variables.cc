@@ -20,7 +20,7 @@
 #include <cerrno>
 #include <cstdlib>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -563,4 +563,4 @@ ExpressionEvaluation EvaluateAssetPathExpression(const std::string& path,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

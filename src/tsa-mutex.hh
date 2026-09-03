@@ -5,7 +5,7 @@
 // declare that the mutex is not already held (negative capability,
 // `requires_capability(!m)`). The `!m` in the attribute is parsed as a
 // regular C++ expression, so std::mutex cannot be used directly (it has no
-// operator!); use tinyusdz::Mutex/MutexLockGuard instead and annotate the
+// operator!); use lightusd::Mutex/MutexLockGuard instead and annotate the
 // locking function with TUSDZ_REQUIRES_NOT(m).
 #pragma once
 
@@ -33,7 +33,7 @@
 #define TUSDZ_TSA_GUARDED_BY(x) TUSDZ_TSA(guarded_by(x))
 #define TUSDZ_REQUIRES_NOT(x) TUSDZ_TSA(requires_capability(!x))
 
-namespace tinyusdz {
+namespace lightusd {
 
 // std::mutex wrapper visible to clang thread-safety analysis.
 class TUSDZ_TSA_CAPABILITY("mutex") Mutex {
@@ -56,7 +56,7 @@ class TUSDZ_TSA_CAPABILITY("mutex") Mutex {
 #endif
   // Required so `!m` is a valid expression in negative capability
   // annotations.
-  const Mutex& operator!() const TINYUSDZ_LIFETIMEBOUND { return *this; }
+  const Mutex& operator!() const LIGHTUSD_LIFETIMEBOUND { return *this; }
 };
 
 // std::lock_guard equivalent for Mutex.
@@ -73,4 +73,4 @@ class TUSDZ_TSA_SCOPED_CAPABILITY MutexLockGuard {
   MutexLockGuard& operator=(const MutexLockGuard&) = delete;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

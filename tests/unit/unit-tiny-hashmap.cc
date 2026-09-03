@@ -17,7 +17,7 @@
 #include <unordered_map>
 #include <utility>
 
-using tinyusdz::HashMap;
+using lightusd::HashMap;
 
 void tiny_hashmap_basic_insert_find_test(void) {
   HashMap<std::string, int> m;

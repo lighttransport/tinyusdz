@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdMtlx Schema
+// LightUSD Next - UsdMtlx Schema
 // MaterialX node graph support: NodedefInput, MaterialXNodeGraph, MaterialXShader,
 // UsdMtlxNodeIO, UsdMtlxLightNode, etc.
 
@@ -13,7 +13,7 @@
 #include <vector>
 #include <map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -97,4 +97,4 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
                              MaterialXNodeIOData* out);
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

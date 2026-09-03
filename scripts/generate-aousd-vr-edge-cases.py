@@ -7,7 +7,7 @@ tests/next/generated/vr-edge-expected.inc (an X-macro table consumed by
 tests/next/test_vr_edge_matrix.cc). The fixtures and the .inc are COMMITTED;
 re-run this script only when extending the matrix:
 
-  PYTHONPATH=/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/lib/python \
+  PYTHONPATH=/mnt/nvme02/work/lightusd-repo/OpenUSD/dist/lib/python \
     python3 scripts/generate-aousd-vr-edge-cases.py
 
 Coverage targets (doc/ousd-vs-tusdz.md wishlist, beyond what the supplemental
@@ -29,7 +29,7 @@ try:
     from pxr import Usd, Sdf  # noqa: F401
 except ImportError:
     sys.exit("pxr python not importable — run with PYTHONPATH="
-             "/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/lib/python")
+             "/mnt/nvme02/work/lightusd-repo/OpenUSD/dist/lib/python")
 
 # --------------------------------------------------------------------------
 # case definitions: (case_name, {filename: usda_text})

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment, Inc.
 //
-// Benchmark: TinyUSDZ vs Three.js for HDR/EXR decoding
+// Benchmark: LightUSD vs Three.js for HDR/EXR decoding
 //
 // Usage:
 //   npx vite-node benchmark-exr.js [options] <file.hdr|file.exr>
@@ -23,8 +23,8 @@ import { fileURLToPath } from 'node:url';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 
-// TinyUSDZ WASM module
-import createTinyUSDZ from 'tinyusdz/tinyusdz.js';
+// LightUSD WASM module
+import createLightUSD from 'lightusd/lightusd.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,7 +63,7 @@ function parseArgs() {
 
 function showHelp() {
   console.log(`
-Benchmark: TinyUSDZ vs Three.js for HDR/EXR decoding
+Benchmark: LightUSD vs Three.js for HDR/EXR decoding
 
 Usage:
   npx vite-node benchmark-exr.js [options] <file.hdr|file.exr> [...]
@@ -138,8 +138,8 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Benchmark TinyUSDZ decoder
-async function benchmarkTinyUSDZ(tinyusdz, buffer, fileType, format, iterations, warmup) {
+// Benchmark LightUSD decoder
+async function benchmarkLightUSD(lightusd, buffer, fileType, format, iterations, warmup) {
   const uint8Array = new Uint8Array(buffer);
   const times = [];
   let result = null;
@@ -148,25 +148,25 @@ async function benchmarkTinyUSDZ(tinyusdz, buffer, fileType, format, iterations,
   const decodeFunc = fileType === 'exr' ? 'decodeEXR' : 'decodeHDR';
 
   // Check if function exists
-  if (typeof tinyusdz[decodeFunc] !== 'function') {
-    throw new Error(`Function ${decodeFunc} not available in TinyUSDZ module`);
+  if (typeof lightusd[decodeFunc] !== 'function') {
+    throw new Error(`Function ${decodeFunc} not available in LightUSD module`);
   }
 
   // First check if decoding works
-  const testResult = tinyusdz[decodeFunc](uint8Array, format);
+  const testResult = lightusd[decodeFunc](uint8Array, format);
   if (!testResult.success) {
     throw new Error(testResult.error || 'Decode failed');
   }
 
   // Warmup
   for (let i = 0; i < warmup; i++) {
-    tinyusdz[decodeFunc](uint8Array, format);
+    lightusd[decodeFunc](uint8Array, format);
   }
 
   // Benchmark
   for (let i = 0; i < iterations; i++) {
     const start = hrtime();
-    result = tinyusdz[decodeFunc](uint8Array, format);
+    result = lightusd[decodeFunc](uint8Array, format);
     const end = hrtime();
     times.push(end - start);
   }
@@ -176,7 +176,7 @@ async function benchmarkTinyUSDZ(tinyusdz, buffer, fileType, format, iterations,
   }
 
   return {
-    name: `TinyUSDZ (${decodeFunc}, ${format})`,
+    name: `LightUSD (${decodeFunc}, ${format})`,
     times,
     stats: calcStats(times),
     result: result ? {
@@ -310,13 +310,13 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize TinyUSDZ WASM module
+  // Initialize LightUSD WASM module
   if (!options.json) {
-    console.log('Initializing TinyUSDZ WASM module...');
+    console.log('Initializing LightUSD WASM module...');
   }
-  const tinyusdz = await createTinyUSDZ();
+  const lightusd = await createLightUSD();
   if (!options.json) {
-    console.log('TinyUSDZ WASM module initialized');
+    console.log('LightUSD WASM module initialized');
   }
 
   const allResults = [];
@@ -350,10 +350,10 @@ async function main() {
 
     const results = [];
 
-    // Benchmark TinyUSDZ with float32
+    // Benchmark LightUSD with float32
     try {
-      const tinyResult32 = await benchmarkTinyUSDZ(
-        tinyusdz,
+      const tinyResult32 = await benchmarkLightUSD(
+        lightusd,
         arrayBuffer,
         fileType,
         'float32',
@@ -363,14 +363,14 @@ async function main() {
       results.push(tinyResult32);
     } catch (err) {
       if (!options.json) {
-        console.error(`TinyUSDZ (float32) error: ${err.message}`);
+        console.error(`LightUSD (float32) error: ${err.message}`);
       }
     }
 
-    // Benchmark TinyUSDZ with float16
+    // Benchmark LightUSD with float16
     try {
-      const tinyResult16 = await benchmarkTinyUSDZ(
-        tinyusdz,
+      const tinyResult16 = await benchmarkLightUSD(
+        lightusd,
         arrayBuffer,
         fileType,
         'float16',
@@ -380,7 +380,7 @@ async function main() {
       results.push(tinyResult16);
     } catch (err) {
       if (!options.json) {
-        console.error(`TinyUSDZ (float16) error: ${err.message}`);
+        console.error(`LightUSD (float16) error: ${err.message}`);
       }
     }
 

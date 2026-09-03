@@ -1,8 +1,8 @@
-# TinyUSDZ Python ABI3 Binding - Technical Design
+# LightUSD Python ABI3 Binding - Technical Design
 
 ## Overview
 
-This document describes the technical design and architecture of the TinyUSDZ Python ABI3 binding experiment.
+This document describes the technical design and architecture of the LightUSD Python ABI3 binding experiment.
 
 ## Goals
 
@@ -25,7 +25,7 @@ This document describes the technical design and architecture of the TinyUSDZ Py
                   ▼
 ┌─────────────────────────────────────────┐
 │     Python ABI3 Binding Layer           │
-│  (tinyusdz_abi3.c + py_limited_api.h)  │
+│  (lightusd_abi3.c + py_limited_api.h)  │
 │  • Stage, Prim, Value wrapper objects   │
 │  • Buffer protocol implementation       │
 │  • Reference counting management        │
@@ -33,8 +33,8 @@ This document describes the technical design and architecture of the TinyUSDZ Py
                   │
                   ▼
 ┌─────────────────────────────────────────┐
-│         TinyUSDZ C API                  │
-│         (c-tinyusd.h/cc)                │
+│         LightUSD C API                  │
+│         (c-lightusd.h/cc)                │
 │  • C-friendly wrapper for C++ API       │
 │  • Opaque pointer types                 │
 │  • Manual memory management             │
@@ -42,7 +42,7 @@ This document describes the technical design and architecture of the TinyUSDZ Py
                   │
                   ▼
 ┌─────────────────────────────────────────┐
-│      TinyUSDZ C++ Core Library          │
+│      LightUSD C++ Core Library          │
 │  • USD parsing (USDA, USDC, USDZ)      │
 │  • Stage, Prim, Value classes           │
 │  • RAII memory management               │
@@ -53,7 +53,7 @@ This document describes the technical design and architecture of the TinyUSDZ Py
 
 ### C++ Side (RAII)
 
-The TinyUSDZ core library uses C++ RAII:
+The LightUSD core library uses C++ RAII:
 
 ```cpp
 // C++ side - automatic cleanup
@@ -68,9 +68,9 @@ The C API wraps this with manual management:
 
 ```c
 // C API - manual management
-CTinyUSDStage *stage = c_tinyusd_stage_new();
+CLightUSDStage *stage = c_lightusd_stage_new();
 // ... use stage ...
-c_tinyusd_stage_free(stage);  // Explicitly free
+c_lightusd_stage_free(stage);  // Explicitly free
 ```
 
 ### Python Side (Reference Counting)
@@ -82,7 +82,7 @@ Python objects wrap C API pointers and use reference counting:
 stage = tusd.Stage()  # Creates C++ object, refcount = 1
 # ... use stage ...
 # When refcount reaches 0, __del__ is called
-# which calls c_tinyusd_stage_free()
+# which calls c_lightusd_stage_free()
 ```
 
 The binding layer manages the lifetime:
@@ -90,14 +90,14 @@ The binding layer manages the lifetime:
 ```c
 typedef struct {
     PyObject_HEAD
-    CTinyUSDStage *stage;  // Pointer to C++ object
-} TinyUSDStageObject;
+    CLightUSDStage *stage;  // Pointer to C++ object
+} LightUSDStageObject;
 
 static void
-TinyUSDStage_dealloc(TinyUSDStageObject *self)
+LightUSDStage_dealloc(LightUSDStageObject *self)
 {
     if (self->stage) {
-        c_tinyusd_stage_free(self->stage);  // Free C++ object
+        c_lightusd_stage_free(self->stage);  // Free C++ object
         self->stage = NULL;
     }
     Py_TYPE(self)->tp_free((PyObject *)self);  // Free Python object
@@ -135,16 +135,16 @@ typedef struct {
     Py_ssize_t itemsize;  // Size per element
     int readonly;         // Read-only flag
     char *format;         // Format string (e.g., "f", "fff")
-    CTinyUSDValueType value_type;  // TinyUSDZ type
+    CLightUSDValueType value_type;  // LightUSD type
     PyObject *owner;      // Owner object (keeps C++ data alive)
-} TinyUSDValueArrayObject;
+} LightUSDValueArrayObject;
 ```
 
 ### Buffer Protocol Methods
 
 ```c
 static int
-TinyUSDValueArray_getbuffer(TinyUSDValueArrayObject *self,
+LightUSDValueArray_getbuffer(LightUSDValueArrayObject *self,
                             Py_buffer *view, int flags)
 {
     // Fill in buffer info
@@ -161,7 +161,7 @@ TinyUSDValueArray_getbuffer(TinyUSDValueArrayObject *self,
 }
 
 static void
-TinyUSDValueArray_releasebuffer(TinyUSDValueArrayObject *self,
+LightUSDValueArray_releasebuffer(LightUSDValueArrayObject *self,
                                 Py_buffer *view)
 {
     // Nothing to do - data is managed by owner
@@ -186,7 +186,7 @@ positions_np = np.asarray(positions)
 
 Format strings follow Python's struct format:
 
-| TinyUSDZ Type | Format | Description |
+| LightUSD Type | Format | Description |
 |---------------|--------|-------------|
 | `bool` | `?` | Boolean |
 | `int` | `i` | 32-bit signed int |
@@ -252,8 +252,8 @@ Similar to Linux with dylib instead of .so
 ```python
 ext_modules = [
     Extension(
-        name='tinyusdz_abi3',
-        sources=['src/tinyusdz_abi3.c'],
+        name='lightusd_abi3',
+        sources=['src/lightusd_abi3.c'],
         define_macros=[('Py_LIMITED_API', '0x030a0000')],
         py_limited_api=True,  # Enable stable ABI
     )
@@ -262,7 +262,7 @@ ext_modules = [
 
 **CMake:**
 ```cmake
-target_compile_definitions(tinyusdz_abi3 PRIVATE
+target_compile_definitions(lightusd_abi3 PRIVATE
     Py_LIMITED_API=0x030a0000  # Python 3.10+ API version
 )
 ```
@@ -277,10 +277,10 @@ target_compile_definitions(tinyusdz_abi3 PRIVATE
 | `int` | `int32_t` | `int` | `int32` |
 | `float` | `float` | `float` | `float32` |
 | `double` | `double` | `float` | `float64` |
-| `token` | `c_tinyusd_token_t*` | `str` | - |
-| `string` | `c_tinyusd_string_t*` | `str` | - |
-| `float3` | `c_tinyusd_float3_t` | `ValueArray` | `(3,) float32` |
-| `float3[]` | `c_tinyusd_float3_t*` | `ValueArray` | `(N, 3) float32` |
+| `token` | `c_lightusd_token_t*` | `str` | - |
+| `string` | `c_lightusd_string_t*` | `str` | - |
+| `float3` | `c_lightusd_float3_t` | `ValueArray` | `(3,) float32` |
+| `float3[]` | `c_lightusd_float3_t*` | `ValueArray` | `(N, 3) float32` |
 
 ### Scalar Values
 
@@ -288,12 +288,12 @@ target_compile_definitions(tinyusdz_abi3 PRIVATE
 # Python -> C -> C++
 val = tusd.Value.from_int(42)
 # → PyLong_AsLong(42)
-# → c_tinyusd_value_new_int(42)
+# → c_lightusd_value_new_int(42)
 # → new Value(42)
 
 # C++ -> C -> Python
 result = val.as_int()
-# → c_tinyusd_value_as_int(value, &out)
+# → c_lightusd_value_as_int(value, &out)
 # → PyLong_FromLong(out)
 # → 42
 ```
@@ -319,11 +319,11 @@ np_positions = np.asarray(positions)
 ### C API Level
 
 ```c
-int c_tinyusd_load_usd_from_file(
+int c_lightusd_load_usd_from_file(
     const char *filename,
-    CTinyUSDStage *stage,
-    c_tinyusd_string_t *warn,
-    c_tinyusd_string_t *err)
+    CLightUSDStage *stage,
+    c_lightusd_string_t *warn,
+    c_lightusd_string_t *err)
 {
     // Returns 1 for success, 0 for failure
     // Populates err string on failure
@@ -334,13 +334,13 @@ int c_tinyusd_load_usd_from_file(
 
 ```c
 static PyObject *
-TinyUSDStage_load_from_file(PyTypeObject *type, PyObject *args)
+LightUSDStage_load_from_file(PyTypeObject *type, PyObject *args)
 {
     // ...
-    int ret = c_tinyusd_load_usd_from_file(filename, stage, warn, err);
+    int ret = c_lightusd_load_usd_from_file(filename, stage, warn, err);
 
     if (!ret) {
-        const char *err_str = c_tinyusd_string_str(err);
+        const char *err_str = c_lightusd_string_str(err);
         PyErr_SetString(PyExc_RuntimeError, err_str);
         // Clean up
         return NULL;  // Python will raise exception
@@ -469,4 +469,4 @@ async def load_scene():
 - [Python Stable ABI Documentation](https://docs.python.org/3/c-api/stable.html)
 - [Python Buffer Protocol](https://docs.python.org/3/c-api/buffer.html)
 - [NumPy Array Interface](https://numpy.org/doc/stable/reference/arrays.interface.html)
-- [TinyUSDZ Documentation](https://github.com/syoyo/tinyusdz)
+- [LightUSD Documentation](https://github.com/syoyo/lightusd)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Performance Benchmarks
+// LightUSD Next - Performance Benchmarks
 
 #include <chrono>
 #include <cstdio>
@@ -17,7 +17,7 @@
 #include <unistd.h>
 #endif
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/layer/layer.hh"
 #include "next/pcp/prim-index.hh"
 #include "next/crate/crate-reader.hh"
@@ -26,7 +26,7 @@
 #include "next/reader/usdc-reader.hh"
 #include "next/writer/usdc-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // Timer helper
 class Timer {
@@ -445,7 +445,7 @@ void benchmark_usdc_reading() {
 
 int print_memstats(int num_prims) {
   if (num_prims < 1) num_prims = 1;
-  printf("TinyUSDZ Next - Memory Stats\n");
+  printf("LightUSD Next - Memory Stats\n");
   printf("sizeof(Value)=%zu\n", sizeof(Value));
   printf("sizeof(PrimSpec)=%zu\n", sizeof(PrimSpec));
   printf("sizeof(PrimSpecMeta)=%zu\n", sizeof(PrimSpecMeta));
@@ -529,7 +529,7 @@ void print_bytes_metric(const char* name, uint64_t bytes) {
 }
 
 int print_memstats_file(const std::string& filename) {
-  printf("TinyUSDZ Next - Real File Memory Stats\n");
+  printf("LightUSD Next - Real File Memory Stats\n");
   printf("file=%s\n", filename.c_str());
   printf("file_size_bytes=%llu\n",
          static_cast<unsigned long long>(file_size_bytes(filename)));
@@ -636,7 +636,7 @@ int main(int argc, char** argv) {
     if (scale < 1) scale = 1;
   }
 
-  printf("TinyUSDZ Next - Performance Benchmarks (scale=%d)\n", scale);
+  printf("LightUSD Next - Performance Benchmarks (scale=%d)\n", scale);
   printf("================================================\n");
 
   benchmark_value_creation(100000 * scale);

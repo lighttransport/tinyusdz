@@ -2,4 +2,4 @@ builddir=build_64
 rm -rf ${builddir}
 mkdir ${builddir}
 
-emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM_COROUTINE=On -DCMAKE_VERBOSE_MAKEFILE=1 -DTINYUSDZ_WASM64=1 -B${builddir}
+emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_COROUTINE=On -DCMAKE_VERBOSE_MAKEFILE=1 -DLIGHTUSD_WASM64=1 -B${builddir}

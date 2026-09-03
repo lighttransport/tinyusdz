@@ -1,5 +1,5 @@
 /**
- * TinyUSDZ UsdLux Light Demo
+ * LightUSD UsdLux Light Demo
  * Visualizes USD lights using Three.js
  */
 
@@ -21,15 +21,15 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import {
   basenameFromUri,
   getAssetUriFromURL,
   getBackendFromURL,
   mountBackendSelector
-} from 'tinyusdz/LoaderConfigUtils.js';
+} from 'lightusd/LoaderConfigUtils.js';
 
-// Light-to-HDRI projection (no TinyUSDZ dependency)
+// Light-to-HDRI projection (no LightUSD dependency)
 import {
   LightHDRIProjection,
   SphereLight,
@@ -2619,7 +2619,7 @@ function createLightHelper(light, usdLight, lightIndex) {
 
 /**
  * Convert USD RenderLight to Three.js Light
- * @param {Object} usdLight - USD light data from TinyUSDZ
+ * @param {Object} usdLight - USD light data from LightUSD
  * @returns {THREE.Light|null} Three.js light object
  */
 function convertUSDLightToThreeJS(usdLight) {
@@ -3271,7 +3271,7 @@ function createTextureFromImageData(imageData) {
 
 /**
  * Load lights from USD data
- * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {Object} usdLoader - LightUSD loader instance
  */
 async function loadLightsFromUSD(usdLoader) {
   clearLights();
@@ -4413,11 +4413,11 @@ let loader = null;
 async function initLoader() {
   if (loader) return loader;
 
-  loader = new TinyUSDZLoader();
+  loader = new LightUSDLoader();
   await loader.init({ useMemory64: false, backend: getBackendFromURL() });
   loader.setMaxMemoryLimitMB(500);
 
-  debugLog('TinyUSDZ loader initialized');
+  debugLog('LightUSD loader initialized');
   return loader;
 }
 

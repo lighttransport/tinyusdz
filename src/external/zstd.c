@@ -12025,7 +12025,7 @@ enum XXH_VECTOR_TYPE /* fake enum */ {
 #endif
 
 #ifndef XXH_VECTOR    /* can be defined on command line */
-/* tinyusdz default: keep xxHash scalar unless explicitly overridden. */
+/* lightusd default: keep xxHash scalar unless explicitly overridden. */
 #  define XXH_VECTOR XXH_SCALAR
 #endif
 

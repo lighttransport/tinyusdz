@@ -17,15 +17,15 @@
 // centroid into a scratch tuple on demand (centroids are consumed sequentially,
 // so a single reused scratch tuple is safe). Both produce identical bits.
 
-#ifndef TINYUSDZ_TSD_KERNEL_HH_
-#define TINYUSDZ_TSD_KERNEL_HH_
+#ifndef LIGHTUSD_TSD_KERNEL_HH_
+#define LIGHTUSD_TSD_KERNEL_HH_
 
 #include <cmath>
 #include <vector>
 
 #include "tsd-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 // Vertex-vertex subdivision rule, matching Sdc::Crease semantics.
@@ -508,6 +508,6 @@ inline void ComputeLoopVertexChild(const Topology &topo, const float *values,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_TSD_KERNEL_HH_
+#endif  // LIGHTUSD_TSD_KERNEL_HH_

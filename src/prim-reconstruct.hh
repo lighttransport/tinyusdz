@@ -14,7 +14,7 @@
 #include "core/prim-spec.hh"  // PrimSpec, PropertyMap, ReferenceList, Specifier (transitively: property, composition-types, prim-enums)
 #include "core/xform-op.hh"   // XformOp
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 struct PrimReconstructOptions
@@ -92,4 +92,4 @@ bool ReconstructPrim(
 
 
 } // namespace prim
-} // namespace tinyusdz
+} // namespace lightusd

@@ -1,6 +1,6 @@
 # Pretty-Print Benchmark
 
-Performance benchmark for TinyUSDZ pretty-printing functionality. Measures the performance of different pprint implementations:
+Performance benchmark for LightUSD pretty-printing functionality. Measures the performance of different pprint implementations:
 
 - **String-based**: Traditional `std::string` concatenation with `std::stringstream`
 - **StreamWriter**: Optimized single-buffer writer
@@ -24,7 +24,7 @@ make pprint_benchmark
 # From this directory
 cd tests/pprint
 
-# Make sure tinyusdz is built first
+# Make sure lightusd is built first
 cd ../../build && make && cd -
 
 # Build benchmark
@@ -94,7 +94,7 @@ make
 
 ```
 ========================================
-TinyUSDZ Pretty-Print Benchmark
+LightUSD Pretty-Print Benchmark
 ========================================
 
 Benchmark Configuration:
@@ -129,7 +129,7 @@ Benchmark completed.
 ## Performance Tips
 
 1. **Parallel Printing**: Use `--parallel` flag for benchmarks with many Prims (>= 4)
-2. **Threading**: Make sure TinyUSDZ is compiled with `TINYUSDZ_ENABLE_THREAD=ON`
+2. **Threading**: Make sure LightUSD is compiled with `LIGHTUSD_ENABLE_THREAD=ON`
 3. **Memory**: Ensure sufficient RAM for large/huge presets
 4. **Reproducibility**: The benchmark uses a fixed random seed (42) for consistent results
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdMedia Schema
+// LightUSD Next - UsdMedia Schema
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include "../eval/attribute-eval.hh"
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -35,4 +35,4 @@ bool GetMediaAudioData(const Stage& stage, const UsdPrim& prim,
                         MediaAudioData* out);
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

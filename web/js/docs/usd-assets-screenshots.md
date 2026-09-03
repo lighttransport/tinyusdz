@@ -1,14 +1,14 @@
 # USD Assets Screenshots
 
 Visual verification for the `usd-wg/assets` corpus renders `test_assets` through
-the browser TinyUSDZ/tydra WebGL path and captures per-scene PNGs plus a preview
+the browser LightUSD/tydra WebGL path and captures per-scene PNGs plus a preview
 catalog.
 
 ```bash
 cd web/js
 
 # Prepared local checkout:
-USD_WG_ASSETS_DIR=$PWD/../../.cache/tinyusdz-verification/usd-assets \
+USD_WG_ASSETS_DIR=$PWD/../../.cache/lightusd-verification/usd-assets \
   xvfb-run -a node tests/screenshot-usd-assets-batch.mjs --hw
 npm run screenshot:usd-assets
 

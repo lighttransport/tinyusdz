@@ -1,4 +1,4 @@
-# TinyUSDZ Python ABI3 Binding - Project Summary
+# LightUSD Python ABI3 Binding - Project Summary
 
 ## Created Files
 
@@ -14,7 +14,7 @@ sandbox/abi3/
 ├── include/
 │   └── py_limited_api.h        # Custom Python 3.10+ limited API headers
 ├── src/
-│   └── tinyusdz_abi3.c         # ABI3 binding implementation
+│   └── lightusd_abi3.c         # ABI3 binding implementation
 ├── examples/
 │   ├── example_basic.py         # Basic usage examples
 │   └── example_numpy.py         # NumPy integration examples
@@ -32,7 +32,7 @@ sandbox/abi3/
 - Platform-specific export/import macros
 - Full buffer protocol support
 
-### 2. ABI3 Binding Implementation (`src/tinyusdz_abi3.c`)
+### 2. ABI3 Binding Implementation (`src/lightusd_abi3.c`)
 - **Stage Object**: Load and manipulate USD stages
 - **Prim Object**: Create and access USD prims
 - **Value Object**: Type-safe value wrappers
@@ -41,7 +41,7 @@ sandbox/abi3/
 
 ### 3. Buffer Protocol Implementation
 - Zero-copy array access for NumPy
-- Supports all TinyUSDZ value types
+- Supports all LightUSD value types
 - Format strings for type safety
 - Read-only and writable buffer support
 
@@ -90,7 +90,7 @@ python3 examples/example_numpy.py
 ### Basic Usage
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 
 # Create objects
 stage = tusd.Stage()
@@ -112,7 +112,7 @@ fmt = tusd.detect_format("file.usda")  # Returns "USDA"
 ```
 Python Side           C API Layer          C++ Side
 -----------          --------------        ----------
-Stage object    →    CTinyUSDStage*   →   Stage (RAII)
+Stage object    →    CLightUSDStage*   →   Stage (RAII)
 (ref counted)         (opaque ptr)         (auto cleanup)
 
 Py_INCREF/DECREF  ←→  _new/_free      ←→  new/delete
@@ -230,9 +230,9 @@ Based on buffer protocol design:
 
 - Python Stable ABI: https://docs.python.org/3/c-api/stable.html
 - Buffer Protocol: https://docs.python.org/3/c-api/buffer.html
-- TinyUSDZ: https://github.com/syoyo/tinyusdz
+- LightUSD: https://github.com/syoyo/lightusd
 - USD Specification: https://openusd.org/
 
 ## License
 
-Apache 2.0 (same as TinyUSDZ)
+Apache 2.0 (same as LightUSD)

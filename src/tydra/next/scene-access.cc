@@ -11,19 +11,19 @@
 #include <string_view>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
-using ::tinyusdz::next::Path;
-using ::tinyusdz::next::PrimSpec;
-using ::tinyusdz::next::PropMeta;
+using ::lightusd::next::Path;
+using ::lightusd::next::PrimSpec;
+using ::lightusd::next::PropMeta;
 
 namespace {
 
-const ::tinyusdz::next::PropNameId& kXformOpOrder() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("xformOpOrder");
+const ::lightusd::next::PropNameId& kXformOpOrder() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("xformOpOrder");
   return id;
 }
 
@@ -156,14 +156,14 @@ std::vector<UsdPrim> FindPrims(const Stage& stage, PrimPredicate pred) {
 
 const Value* GetAttribute(const UsdPrim& prim, const std::string& name) {
   if (!prim.IsValid()) return nullptr;
-  auto name_id = tinyusdz::next::GetPropNameTable().find(name);
+  auto name_id = lightusd::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return nullptr;
   return prim.GetPropertyValue(name_id);
 }
 
 const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name, double time) {
   if (!prim.IsValid()) return nullptr;
-  auto name_id = tinyusdz::next::GetPropNameTable().find(name);
+  auto name_id = lightusd::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return nullptr;
   return prim.GetValueAtTime(name_id, time);
 }
@@ -466,7 +466,7 @@ void MatrixMultiply(double* result, const double* a, const double* b) {
 // --- Bit-exact xform evaluation -------------------------------------------
 //
 // To produce world/local matrices that are byte-identical to the legacy
-// tinyusdz evaluator (Xformable::EvaluateXformOps in src/xform.cc), the helpers
+// lightusd evaluator (Xformable::EvaluateXformOps in src/xform.cc), the helpers
 // below replicate its exact arithmetic: the `sin_pi`/`cos_pi` reduced-argument
 // trig (NOT std::sin/cos(deg * pi/180)), the per-op matrix layouts, and the
 // `cm = op * cm` / `world = local * parent` (row-vector) multiply order.
@@ -479,7 +479,7 @@ inline bool IsCloseD(double a, double b, double eps) {
   return std::fabs(d) <= (eps * std::fmax(std::fabs(a), std::fabs(b)));
 }
 
-// cos(pi*x) — verbatim port of tinyusdz::math::cos_pi_imp<double>.
+// cos(pi*x) — verbatim port of lightusd::math::cos_pi_imp<double>.
 inline double CosPi(double x) {
   bool invert = false;
   if (std::fabs(x) < 0.25) return std::cos(kPi * x);
@@ -505,7 +505,7 @@ inline double CosPi(double x) {
   return invert ? -rem : rem;
 }
 
-// sin(pi*x) — verbatim port of tinyusdz::math::sin_pi_imp<double>.
+// sin(pi*x) — verbatim port of lightusd::math::sin_pi_imp<double>.
 inline double SinPi(double x) {
   if (x < 0) return -SinPi(-x);
   bool invert = false;
@@ -572,7 +572,7 @@ void MatMulD(double* dst, const double* a, const double* b) {
 // time sample. A NaN time keeps the exact default-value path (byte-identical to
 // the previous, time-unaware behaviour).
 const Value* PropAtTime(const UsdPrim& prim,
-                        ::tinyusdz::next::PropNameId name_id,
+                        ::lightusd::next::PropNameId name_id,
                         double time) {
   if (!name_id.is_valid()) return nullptr;
   if (std::isnan(time)) return prim.GetPropertyValue(name_id);
@@ -591,7 +591,7 @@ const Value* PropAtTime(const UsdPrim& prim,
 // Read a 3-component op value (translate/scale/rotate) as double, trying
 // float3 then double3 (matches the legacy evaluator's exact-type promotion),
 // then the converting read for authored half3 (raw half-bit lanes).
-bool ReadVec3D(const UsdPrim& prim, ::tinyusdz::next::PropNameId name_id,
+bool ReadVec3D(const UsdPrim& prim, ::lightusd::next::PropNameId name_id,
                double v[3],
                double time) {
   const Value* val = PropAtTime(prim, name_id, time);
@@ -612,7 +612,7 @@ bool ReadVec3D(const UsdPrim& prim, ::tinyusdz::next::PropNameId name_id,
   return false;
 }
 
-bool ReadFloat1D(const UsdPrim& prim, ::tinyusdz::next::PropNameId name_id,
+bool ReadFloat1D(const UsdPrim& prim, ::lightusd::next::PropNameId name_id,
                  double* out,
                  double time) {
   const Value* val = PropAtTime(prim, name_id, time);
@@ -639,7 +639,7 @@ void MakeRotAxisD(double* m, char axis, double deg) {
 }
 
 // Quaternion (w,x,y,z) -> row-vector rotation matrix, matching
-// tinyusdz::to_matrix3x3(quatd) embedded in a 4x4.
+// lightusd::to_matrix3x3(quatd) embedded in a 4x4.
 void MakeOrientD(double* m, double w, double x, double y, double z) {
   SetIdentity(m);
   m[0] = 1.0 - 2.0 * (y * y + z * z);
@@ -689,7 +689,7 @@ std::string_view XformOpName(std::string_view tok) {
 }
 
 // Bit-exact local matrix from authored xformOpOrder, replicating
-// tinyusdz::Xformable::EvaluateXformOps (row-vector, cm = op * cm). Sets
+// lightusd::Xformable::EvaluateXformOps (row-vector, cm = op * cm). Sets
 // *reset when the op list begins with "!resetXformStack!".
 bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time) {
   if (reset) *reset = false;
@@ -715,7 +715,7 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
     }
     const std::string_view op = XformOpName(tok);
     if (op.empty()) continue;
-    const auto name_id = ::tinyusdz::next::GetPropNameTable().find(tok);
+    const auto name_id = ::lightusd::next::GetPropNameTable().find(tok);
 
     double m[16];
     SetIdentity(m);
@@ -1351,4 +1351,4 @@ std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name)
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

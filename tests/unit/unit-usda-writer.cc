@@ -6,14 +6,14 @@
 #include "acutest.h"
 
 #include "unit-usda-writer.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usda-writer.hh"
 #include "usdGeom.hh"
 #include "stage.hh"
 
 #include <string>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

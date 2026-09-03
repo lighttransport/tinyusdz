@@ -6,7 +6,7 @@
 
 #include "value-type.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Simpole variant template Based on
 // https://gist.github.com/tibordp/6909880#file-variant-cc-L148
@@ -160,14 +160,14 @@ struct variant {
   ~variant() { helper_t::destroy(type_id, &data); }
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 int main(int argc, char** argv) {
-  tinyusdz::variant<bool, std::string> a;
+  lightusd::variant<bool, std::string> a;
   a.set<bool>(true);
   a.set<std::string>("bora");
 
-  tinyusdz::variant<bool, std::string> b = a;
+  lightusd::variant<bool, std::string> b = a;
 
   std::cout << a.get<std::string>() << "\n";
   std::cout << b.get<std::string>() << "\n";

@@ -16,7 +16,7 @@ on:
         default: preview
 
 jobs:
-  tinyusdz-wasm:
+  lightusd-wasm:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -58,7 +58,7 @@ jobs:
       - name: Configure WASM64
         run: |
           source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=1
+          emcmake cmake -S web -B web/cmake-build64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=1
 
       - name: Build WASM64
         run: |
@@ -68,7 +68,7 @@ jobs:
       - name: Configure WASM32 next-only
         run: |
           source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-next -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM_NEXT_ONLY=1
+          emcmake cmake -S web -B web/cmake-build-next -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_NEXT_ONLY=1
 
       - name: Build WASM32 next-only
         run: |
@@ -78,7 +78,7 @@ jobs:
       - name: Configure WASM64 next-only
         run: |
           source ./emsdk/emsdk_env.sh
-          emcmake cmake -S web -B web/cmake-build-next64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM_NEXT_ONLY=1 -DTINYUSDZ_WASM64=1
+          emcmake cmake -S web -B web/cmake-build-next64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM_NEXT_ONLY=1 -DLIGHTUSD_WASM64=1
 
       - name: Build WASM64 next-only
         run: |
@@ -91,7 +91,7 @@ jobs:
         working-directory: ${{ github.workspace }}/web/js
         run: |
           node tests/usdzconvert-next.test.mjs
-          TINYUSDZ_WASM64=1 node tests/usdzconvert-next.test.mjs
+          LIGHTUSD_WASM64=1 node tests/usdzconvert-next.test.mjs
 
       - name: Install npm dependencies
         working-directory: ${{ github.workspace }}/web/npm
@@ -111,7 +111,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: 'tinyusdz-npm-${{ github.event.inputs.release_version }}'
+          name: 'lightusd-npm-${{ github.event.inputs.release_version }}'
           path: ${{ github.workspace }}/web/npm/dist
 
       - name: Publish package

@@ -19,7 +19,7 @@
 #include "core/layer-types.hh"   // LayerMetas (aliased as StageMetas)
 #include "handle-allocator.hh"   // HandleAllocator
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations for mmap zero-copy support
 class MMapArrayTable;
@@ -144,7 +144,7 @@ class Stage {
   ///
   /// @return Const array of Root Prims.
   ///
-  const std::vector<Prim> &root_prims() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Prim> &root_prims() const LIGHTUSD_LIFETIMEBOUND {
     return _root_nodes;
   }
 
@@ -154,7 +154,7 @@ class Stage {
   /// @return Array of Root Prims.
   /// TODO: Deprecate non-const `root_prims()` API and use `add_root_prim()` instead.
   ///
-  std::vector<Prim> &root_prims() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<Prim> &root_prims() LIGHTUSD_LIFETIMEBOUND {
     return _root_nodes;
   }
 
@@ -170,7 +170,7 @@ class Stage {
   bool add_root_prim(Prim &&prim, bool rename_prim_name = true);
 
   ///
-  /// Replace root Prim of elementName `prim_name` with `prim` 
+  /// Replace root Prim of elementName `prim_name` with `prim`
   ///
   /// `prim`'s elementName will be modified to `prim_name`.
   ///
@@ -212,11 +212,11 @@ class Stage {
   ///
   /// @return Stage metadatum struct.
   ///
-  const StageMetas &metas() const TINYUSDZ_LIFETIMEBOUND {
+  const StageMetas &metas() const LIGHTUSD_LIFETIMEBOUND {
     return stage_metas;
   }
 
-  StageMetas &metas() TINYUSDZ_LIFETIMEBOUND { return stage_metas; }
+  StageMetas &metas() LIGHTUSD_LIFETIMEBOUND { return stage_metas; }
 
   ///
   /// @brief Assign unique Prim id inside this Stage.
@@ -291,11 +291,11 @@ class Stage {
   ///
   bool compose(bool addSourceFileComment = true) const;
 
-  const std::string &get_warning() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_warning() const LIGHTUSD_LIFETIMEBOUND {
     return _warn;
   }
 
-  const std::string &get_error() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_error() const LIGHTUSD_LIFETIMEBOUND {
     return _err;
   }
 
@@ -427,13 +427,13 @@ class Stage {
   // cache, avoiding the per-lookup std::string allocation that would result
   // from passing tstring_view as a key to a HashMap<std::string, ...>).
   // See concern #1 in review.md.
-  mutable tinyusdz::HashMap<Path, const Prim *, tinyusdz::crate::PathHasher,
-                            tinyusdz::crate::PathKeyEqual>
+  mutable lightusd::HashMap<Path, const Prim *, lightusd::crate::PathHasher,
+                            lightusd::crate::PathKeyEqual>
       _prim_path_cache;
 
   // Cached prim_id -> Prim lookup
   // key : prim_id
-  mutable tinyusdz::HashMap<uint64_t, const Prim *> _prim_id_cache;
+  mutable lightusd::HashMap<uint64_t, const Prim *> _prim_id_cache;
 
   mutable bool _dirty{true}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
 
@@ -448,8 +448,8 @@ class Stage {
   // copyable/movable; the _root_nodes Prim tree is read lock-free during the
   // walk. Reset (not shared) in Stage's copy paths.
   //
-  // NOTE: this member is *unconditional* (not gated on TINYUSDZ_ENABLE_THREAD)
-  // on purpose. TINYUSDZ_ENABLE_THREAD is PRIVATE to the library target, so
+  // NOTE: this member is *unconditional* (not gated on LIGHTUSD_ENABLE_THREAD)
+  // on purpose. LIGHTUSD_ENABLE_THREAD is PRIVATE to the library target, so
   // gating a member of this *public* header would make sizeof(Stage) differ
   // between the library and its consumers (ODR violation / stack corruption).
   // Only the locking in stage.cc is gated; the lone mutex alloc per Stage is
@@ -468,10 +468,10 @@ class Stage {
   bool adopt_mmap_file(io::MMapFileHandle &&handle);
   bool adopt_mmap_buffer(std::vector<uint8_t> &&buffer);
   void clear_mmap_data();
-  const MMapArrayTable *mmap_table() const TINYUSDZ_LIFETIMEBOUND {
+  const MMapArrayTable *mmap_table() const LIGHTUSD_LIFETIMEBOUND {
     return _mmap_table.get();
   }
-  const MMapDataSource *mmap_source() const TINYUSDZ_LIFETIMEBOUND {
+  const MMapDataSource *mmap_source() const LIGHTUSD_LIFETIMEBOUND {
     return _mmap_source.get();
   }
   bool has_mmap_zero_copy() const;
@@ -481,4 +481,4 @@ inline std::string to_string(const Stage &stage, bool relative_path = false) {
   return stage.ExportToString(relative_path);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

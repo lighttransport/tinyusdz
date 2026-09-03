@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII parser stage metadata.
+// LightUSD Next - USDA ASCII parser stage metadata.
 
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool AsciiParser::Impl::ParseStageMetadata() {
@@ -261,4 +261,4 @@ bool AsciiParser::Impl::ParseStageMetadata() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

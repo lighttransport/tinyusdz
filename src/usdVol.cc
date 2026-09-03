@@ -10,7 +10,7 @@
 // this C++ translation unit limited to the public C declarations.
 #include "external/tinyvdb/tinyvdb_io.h"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdVol {
 
 namespace {
@@ -321,4 +321,4 @@ bool ReadVDBFromFile(const std::string &filepath, std::vector<VDBGrid> *grids,
 }
 
 }  // namespace usdVol
-}  // namespace tinyusdz
+}  // namespace lightusd

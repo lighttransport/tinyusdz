@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII parser timeSamples support.
+// LightUSD Next - USDA ASCII parser timeSamples support.
 
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
@@ -70,4 +70,4 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

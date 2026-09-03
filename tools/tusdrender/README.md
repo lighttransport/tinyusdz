@@ -13,7 +13,7 @@ tusdrender scene.usd out.png -rtPreview -w 960 -height 540 -autoframe
 ### Build and link time
 
 On Linux, `tusdrender` automatically uses the first available fast linker in
-the order mold, LLD, then gold. This is target-local—the rest of TinyUSDZ keeps
+the order mold, LLD, then gold. This is target-local—the rest of LightUSD keeps
 the linker selected by the parent build. CMake prints the selected linker while
 configuring. Versioned LLD installations are supported even when the system's
 unversioned alternative is absent.
@@ -216,7 +216,7 @@ software fallbacks and missing required backends rather than silently skipping.
 The vendored TinyVDB reader accepts OpenVDB 1.x through 13.x scalar grids
 (`bool`, integer, half, float, and double). Vec3 grids are reduced to vector
 magnitude for the single-channel density renderer. ZIP, active-mask, BLOSC/LZ4,
-and BLOSC/zstd payloads use tinyusdz's existing vendored codecs. PointDataGrid
+and BLOSC/zstd payloads use lightusd's existing vendored codecs. PointDataGrid
 assets are rejected explicitly because they are point payloads, not voxel-valued
 UsdVol fields.
 

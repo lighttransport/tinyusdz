@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Layer / PrimSpec diff (see layer-diff.hh).
+// LightUSD Next - Layer / PrimSpec diff (see layer-diff.hh).
 
 #include "layer-diff.hh"
 
@@ -31,7 +31,7 @@
 #pragma GCC diagnostic ignored "-Wfloat-equal"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -1736,4 +1736,4 @@ std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

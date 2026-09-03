@@ -19,12 +19,12 @@
 //
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   // Each authored field is collected as (sortKey, rendered-text). usdcat writes
   // layer metadata fields in ALPHABETICAL order by their Sdf field TOKEN (note
-  // `doc` sorts as "documentation"); the default keeps tinyusdz's historical
+  // `doc` sorts as "documentation"); the default keeps lightusd's historical
   // emission order. So under the USD-text-format opt-in we sort by sortKey,
   // otherwise we emit in insertion (historical) order -- byte-identical default.
   std::vector<std::pair<std::string, std::string>> fields;
@@ -108,7 +108,7 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
 
   if (metas.defaultPrim.str().size()) {
     add("defaultPrim", pprint::Indent(1) + "defaultPrim = " +
-                           tinyusdz::quote(metas.defaultPrim.str()) + "\n");
+                           lightusd::quote(metas.defaultPrim.str()) + "\n");
   }
 
   if (metas.autoPlay.authored()) {
@@ -222,7 +222,7 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
 }
 
 std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel) {
-#if !defined(TINYUSDZ_ENABLE_THREAD)
+#if !defined(LIGHTUSD_ENABLE_THREAD)
   (void)parallel; // Threading disabled
 #endif
 
@@ -248,7 +248,7 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
       primNameTable.emplace(item.first, &item.second);
     }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (parallel) {
       // Parallel printing path
       std::vector<const PrimSpec*> ordered_primspecs;
@@ -265,7 +265,7 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
       prim::ParallelPrintConfig config;
       ss << prim::print_primspecs_parallel(ordered_primspecs, indent, config);
     } else
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
     {
       // Sequential printing path (original)
       for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
@@ -280,7 +280,7 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
       }
     }
   } else {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (parallel) {
       // Parallel printing path
       std::vector<const PrimSpec*> primspecs;
@@ -292,7 +292,7 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
       prim::ParallelPrintConfig config;
       ss << prim::print_primspecs_parallel(primspecs, indent, config);
     } else
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
     {
       // Sequential printing path (original)
       size_t i = 0;
@@ -500,7 +500,7 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     // ENTER phase
     const bool usd_text = pprint::GetUSDTextFormat();
     if (item.need_separator) {
-      // usdcat separates siblings with a PLAIN blank line; tinyusdz's default
+      // usdcat separates siblings with a PLAIN blank line; lightusd's default
       // indents it.
       if (usd_text) {
         ss << "\n";
@@ -520,7 +520,7 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
 
     if (item.primspec->metas().authored()) {
       // usdcat puts the metadata opening paren on the `def` line (`def M "n" (`);
-      // tinyusdz's default puts it on its own line.
+      // lightusd's default puts it on its own line.
       if (usd_text) {
         ss << " (\n";
       } else {
@@ -791,4 +791,4 @@ std::string to_string(const PrimSpec &primspec, const uint32_t indent,
   return prim::print_primspec(primspec, indent);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

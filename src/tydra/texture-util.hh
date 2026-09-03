@@ -2,21 +2,21 @@
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
 
 ///
-/// @file texture-util.hh  
+/// @file texture-util.hh
 /// @brief Texture processing utilities for material workflows
 ///
 /// Provides utilities for combining and processing textures commonly used
-/// in physically-based rendering workflows, particularly for glTF and 
+/// in physically-based rendering workflows, particularly for glTF and
 /// USD material conversion.
 ///
 /// Key functions:
-/// - BuildOcclusionRoughnessMetallicTexture(): Combines separate texture 
+/// - BuildOcclusionRoughnessMetallicTexture(): Combines separate texture
 ///   channels into a single ORM (Occlusion-Roughness-Metallic) texture
 ///   following glTF conventions
 ///
 /// Channel packing follows glTF 2.0 specification:
 /// - R channel: Occlusion
-/// - G channel: Roughness  
+/// - G channel: Roughness
 /// - B channel: Metallic
 /// - A channel: Not used (set to 1.0)
 ///
@@ -30,7 +30,7 @@
 #include "image-types.hh"
 #include "image-writer.hh"  // image::PngEncoder / WriteOption
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -146,16 +146,16 @@ bool FitTexturesToBudget(const std::vector<FitTextureInput> &inputs,
 
 ///
 /// Build combined ORM (Occlusion-Roughness-Metallic) texture for glTF workflow.
-/// 
+///
 /// Combines separate occlusion, roughness, and metallic texture channels
 /// into a single RGB texture following glTF 2.0 specification:
 /// - R channel: Occlusion factor and texture
-/// - G channel: Roughness factor and texture  
+/// - G channel: Roughness factor and texture
 /// - B channel: Metallic factor and texture
 /// - A channel: Set to 1.0 (opaque)
 ///
 /// @param[in] occlusionFactor Occlusion multiplier (typically 1.0)
-/// @param[in] roughnessFactor Roughness multiplier (typically 1.0) 
+/// @param[in] roughnessFactor Roughness multiplier (typically 1.0)
 /// @param[in] metallicFactor Metallic multiplier (typically 1.0)
 /// @param[in] occlusionImageData Source occlusion texture data
 /// @param[in] occlusionImageWidth Width of occlusion texture
@@ -197,9 +197,9 @@ bool BuildOcclusionRoughnessMetallicTexture(
 	const size_t metallicImageChannels,
 	const size_t metallicChannel,
 	std::vector<uint8_t> &dst, // RGBA
-  size_t &dstWidth,	
+  size_t &dstWidth,
   size_t &dstHeight);
 
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

@@ -14,7 +14,7 @@
 #include <string>
 #include <utility>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Test basic operations: push_back, pop_back, size, empty, back, operator[]
 void stack_vector_basic_test(void) {

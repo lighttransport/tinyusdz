@@ -41,13 +41,13 @@
 #include <thread>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
-using ::tinyusdz::next::Stage;
-using ::tinyusdz::next::UsdPrim;
-using ::tinyusdz::next::Value;
+using ::lightusd::next::Stage;
+using ::lightusd::next::UsdPrim;
+using ::lightusd::next::Value;
 
 namespace {
 
@@ -75,325 +75,325 @@ uint64_t ImageCacheHash(const std::string& resolved,
   return hash;
 }
 
-const ::tinyusdz::next::PropNameId& kIdVisibility() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("visibility");
+const ::lightusd::next::PropNameId& kIdVisibility() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("visibility");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdOutputsOut() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("outputs:out");
+const ::lightusd::next::PropNameId& kIdOutputsOut() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("outputs:out");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdClippingRange() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("clippingRange");
+const ::lightusd::next::PropNameId& kIdClippingRange() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("clippingRange");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdFaceVertexCounts() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("faceVertexCounts");
+const ::lightusd::next::PropNameId& kIdFaceVertexCounts() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("faceVertexCounts");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdFaceVertexIndices() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("faceVertexIndices");
+const ::lightusd::next::PropNameId& kIdFaceVertexIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("faceVertexIndices");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdOrientation() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("orientation");
+const ::lightusd::next::PropNameId& kIdOrientation() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("orientation");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdDoubleSided() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("doubleSided");
+const ::lightusd::next::PropNameId& kIdDoubleSided() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("doubleSided");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdHoleIndices() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("holeIndices");
+const ::lightusd::next::PropNameId& kIdHoleIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("holeIndices");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdPoints() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("points");
+const ::lightusd::next::PropNameId& kIdPoints() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("points");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdTetVertexIndices() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("tetVertexIndices");
+const ::lightusd::next::PropNameId& kIdTetVertexIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("tetVertexIndices");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdNormals() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("normals");
+const ::lightusd::next::PropNameId& kIdNormals() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("normals");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdDisplayColor() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("primvars:displayColor");
+const ::lightusd::next::PropNameId& kIdDisplayColor() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("primvars:displayColor");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdDisplayOpacity() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("primvars:displayOpacity");
+const ::lightusd::next::PropNameId& kIdDisplayOpacity() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("primvars:displayOpacity");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdPrimvarsSt() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("primvars:st");
+const ::lightusd::next::PropNameId& kIdPrimvarsSt() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("primvars:st");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdExtent() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("extent");
+const ::lightusd::next::PropNameId& kIdExtent() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("extent");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdCurveVertexCounts() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("curveVertexCounts");
+const ::lightusd::next::PropNameId& kIdCurveVertexCounts() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("curveVertexCounts");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdWidths() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("widths");
+const ::lightusd::next::PropNameId& kIdWidths() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("widths");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsColor() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:color");
+const ::lightusd::next::PropNameId& kIdInputsColor() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:color");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsIntensity() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:intensity");
+const ::lightusd::next::PropNameId& kIdInputsIntensity() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:intensity");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsExposure() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:exposure");
+const ::lightusd::next::PropNameId& kIdInputsExposure() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:exposure");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsNormalize() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:normalize");
+const ::lightusd::next::PropNameId& kIdInputsNormalize() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:normalize");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsEnableColorTemperature() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:enableColorTemperature");
+const ::lightusd::next::PropNameId& kIdInputsEnableColorTemperature() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:enableColorTemperature");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsColorTemperature() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:colorTemperature");
+const ::lightusd::next::PropNameId& kIdInputsColorTemperature() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:colorTemperature");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsDiffuse() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:diffuse");
+const ::lightusd::next::PropNameId& kIdInputsDiffuse() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:diffuse");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsSpecular() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:specular");
+const ::lightusd::next::PropNameId& kIdInputsSpecular() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:specular");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingConeAngle() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:cone:angle");
+const ::lightusd::next::PropNameId& kIdInputsShapingConeAngle() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:cone:angle");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingFocus() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:focus");
+const ::lightusd::next::PropNameId& kIdInputsShapingFocus() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:focus");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingFocusTint() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:focusTint");
+const ::lightusd::next::PropNameId& kIdInputsShapingFocusTint() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:focusTint");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingConeSoftness() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:cone:softness");
+const ::lightusd::next::PropNameId& kIdInputsShapingConeSoftness() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:cone:softness");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingIesAngleScale() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:ies:angleScale");
+const ::lightusd::next::PropNameId& kIdInputsShapingIesAngleScale() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:ies:angleScale");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingIesNormalize() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:ies:normalize");
+const ::lightusd::next::PropNameId& kIdInputsShapingIesNormalize() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:ies:normalize");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShapingIesFile() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:ies:file");
+const ::lightusd::next::PropNameId& kIdInputsShapingIesFile() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shaping:ies:file");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsRadius() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:radius");
+const ::lightusd::next::PropNameId& kIdInputsRadius() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:radius");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsWidth() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:width");
+const ::lightusd::next::PropNameId& kIdInputsWidth() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:width");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsHeight() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:height");
+const ::lightusd::next::PropNameId& kIdInputsHeight() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:height");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsLength() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:length");
+const ::lightusd::next::PropNameId& kIdInputsLength() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:length");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsAngle() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:angle");
+const ::lightusd::next::PropNameId& kIdInputsAngle() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:angle");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsTextureFormat() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:texture:format");
+const ::lightusd::next::PropNameId& kIdInputsTextureFormat() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:texture:format");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShadowEnable() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:enable");
+const ::lightusd::next::PropNameId& kIdInputsShadowEnable() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:enable");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsEnableShadows() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:enableShadows");
+const ::lightusd::next::PropNameId& kIdInputsEnableShadows() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:enableShadows");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShadowColor() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:color");
+const ::lightusd::next::PropNameId& kIdInputsShadowColor() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:color");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShadowDistance() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:distance");
+const ::lightusd::next::PropNameId& kIdInputsShadowDistance() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:distance");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShadowFalloff() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:falloff");
+const ::lightusd::next::PropNameId& kIdInputsShadowFalloff() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:falloff");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsShadowFalloffGamma() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:falloffGamma");
+const ::lightusd::next::PropNameId& kIdInputsShadowFalloffGamma() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:shadow:falloffGamma");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInputsTextureFile() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inputs:texture:file");
+const ::lightusd::next::PropNameId& kIdInputsTextureFile() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inputs:texture:file");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdProjection() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("projection");
+const ::lightusd::next::PropNameId& kIdProjection() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("projection");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdFocalLength() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("focalLength");
+const ::lightusd::next::PropNameId& kIdFocalLength() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("focalLength");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdHorizontalAperture() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("horizontalAperture");
+const ::lightusd::next::PropNameId& kIdHorizontalAperture() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("horizontalAperture");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdVerticalAperture() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("verticalAperture");
+const ::lightusd::next::PropNameId& kIdVerticalAperture() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("verticalAperture");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdFocusDistance() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("focusDistance");
+const ::lightusd::next::PropNameId& kIdFocusDistance() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("focusDistance");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdShutterOpen() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("shutter:open");
+const ::lightusd::next::PropNameId& kIdShutterOpen() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("shutter:open");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdShutterClose() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("shutter:close");
+const ::lightusd::next::PropNameId& kIdShutterClose() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("shutter:close");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdFStop() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("fStop");
+const ::lightusd::next::PropNameId& kIdFStop() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("fStop");
   return id;
 }
 
-bool GetBool(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
+bool GetBool(const UsdPrim& prim, const ::lightusd::next::PropNameId& name_id,
              bool* out) {
   if (!out) return false;
   const Value* val = prim.GetPropertyValue(name_id);
@@ -404,7 +404,7 @@ bool GetBool(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
   return true;
 }
 
-bool GetFloat(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
+bool GetFloat(const UsdPrim& prim, const ::lightusd::next::PropNameId& name_id,
               float* out) {
   if (!out) return false;
   const Value* val = prim.GetPropertyValue(name_id);
@@ -422,7 +422,7 @@ bool GetFloat(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
   return false;
 }
 
-bool GetFloat3(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
+bool GetFloat3(const UsdPrim& prim, const ::lightusd::next::PropNameId& name_id,
                float* x, float* y, float* z) {
   if (!x || !y || !z) return false;
   const Value* val = prim.GetPropertyValue(name_id);
@@ -445,7 +445,7 @@ bool GetFloat3(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
 }
 
 bool GetDouble(const UsdPrim& prim,
-               const ::tinyusdz::next::PropNameId& name_id, double* out) {
+               const ::lightusd::next::PropNameId& name_id, double* out) {
   if (!out) return false;
   const Value* val = prim.GetPropertyValue(name_id);
   if (!val) return false;
@@ -463,7 +463,7 @@ bool GetDouble(const UsdPrim& prim,
 }
 
 bool GetToken(const UsdPrim& prim,
-             const ::tinyusdz::next::PropNameId& name_id, std::string* out) {
+             const ::lightusd::next::PropNameId& name_id, std::string* out) {
   if (!out) return false;
   const Value* val = prim.GetPropertyValue(name_id);
   if (!val) return false;
@@ -479,25 +479,25 @@ bool GetToken(const UsdPrim& prim,
 }
 
 bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return false;
   return GetBool(prim, name_id, out);
 }
 
 bool GetFloat(const UsdPrim& prim, const char* name, float* out) {
-  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return false;
   return GetFloat(prim, name_id, out);
 }
 
 bool GetDouble(const UsdPrim& prim, const char* name, double* out) {
-  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return false;
   return GetDouble(prim, name_id, out);
 }
 
 bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  const auto name_id = ::lightusd::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return false;
   return GetToken(prim, name_id, out);
 }
@@ -515,7 +515,7 @@ bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
 }
 
 size_t AuthoredArraySize(const UsdPrim& prim,
-                        const ::tinyusdz::next::PropNameId& name_id) {
+                        const ::lightusd::next::PropNameId& name_id) {
   const Value* value = prim.GetPropertyValue(name_id);
   return value && value->is_array() ? value->array_size() : 0;
 }
@@ -569,7 +569,7 @@ bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
       id.rfind("ND_tiledimage_", 0) == 0) {
     return true;
   }
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   return eval.EvalAssetPath(prim, "inputs:file").has_value() ||
          eval.EvalString(prim, "inputs:file").has_value() ||
@@ -577,16 +577,16 @@ bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
          eval.EvalString(prim, "inputs:filename").has_value();
 }
 
-const std::vector<::tinyusdz::next::Path>* PrimaryDataInputConnection(
+const std::vector<::lightusd::next::Path>* PrimaryDataInputConnection(
     const UsdPrim& prim) {
-  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
   if (!spec) return nullptr;
 
   static const char* kPreferredInputs[] = {
       "inputs:in", "inputs:in1", "inputs:dispScalar", "inputs:inputRGB",
       "inputs:fg", "inputs:bg"};
   for (const char* preferred : kPreferredInputs) {
-    const std::vector<::tinyusdz::next::Path>* connections =
+    const std::vector<::lightusd::next::Path>* connections =
         spec->connection(preferred);
     if (connections && !connections->empty()) return connections;
   }
@@ -600,7 +600,7 @@ const std::vector<::tinyusdz::next::Path>* PrimaryDataInputConnection(
     if (property.rfind("inputs:", 0) != 0 || is_factor_input(property)) {
       continue;
     }
-    const std::vector<::tinyusdz::next::Path>* connections =
+    const std::vector<::lightusd::next::Path>* connections =
         spec->connection(property);
     if (connections && !connections->empty()) return connections;
   }
@@ -627,8 +627,8 @@ bool ResolveConnectedEndpoint(const Stage& stage,
       return true;
     }
 
-    const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
-    const std::vector<::tinyusdz::next::Path>* connections =
+    const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
+    const std::vector<::lightusd::next::Path>* connections =
         spec ? spec->connection(prop_name) : nullptr;
     if (!connections || connections->empty()) {
       connections = PrimaryDataInputConnection(prim);
@@ -648,7 +648,7 @@ bool FindConnectedUtilityScalar(const Stage& stage, const UsdPrim& shader,
                                 const std::string& node_input,
                                 double time_code, float* out) {
   if (!out || !shader.IsValid()) return false;
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
   const std::string property = "inputs:" + shader_input;
   if (!eval.HasConnection(shader, property)) return false;
@@ -671,8 +671,8 @@ bool FindConnectedUtilityScalar(const Stage& stage, const UsdPrim& shader,
       }
       return false;
     }
-    const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
-    const std::vector<::tinyusdz::next::Path>* connections =
+    const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
+    const std::vector<::lightusd::next::Path>* connections =
         spec ? spec->connection(prop_name) : nullptr;
     if (!connections || connections->empty()) {
       connections = PrimaryDataInputConnection(node);
@@ -700,11 +700,11 @@ bool ResolveConnectedValue(const Stage& stage,
   UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return false;
 
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
-  ::tinyusdz::next::EvalOptions opts = eval.GetOptions();
+  ::lightusd::next::EvalOptions opts = eval.GetOptions();
   opts.follow_connections = false;
-  ::tinyusdz::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
+  ::lightusd::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
   if (result.success) {
     *out = std::move(result.value);
     return true;
@@ -737,7 +737,7 @@ RenderTexture::Channel ChannelFromConnection(
       else if (const std::string* str = value->as_string()) type = *str;
     }
     if (type.empty()) {
-      if (const ::tinyusdz::next::PrimSpec* spec =
+      if (const ::lightusd::next::PrimSpec* spec =
               texture_prim.GetPrimSpec()) {
         if (const std::string* declared =
                 spec->property_type_name("outputs:out")) {
@@ -793,7 +793,7 @@ ColorSpace ParseColorSpace(const std::string& token) {
 
 bool IsColorShaderInput(const UsdPrim& prim, const std::string& attr_name,
                         const std::string& param_name) {
-  if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+  if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
     if (const std::string* type = spec->property_type_name(attr_name)) {
       if (type->rfind("color3", 0) == 0 || type->rfind("color4", 0) == 0) {
         return true;
@@ -823,7 +823,7 @@ bool MaterialXConfiguredColorSpace(const UsdPrim& prim, std::string* out) {
     const std::string* token = value->as_token();
     if (!token) token = value->as_string();
     if (token && !token->empty()) {
-      *out = ::tinyusdz::color::CanonicalizeToken(*token);
+      *out = ::lightusd::color::CanonicalizeToken(*token);
       return true;
     }
   }
@@ -848,9 +848,9 @@ bool ResolveConnectedColorSource(const Stage& stage,
   // Prefer metadata on the resolved output itself. MaterialX constant and
   // utility nodes usually put it on their value/data input instead, so scan
   // those inputs before falling back to the terminal shader attribute.
-  if (const ::tinyusdz::next::PropMeta* meta =
+  if (const ::lightusd::next::PropMeta* meta =
           prim.GetPropertyMeta(property)) {
-    if ((meta->authored & ::tinyusdz::next::PropMeta::kColorSpace) != 0u) {
+    if ((meta->authored & ::lightusd::next::PropMeta::kColorSpace) != 0u) {
       *source_prim = prim;
       *source_property = property;
       return true;
@@ -863,9 +863,9 @@ bool ResolveConnectedColorSource(const Stage& stage,
         candidate == "inputs:in") {
       value_input = candidate;
     }
-    if (const ::tinyusdz::next::PropMeta* meta =
+    if (const ::lightusd::next::PropMeta* meta =
             prim.GetPropertyMeta(candidate)) {
-      if ((meta->authored & ::tinyusdz::next::PropMeta::kColorSpace) != 0u) {
+      if ((meta->authored & ::lightusd::next::PropMeta::kColorSpace) != 0u) {
         *source_prim = prim;
         *source_property = candidate;
         return true;
@@ -893,20 +893,20 @@ void ConvertShaderColorToWorking(const UsdPrim& prim,
   }
   std::string source;
   bool authored = false;
-  if (!::tinyusdz::next::color_management::ComputeColorSpaceName(
+  if (!::lightusd::next::color_management::ComputeColorSpaceName(
           prim, attr_name, &source, &authored)) {
     return;
   }
   if (!authored) {
     (void)MaterialXConfiguredColorSpace(prim, &source);
   }
-  ::tinyusdz::color::ColorTransform transform;
-  if (!::tinyusdz::next::color_management::BuildColorTransform(
+  ::lightusd::color::ColorTransform transform;
+  if (!::lightusd::next::color_management::BuildColorTransform(
           prim, source, scene->working_color_space, &transform)) {
     return;
   }
   float rgb[3] = {param->value.x, param->value.y, param->value.z};
-  ::tinyusdz::color::TransformRGB(transform, rgb);
+  ::lightusd::color::TransformRGB(transform, rgb);
   param->value.x = rgb[0];
   param->value.y = rgb[1];
   param->value.z = rgb[2];
@@ -1069,7 +1069,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   const UsdPrim material = shader.GetParent();
   if (!material.IsValid()) return {};
   std::vector<UsdPrim> graphs;
-  ::tinyusdz::next::AttributeEval shader_connections(&stage);
+  ::lightusd::next::AttributeEval shader_connections(&stage);
   for (const std::string& prop : shader.GetPropertyNames()) {
     if (prop.compare(0, 7, "inputs:") != 0 ||
         !shader_connections.HasConnection(shader, prop)) continue;
@@ -1077,7 +1077,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
         shader_connections.GetConnectionPath(shader, prop);
     UsdPrim candidate = stage.GetPrimAtPath(
         SourcePrimPathFromConnection(connection));
-    if (::tinyusdz::next::IsNodeGraph(candidate) &&
+    if (::lightusd::next::IsNodeGraph(candidate) &&
         std::none_of(graphs.begin(), graphs.end(), [&](const UsdPrim& item) {
           return item.GetPath() == candidate.GetPath();
         })) {
@@ -1087,7 +1087,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   for (size_t i = 0; i < material.GetChildCount(); ++i) {
     if (!graphs.empty()) break;
     UsdPrim child = material.GetChildAt(i);
-    if (::tinyusdz::next::IsNodeGraph(child)) { graphs.push_back(child); break; }
+    if (::lightusd::next::IsNodeGraph(child)) { graphs.push_back(child); break; }
   }
   const bool direct_graph = graphs.empty();
   const bool graph_forest = graphs.size() > 1;
@@ -1099,18 +1099,18 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   std::function<void(const UsdPrim&)> collect_nodes = [&](const UsdPrim& parent) {
     for (size_t ci = 0; ci < parent.GetChildCount(); ++ci) {
       const UsdPrim child = parent.GetChildAt(ci);
-      if (::tinyusdz::next::IsShader(child)) graph_nodes.push_back(child);
-      else if (::tinyusdz::next::IsNodeGraph(child)) collect_nodes(child);
+      if (::lightusd::next::IsShader(child)) graph_nodes.push_back(child);
+      else if (::lightusd::next::IsNodeGraph(child)) collect_nodes(child);
     }
   };
   if (direct_graph) {
     std::unordered_set<std::string> visited;
     std::function<void(const UsdPrim&)> collect_upstream =
         [&](const UsdPrim& node) {
-          if (!node.IsValid() || !::tinyusdz::next::IsShader(node) ||
+          if (!node.IsValid() || !::lightusd::next::IsShader(node) ||
               node.GetPath() == shader.GetPath() ||
               !visited.insert(node.GetPath().str()).second) return;
-          ::tinyusdz::next::AttributeEval eval(&stage);
+          ::lightusd::next::AttributeEval eval(&stage);
           for (const std::string& prop : node.GetPropertyNames()) {
             if (prop.compare(0, 7, "inputs:") != 0 ||
                 !eval.HasConnection(node, prop)) continue;
@@ -1160,10 +1160,10 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     for (int depth = 0; depth < 16; ++depth) {
       const UsdPrim source = stage.GetPrimAtPath(
           SourcePrimPathFromConnection(connection));
-      if (!source.IsValid() || !::tinyusdz::next::IsNodeGraph(source)) break;
+      if (!source.IsValid() || !::lightusd::next::IsNodeGraph(source)) break;
       const std::string property = ConnectionPropertyName(connection);
       if (property.empty()) break;
-      ::tinyusdz::next::AttributeEval eval(&stage);
+      ::lightusd::next::AttributeEval eval(&stage);
       if (!eval.HasConnection(source, property)) break;
       const std::string forwarded = eval.GetConnectionPath(source, property);
       if (forwarded.empty() || forwarded == connection) break;
@@ -1196,7 +1196,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
        << "\",\"type\":\"" << JsonEscape(node_id)
        << "\",\"inputs\":[";
     bool first_input = true;
-    ::tinyusdz::next::AttributeEval eval(&stage);
+    ::lightusd::next::AttributeEval eval(&stage);
     for (const std::string& prop : node.GetPropertyNames()) {
       if (prop.compare(0, 7, "inputs:") != 0) continue;
       if (!first_input) os << ',';
@@ -1214,7 +1214,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
            << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << '"';
       } else if (const Value* value = node.GetPropertyValueOrEarliestTimeSample(prop)) {
         os << ",\"value\":"; EmitNextGraphValue(os, *value);
-        if (const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec()) {
+        if (const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec()) {
           if (const std::string* type = spec->property_type_name(prop))
             os << ",\"type\":\"" << JsonEscape(*type) << '"';
         }
@@ -1225,7 +1225,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   }
   os << "],\"outputs\":[";
   bool first_output = true;
-  ::tinyusdz::next::AttributeEval shader_eval(&stage);
+  ::lightusd::next::AttributeEval shader_eval(&stage);
   auto runtime_input_name = [&](const std::string& name) {
     if (!volume_graph) return name;
     if (name == "density") return std::string("volume_density");
@@ -1256,7 +1256,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
          << "\"}";
     }
   } else for (const UsdPrim& graph : graphs) {
-    ::tinyusdz::next::AttributeEval graph_eval(&stage);
+    ::lightusd::next::AttributeEval graph_eval(&stage);
     for (const std::string& prop : graph.GetPropertyNames()) {
       if (prop.compare(0, 8, "outputs:") != 0 ||
           !graph_eval.HasConnection(graph, prop)) continue;
@@ -1285,7 +1285,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     const UsdPrim source = stage.GetPrimAtPath(
         SourcePrimPathFromConnection(connection));
     if (direct_graph) {
-      if (!::tinyusdz::next::IsShader(source) ||
+      if (!::lightusd::next::IsShader(source) ||
           graph_node_names.find(source.GetPath().str()) == graph_node_names.end())
         continue;
       if (!first_connection) os << ',';
@@ -1295,7 +1295,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
          << "\",\"output\":\"" << JsonEscape(prop.substr(7)) << "\"}";
       continue;
     }
-    if (!::tinyusdz::next::IsNodeGraph(source)) continue;
+    if (!::lightusd::next::IsNodeGraph(source)) continue;
     const auto graph_it = std::find_if(
         graphs.begin(), graphs.end(), [&](const UsdPrim& graph) {
           return graph.GetPath() == source.GetPath();
@@ -1367,7 +1367,7 @@ bool TransformMtlxColorInput(const UsdPrim& node,
                              MtlxConstantValue* value) {
   if (!value) return false;
   if (value->components < 3 || evaluation_space.empty()) return true;
-  const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
+  const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
   const std::string* type = spec ? spec->property_type_name(property) : nullptr;
   if (!type || (type->rfind("color3", 0) != 0 &&
                 type->rfind("color4", 0) != 0)) {
@@ -1376,23 +1376,23 @@ bool TransformMtlxColorInput(const UsdPrim& node,
 
   std::string source;
   bool authored = false;
-  if (!::tinyusdz::next::color_management::ComputeColorSpaceName(
+  if (!::lightusd::next::color_management::ComputeColorSpaceName(
           node, property, &source, &authored)) {
     return false;
   }
   if (!authored) source = evaluation_space;
-  ::tinyusdz::color::ColorTransform transform;
-  if (!::tinyusdz::next::color_management::BuildColorTransform(
+  ::lightusd::color::ColorTransform transform;
+  if (!::lightusd::next::color_management::BuildColorTransform(
           node, source, evaluation_space, &transform)) {
     return false;
   }
   float rgb[3] = {value->value[0], value->value[1], value->value[2]};
-  ::tinyusdz::color::TransformRGB(transform, rgb);
+  ::lightusd::color::TransformRGB(transform, rgb);
   value->value[0] = rgb[0];
   value->value[1] = rgb[1];
   value->value[2] = rgb[2];
   value->color_managed =
-      transform.source.kind != ::tinyusdz::color::ColorSpaceKind::Data;
+      transform.source.kind != ::lightusd::color::ColorSpaceKind::Data;
   return true;
 }
 
@@ -1403,19 +1403,19 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
                    int depth) {
   if (!out || depth > kMaxMtlxConstantDepth) return false;
   const std::string property = "inputs:" + input;
-  const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
-  const std::vector<::tinyusdz::next::Path>* connections =
+  const ::lightusd::next::PrimSpec* spec = node.GetPrimSpec();
+  const std::vector<::lightusd::next::Path>* connections =
       spec ? spec->connection(property) : nullptr;
   if (connections && !connections->empty()) {
     return EvalMtlxConstantConnection(stage, (*connections)[0].str(),
                                       time_code, evaluation_space, out,
                                       visiting, depth + 1);
   }
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
-  ::tinyusdz::next::EvalOptions options = eval.GetOptions();
+  ::lightusd::next::EvalOptions options = eval.GetOptions();
   options.follow_connections = false;
-  const ::tinyusdz::next::EvalResult result =
+  const ::lightusd::next::EvalResult result =
       eval.EvalWith(node, property, options);
   return result.success && ValueToMtlxConstant(result.value, out) &&
          TransformMtlxColorInput(node, property, evaluation_space, out);
@@ -1680,15 +1680,15 @@ bool EvalMtlxConstantConnection(const Stage& stage,
   if (!SplitConnectionPath(connection, &prim_path, &property)) return false;
   const UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return false;
-  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
-  const std::vector<::tinyusdz::next::Path>* forwarded =
+  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
+  const std::vector<::lightusd::next::Path>* forwarded =
       spec ? spec->connection(property) : nullptr;
   if (forwarded && !forwarded->empty()) {
     return EvalMtlxConstantConnection(stage, (*forwarded)[0].str(), time_code,
                                       evaluation_space, out, visiting,
                                       depth + 1);
   }
-  if (::tinyusdz::next::IsShader(prim)) {
+  if (::lightusd::next::IsShader(prim)) {
     return EvalMtlxConstantNode(stage, prim, time_code, evaluation_space, out,
                                 visiting, depth + 1);
   }
@@ -1832,10 +1832,10 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
   // next-core Values keep quats real-first (w, x, y, z); render animation
   // channels use xyzw (three.js quaternion order). xformOp:orient is the
   // quat-valued xform op.
-  const ::tinyusdz::next::TypeId tid = value.type_id();
-  if (tid == ::tinyusdz::next::TypeId::Quatf ||
-      tid == ::tinyusdz::next::TypeId::Quatd ||
-      tid == ::tinyusdz::next::TypeId::Quath) {
+  const ::lightusd::next::TypeId tid = value.type_id();
+  if (tid == ::lightusd::next::TypeId::Quatf ||
+      tid == ::lightusd::next::TypeId::Quatd ||
+      tid == ::lightusd::next::TypeId::Quath) {
     *out = Float4(out->y, out->z, out->w, out->x);
     return true;
   }
@@ -1877,7 +1877,7 @@ void CopyMatrixFromDoubles(const std::vector<double>& values,
 }
 
 Matrix4 MatrixFromPointInstancerTransform(
-    const ::tinyusdz::next::PointInstancerTransform& src) {
+    const ::lightusd::next::PointInstancerTransform& src) {
   Matrix4 dst;
   for (size_t i = 0; i < 16; ++i) {
     dst.m[i] = static_cast<float>(src.matrix[i]);
@@ -2348,12 +2348,12 @@ bool IsXformAnimationProperty(const std::string& prop_name) {
 // Bake-only helper: the stage times at which the bake samples a clip set
 // (authored times/active knots + a uniform fill up to max_samples).
 std::vector<double> ValueClipSampleTimes(
-    const Stage& stage, const ::tinyusdz::next::ValueClipSet& meta,
+    const Stage& stage, const ::lightusd::next::ValueClipSet& meta,
     uint32_t max_samples) {
   std::set<double> exact;
   for (const auto& value : meta.times) exact.insert(value.first);
   for (const auto& value : meta.active) exact.insert(value.first);
-  const ::tinyusdz::next::StageMeta stage_meta = stage.GetMeta();
+  const ::lightusd::next::StageMeta stage_meta = stage.GetMeta();
   double start = exact.empty() ? 0.0 : *exact.begin();
   double end = exact.empty() ? start : *exact.rbegin();
   if (stage_meta.startTimeCode_set) start = stage_meta.startTimeCode;
@@ -2397,7 +2397,7 @@ struct TextureNodeData {
 // UsdPrimvarReader_* terminates the chain and names the UV set.
 static bool GetFloat2Local(const UsdPrim& prim, const std::string& name,
                            float* out2) {
-  const ::tinyusdz::next::Value* v = GetAttribute(prim, name);
+  const ::lightusd::next::Value* v = GetAttribute(prim, name);
   if (!v) return false;
   const float* f = v->as_float2();
   if (!f) return false;
@@ -2423,8 +2423,8 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
   double T[2] = {0.0, 0.0};                   // accumulated offset
 
   for (int hop = 0; hop < 4 && cur.IsValid(); ++hop) {
-    const ::tinyusdz::next::PrimSpec* spec = cur.GetPrimSpec();
-    const std::vector<::tinyusdz::next::Path>* conns =
+    const ::lightusd::next::PrimSpec* spec = cur.GetPrimSpec();
+    const std::vector<::lightusd::next::Path>* conns =
         spec ? spec->connection(prop) : nullptr;
     if (!conns || conns->empty()) break;
     const std::string next_path = SourcePrimPathFromConnection((*conns)[0].str());
@@ -2471,7 +2471,7 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
       continue;
     }
     if (id.rfind("UsdPrimvarReader", 0) == 0) {
-      out->uv_primvar = ::tinyusdz::next::GetPrimvarReaderVarname(stage, np);
+      out->uv_primvar = ::lightusd::next::GetPrimvarReaderVarname(stage, np);
       break;
     }
     break;
@@ -2514,11 +2514,11 @@ bool ExtractTextureNodeData(const Stage& stage,
   // not necessarily on the texture shader itself.
   auto apply_file_metadata = [out](const UsdPrim& owner,
                                    const std::string& property) {
-    const ::tinyusdz::next::PropMeta* pm = owner.GetPropertyMeta(property);
+    const ::lightusd::next::PropMeta* pm = owner.GetPropertyMeta(property);
     if (!pm) return;
     if (!pm->colorSpace.empty()) out->source_color_space = pm->colorSpace;
-    if (const ::tinyusdz::next::Dict* cd = pm->customData.as_dictionary()) {
-      if (const ::tinyusdz::next::Value* v = cd->find("ktx2")) {
+    if (const ::lightusd::next::Dict* cd = pm->customData.as_dictionary()) {
+      if (const ::lightusd::next::Value* v = cd->find("ktx2")) {
         if (const std::string* s = v->as_asset_path()) {
           out->ktx2_hint = *s;
         } else if (const std::string* t = v->as_string()) {
@@ -2528,8 +2528,8 @@ bool ExtractTextureNodeData(const Stage& stage,
     }
   };
 
-  ::tinyusdz::next::UVTextureData uv;
-  if (::tinyusdz::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
+  ::lightusd::next::UVTextureData uv;
+  if (::lightusd::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
     out->file = uv.file;
     out->wrap_s = uv.wrap_s;
     out->wrap_t = uv.wrap_t;
@@ -2541,7 +2541,7 @@ bool ExtractTextureNodeData(const Stage& stage,
     return !out->file.empty();
   }
 
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
 
   std::string shader_id;
@@ -2724,7 +2724,7 @@ std::string ValueSummary(const Value& value) {
   if (const std::vector<std::string>* arr = value.as_token_array()) {
     return "token[" + std::to_string(arr->size()) + "]";
   }
-  const char* type_name = ::tinyusdz::next::GetTypeName(value.type_id());
+  const char* type_name = ::lightusd::next::GetTypeName(value.type_id());
   return type_name ? type_name : "value";
 }
 
@@ -2742,7 +2742,7 @@ bool ReadStringLikeProperty(const UsdPrim& prim, const std::string& name,
 }
 
 bool ReadStringLikeProperty(const UsdPrim& prim,
-                           const ::tinyusdz::next::PropNameId& name_id,
+                           const ::lightusd::next::PropNameId& name_id,
                            std::string* out) {
   if (!out) return false;
   const Value* v = prim.GetPropertyValue(name_id);
@@ -3217,7 +3217,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
                                  std::vector<int32_t>* mesh_indices) {
   const Value* value = owner.GetPropertyValue(property_name);
   if (!value ||
-      value->type_id() != ::tinyusdz::next::TypeId::PathExpression) return false;
+      value->type_id() != ::lightusd::next::TypeId::PathExpression) return false;
   const std::string* text = value->as_string();
   if (!text) return false;
   ParsedPathExpression expression = ParsedPathExpression::Parse(*text);
@@ -3240,7 +3240,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
     const Value* ref_value = ref_owner.GetPropertyValue(
         "collection:" + ref.name + ":membershipExpression");
     if (!ref_value || ref_value->type_id() !=
-                          ::tinyusdz::next::TypeId::PathExpression) return nullptr;
+                          ::lightusd::next::TypeId::PathExpression) return nullptr;
     const std::string* ref_text = ref_value->as_string();
     if (!ref_text) return nullptr;
     std::string qualified = *ref_text;
@@ -3283,9 +3283,9 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
     return;
   }
 
-  const std::vector<::tinyusdz::next::Path>* includes =
+  const std::vector<::lightusd::next::Path>* includes =
       prim.GetRelationship(base + "includes");
-  const std::vector<::tinyusdz::next::Path>* excludes =
+  const std::vector<::lightusd::next::Path>* excludes =
       prim.GetRelationship(base + "excludes");
   if (!includes && !excludes) return;  // unauthored -> links all
 
@@ -3304,7 +3304,7 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
   // the matched subtrees, not to the whole scene.
   index.NewGeneration();
   if (excludes) {
-    for (const ::tinyusdz::next::Path& p : *excludes) {
+    for (const ::lightusd::next::Path& p : *excludes) {
       const std::string ep = p.str();
       const int32_t exact = index.ExactMatch(ep);
       if (exact >= 0) index.Mark(exact);
@@ -3325,7 +3325,7 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
 
   if (include_root) add_subtree(owner_path);
   if (includes) {
-    for (const ::tinyusdz::next::Path& p : *includes) {
+    for (const ::lightusd::next::Path& p : *includes) {
       const std::string ip = p.str();
       if (explicit_only) {
         const int32_t exact = index.ExactMatch(ip);
@@ -3366,11 +3366,11 @@ void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
 std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim,
                                                  const std::string& name) {
   std::vector<std::string> out;
-  const std::vector<::tinyusdz::next::Path>* targets =
+  const std::vector<::lightusd::next::Path>* targets =
       prim.GetRelationship(name);
   if (!targets) return out;
   out.reserve(targets->size());
-  for (const ::tinyusdz::next::Path& target : *targets) {
+  for (const ::lightusd::next::Path& target : *targets) {
     out.push_back(target.str());
   }
   return out;
@@ -3621,7 +3621,7 @@ std::vector<PhysicsProperty> CollectPhysicsExtensionProperties(
     if (!IsPhysicsExtensionPropertyName(name)) continue;
     PhysicsProperty prop;
     prop.name = name;
-    const std::vector<::tinyusdz::next::Path>* targets =
+    const std::vector<::lightusd::next::Path>* targets =
         prim.GetRelationship(name);
     if (targets) {
       prop.value = "rel[" + std::to_string(targets->size()) + "]";
@@ -3645,7 +3645,7 @@ Float4 Float4FromArray(const float v[4]) {
 // SAME prim, not reject the prim (GetBoundMaterialPath returns only the
 // first authored rel).
 std::string FirstValidBoundMaterialPath(const Stage& stage,
-                                        const ::tinyusdz::next::UsdPrim& prim,
+                                        const ::lightusd::next::UsdPrim& prim,
                                         const std::string& purpose) {
   static const char* kPreviewOrder[] = {"material:binding:preview",
                                         "material:binding",
@@ -3657,11 +3657,11 @@ std::string FirstValidBoundMaterialPath(const Stage& stage,
                                                        : kPreviewOrder;
   for (size_t i = 0; i < 3; ++i) {
     const char* rel = bindingOrder[i];
-    const std::vector<::tinyusdz::next::Path>* targets =
+    const std::vector<::lightusd::next::Path>* targets =
         prim.GetRelationship(rel);
     if (!targets || targets->empty()) continue;
     const std::string p = (*targets)[0].str();
-    if (!p.empty() && ::tinyusdz::tydra::next::IsMaterial(
+    if (!p.empty() && ::lightusd::tydra::next::IsMaterial(
                           stage.GetPrimAtPath(p))) {
       return p;
     }
@@ -3675,7 +3675,7 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
   // Core UsdShade resolution now validates targets at every purpose/ancestor
   // step and associates bindMaterialAs with the relationship that actually
   // won. Keep one implementation shared by the converter and applications.
-  return ::tinyusdz::next::GetInheritedBoundMaterialPathForPurpose(
+  return ::lightusd::next::GetInheritedBoundMaterialPathForPurpose(
       stage, prim_path, purpose.empty() ? "preview" : purpose);
 }
 
@@ -3698,7 +3698,7 @@ ConverterConfig MakeHardenedConverterConfig(size_t max_memory) {
   config.execution.max_threads = 1;
   config.execution.max_in_flight_bytes = max_memory;
   config.execution.callback_concurrency =
-      ::tinyusdz::next::CallbackConcurrency::Serialized;
+      ::lightusd::next::CallbackConcurrency::Serialized;
   return config;
 }
 
@@ -3809,18 +3809,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     result.scene.start_time = meta.startTimeCode;
     result.scene.end_time = meta.endTimeCode;
     result.scene.frames_per_second = meta.timeCodesPerSecond;
-    ::tinyusdz::next::color_management::RenderingColorConfig color_config;
+    ::lightusd::next::color_management::RenderingColorConfig color_config;
     std::string color_warning;
-    (void)::tinyusdz::next::color_management::ResolveRenderingColorConfig(
+    (void)::lightusd::next::color_management::ResolveRenderingColorConfig(
         stage, config_.material.render_settings_path, &color_config,
         &color_warning);
     result.scene.render_settings_path = color_config.render_settings_path;
     result.scene.working_color_space = color_config.working_space;
-    ::tinyusdz::color::ColorSpaceDesc display_linear;
-    ::tinyusdz::color::ColorTransform working_to_display;
-    if (::tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+    ::lightusd::color::ColorSpaceDesc display_linear;
+    ::lightusd::color::ColorTransform working_to_display;
+    if (::lightusd::color::GetBuiltinColorSpace("lin_rec709_scene",
                                                 &display_linear) &&
-        ::tinyusdz::color::BuildColorTransform(
+        ::lightusd::color::BuildColorTransform(
             color_config.working_definition, display_linear,
             &working_to_display)) {
       for (size_t i = 0; i < 9; ++i) {
@@ -3934,18 +3934,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       } else {
         mesh_workers = std::min<size_t>(
             static_cast<size_t>(config_.execution.max_threads),
-            static_cast<size_t>(::tinyusdz::next::kMaxExecutionThreads));
+            static_cast<size_t>(::lightusd::next::kMaxExecutionThreads));
       }
     } else if (config_.max_worker_threads > 0) {
       mesh_workers = std::min<size_t>(
           config_.max_worker_threads,
-          static_cast<size_t>(::tinyusdz::next::kMaxExecutionThreads));
+          static_cast<size_t>(::lightusd::next::kMaxExecutionThreads));
     } else {
       const unsigned hw_threads = std::thread::hardware_concurrency();
       mesh_workers =
           std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
     }
-    ::tinyusdz::next::TaskArena task_arena(mesh_workers);
+    ::lightusd::next::TaskArena task_arena(mesh_workers);
 
     // Dynamic work distribution: instead of fixed-size batch waves (where one
     // oversized mesh idled the other workers until the wave barrier), all
@@ -4199,10 +4199,10 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         batch_ok[bi] = ConvertMaterial(stage, mat_prim, &batch_material[bi],
                                        &batch_local_scene[bi]) ? 1 : 0;
       };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
       const bool callbacks_may_run_concurrently =
           config_.execution.callback_concurrency ==
-          ::tinyusdz::next::CallbackConcurrency::Concurrent;
+          ::lightusd::next::CallbackConcurrency::Concurrent;
       const bool resolver_has_callbacks =
           config_.asset_resolver && config_.asset_resolver->HasUserCallbacks();
       const bool material_parallel_safe =
@@ -4215,7 +4215,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 #endif
         for (size_t bi = 0; bi < n; ++bi) convert_one(bi);
       } else {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
         task_arena.Run(n, convert_one);
 #endif
       }
@@ -4397,7 +4397,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
               skeleton.animation_source_path = sources[0];
               break;
             }
-            if (::tinyusdz::tydra::next::IsSkelRoot(anc)) break;
+            if (::lightusd::tydra::next::IsSkelRoot(anc)) break;
             anc = GetParent(stage, anc);
           }
         }
@@ -4533,18 +4533,18 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
   catalog.start_time = meta.startTimeCode;
   catalog.end_time = meta.endTimeCode;
   catalog.frames_per_second = meta.timeCodesPerSecond;
-  ::tinyusdz::next::color_management::RenderingColorConfig color_config;
+  ::lightusd::next::color_management::RenderingColorConfig color_config;
   std::string color_warning;
-  (void)::tinyusdz::next::color_management::ResolveRenderingColorConfig(
+  (void)::lightusd::next::color_management::ResolveRenderingColorConfig(
       stage, config_.material.render_settings_path, &color_config,
       &color_warning);
   catalog.render_settings_path = color_config.render_settings_path;
   catalog.working_color_space = color_config.working_space;
-  ::tinyusdz::color::ColorSpaceDesc display_linear;
-  ::tinyusdz::color::ColorTransform working_to_display;
-  if (::tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+  ::lightusd::color::ColorSpaceDesc display_linear;
+  ::lightusd::color::ColorTransform working_to_display;
+  if (::lightusd::color::GetBuiltinColorSpace("lin_rec709_scene",
                                               &display_linear) &&
-      ::tinyusdz::color::BuildColorTransform(
+      ::lightusd::color::BuildColorTransform(
           color_config.working_definition, display_linear,
           &working_to_display)) {
     for (size_t i = 0; i < 9; ++i) {
@@ -4909,9 +4909,9 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
   stage.Traverse([&](const UsdPrim& prim) {
     const std::string path = prim.GetPath().str();
 
-    if (::tinyusdz::next::IsPhysicsScene(prim)) {
-      ::tinyusdz::next::PhysicsSceneData data;
-      if (::tinyusdz::next::GetPhysicsSceneData(stage, prim, &data,
+    if (::lightusd::next::IsPhysicsScene(prim)) {
+      ::lightusd::next::PhysicsSceneData data;
+      if (::lightusd::next::GetPhysicsSceneData(stage, prim, &data,
                                                 config_.time_code)) {
         PhysicsSceneAnnotation out;
         out.prim_path = path;
@@ -4922,13 +4922,13 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
       }
     }
 
-    if (::tinyusdz::next::HasPhysicsRigidBodyAPI(prim) ||
-        ::tinyusdz::next::HasPhysicsMassAPI(prim)) {
+    if (::lightusd::next::HasPhysicsRigidBodyAPI(prim) ||
+        ::lightusd::next::HasPhysicsMassAPI(prim)) {
       PhysicsRigidBodyAnnotation out;
       out.prim_path = path;
-      if (::tinyusdz::next::HasPhysicsRigidBodyAPI(prim)) {
-        ::tinyusdz::next::PhysicsRigidBodyData data;
-        if (::tinyusdz::next::GetPhysicsRigidBodyData(stage, prim, &data,
+      if (::lightusd::next::HasPhysicsRigidBodyAPI(prim)) {
+        ::lightusd::next::PhysicsRigidBodyData data;
+        if (::lightusd::next::GetPhysicsRigidBodyData(stage, prim, &data,
                                                       config_.time_code)) {
           out.rigid_body_enabled = data.rigidBodyEnabled;
           out.kinematic_enabled = data.kinematicEnabled;
@@ -4938,9 +4938,9 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
           out.starts_asleep = data.startsAsleep;
         }
       }
-      if (::tinyusdz::next::HasPhysicsMassAPI(prim)) {
-        ::tinyusdz::next::PhysicsMassData data;
-        if (::tinyusdz::next::GetPhysicsMassData(stage, prim, &data)) {
+      if (::lightusd::next::HasPhysicsMassAPI(prim)) {
+        ::lightusd::next::PhysicsMassData data;
+        if (::lightusd::next::GetPhysicsMassData(stage, prim, &data)) {
           out.has_mass = true;
           out.mass = data.mass;
           out.density = data.density;
@@ -4953,20 +4953,20 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
       scene->physics.rigid_bodies.push_back(std::move(out));
     }
 
-    if (::tinyusdz::next::HasPhysicsCollisionAPI(prim) ||
-        ::tinyusdz::next::HasPhysicsMeshCollisionAPI(prim)) {
+    if (::lightusd::next::HasPhysicsCollisionAPI(prim) ||
+        ::lightusd::next::HasPhysicsMeshCollisionAPI(prim)) {
       PhysicsColliderAnnotation out;
       out.prim_path = path;
-      if (::tinyusdz::next::HasPhysicsCollisionAPI(prim)) {
-        ::tinyusdz::next::PhysicsCollisionData data;
-        if (::tinyusdz::next::GetPhysicsCollisionData(stage, prim, &data)) {
+      if (::lightusd::next::HasPhysicsCollisionAPI(prim)) {
+        ::lightusd::next::PhysicsCollisionData data;
+        if (::lightusd::next::GetPhysicsCollisionData(stage, prim, &data)) {
           out.collision_enabled = data.collisionEnabled;
           out.simulation_owner = data.simulationOwner;
         }
       }
-      if (::tinyusdz::next::HasPhysicsMeshCollisionAPI(prim)) {
-        ::tinyusdz::next::PhysicsMeshCollisionData data;
-        if (::tinyusdz::next::GetPhysicsMeshCollisionData(prim, &data)) {
+      if (::lightusd::next::HasPhysicsMeshCollisionAPI(prim)) {
+        ::lightusd::next::PhysicsMeshCollisionData data;
+        if (::lightusd::next::GetPhysicsMeshCollisionData(prim, &data)) {
           out.has_mesh_collision = true;
           out.approximation = data.approximation;
         }
@@ -4975,13 +4975,13 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
       scene->physics.colliders.push_back(std::move(out));
     }
 
-    if (::tinyusdz::next::IsPhysicsJoint(prim)) {
+    if (::lightusd::next::IsPhysicsJoint(prim)) {
       PhysicsJointAnnotation out;
       out.prim_path = path;
       out.type_name = prim.GetTypeName();
 
-      ::tinyusdz::next::PhysicsJointData base;
-      if (::tinyusdz::next::GetPhysicsJointData(stage, prim, &base,
+      ::lightusd::next::PhysicsJointData base;
+      if (::lightusd::next::GetPhysicsJointData(stage, prim, &base,
                                                 config_.time_code)) {
         out.body0 = base.body0;
         out.body1 = base.body1;
@@ -4994,47 +4994,47 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
         out.collision_enabled = base.collisionEnabled;
       }
 
-      if (::tinyusdz::next::IsPhysicsRevoluteJoint(prim)) {
-        ::tinyusdz::next::PhysicsRevoluteJointData data;
-        if (::tinyusdz::next::GetPhysicsRevoluteJointData(
+      if (::lightusd::next::IsPhysicsRevoluteJoint(prim)) {
+        ::lightusd::next::PhysicsRevoluteJointData data;
+        if (::lightusd::next::GetPhysicsRevoluteJointData(
                 stage, prim, &data, config_.time_code)) {
           out.axis = Float3FromArray(data.axis);
           out.lower_limit = data.lowerLimit;
           out.upper_limit = data.upperLimit;
         }
-      } else if (::tinyusdz::next::IsPhysicsPrismaticJoint(prim)) {
-        ::tinyusdz::next::PhysicsPrismaticJointData data;
-        if (::tinyusdz::next::GetPhysicsPrismaticJointData(
+      } else if (::lightusd::next::IsPhysicsPrismaticJoint(prim)) {
+        ::lightusd::next::PhysicsPrismaticJointData data;
+        if (::lightusd::next::GetPhysicsPrismaticJointData(
                 stage, prim, &data, config_.time_code)) {
           out.axis = Float3FromArray(data.axis);
           out.lower_limit = data.lowerLimit;
           out.upper_limit = data.upperLimit;
         }
-      } else if (::tinyusdz::next::IsPhysicsSliderJoint(prim)) {
-        ::tinyusdz::next::PhysicsSliderJointData data;
-        if (::tinyusdz::next::GetPhysicsSliderJointData(
+      } else if (::lightusd::next::IsPhysicsSliderJoint(prim)) {
+        ::lightusd::next::PhysicsSliderJointData data;
+        if (::lightusd::next::GetPhysicsSliderJointData(
                 stage, prim, &data, config_.time_code)) {
           out.axis = Float3FromArray(data.axis);
           out.lower_limit = data.lowerLimit;
           out.upper_limit = data.upperLimit;
         }
-      } else if (::tinyusdz::next::IsPhysicsSphericalJoint(prim)) {
-        ::tinyusdz::next::PhysicsSphericalJointData data;
-        if (::tinyusdz::next::GetPhysicsSphericalJointData(
+      } else if (::lightusd::next::IsPhysicsSphericalJoint(prim)) {
+        ::lightusd::next::PhysicsSphericalJointData data;
+        if (::lightusd::next::GetPhysicsSphericalJointData(
                 stage, prim, &data, config_.time_code)) {
           out.cone_angle0_limit = data.coneAngle0Limit;
           out.cone_angle1_limit = data.coneAngle1Limit;
         }
-      } else if (::tinyusdz::next::IsPhysicsBallJoint(prim)) {
-        ::tinyusdz::next::PhysicsBallJointData data;
-        if (::tinyusdz::next::GetPhysicsBallJointData(
+      } else if (::lightusd::next::IsPhysicsBallJoint(prim)) {
+        ::lightusd::next::PhysicsBallJointData data;
+        if (::lightusd::next::GetPhysicsBallJointData(
                 stage, prim, &data, config_.time_code)) {
           out.cone_angle0_limit = data.coneAngle0Limit;
           out.cone_angle1_limit = data.coneAngle1Limit;
         }
-      } else if (::tinyusdz::next::IsPhysicsDistanceJoint(prim)) {
-        ::tinyusdz::next::PhysicsDistanceJointData data;
-        if (::tinyusdz::next::GetPhysicsDistanceJointData(
+      } else if (::lightusd::next::IsPhysicsDistanceJoint(prim)) {
+        ::lightusd::next::PhysicsDistanceJointData data;
+        if (::lightusd::next::GetPhysicsDistanceJointData(
                 stage, prim, &data, config_.time_code)) {
           out.min_distance = data.minDistance;
           out.max_distance = data.maxDistance;
@@ -5045,9 +5045,9 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
       scene->physics.joints.push_back(std::move(out));
     }
 
-    if (::tinyusdz::next::HasPhysicsMaterialAPI(prim)) {
-      ::tinyusdz::next::PhysicsMaterialData data;
-      if (::tinyusdz::next::GetPhysicsMaterialData(stage, prim, &data)) {
+    if (::lightusd::next::HasPhysicsMaterialAPI(prim)) {
+      ::lightusd::next::PhysicsMaterialData data;
+      if (::lightusd::next::GetPhysicsMaterialData(stage, prim, &data)) {
         PhysicsMaterialAnnotation out;
         out.prim_path = path;
         out.static_friction = data.staticFriction;
@@ -5059,9 +5059,9 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
       }
     }
 
-    if (::tinyusdz::next::HasPhysicsFilteredPairsAPI(prim)) {
-      ::tinyusdz::next::PhysicsFilteredPairsData data;
-      if (::tinyusdz::next::GetPhysicsFilteredPairsData(prim, &data)) {
+    if (::lightusd::next::HasPhysicsFilteredPairsAPI(prim)) {
+      ::lightusd::next::PhysicsFilteredPairsData data;
+      if (::lightusd::next::GetPhysicsFilteredPairsData(prim, &data)) {
         PhysicsFilteredPairsAnnotation out;
         out.prim_path = path;
         out.filtered_pair_paths = std::move(data.filteredPairPaths);
@@ -5069,7 +5069,7 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
       }
     }
 
-    if (::tinyusdz::next::HasPhysicsArticulationRootAPI(prim)) {
+    if (::lightusd::next::HasPhysicsArticulationRootAPI(prim)) {
       scene->physics.articulation_roots.push_back(path);
     }
 
@@ -5278,7 +5278,7 @@ void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
 
 int32_t RenderSceneConverter::GetOrCreateDefaultMaterial(RenderScene* scene) {
   // Same sentinel path as the legacy converter.
-  constexpr const char* kDefaultMaterialPath = "/__tinyusdz_default_material__";
+  constexpr const char* kDefaultMaterialPath = "/__lightusd_default_material__";
   const auto it = scene->material_by_path.find(kDefaultMaterialPath);
   if (it != scene->material_by_path.end()) return it->second;
   RenderMaterial material;
@@ -5444,11 +5444,11 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       return false;
     }
   } else if (type == "Cube") {
-    ::tinyusdz::tydra::GenerateCubeMesh(
+    ::lightusd::tydra::GenerateCubeMesh(
         ReadDoubleProperty(prim, "size", 2.0), points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Sphere") {
-    ::tinyusdz::tydra::GenerateIcosphereMesh(
+    ::lightusd::tydra::GenerateIcosphereMesh(
         // USD's Sphere.radius default is 1 (Cube.size is 2). Normally the
         // schema registry supplies it and this fallback never fires.
         ReadDoubleProperty(prim, "radius", 1.0),
@@ -5466,11 +5466,11 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
                             "': tapered radii are approximated with max radius");
       }
     }
-    ::tinyusdz::tydra::GenerateCylinderMesh(
+    ::lightusd::tydra::GenerateCylinderMesh(
         radius, ReadDoubleProperty(prim, "height", 2.0), 24, 1, points,
         face_counts, face_indices, normals, uvs);
   } else if (type == "Cone") {
-    ::tinyusdz::tydra::GenerateConeMesh(
+    ::lightusd::tydra::GenerateConeMesh(
         ReadDoubleProperty(prim, "radius", 1.0),
         ReadDoubleProperty(prim, "height", 2.0), 24, points, face_counts,
         face_indices, normals, uvs);
@@ -5486,11 +5486,11 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
                             "': asymmetric radii are approximated with max radius");
       }
     }
-    ::tinyusdz::tydra::GenerateCapsuleMesh(radius, height, 24, 1, points,
+    ::lightusd::tydra::GenerateCapsuleMesh(radius, height, 24, 1, points,
                                            face_counts, face_indices, normals,
                                            uvs);
   } else if (type == "Plane") {
-    ::tinyusdz::tydra::GeneratePlaneMesh(
+    ::lightusd::tydra::GeneratePlaneMesh(
         ReadDoubleProperty(prim, "width", 2.0),
         ReadDoubleProperty(prim, "length", 2.0), 1, 1, points, face_counts,
         face_indices, normals, uvs);
@@ -5687,21 +5687,21 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   if (subdivision_level > 0 && has_authored_subdivision &&
       subdivision_scheme != "none" &&
       config_.mesh.retain_geometry && !subdivision_deformed) {
-    ::tinyusdz::tsd::Options subdiv_options;
+    ::lightusd::tsd::Options subdiv_options;
     subdiv_options.level = std::min(subdivision_level,
-                                    ::tinyusdz::tsd::kMaxLevel);
+                                    ::lightusd::tsd::kMaxLevel);
     if (subdivision_scheme == "loop") {
-      subdiv_options.scheme = ::tinyusdz::tsd::Scheme::Loop;
+      subdiv_options.scheme = ::lightusd::tsd::Scheme::Loop;
     } else if (subdivision_scheme == "bilinear") {
-      subdiv_options.scheme = ::tinyusdz::tsd::Scheme::Bilinear;
+      subdiv_options.scheme = ::lightusd::tsd::Scheme::Bilinear;
     } else {
-      subdiv_options.scheme = ::tinyusdz::tsd::Scheme::CatmullClark;
+      subdiv_options.scheme = ::lightusd::tsd::Scheme::CatmullClark;
     }
 
     const std::vector<float> points = out->points.flatten();
     const std::vector<uint32_t> counts = out->face_vertex_counts.flatten();
     const std::vector<uint32_t> indices = out->face_vertex_indices.flatten();
-    ::tinyusdz::tsd::MeshView mesh_view;
+    ::lightusd::tsd::MeshView mesh_view;
     mesh_view.points = points.data();
     mesh_view.num_points = static_cast<uint32_t>(points.size() / 3);
     mesh_view.face_vertex_counts = counts.data();
@@ -5737,14 +5737,14 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     add_channel(&out->opacities, &out->opacities_interp, 1);
 
     std::vector<std::vector<float>> channel_values(channels.size());
-    std::vector<::tinyusdz::tsd::FVarChannelView> fvar;
-    std::vector<::tinyusdz::tsd::VertexPrimvarView> vertex;
+    std::vector<::lightusd::tsd::FVarChannelView> fvar;
+    std::vector<::lightusd::tsd::VertexPrimvarView> vertex;
     std::vector<size_t> fvar_channel;
     std::vector<size_t> vertex_channel;
     for (size_t i = 0; i < channels.size(); ++i) {
       channel_values[i] = channels[i].data->flatten();
       if (channels[i].face_varying) {
-        ::tinyusdz::tsd::FVarChannelView view;
+        ::lightusd::tsd::FVarChannelView view;
         view.values = channel_values[i].data();
         view.num_values = static_cast<uint32_t>(channel_values[i].size() /
                                                 channels[i].stride);
@@ -5752,7 +5752,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         fvar.push_back(view);
         fvar_channel.push_back(i);
       } else {
-        ::tinyusdz::tsd::VertexPrimvarView view;
+        ::lightusd::tsd::VertexPrimvarView view;
         view.values = channel_values[i].data();
         view.stride = channels[i].stride;
         view.varying = *channels[i].interpolation == Interpolation::Varying;
@@ -5761,15 +5761,15 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       }
     }
 
-    ::tinyusdz::tsd::RefinedMesh refined;
+    ::lightusd::tsd::RefinedMesh refined;
     std::string subdivision_error;
-    const ::tinyusdz::tsd::Result result = ::tinyusdz::tsd::Refine(
+    const ::lightusd::tsd::Result result = ::lightusd::tsd::Refine(
         mesh_view, fvar.empty() ? nullptr : fvar.data(),
         static_cast<uint32_t>(fvar.size()),
         vertex.empty() ? nullptr : vertex.data(),
         static_cast<uint32_t>(vertex.size()), subdiv_options, &refined,
         &subdivision_error);
-    if (result == ::tinyusdz::tsd::Result::Success) {
+    if (result == ::lightusd::tsd::Result::Success) {
       out->subdivision_face_source = std::move(refined.face_source);
       // Uniform primvars are one value per authored face. They are not vertex
       // or face-varying subdivision channels, but every refined child face
@@ -5871,7 +5871,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
             break;
           }
           // Binding inheritance is scoped to the SkelRoot subtree.
-          if (::tinyusdz::tydra::next::IsSkelRoot(anc)) {
+          if (::lightusd::tydra::next::IsSkelRoot(anc)) {
             skel_root = anc;
             break;
           }
@@ -5883,7 +5883,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         // wins, matching legacy.
         if (sb.skeleton_path.empty() && skel_root.IsValid()) {
           for (const UsdPrim& desc : GetDescendants(skel_root)) {
-            if (::tinyusdz::tydra::next::IsSkeleton(desc)) {
+            if (::lightusd::tydra::next::IsSkeleton(desc)) {
               sb.skeleton_path = desc.GetPath().str();
               break;
             }
@@ -6007,8 +6007,8 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   for (const BlendShapeInfo& bs : GetBlendShapes(prim)) {
     UsdPrim bs_prim = stage.GetPrimAtPath(bs.path);
     if (!bs_prim.IsValid()) continue;
-    ::tinyusdz::next::BlendShapeData bd;
-    if (!::tinyusdz::next::GetBlendShapeData(stage, bs_prim, &bd)) continue;
+    ::lightusd::next::BlendShapeData bd;
+    if (!::lightusd::next::GetBlendShapeData(stage, bs_prim, &bd)) continue;
     if (bd.offsets.empty()) continue;
     // Cumulative budget guard: a scene with many blend-shape targets (or
     // dense per-vertex offsets on a single target) can sum well past the cap
@@ -6079,7 +6079,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
                                     bd.normalOffsets.size());
       }
     }
-    for (const ::tinyusdz::next::BlendShapeData::Inbetween& source :
+    for (const ::lightusd::next::BlendShapeData::Inbetween& source :
          bd.inbetweens) {
       if (source.offsets.size() != bd.offsets.size()) {
         AddWarning("Ignoring malformed in-between '" + source.name +
@@ -6338,18 +6338,18 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
 
   switch (config_.mesh.tangent_method) {
     case MeshConfig::TangentComputationMethod::MikkTSpace:
-      tangent_ok = ::tinyusdz::tydra::ComputeTangentsMikkTSpace(
+      tangent_ok = ::lightusd::tydra::ComputeTangentsMikkTSpace(
           fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
           &fv_binormals, &tangent_error);
       break;
     case MeshConfig::TangentComputationMethod::FastMikkTSpace:
-      tangent_ok = ::tinyusdz::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
+      tangent_ok = ::lightusd::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
           fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
           &fv_binormals, &tangent_error);
       break;
     case MeshConfig::TangentComputationMethod::Hybrid: {
-      ::tinyusdz::tydra::fast_mikkt::HybridStats stats = {};
-      tangent_ok = ::tinyusdz::tydra::fast_mikkt::ComputeTangentsHybrid(
+      ::lightusd::tydra::fast_mikkt::HybridStats stats = {};
+      tangent_ok = ::lightusd::tydra::fast_mikkt::ComputeTangentsHybrid(
           fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
           &fv_binormals, &stats, &tangent_error);
       break;
@@ -6357,7 +6357,7 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     case MeshConfig::TangentComputationMethod::Lengyel:
       // Face-varying Lengyel is intentionally not duplicated here; Hybrid is
       // the O(n) seam-aware fallback for non-vertex data.
-      tangent_ok = ::tinyusdz::tydra::fast_mikkt::ComputeTangentsHybrid(
+      tangent_ok = ::lightusd::tydra::fast_mikkt::ComputeTangentsHybrid(
           fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
           &fv_binormals, nullptr, &tangent_error);
       break;
@@ -6741,10 +6741,10 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (ReadFloatArray(prim, kIdNormals(), config_.time_code, &normals) &&
         !normals.empty()) {
       std::string interp_tok = "vertex";
-      if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
-        if (const ::tinyusdz::next::PropMeta* pm =
+      if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+        if (const ::lightusd::next::PropMeta* pm =
                 spec->property_meta("normals")) {
-          if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
             interp_tok = pm->interpolation;
           }
         }
@@ -6915,10 +6915,10 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
     return false;
   }
 
-  ::tinyusdz::next::ParticleFieldData particle_field;
+  ::lightusd::next::ParticleFieldData particle_field;
   if (gaussian) {
     std::string particle_warning;
-    if (!::tinyusdz::next::GetParticleFieldData(
+    if (!::lightusd::next::GetParticleFieldData(
             stage, prim, &particle_field, config_.time_code,
             &particle_warning)) {
       SetLastError("Invalid ParticleField data");
@@ -6984,10 +6984,10 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
                      &colors) &&
       !colors.empty()) {
     std::string interp_tok;
-    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::tinyusdz::next::PropMeta* pm =
+    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::next::PropMeta* pm =
               spec->property_meta("primvars:displayColor")) {
-        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -7020,10 +7020,10 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
                      &opacities) &&
       !opacities.empty()) {
     std::string interp_tok;
-    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::tinyusdz::next::PropMeta* pm =
+    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::next::PropMeta* pm =
               spec->property_meta("primvars:displayOpacity")) {
-        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -7172,9 +7172,9 @@ bool ReadFloatsFlexible(const UsdPrim& prim, const char* name, double time,
   }
   const Value* v = GetAttribute(prim, name);
   if (!v) return false;
-  ::tinyusdz::next::ArrayScratch<double> scratch;
-  ::tinyusdz::next::ArrayView<double> view;
-  if (!::tinyusdz::next::GetDoubleArrayView(*v, &scratch, &view) ||
+  ::lightusd::next::ArrayScratch<double> scratch;
+  ::lightusd::next::ArrayView<double> view;
+  if (!::lightusd::next::GetDoubleArrayView(*v, &scratch, &view) ||
       view.empty()) {
     return false;
   }
@@ -7229,27 +7229,27 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     // Baked procedural curves commonly put clips metadata on their GEO
     // container while the sampled points live on descendant curves.
     for (UsdPrim owner = prim; owner.IsValid(); owner = owner.GetParent()) {
-      const ::tinyusdz::next::PrimSpec* spec = owner.GetPrimSpec();
+      const ::lightusd::next::PrimSpec* spec = owner.GetPrimSpec();
       if (!spec || !spec->meta().clips().is_dictionary()) continue;
-      std::vector<::tinyusdz::next::ValueClipSet> sets;
-      if (!::tinyusdz::next::ParseValueClipSets(owner, &sets, nullptr))
+      std::vector<::lightusd::next::ValueClipSet> sets;
+      if (!::lightusd::next::ParseValueClipSets(owner, &sets, nullptr))
         break;
       for (auto& set : sets) set.prim_path = prim.GetPath().str();
       Value clipped;
       if (!config_.animation.clip_stage_loader ||
-          !::tinyusdz::next::ResolveValueClipFromSets(
+          !::lightusd::next::ResolveValueClipFromSets(
               sets, prim, "points", config_.time_code,
               config_.animation.clip_stage_loader, &clipped))
         break;
       points.scratch.materialized = std::move(clipped);
-      have_points = ::tinyusdz::next::GetFloatArrayView(
+      have_points = ::lightusd::next::GetFloatArrayView(
           points.scratch.materialized, &points.scratch, &points.view);
       break;
     }
     // Some composed variant paths do not retain parent links in the compact
     // stage index. Walk the path index directly as a fallback.
     if (!have_points && prim.GetLayer()) {
-      const ::tinyusdz::next::Layer* layer = prim.GetLayer();
+      const ::lightusd::next::Layer* layer = prim.GetLayer();
       std::string parent_path = prim.GetPath().str();
       while (!have_points) {
         const size_t slash = parent_path.rfind('/');
@@ -7257,24 +7257,24 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
         parent_path.resize(slash);
         const uint32_t index = layer->index_at_path(parent_path);
         if (index == UINT32_MAX) continue;
-        const ::tinyusdz::next::PrimSpec* parent_spec =
-            layer->prim_at_path(::tinyusdz::next::Path(parent_path));
+        const ::lightusd::next::PrimSpec* parent_spec =
+            layer->prim_at_path(::lightusd::next::Path(parent_path));
         if (!parent_spec || !parent_spec->meta().clips().is_dictionary())
           continue;
-        std::vector<::tinyusdz::next::ValueClipSet> sets;
-        if (!::tinyusdz::next::ParseValueClipSets(
-                ::tinyusdz::next::UsdPrim(parent_spec, layer, index), &sets,
+        std::vector<::lightusd::next::ValueClipSet> sets;
+        if (!::lightusd::next::ParseValueClipSets(
+                ::lightusd::next::UsdPrim(parent_spec, layer, index), &sets,
                 nullptr))
           break;
         for (auto& set : sets) set.prim_path = prim.GetPath().str();
         Value clipped;
         if (!config_.animation.clip_stage_loader ||
-            !::tinyusdz::next::ResolveValueClipFromSets(
+            !::lightusd::next::ResolveValueClipFromSets(
                 sets, prim, "points", config_.time_code,
                 config_.animation.clip_stage_loader, &clipped))
           break;
         points.scratch.materialized = std::move(clipped);
-        have_points = ::tinyusdz::next::GetFloatArrayView(
+        have_points = ::lightusd::next::GetFloatArrayView(
             points.scratch.materialized, &points.scratch, &points.view);
       }
     }
@@ -7534,10 +7534,10 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
                      &colors) &&
       !colors.empty() && (colors.view.size % 3) == 0) {
     std::string interp_tok = "constant";
-    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::tinyusdz::next::PropMeta* pm =
+    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::next::PropMeta* pm =
               spec->property_meta("primvars:displayColor")) {
-        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -7578,10 +7578,10 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   if (ReadFloatArray(prim, kIdDisplayOpacity(), config_.time_code,
                      &opacities) && !opacities.empty()) {
     std::string interp_tok = "constant";
-    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
-      if (const ::tinyusdz::next::PropMeta* pm =
+    if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::lightusd::next::PropMeta* pm =
               spec->property_meta("primvars:displayOpacity")) {
-        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+        if (pm->authored & ::lightusd::next::PropMeta::kInterpolation) {
           interp_tok = pm->interpolation;
         }
       }
@@ -7849,7 +7849,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
 
 bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
                                                  RenderPointInstancer* out) {
-  if (!out || !::tinyusdz::next::IsPointInstancer(prim)) {
+  if (!out || !::lightusd::next::IsPointInstancer(prim)) {
     SetLastError("Invalid PointInstancer prim");
     return false;
   }
@@ -7870,7 +7870,7 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
   out->prototype_paths.reserve(data.prototypes.size());
-  for (const ::tinyusdz::next::Path& path : data.prototypes) {
+  for (const ::lightusd::next::Path& path : data.prototypes) {
     out->prototype_paths.push_back(path.str());
   }
   std::vector<uint8_t> visibility = BuildInstanceVisibility(
@@ -7895,7 +7895,7 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
     out->instance_visible = std::move(visibility);
   }
   out->transforms.reserve(data.transforms.size());
-  for (const ::tinyusdz::next::PointInstancerTransform& transform :
+  for (const ::lightusd::next::PointInstancerTransform& transform :
        data.transforms) {
     out->transforms.push_back(MatrixFromPointInstancerTransform(transform));
   }
@@ -8370,13 +8370,13 @@ std::string RenderSceneConverter::ResolveAssetPath(const std::string& file,
   // root yields a nonexistent path. Fall back to the stage base dir for prims
   // with no anchor (the root layer itself, and USDZ package entries).
   const std::string& anchor =
-      ::tinyusdz::next::AssetAnchorPath(asset_anchor_id);
+      ::lightusd::next::AssetAnchorPath(asset_anchor_id);
   const std::string& base = anchor.empty() ? config_.asset_base_dir : anchor;
 
   // A configured AssetResolver owns resolution (anchor/search paths + suffix
   // fallback). Anchor it at the AUTHORING layer's directory, same as above.
   if (config_.asset_resolver) {
-    ::tinyusdz::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
+    ::lightusd::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
         file, base.empty() ? std::string() : base + "/");
     if (resolved.exists && !resolved.resolved_path.empty()) {
       return resolved.resolved_path;
@@ -8388,12 +8388,12 @@ std::string RenderSceneConverter::ResolveAssetPath(const std::string& file,
 
   // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and
   // an un-collapsed path would also defeat the `resolved_path` image dedup below.
-  return ::tinyusdz::next::AssetResolver::NormalizePath(
-      ::tinyusdz::next::AssetResolver::JoinPath(base, file));
+  return ::lightusd::next::AssetResolver::NormalizePath(
+      ::lightusd::next::AssetResolver::JoinPath(base, file));
 }
 
 uint32_t RenderSceneConverter::AssetAnchorOf(const UsdPrim& prim) {
-  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
   return spec ? spec->asset_anchor_id() : 0u;
 }
 
@@ -8527,7 +8527,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
                                            const UsdPrim& prim,
                                            RenderMaterial* out,
                                            RenderScene* scene) {
-  if (!out || !::tinyusdz::next::IsMaterial(prim)) {
+  if (!out || !::lightusd::next::IsMaterial(prim)) {
     SetLastError("Invalid material prim");
     return false;
   }
@@ -8543,18 +8543,18 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   // and color_config_scene_ is a shared member no worker thread may write.
   if (scene && scene != color_config_scene_ && !tl_material_local_scope_) {
     color_config_scene_ = scene;
-    ::tinyusdz::next::color_management::RenderingColorConfig color_config;
+    ::lightusd::next::color_management::RenderingColorConfig color_config;
     std::string color_warning;
-    if (::tinyusdz::next::color_management::ResolveRenderingColorConfig(
+    if (::lightusd::next::color_management::ResolveRenderingColorConfig(
             stage, config_.material.render_settings_path, &color_config,
             &color_warning)) {
       scene->render_settings_path = color_config.render_settings_path;
       scene->working_color_space = color_config.working_space;
-      ::tinyusdz::color::ColorSpaceDesc display_linear;
-      ::tinyusdz::color::ColorTransform display_transform;
-      if (::tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+      ::lightusd::color::ColorSpaceDesc display_linear;
+      ::lightusd::color::ColorTransform display_transform;
+      if (::lightusd::color::GetBuiltinColorSpace("lin_rec709_scene",
                                                    &display_linear) &&
-          ::tinyusdz::color::BuildColorTransform(
+          ::lightusd::color::BuildColorTransform(
               color_config.working_definition, display_linear,
               &display_transform)) {
         std::copy(display_transform.matrix, display_transform.matrix + 9,
@@ -8572,12 +8572,12 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   // converted into shader networks).
   {
     const std::string disp =
-        ::tinyusdz::next::GetDisplacementShader(stage, prim);
+        ::lightusd::next::GetDisplacementShader(stage, prim);
     if (!disp.empty()) {
       out->has_displacement = true;
       out->displacement_shader_path = disp;
     }
-    const std::string vol = ::tinyusdz::next::GetVolumeShader(stage, prim);
+    const std::string vol = ::lightusd::next::GetVolumeShader(stage, prim);
     if (!vol.empty()) {
       out->has_volume = true;
       out->volume_shader_path = vol;
@@ -8600,8 +8600,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   // fallback on outputs:surface and the authoritative MaterialX graph on
   // outputs:mtlx:surface. Prefer the explicit MaterialX render context; using
   // the fallback made every graph-driven parameter look unauthored.
-  if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
-    const std::vector<::tinyusdz::next::Path>* mtlx_surface =
+  if (const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec()) {
+    const std::vector<::lightusd::next::Path>* mtlx_surface =
         spec->connection("outputs:mtlx:surface");
     if (mtlx_surface && !mtlx_surface->empty()) {
       UsdPrim sp = stage.GetPrimAtPath(
@@ -8614,14 +8614,14 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // prefer the MaterialX terminal. Blender commonly emits a textured OpenPBR
     // graph plus an untextured PreviewSurface fallback; selecting the fallback
     // here silently turns the material white.
-    ::tinyusdz::next::AttributeEval eval(&stage);
+    ::lightusd::next::AttributeEval eval(&stage);
     if (eval.HasConnection(prim, "outputs:mtlx:surface")) {
       const std::string mtlx_surface =
           eval.GetConnectionPath(prim, "outputs:mtlx:surface");
       UsdPrim sp = stage.GetPrimAtPath(
           SourcePrimPathFromConnection(mtlx_surface));
       if (sp.IsValid()) candidates.push_back(sp);
-    } else if (const std::vector<::tinyusdz::next::Path>* targets =
+    } else if (const std::vector<::lightusd::next::Path>* targets =
                    prim.GetRelationship("outputs:mtlx:surface")) {
       if (!targets->empty()) {
         UsdPrim sp = stage.GetPrimAtPath(
@@ -8631,7 +8631,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     }
     // External MaterialX references are synthesized by the next layer
     // registry with this relationship instead of outputs:mtlx:surface.
-    if (const std::vector<::tinyusdz::next::Path>* sources =
+    if (const std::vector<::lightusd::next::Path>* sources =
             prim.GetRelationship("mtlx:surface:source")) {
       if (!sources->empty()) {
         UsdPrim sp = stage.GetPrimAtPath(sources->front().str());
@@ -8645,7 +8645,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
       }
     }
     const std::string surf =
-        ::tinyusdz::next::GetSurfaceShader(stage, prim);
+        ::lightusd::next::GetSurfaceShader(stage, prim);
     if (!surf.empty()) {
       UsdPrim sp = stage.GetPrimAtPath(surf);
       if (sp.IsValid() &&
@@ -8678,20 +8678,20 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
               !visited.insert(source.GetPath().str()).second) {
             return;
           }
-          if (!::tinyusdz::next::IsNodeGraph(source)) return;
+          if (!::lightusd::next::IsNodeGraph(source)) return;
 
-          const ::tinyusdz::next::PrimSpec* spec = source.GetPrimSpec();
+          const ::lightusd::next::PrimSpec* spec = source.GetPrimSpec();
           if (!spec) return;
           static const char* kOutputs[] = {"outputs:surface", "outputs:out"};
           for (const char* output : kOutputs) {
-            const std::vector<::tinyusdz::next::Path>* connections =
+            const std::vector<::lightusd::next::Path>* connections =
                 spec->connection(output);
             if (!connections || connections->empty()) continue;
             UsdPrim target = stage.GetPrimAtPath(
                 SourcePrimPathFromConnection((*connections)[0].str()));
             if (!target.IsValid()) continue;
             candidates.push_back(target);
-            if (::tinyusdz::next::IsNodeGraph(target)) {
+            if (::lightusd::next::IsNodeGraph(target)) {
               append_graph_shader(target, depth + 1);
             }
             return;
@@ -8705,7 +8705,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
 
   for (const auto& child : candidates) {
     if (found_shader) break;
-    if (::tinyusdz::next::IsShader(child)) {
+    if (::lightusd::next::IsShader(child)) {
       std::string shader_id;
       GetToken(child, "info:id", &shader_id);
 
@@ -8979,7 +8979,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     std::string displacementId;
     GetToken(displacement, "info:id", &displacementId);
     if (displacement.IsValid() && displacementId == "PxrDisplace") {
-      ::tinyusdz::next::AttributeEval eval(&stage);
+      ::lightusd::next::AttributeEval eval(&stage);
       eval.SetTime(config_.time_code);
       const std::string scalarConnection =
           eval.GetConnectionPath(displacement, "inputs:dispScalar");
@@ -9046,7 +9046,7 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
                                                  const UsdPrim& shader_prim,
                                                  PreviewSurfaceShader* out,
                                                  RenderScene* scene) {
-  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
 
   // AttributeEval returns a successful zero-valued result for an unauthored
   // shader input.  Those zeros are not the UsdPreviewSurface schema defaults
@@ -9054,7 +9054,7 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
   // PreviewSurfaceShader defaults unless the input is actually authored or
   // connected.  This also keeps the 0.5 roughness, 1.5 IOR and unit occlusion
   // fallbacks instead of silently replacing them with zero.
-  ::tinyusdz::next::AttributeEval authored_eval(&stage);
+  ::lightusd::next::AttributeEval authored_eval(&stage);
   authored_eval.SetTime(config_.time_code);
   auto extract_authored = [&](const char* name, ShaderParam* param) {
     const std::string attr_name = std::string("inputs:") + name;
@@ -9079,7 +9079,7 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
   extract_authored("displacement", &out->displacement);
   extract_authored("occlusion", &out->occlusion);
 
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);
   if (std::optional<int32_t> use_spec =
           eval.EvalInt(shader_prim, "inputs:useSpecularWorkflow")) {
@@ -9096,7 +9096,7 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
 bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
     const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
     RenderScene* scene) {
-  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
 
   // Base layer
   // AttributeEval can return a successful zero-valued result for an
@@ -9105,7 +9105,7 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   // input is explicitly authored or connected.
   const bool base_authored =
       GetAttribute(shader_prim, "inputs:base") != nullptr ||
-      ::tinyusdz::next::AttributeEval(&stage).HasConnection(
+      ::lightusd::next::AttributeEval(&stage).HasConnection(
           shader_prim, "inputs:base");
   if (base_authored) {
     ExtractShaderParam(stage, shader_prim, "base", &out->base_weight, scene);
@@ -9190,7 +9190,7 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                                                  const UsdPrim& shader_prim,
                                                  OpenPBRSurfaceShader* out,
                                                  RenderScene* scene) {
-  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
 
   ExtractShaderParam(stage, shader_prim, "base_weight", &out->base_weight, scene);
   ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
@@ -9323,13 +9323,13 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
   // connection semantics as Shader inputs. Accept either here so degraded
   // material recovery can preserve constants authored on the Material prim.
   if (!out || !shader_prim.IsValid() ||
-      (!::tinyusdz::next::IsShader(shader_prim) &&
-       !::tinyusdz::next::IsMaterial(shader_prim))) {
+      (!::lightusd::next::IsShader(shader_prim) &&
+       !::lightusd::next::IsMaterial(shader_prim))) {
     return false;
   }
 
   const std::string attr_name = "inputs:" + param_name;
-  ::tinyusdz::next::AttributeEval eval(&stage);
+  ::lightusd::next::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);
 
   if (eval.HasConnection(shader_prim, attr_name)) {
@@ -9365,12 +9365,12 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       }
       if (scene && evaluated.components >= 3 && evaluated.color_managed &&
           IsColorShaderInput(shader_prim, attr_name, param_name)) {
-        ::tinyusdz::color::ColorTransform transform;
-        if (::tinyusdz::next::color_management::BuildColorTransform(
+        ::lightusd::color::ColorTransform transform;
+        if (::lightusd::next::color_management::BuildColorTransform(
                 evaluation_context, evaluation_space,
                 scene->working_color_space, &transform)) {
           float rgb[3] = {out->value.x, out->value.y, out->value.z};
-          ::tinyusdz::color::TransformRGB(transform, rgb);
+          ::lightusd::color::TransformRGB(transform, rgb);
           out->value.x = rgb[0];
           out->value.y = rgb[1];
           out->value.z = rgb[2];
@@ -9395,7 +9395,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           tex_data.source_color_space == "auto") {
         bool authored = false;
         std::string inherited;
-        (void)::tinyusdz::next::color_management::ComputeColorSpaceName(
+        (void)::lightusd::next::color_management::ComputeColorSpaceName(
             texture_prim, "inputs:file", &inherited, &authored);
         if (authored) {
           tex_data.source_color_space = inherited;
@@ -9457,15 +9457,15 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
         if (source_space.empty() || source_space == "auto") {
           source_space = "srgb_rec709_scene";
         }
-        ::tinyusdz::color::ColorTransform source_to_display;
-        if (::tinyusdz::next::color_management::BuildColorTransform(
+        ::lightusd::color::ColorTransform source_to_display;
+        if (::lightusd::next::color_management::BuildColorTransform(
                 texture_prim, source_space, "lin_rec709_scene",
                 &source_to_display)) {
           texture.color_transform_valid = true;
           texture.color_transform_bypass = source_to_display.bypass;
           texture.source_color_is_data =
               source_to_display.source.kind ==
-              ::tinyusdz::color::ColorSpaceKind::Data;
+              ::lightusd::color::ColorSpaceKind::Data;
           texture.source_gamma = source_to_display.source.gamma;
           texture.source_linear_bias = source_to_display.source.linear_bias;
           std::copy(source_to_display.matrix, source_to_display.matrix + 9,
@@ -9502,9 +9502,9 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
     }
   }
 
-  ::tinyusdz::next::EvalOptions direct_opts = eval.GetOptions();
+  ::lightusd::next::EvalOptions direct_opts = eval.GetOptions();
   direct_opts.follow_connections = false;
-  ::tinyusdz::next::EvalResult direct =
+  ::lightusd::next::EvalResult direct =
       eval.EvalWith(shader_prim, attr_name, direct_opts);
   if (direct.success && ValueToShaderParam(direct.value, out)) {
     ConvertShaderColorToWorking(shader_prim, attr_name, param_name, scene,
@@ -9512,7 +9512,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
     return true;
   }
 
-  ::tinyusdz::next::EvalResult followed = eval.Eval(shader_prim, attr_name);
+  ::lightusd::next::EvalResult followed = eval.Eval(shader_prim, attr_name);
   if (followed.success && ValueToShaderParam(followed.value, out)) {
     ConvertShaderColorToWorking(shader_prim, attr_name, param_name, scene,
                                 out);
@@ -9672,7 +9672,7 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
 bool RenderSceneConverter::ConvertCamera(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderCamera* out) {
-  if (!out || !::tinyusdz::tydra::next::IsCamera(prim)) {
+  if (!out || !::lightusd::tydra::next::IsCamera(prim)) {
     SetLastError("Invalid camera prim");
     return false;
   }
@@ -9742,8 +9742,8 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
     if (schema.compare(0, std::strlen(kBackPlatePrefix), kBackPlatePrefix) != 0)
       continue;
     const std::string instance = schema.substr(std::strlen(kBackPlatePrefix));
-    ::tinyusdz::next::BackPlateData source;
-    if (!::tinyusdz::next::GetBackPlateData(stage, prim, instance, &source,
+    ::lightusd::next::BackPlateData source;
+    if (!::lightusd::next::GetBackPlateData(stage, prim, instance, &source,
                                              config_.time_code)) {
       continue;
     }
@@ -9780,7 +9780,7 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
 //
 
 bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
-  if (!out || !::tinyusdz::next::IsSkeleton(prim)) {
+  if (!out || !::lightusd::next::IsSkeleton(prim)) {
     SetLastError("Invalid skeleton prim");
     return false;
   }
@@ -9797,9 +9797,9 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   // local empty Stage out of the hot path and read directly from the prim.
   (void)stage_ptr;
 
-  ::tinyusdz::next::SkeletonData skel;
+  ::lightusd::next::SkeletonData skel;
   // The schema accessor does not dereference Stage for Skeleton fields.
-  if (!::tinyusdz::next::GetSkeletonData(stage, prim, &skel) ||
+  if (!::lightusd::next::GetSkeletonData(stage, prim, &skel) ||
       skel.joints.empty()) {
     return true;
   }
@@ -9827,7 +9827,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 
   std::vector<int> topology;
   std::string err;
-  if (!::tinyusdz::next::BuildSkelTopology(skel.joints, topology, &err)) {
+  if (!::lightusd::next::BuildSkelTopology(skel.joints, topology, &err)) {
     AddWarning("Invalid skeleton topology for " + prim.GetPath().str() +
                         ": " + err);
     topology.assign(skel.joints.size(), -1);
@@ -9928,15 +9928,15 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     // once, then resolve every (property, time) sample through
     // ResolveValueClipFromSets (set-name strength order, times jump
     // discontinuities, out-of-range mapping, manifest gating, nested clips).
-    std::vector<::tinyusdz::next::ValueClipSet> clip_sets;
+    std::vector<::lightusd::next::ValueClipSet> clip_sets;
     std::string clip_error;
-    if (::tinyusdz::next::ParseValueClipSets(prim, &clip_sets, &clip_error)) {
+    if (::lightusd::next::ParseValueClipSets(prim, &clip_sets, &clip_error)) {
       // Pre-load every clip asset once: records clip_asset_paths for
       // diagnostics, drives property ENUMERATION (the bake needs the property
       // names, which the resolver does not report), and seeds the shared
       // stage cache the core resolver consumes (no double loading).
-      ::tinyusdz::next::ValueClipStageCache clip_cache;
-      for (const ::tinyusdz::next::ValueClipSet& clip_set : clip_sets) {
+      ::lightusd::next::ValueClipStageCache clip_cache;
+      for (const ::lightusd::next::ValueClipSet& clip_set : clip_sets) {
         for (const std::string& asset_path : clip_set.asset_paths) {
           if (std::find(out->clip_asset_paths.begin(),
                         out->clip_asset_paths.end(), asset_path) ==
@@ -9948,7 +9948,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
           auto clip_stage = std::make_shared<Stage>();
           std::string warn;
           std::string err;
-          ::tinyusdz::next::ValueClipStageCache::Entry entry;
+          ::lightusd::next::ValueClipStageCache::Entry entry;
           if (config_.animation.clip_stage_loader(asset_path,
                                                   clip_stage.get(), &warn,
                                                   &err)) {
@@ -9967,7 +9967,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
       // A property provided by more than one set bakes ONCE: the core
       // resolver already applies the set strength order per query.
       std::set<std::string> baked_properties;
-      for (const ::tinyusdz::next::ValueClipSet& clip_set : clip_sets) {
+      for (const ::lightusd::next::ValueClipSet& clip_set : clip_sets) {
         std::set<std::string> properties;
         const std::string clip_prim_path =
             clip_set.prim_path.empty() ? prim_path
@@ -9991,7 +9991,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         for (const std::string& property : properties) {
           if (!baked_properties.insert(property).second) continue;
           const auto prop_id =
-              ::tinyusdz::next::GetPropNameTable().find(property);
+              ::lightusd::next::GetPropNameTable().find(property);
           const bool has_property = prim.HasProperty(prop_id);
           AnimationChannel channel;
           channel.target_path =
@@ -10009,7 +10009,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
 
           for (double stage_time : sample_times) {
             Value value;
-            bool have_value = ::tinyusdz::next::ResolveValueClipFromSets(
+            bool have_value = ::lightusd::next::ResolveValueClipFromSets(
                 clip_sets, prim, property, stage_time,
                 config_.animation.clip_stage_loader, &value, nullptr, nullptr,
                 nullptr, &clip_cache);
@@ -10039,7 +10039,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     }
   }
 
-  if (::tinyusdz::next::IsSkelAnimation(prim)) {
+  if (::lightusd::next::IsSkelAnimation(prim)) {
     const std::vector<std::string> joint_order =
         ReadTokenArrayProperty(prim, "joints");
     const std::vector<std::string> blend_shape_order =
@@ -10049,7 +10049,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
                                    AnimationChannel::TargetPath target_path,
                                    uint32_t stride) {
       const auto prop_id =
-          ::tinyusdz::next::GetPropNameTable().find(prop_name);
+          ::lightusd::next::GetPropNameTable().find(prop_name);
       if (!prop_id.is_valid()) return;
       const auto* samples = prim.GetTimeSamples(prop_id);
       if (!samples || samples->empty()) return;
@@ -10172,7 +10172,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     }
   }
 
-  const ::tinyusdz::next::PrimSpec* prim_spec = prim.GetPrimSpec();
+  const ::lightusd::next::PrimSpec* prim_spec = prim.GetPrimSpec();
   if (!prim_spec) {
     if (out->channels.empty()) {
       out->start_time = 0.0;
@@ -10182,11 +10182,11 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     return true;
   }
 
-  const std::vector<::tinyusdz::next::PropNameId> sampled_props =
+  const std::vector<::lightusd::next::PropNameId> sampled_props =
       prim_spec->time_sampled_properties();
   for (const auto& prop_id : sampled_props) {
     const std::string& prop_name =
-        ::tinyusdz::next::GetPropNameTable().get(prop_id);
+        ::lightusd::next::GetPropNameTable().get(prop_id);
     const auto* samples = prim.GetTimeSamples(prop_id);
     if (!samples || samples->empty()) continue;
 
@@ -10264,4 +10264,4 @@ void ComputeTriangleNormal(const float* p0, const float* p1, const float* p2, fl
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

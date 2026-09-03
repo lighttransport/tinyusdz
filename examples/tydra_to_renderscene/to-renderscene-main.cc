@@ -15,10 +15,10 @@
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "str-util.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "mmap-array-ref.hh"
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
-#include "next/tinyusdz-next.hh"
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#include "next/lightusd-next.hh"
 #include "tydra/next/render-converter.hh"
 #endif
 #include "tydra/obj-export.hh"
@@ -67,7 +67,7 @@ static int NullARSize(const char *asset_name, uint64_t *nbytes, std::string *err
 
 static int NullARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
              uint64_t *nbytes, std::string *err, void *userdata) {
-  
+
   (void)asset_name;
   (void)req_nbytes;
   (void)out_buf;
@@ -79,9 +79,9 @@ static int NullARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_
 }
 
 static bool SetupNullAssetResolution(
-  tinyusdz::AssetResolutionResolver &resolver)
+  lightusd::AssetResolutionResolver &resolver)
 {
-  tinyusdz::AssetResolutionHandler handler;
+  lightusd::AssetResolutionHandler handler;
   handler.resolve_fun = NullARResolve;
   handler.size_fun = NullARSize;
   handler.read_fun = NullARRead;
@@ -93,35 +93,35 @@ static bool SetupNullAssetResolution(
   return true;
 }
 
-static std::string AnimationPathToString(tinyusdz::tydra::AnimationPath path) {
+static std::string AnimationPathToString(lightusd::tydra::AnimationPath path) {
   switch (path) {
-    case tinyusdz::tydra::AnimationPath::Translation:
+    case lightusd::tydra::AnimationPath::Translation:
       return "Translation";
-    case tinyusdz::tydra::AnimationPath::Rotation:
+    case lightusd::tydra::AnimationPath::Rotation:
       return "Rotation";
-    case tinyusdz::tydra::AnimationPath::Scale:
+    case lightusd::tydra::AnimationPath::Scale:
       return "Scale";
-    case tinyusdz::tydra::AnimationPath::Weights:
+    case lightusd::tydra::AnimationPath::Weights:
       return "Weights";
-    case tinyusdz::tydra::AnimationPath::CustomProperty:
+    case lightusd::tydra::AnimationPath::CustomProperty:
       return "CustomProperty";
   }
   return "Unknown";
 }
 
-static std::string InterpolationToString(tinyusdz::tydra::AnimationInterpolation interp) {
+static std::string InterpolationToString(lightusd::tydra::AnimationInterpolation interp) {
   switch (interp) {
-    case tinyusdz::tydra::AnimationInterpolation::Linear:
+    case lightusd::tydra::AnimationInterpolation::Linear:
       return "Linear";
-    case tinyusdz::tydra::AnimationInterpolation::Step:
+    case lightusd::tydra::AnimationInterpolation::Step:
       return "Step";
-    case tinyusdz::tydra::AnimationInterpolation::CubicSpline:
+    case lightusd::tydra::AnimationInterpolation::CubicSpline:
       return "CubicSpline";
   }
   return "Unknown";
 }
 
-static void DumpAnimationTimesamples(const tinyusdz::tydra::RenderScene& scene) {
+static void DumpAnimationTimesamples(const lightusd::tydra::RenderScene& scene) {
   std::cout << "\n========================================\n";
   std::cout << "Animation Timesamples Dump\n";
   std::cout << "========================================\n";
@@ -144,7 +144,7 @@ static void DumpAnimationTimesamples(const tinyusdz::tydra::RenderScene& scene) 
       std::cout << "\n  Channel [" << ch_idx << "]:\n";
       std::cout << "    Path: " << AnimationPathToString(channel.path) << "\n";
 
-      if (channel.target_type == tinyusdz::tydra::ChannelTargetType::SceneNode) {
+      if (channel.target_type == lightusd::tydra::ChannelTargetType::SceneNode) {
         std::cout << "    Target type: SceneNode\n";
         std::cout << "    Target node: " << channel.target_node << "\n";
       } else {
@@ -165,15 +165,15 @@ static void DumpAnimationTimesamples(const tinyusdz::tydra::RenderScene& scene) 
         // Determine components per value based on path
         size_t components = 1;
         switch (channel.path) {
-          case tinyusdz::tydra::AnimationPath::Translation:
-          case tinyusdz::tydra::AnimationPath::Scale:
+          case lightusd::tydra::AnimationPath::Translation:
+          case lightusd::tydra::AnimationPath::Scale:
             components = 3;  // vec3
             break;
-          case tinyusdz::tydra::AnimationPath::Rotation:
+          case lightusd::tydra::AnimationPath::Rotation:
             components = 4;  // quat (x, y, z, w)
             break;
-          case tinyusdz::tydra::AnimationPath::Weights:
-          case tinyusdz::tydra::AnimationPath::CustomProperty:
+          case lightusd::tydra::AnimationPath::Weights:
+          case lightusd::tydra::AnimationPath::CustomProperty:
             // Variable, depends on number of morph targets
             if (!sampler.times.empty() && !sampler.values.empty()) {
               components = sampler.values.size() / sampler.times.size();
@@ -229,7 +229,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
   std::cout << "  --snorm8              Use SNorm8x3 normals (3 bytes) and SNorm8x4 tangents (4 bytes)\n";
   std::cout << "  --fast-index-build    Force BuildVertexIndicesFastImpl (reproduces WASM code path)\n";
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   std::cout << "  --next                Use next-core pipeline (compose/payload-aware)\n";
   std::cout << "  --compose-threads N   next composition worker hint\n";
   std::cout << "  --compose-threads-auto Use hw-concurrency for next composition\n";
@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
   // When Xform, Mesh, Material, etc. have time-varying values,
   // values are evaluated at `timecode` time(except for animation values in
   // SkelAnimation)
-  double timecode = tinyusdz::value::TimeCode::Default();
+  double timecode = lightusd::value::TimeCode::Default();
 
   bool build_indices = true;
   bool triangulate = true;
@@ -269,13 +269,13 @@ int main(int argc, char **argv) {
   bool snorm8 = false;
   bool force_fast_index = false;
   bool profile = false;
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   bool use_next = false;
   int compose_threads = 1;
   bool next_load_payloads = true;
   bool no_animation = false;
 #endif
-  auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
+  auto tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
   std::string filepath;
@@ -316,11 +316,11 @@ int main(int argc, char **argv) {
       }
       std::string tm = argv[i + 1];
       if (tm == "lengyel") {
-        tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
+        tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
       } else if (tm == "mikktspace") {
-        tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace;
+        tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace;
       } else if (tm == "fast-mikktspace") {
-        tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace;
+        tangent_method = lightusd::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace;
       } else {
         std::cerr << "Unknown tangent method: " << tm << ". Use lengyel, mikktspace, or fast-mikktspace.\n";
         return -1;
@@ -346,7 +346,7 @@ int main(int argc, char **argv) {
       snorm8 = true;
     } else if (strcmp(argv[i], "--fast-index-build") == 0) {
       force_fast_index = true;
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     } else if (strcmp(argv[i], "--next") == 0) {
       use_next = true;
     } else if (strcmp(argv[i], "--compose-threads") == 0) {
@@ -383,43 +383,43 @@ int main(int argc, char **argv) {
   std::string err;
 
   bool use_next_pipeline = false;
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   use_next_pipeline = use_next;
-  tinyusdz::next::Stage next_stage;
+  lightusd::next::Stage next_stage;
 #endif
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
 
-  if (!tinyusdz::IsUSD(filepath)) {
+  if (!lightusd::IsUSD(filepath)) {
     std::cerr << "File not found or not a USD format: " << filepath << "\n";
   }
 
-  bool is_usdz = tinyusdz::IsUSDZ(filepath);
+  bool is_usdz = lightusd::IsUSDZ(filepath);
 
   // Add base directory early since next load path also needs it.
-  std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
+  std::string usd_basedir = lightusd::io::GetBaseDir(filepath);
 
   // Collect config info for formatted output
   std::vector<std::pair<std::string, std::string>> config_info;
 
   // Use mmap if available to save memory (avoids copying entire file)
-  tinyusdz::io::MMapFileHandle mmap_handle;
+  lightusd::io::MMapFileHandle mmap_handle;
   bool using_mmap = false;
   bool ret = false;
 
   auto _t_load_begin = std::chrono::steady_clock::now();
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   if (use_next_pipeline) {
     config_info.push_back({"load_pipeline", "next"});
-    tinyusdz::next::LoadUSDOptions load_options;
+    lightusd::next::LoadUSDOptions load_options;
     if (mmap_lowmem) {
       config_info.push_back({"mmap_zero_copy", "true"});
     }
     config_info.push_back({"asset_resolver", no_assetresolver ? "null" : "default"});
 
-    tinyusdz::next::pcp::CompositionOptions comp_opts;
+    lightusd::next::pcp::CompositionOptions comp_opts;
     comp_opts.num_threads = compose_threads;
     comp_opts.load_payloads = next_load_payloads;
-    ret = tinyusdz::next::LoadUSDComposed(filepath, &next_stage,
+    ret = lightusd::next::LoadUSDComposed(filepath, &next_stage,
                                           load_options, &warn, &err,
                                           &comp_opts);
     if (compose_threads == -1) {
@@ -430,22 +430,22 @@ int main(int argc, char **argv) {
     config_info.push_back({"load_payloads", next_load_payloads ? "true" : "false"});
   } else {
 #endif
-  tinyusdz::USDLoadOptions load_options;
+  lightusd::USDLoadOptions load_options;
   if (mmap_lowmem) {
     load_options.mmap_zero_copy = true;
     config_info.push_back({"mmap_zero_copy", "true"});
   }
 
-  if (tinyusdz::io::IsMMapSupported()) {
+  if (lightusd::io::IsMMapSupported()) {
     config_info.push_back({"loading_method", "mmap"});
-    if (!tinyusdz::io::MMapFile(filepath, &mmap_handle, /* writable */false, &err)) {
+    if (!lightusd::io::MMapFile(filepath, &mmap_handle, /* writable */false, &err)) {
       std::cerr << "Failed to mmap USD file: " << err << "\n";
       return EXIT_FAILURE;
     }
     using_mmap = true;
 
     // Load USD from mmap'd memory
-    ret = tinyusdz::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
+    ret = lightusd::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
                                        filepath, &stage, &warn, &err,
                                        load_options);
   } else {
@@ -454,9 +454,9 @@ int main(int argc, char **argv) {
     if (mmap_lowmem) {
       std::cerr << "WARN: --mmap-lowmem requested but mmap is not supported on this platform.\n";
     }
-    ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
   }
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
   }
 #endif
   auto _t_load_end = std::chrono::steady_clock::now();
@@ -476,14 +476,14 @@ int main(int argc, char **argv) {
   if (!ret) {
     std::cerr << "Failed to load USD file: " << filepath << "\n";
     if (using_mmap) {
-      tinyusdz::io::UnmapFile(mmap_handle, &err);
+      lightusd::io::UnmapFile(mmap_handle, &err);
     }
     return EXIT_FAILURE;
   }
 
   if (memstat) {
     size_t stage_mem = 0;
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline) {
       stage_mem = next_stage.GetMemoryUsage();
     } else
@@ -511,9 +511,9 @@ int main(int argc, char **argv) {
   }
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-  tinyusdz::tydra::RenderScene render_scene;
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
-  tinyusdz::tydra::next::RenderScene next_render_scene;
+  lightusd::tydra::RenderScene render_scene;
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+  lightusd::tydra::next::RenderScene next_render_scene;
   bool next_render_scene_ready = false;
 #endif
 
@@ -524,22 +524,22 @@ int main(int argc, char **argv) {
   config_info.push_back({"triangulation_method", use_triangle_fan ? "TriangleFan" : "Earcut"});
   auto _t_conv_begin = std::chrono::steady_clock::now();
   if (use_next_pipeline) {
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (snorm8) {
       std::cerr << "WARN: --snorm8 is not yet supported in next converter; ignored.\n";
       config_info.push_back({"normal_storage", "unsupported_in_next"});
       config_info.push_back({"tangent_storage", "unsupported_in_next"});
     }
 
-    tinyusdz::next::AssetResolver next_asset_resolver;
-    tinyusdz::tydra::next::ConverterConfig conv_cfg;
+    lightusd::next::AssetResolver next_asset_resolver;
+    lightusd::tydra::next::ConverterConfig conv_cfg;
     conv_cfg.time_code = timecode;
     conv_cfg.asset_base_dir = usd_basedir;
     conv_cfg.mesh.triangulate = triangulate;
     conv_cfg.mesh.triangulation_method =
         use_triangle_fan
-            ? tinyusdz::tydra::next::MeshConfig::TriangulationMethod::Fan
-            : tinyusdz::tydra::next::MeshConfig::TriangulationMethod::Earcut;
+            ? lightusd::tydra::next::MeshConfig::TriangulationMethod::Fan
+            : lightusd::tydra::next::MeshConfig::TriangulationMethod::Earcut;
     conv_cfg.mesh.build_vertex_indices = build_indices;
     conv_cfg.mesh.compute_normals = !no_tangent;
     conv_cfg.mesh.compute_tangents = !no_tangent;
@@ -549,14 +549,14 @@ int main(int argc, char **argv) {
     conv_cfg.animation.enabled = !no_animation;
 
     if (!no_assetresolver) {
-      tinyusdz::next::ResolverConfig resolver_config;
+      lightusd::next::ResolverConfig resolver_config;
       resolver_config.working_directory = usd_basedir;
       resolver_config.search_paths.push_back(usd_basedir);
       next_asset_resolver.SetConfig(resolver_config);
       conv_cfg.asset_resolver = &next_asset_resolver;
     }
 
-    if (!tinyusdz::value::TimeCode(timecode).is_default()) {
+    if (!lightusd::value::TimeCode(timecode).is_default()) {
       config_info.push_back({"timecode", std::to_string(timecode)});
     } else {
       config_info.push_back({"timecode", "default"});
@@ -568,25 +568,25 @@ int main(int argc, char **argv) {
     config_info.push_back({"no_animation", no_animation ? "true" : "false"});
 
     switch (tangent_method) {
-      case tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel:
+      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel:
         conv_cfg.mesh.tangent_method =
-            tinyusdz::tydra::next::MeshConfig::TangentComputationMethod::Lengyel;
+            lightusd::tydra::next::MeshConfig::TangentComputationMethod::Lengyel;
         break;
-      case tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace:
+      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace:
         conv_cfg.mesh.tangent_method =
-            tinyusdz::tydra::next::MeshConfig::TangentComputationMethod::MikkTSpace;
+            lightusd::tydra::next::MeshConfig::TangentComputationMethod::MikkTSpace;
         break;
-      case tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace:
-      case tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Hybrid:
+      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace:
+      case lightusd::tydra::MeshConverterConfig::TangentComputationMethod::Hybrid:
         conv_cfg.mesh.tangent_method =
-            tinyusdz::tydra::next::MeshConfig::TangentComputationMethod::FastMikkTSpace;
+            lightusd::tydra::next::MeshConfig::TangentComputationMethod::FastMikkTSpace;
         break;
     }
 
     const char* method_names[] = {"lengyel", "mikktspace", "fast-mikktspace", "hybrid"};
     config_info.push_back({"tangent_method", method_names[int(tangent_method)]});
 
-    tinyusdz::tydra::next::RenderSceneConverter converter(conv_cfg);
+    lightusd::tydra::next::RenderSceneConverter converter(conv_cfg);
     auto result = converter.Convert(next_stage);
     ret = result.success;
     if (ret) {
@@ -605,14 +605,14 @@ int main(int argc, char **argv) {
     ret = false;
 #endif
   } else {
-    tinyusdz::tydra::RenderSceneConverter converter;
-    tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::tydra::RenderSceneConverter converter;
+    lightusd::tydra::RenderSceneConverterEnv env(stage);
 
     env.mesh_config.triangulate = triangulate;
     env.mesh_config.triangulation_method =
         use_triangle_fan
-            ? tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan
-            : tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
+            ? lightusd::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan
+            : lightusd::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
     env.mesh_config.build_vertex_indices = build_indices;
     if (no_tangent) {
       env.mesh_config.compute_tangents_and_binormals = false;
@@ -641,9 +641,9 @@ int main(int argc, char **argv) {
 
     if (snorm8) {
       env.mesh_config.normal_storage =
-          tinyusdz::tydra::MeshConverterConfig::NormalStorageFormat::PackedSNorm8;
+          lightusd::tydra::MeshConverterConfig::NormalStorageFormat::PackedSNorm8;
       env.mesh_config.tangent_storage =
-          tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::PackedSNorm8;
+          lightusd::tydra::MeshConverterConfig::TangentStorageFormat::PackedSNorm8;
       config_info.push_back({"normal_storage", "snorm8"});
       config_info.push_back({"tangent_storage", "snorm8"});
     }
@@ -659,7 +659,7 @@ int main(int argc, char **argv) {
 
     config_info.push_back({"search_path", usd_basedir});
 
-    tinyusdz::USDZAsset usdz_asset;
+    lightusd::USDZAsset usdz_asset;
 
     if (is_usdz) {
       // Setup AssetResolutionResolver to read assets from USDZ container.
@@ -667,17 +667,17 @@ int main(int argc, char **argv) {
       if (using_mmap) {
         // Use ReadUSDZAssetInfoFromMemory with asset_on_memory=true
         // This avoids copying the USDZ data, just references the mmap'd address
-        if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+        if (!lightusd::ReadUSDZAssetInfoFromMemory(
               mmap_handle.addr, mmap_handle.size,
               /* asset_on_memory */ true,
               &usdz_asset, &warn, &err)) {
           std::cerr << "Failed to read USDZ assetInfo from memory: " << err << "\n";
-          tinyusdz::io::UnmapFile(mmap_handle, &err);
+          lightusd::io::UnmapFile(mmap_handle, &err);
           return EXIT_FAILURE;
         }
       } else {
         // Fallback to file-based loading (copies entire file into memory)
-        if (!tinyusdz::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn,
+        if (!lightusd::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn,
                                                  &err)) {
           std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
           return EXIT_FAILURE;
@@ -687,14 +687,14 @@ int main(int argc, char **argv) {
         std::cout << warn << "\n";
       }
 
-      tinyusdz::AssetResolutionResolver arr;
+      lightusd::AssetResolutionResolver arr;
       if (no_assetresolver) {
         SetupNullAssetResolution(arr);
         config_info.push_back({"asset_resolver", "null"});
       } else {
         // NOTE: Pointer address of usdz_asset must be valid until the call of
         // RenderSceneConverter::ConvertToRenderScene.
-        if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset)) {
+        if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset)) {
           std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
           exit(-1);
         };
@@ -711,7 +711,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    if (!tinyusdz::value::TimeCode(timecode).is_default()) {
+    if (!lightusd::value::TimeCode(timecode).is_default()) {
       config_info.push_back({"timecode", std::to_string(timecode)});
     } else {
       config_info.push_back({"timecode", "default"});
@@ -732,7 +732,7 @@ int main(int argc, char **argv) {
   if (profile) {
     double _conv_ms = std::chrono::duration<double, std::milli>(_t_conv_end - _t_conv_begin).count();
     std::cerr << "[timing] RenderScene conversion: " << _conv_ms << " ms\n";
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline) {
       const auto next_stats = next_render_scene.get_stats();
       std::cerr << "[timing] Next RenderScene nodes: " << next_stats.node_count
@@ -747,7 +747,7 @@ int main(int argc, char **argv) {
   }
 
   if (memstat) {
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline && next_render_scene_ready) {
       const auto& stats = next_render_scene.get_stats();
       size_t render_mem = next_render_scene.memory_usage();
@@ -807,7 +807,7 @@ int main(int argc, char **argv) {
         std::cout << "    Total buffer memory: " << format_memory_size(total_buf) << "\n";
       }
     }
-#endif  // TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
+#endif  // LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
     std::cout << "\n";
   }
 
@@ -859,7 +859,7 @@ int main(int argc, char **argv) {
       // Output config info in appropriate format
       if (output_format == "yaml") {
         // YAML: Output as comments
-        std::cout << "# TinyUSDZ tydra_to_renderscene Configuration\n";
+        std::cout << "# LightUSD tydra_to_renderscene Configuration\n";
         std::cout << "# ==========================================\n";
         for (const auto &kv : config_info) {
           std::cout << "# " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
@@ -867,7 +867,7 @@ int main(int argc, char **argv) {
         std::cout << "#\n";
       } else if (output_format == "json") {
         // JSON: Output config as a separate JSON object before main output
-        std::cout << "// TinyUSDZ tydra_to_renderscene Configuration\n";
+        std::cout << "// LightUSD tydra_to_renderscene Configuration\n";
         std::cout << "// config: {\n";
         for (size_t i = 0; i < config_info.size(); i++) {
           std::cout << "//   \"" << config_info[i].first << "\": \"" << escape_for_comment(config_info[i].second) << "\"";
@@ -890,7 +890,7 @@ int main(int argc, char **argv) {
       for (size_t i = 0; i < render_scene.meshes.size(); i++) {
         std::string obj_str;
         std::string mtl_str;
-        if (!tinyusdz::tydra::export_to_obj(render_scene, i, obj_str, mtl_str,
+        if (!lightusd::tydra::export_to_obj(render_scene, i, obj_str, mtl_str,
                                             &warn, &err)) {
           std::cerr << "obj export error: " << err << "\n";
           exit(-1);
@@ -914,13 +914,13 @@ int main(int argc, char **argv) {
     }
 
     if (export_usd) {
-      std::string ext = tinyusdz::io::GetFileExtension(filepath);
-      std::string usd_basename = tinyusdz::io::GetBaseFilename(filepath);
+      std::string ext = lightusd::io::GetFileExtension(filepath);
+      std::string usd_basename = lightusd::io::GetBaseFilename(filepath);
       std::string usd_filename =
-          tinyusdz::removeSuffix(usd_basename, ext) + "export.usda";
+          lightusd::removeSuffix(usd_basename, ext) + "export.usda";
 
       std::string usda_str;
-      if (!tinyusdz::tydra::export_to_usda(render_scene, usda_str, &warn, &err)) {
+      if (!lightusd::tydra::export_to_usda(render_scene, usda_str, &warn, &err)) {
         std::cerr << "Failed to export RenderScene to USDA: " << err << "\n";
       }
       if (warn.size()) {
@@ -939,7 +939,7 @@ int main(int argc, char **argv) {
   // Cleanup mmap if used
   if (using_mmap) {
     std::string unmap_err;
-    if (!tinyusdz::io::UnmapFile(mmap_handle, &unmap_err)) {
+    if (!lightusd::io::UnmapFile(mmap_handle, &unmap_err)) {
       std::cerr << "WARN: Failed to unmap file: " << unmap_err << "\n";
     }
   }

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "cache_dir": ".cache/tinyusdz-verification",
+  "cache_dir": ".cache/lightusd-verification",
   "toolchain": {
     "node": "v24.7.0",
     "emscripten": "4.0.9"

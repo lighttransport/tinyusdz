@@ -8,7 +8,7 @@
 #include "unit-stage.h"
 #include "core/prim.hh"
 #include "core/path.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usda-writer.hh"
 #include "stage.hh"
@@ -18,12 +18,12 @@
 #include <cstdint>
 #include <vector>
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
 #endif
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Helper to build a test hierarchy:
 // /Root
@@ -662,7 +662,7 @@ void stage_nested_hierarchy_test(void) {
 // (clear-on-dirty + insert) under contention. Must be ThreadSanitizer-clean
 // (the cache read/write is guarded by Stage::_cache_mu).
 void stage_concurrent_find_prim_test(void) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   Stage stage = build_test_stage();
 
   const std::vector<std::string> hit_paths = {
@@ -721,7 +721,7 @@ void stage_concurrent_find_prim_test(void) {
 // parse. The buffer contains an out-of-order timeSamples block so the parse-time
 // TimeSamples finalize (sort) runs too. Must be ThreadSanitizer-clean.
 void stage_concurrent_parse_test(void) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   const std::string usda =
       "#usda 1.0\n"
       "def Xform \"Root\"\n"
@@ -742,7 +742,7 @@ void stage_concurrent_parse_test(void) {
   auto worker = [&]() {
     Stage stage;
     std::string warn, err;
-    bool ok = tinyusdz::LoadUSDAFromMemory(
+    bool ok = lightusd::LoadUSDAFromMemory(
         reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
         /* base_dir */ "", &stage, &warn, &err);
     if (ok) {
@@ -770,7 +770,7 @@ void stage_concurrent_parse_test(void) {
 // out-of-order samples, finalize once (as the parsers now do), then read
 // concurrently. Must be ThreadSanitizer-clean.
 void stage_concurrent_timesamples_read_test(void) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   value::TimeSamples ts;
   // Add out of time order so update() actually sorts.
   ts.add_sample<double>(2.0, 20.0);

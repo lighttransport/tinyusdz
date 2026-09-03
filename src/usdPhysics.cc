@@ -5,7 +5,7 @@
 
 #include "core/relationship.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::vector<Path> PhysicsFilteredPairsAPI::get_filtered_pair_paths() const {
   std::vector<Path> out;
@@ -23,4 +23,4 @@ std::vector<Path> PhysicsFilteredPairsAPI::get_filtered_pair_paths() const {
 // tydra/scene-access.cc (they use the higher-level tydra::GetProperty
 // API to dispatch on Prim type).
 
-}  // namespace tinyusdz
+}  // namespace lightusd

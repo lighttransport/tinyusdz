@@ -103,7 +103,7 @@ async function main() {
 
   // 2. WASM init.
   t = performance.now();
-  const glue = wasm64 ? './src/tinyusdz/tinyusdz_64.js' : './src/tinyusdz/tinyusdz.js';
+  const glue = wasm64 ? './src/lightusd/lightusd_64.js' : './src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(/* @vite-ignore */ glue));
   timings.wasmInitMs = performance.now() - t;
   status(`wasm ready (${wasm64 ? 'wasm64' : 'wasm32'}, ${timings.wasmInitMs.toFixed(0)} ms)`);
@@ -181,7 +181,7 @@ async function main() {
     status('validate: skipped (output exceeds in-heap reload size)');
   } else {
     try {
-      const usd = new native.TinyUSDZLoaderNative();
+      const usd = new native.LightUSDLoaderNative();
       validate.ok = usd.loadAsLayerFromBinary(usdz, 'bench.usdz');
       if (!validate.ok) validate.error = String(usd.error());
       usd.delete();

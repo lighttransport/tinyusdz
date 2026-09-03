@@ -55,7 +55,7 @@ function parseArgs(argv) {
     maxDiffer: Infinity,
     out: 'tests/asset-parse-results',
     // Compare mode: cross-check each asset against the OpenUSD reference
-    // (`usdcat`) and diff tinyusdz's re-serialization against it (`tusddiff`).
+    // (`usdcat`) and diff lightusd's re-serialization against it (`tusddiff`).
     compare: false,
     usdcat: process.env.USDCAT_PATH || '',
     tusddiff: process.env.TUSDDIFF_PATH || './build/tusddiff',
@@ -241,7 +241,7 @@ function classify(ext, r) {
 // message categorization
 // ---------------------------------------------------------------------------
 
-// A `src/<file>.<ext>:<Func>():<line>` stack frame (tinyusdz logs these).
+// A `src/<file>.<ext>:<Func>():<line>` stack frame (lightusd logs these).
 const FRAME_RE = /src\/[\w./-]+\.(?:cc|hh|h|cpp|inc):[A-Za-z_]\w*\(\):\d+/;
 const FRAME_RE_G = new RegExp(FRAME_RE.source, 'g');
 const frameKey = (f) => f.replace(/:\d+$/, ''); // drop the volatile line number
@@ -420,7 +420,7 @@ async function main() {
       if (row.ref) crosstab[row.status][row.ref]++;
       if (row.diff) diffTally[row.diff]++;
     }
-    // tinyusdz worse than the reference: tinyusdz could not parse it but OpenUSD could.
+    // lightusd worse than the reference: lightusd could not parse it but OpenUSD could.
     bugList = rows.filter((r) => ['FAIL', 'TIMEOUT', 'CRASH'].includes(r.status) && r.ref && r.ref !== 'REF_FAIL');
   }
 
@@ -452,17 +452,17 @@ async function main() {
     compareMd = [
       `## Compare vs OpenUSD reference (\`${a.usdcat}\`)`,
       '',
-      '**tinyusdz status × OpenUSD `usdcat` status** (which side accepts each asset):',
+      '**lightusd status × OpenUSD `usdcat` status** (which side accepts each asset):',
       '',
-      `| tinyusdz \\ ref | ${REF.join(' | ')} |`,
+      `| lightusd \\ ref | ${REF.join(' | ')} |`,
       `|---|${REF.map(() => '---:').join('|')}|`,
       ...ORDER.filter((s) => s !== 'SKIP' && REF.some((r) => crosstab[s][r]))
         .map((s) => `| ${s} | ${REF.map((r) => crosstab[s][r]).join(' | ')} |`),
       '',
-      '**`tusddiff` (tinyusdz re-serialization vs OpenUSD `usdcat` output, layer-level):** ' +
+      '**`tusddiff` (lightusd re-serialization vs OpenUSD `usdcat` output, layer-level):** ' +
         Object.entries(diffTally).map(([k, v]) => `${k} ${v}`).join(' · '),
       '',
-      `**tinyusdz can't parse but OpenUSD can (parser bugs) — ${bugList.length}:**`,
+      `**lightusd can't parse but OpenUSD can (parser bugs) — ${bugList.length}:**`,
       '',
       bugList.length ? bugList.map((r) => `- \`${r.rel}\` (${r.status}, ref ${r.ref}) — ${headline(r.stderr) || ''}`).join('\n') : '_none_',
       '',
@@ -502,7 +502,7 @@ async function main() {
     assets: a.assets, tusdcat: a.tusdcat, mode: a.mode, files: files.length,
     elapsedSec: Number(elapsed), totals,
     ...(a.compare ? { compare: { usdcat: a.usdcat, crosstab, diffTally,
-      tinyusdzOnlyFailures: bugList.map((r) => ({ rel: r.rel, status: r.status, ref: r.ref, headline: headline(r.stderr) })) } } : {}),
+      lightusdOnlyFailures: bugList.map((r) => ({ rel: r.rel, status: r.status, ref: r.ref, headline: headline(r.stderr) })) } } : {}),
     warningCategories: catJson(warnCats), errorCategories: catJson(errCats),
   }, null, 2) + '\n');
 
@@ -512,7 +512,7 @@ async function main() {
   if (a.compare) {
     console.log('\n== Compare vs OpenUSD usdcat ==');
     console.log('  diff: ' + Object.entries(diffTally).map(([k, v]) => `${k} ${v}`).join('  '));
-    console.log(`  tinyusdz-only failures (OpenUSD parses, tinyusdz doesn't): ${bugList.length}`);
+    console.log(`  lightusd-only failures (OpenUSD parses, lightusd doesn't): ${bugList.length}`);
     for (const r of bugList) console.log(`    ${r.status}/${r.ref}  ${r.rel}`);
   }
   const top = (label, m) => {

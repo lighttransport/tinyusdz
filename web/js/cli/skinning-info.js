@@ -8,7 +8,7 @@
 // geomBindTransform, skel_id, elementSize) from RenderMesh, allowing full inspection
 // of skinning information from USD files.
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 
 // Format bytes to human readable format
@@ -767,7 +767,7 @@ async function main() {
 
   try {
     // Initialize loader
-    const loader = new TinyUSDZLoader();
+    const loader = new LightUSDLoader();
     await loader.init({ useMemory64: false });
     loader.setMaxMemoryLimitMB(512);
 

@@ -2,7 +2,7 @@ import os
 import glob
 import subprocess
 
-# Default configuration Assume running this script from <tinyusdz> root directory
+# Default configuration Assume running this script from <lightusd> root directory
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
@@ -10,13 +10,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     failed = []
-    
+
     print("Basedir: ", args.basedir)
 
     # success expected
     for fname in glob.glob(os.path.join(args.basedir, "*.usda")):
         print(fname)
-        basename = os.path.basename(fname)    
+        basename = os.path.basename(fname)
         out_filename = os.path.splitext(basename)[0] + ".usdc"
         cmd = ["usdcat", fname, '-o', out_filename]
         print(cmd)

@@ -6,7 +6,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace common {
 
@@ -34,7 +34,7 @@ struct VertexProcessingConfig {
   bool prefer_non_indexed{false};              ///< Prefer non-indexed data when mesh isn't single indexable
   bool triangulate{true};                      ///< Triangulate polygonal faces
   bool validate_geomsubset{true};             ///< Validate GeomSubset data
-  
+
   float facevarying_to_vertex_eps{1e-6f};     ///< Epsilon for vertex similarity comparison
   uint32_t max_skin_elementSize{1024 * 256};   ///< Maximum skin weights per vertex
 };
@@ -43,7 +43,7 @@ struct VertexProcessingConfig {
 struct GeometryComputeConfig {
   bool compute_normals{true};                   ///< Compute normals if not present
   bool compute_tangents_and_binormals{true};   ///< Compute tangent frame for normal mapping
-  
+
   std::string default_texcoords_primvar_name{"st"};      ///< Default texture coordinate primvar name
   std::string default_texcoords1_primvar_name{"st1"};    ///< Default secondary texture coordinate primvar name
   std::string default_tangents_primvar_name{"tangents"}; ///< Default tangents primvar name
@@ -56,7 +56,7 @@ struct CommonConverterConfig {
   AssetConfig assets;
   VertexProcessingConfig vertex_processing;
   GeometryComputeConfig geometry_compute;
-  
+
   bool verbose{false};                          ///< Enable verbose logging
   std::string warn_handler_userdata_name;       ///< Name for warning handler user data
   std::string error_handler_userdata_name;      ///< Name for error handler user data
@@ -71,12 +71,12 @@ struct ConversionStats {
   size_t bytes_allocated{0};
   size_t bytes_freed{0};
   size_t peak_memory_usage{0};
-  
+
   size_t meshes_processed{0};
   size_t materials_processed{0};
   size_t nodes_processed{0};
   size_t textures_loaded{0};
-  
+
   double conversion_time_ms{0.0};
 };
 
@@ -97,7 +97,7 @@ template<typename IdType>
 struct StringIdPair {
   std::string name;
   IdType id;
-  
+
   StringIdPair() = default;
   StringIdPair(const std::string& n, IdType i) : name(n), id(i) {}
 };
@@ -110,17 +110,17 @@ public:
     current_usage_ += bytes;
     peak_usage_ = std::max(peak_usage_, current_usage_);
   }
-  
+
   void track_deallocation(size_t bytes) {
     bytes_freed_ += bytes;
     current_usage_ = (current_usage_ >= bytes) ? (current_usage_ - bytes) : 0;
   }
-  
+
   size_t bytes_allocated() const { return bytes_allocated_; }
   size_t bytes_freed() const { return bytes_freed_; }
   size_t current_usage() const { return current_usage_; }
   size_t peak_usage() const { return peak_usage_; }
-  
+
   void reset() {
     bytes_allocated_ = bytes_freed_ = current_usage_ = peak_usage_ = 0;
   }
@@ -134,5 +134,5 @@ private:
 
 }  // namespace common
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd
 

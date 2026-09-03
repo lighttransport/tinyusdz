@@ -20,19 +20,19 @@
 #include "core/prim-enums.hh"
 #include "core/prim-metas.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations needed before variant-types.hh
 class Prim;
 class PrimSpec;
 struct VariantSet;
 
-} // namespace tinyusdz
+} // namespace lightusd
 
 // variant-types.hh uses Prim/PrimSpec forward declarations
 #include "core/variant-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Get elementName from Prim(e.g., Xform::name, GeomMesh::name)
@@ -144,36 +144,36 @@ class Prim {
                      std::string *err = nullptr);
 
   // TODO: Deprecate this API to disallow direct modification of children.
-  std::vector<Prim> &children() TINYUSDZ_LIFETIMEBOUND { return _children; }
+  std::vector<Prim> &children() LIGHTUSD_LIFETIMEBOUND { return _children; }
 
-  const std::vector<Prim> &children() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Prim> &children() const LIGHTUSD_LIFETIMEBOUND {
     return _children;
   }
 
-  const value::Value &data() const TINYUSDZ_LIFETIMEBOUND { return _data; }
-  value::Value &get_data() TINYUSDZ_LIFETIMEBOUND { return _data; }
+  const value::Value &data() const LIGHTUSD_LIFETIMEBOUND { return _data; }
+  value::Value &get_data() LIGHTUSD_LIFETIMEBOUND { return _data; }
 
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return _specifier; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return _specifier; }
 
   Specifier specifier() const { return _specifier; }
 
   // local_path is reserved for Prim composition.
   // for a while please use absolute_path(full Prim absolute path) or
   // element_name(leaf Prim name).
-  Path &local_path() TINYUSDZ_LIFETIMEBOUND { return _path; }
-  const Path &local_path() const TINYUSDZ_LIFETIMEBOUND { return _path; }
+  Path &local_path() LIGHTUSD_LIFETIMEBOUND { return _path; }
+  const Path &local_path() const LIGHTUSD_LIFETIMEBOUND { return _path; }
 
   ///
   /// Absolute Prim Path(e.g. "/xform/mesh0") is available after
   /// Stage::compute_absolute_path() or assign it manually by an app.
   ///
-  Path &absolute_path() TINYUSDZ_LIFETIMEBOUND { return _abs_path; }
-  const Path &absolute_path() const TINYUSDZ_LIFETIMEBOUND {
+  Path &absolute_path() LIGHTUSD_LIFETIMEBOUND { return _abs_path; }
+  const Path &absolute_path() const LIGHTUSD_LIFETIMEBOUND {
     return _abs_path;
   }
 
-  Path &element_path() TINYUSDZ_LIFETIMEBOUND { return _elementPath; }
-  const Path &element_path() const TINYUSDZ_LIFETIMEBOUND {
+  Path &element_path() LIGHTUSD_LIFETIMEBOUND { return _elementPath; }
+  const Path &element_path() const LIGHTUSD_LIFETIMEBOUND {
     return _elementPath;
   }
 
@@ -184,10 +184,10 @@ class Prim {
 
   uint32_t type_id() const { return _data.type_id(); }
 
-  std::string &prim_type_name() TINYUSDZ_LIFETIMEBOUND {
+  std::string &prim_type_name() LIGHTUSD_LIFETIMEBOUND {
     return _prim_type_name;
   }
-  const std::string &prim_type_name() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &prim_type_name() const LIGHTUSD_LIFETIMEBOUND {
     return _prim_type_name;
   }
 
@@ -210,19 +210,19 @@ class Prim {
     return nullptr;
   }
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND;
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND;
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND;
 
   int64_t prim_id() const { return _prim_id; }
 
-  int64_t &prim_id() TINYUSDZ_LIFETIMEBOUND { return _prim_id; }
+  int64_t &prim_id() LIGHTUSD_LIFETIMEBOUND { return _prim_id; }
 
   const std::map<std::string, VariantSet> &variantSets() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _variantSets;
   }
 
-  std::map<std::string, VariantSet> &variantSets() TINYUSDZ_LIFETIMEBOUND {
+  std::map<std::string, VariantSet> &variantSets() LIGHTUSD_LIFETIMEBOUND {
     return _variantSets;
   }
 
@@ -353,4 +353,4 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak,
                                   value::TimeSampleInterpolationType tinterp =
                                       value::TimeSampleInterpolationType::Linear);
 
-} // namespace tinyusdz
+} // namespace lightusd

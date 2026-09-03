@@ -34,7 +34,7 @@
 #include "pprint-meta.hh"
 #include "core/prim-spec.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "tiny-format.hh"
@@ -57,7 +57,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 #define kTag "[Crate]"
@@ -65,7 +65,7 @@ namespace crate {
 #define CHECK_MEMORY_USAGE(__nbytes) \
   MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
 
-#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
+#if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
 bool CrateReader::BuildDecompressedPathsImpl(
     BuildDecompressedPathsArg *arg) {
 
@@ -608,7 +608,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     }
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef LIGHTUSD_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i < pathIndexes.size(); i++) {
     DCOUT("pathIndexes[" << i << "] = " << pathIndexes[i]);
   }
@@ -647,7 +647,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
   // Now build the paths.
-#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
+#if defined(LIGHTUSD_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   BuildDecompressedPathsArg arg;
   arg.pathIndexes = &pathIndexes;
   arg.elementTokenIndexes = &elementTokenIndexes;
@@ -811,4 +811,4 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 }
 
 } // namespace crate
-} // namespace tinyusdz
+} // namespace lightusd

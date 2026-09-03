@@ -12,7 +12,7 @@
       },
       "devDependencies": {
         "@types/bun": "latest",
-        "tinyusdz": "^0.9.1",
+        "lightusd": "^0.9.1",
       },
       "peerDependencies": {
         "typescript": "^5",
@@ -306,7 +306,7 @@
 
     "tinyglobby": ["tinyglobby@0.2.14", "", { "dependencies": { "fdir": "^6.4.4", "picomatch": "^4.0.2" } }, "sha512-tX5e7OM1HnYr2+a2C/4V0htOcSQcoSTH9KgJnVvNm5zm/cyEWKJ7j7YutsH9CxMdtOkkLFy2AHrMci9IM8IPZQ=="],
 
-    "tinyusdz": ["tinyusdz@0.9.1", "", { "dependencies": { "three": ">=0.177.0" } }, "sha512-QpJn+o3Zi9siaEhib8if3wfR7ApyauhpfkMz5vMdglgYQh5gYKnfixer8Me+PHFJgWT3urrbm/CJQqnFPh4DyA=="],
+    "lightusd": ["lightusd@0.9.1", "", { "dependencies": { "three": ">=0.177.0" } }, "sha512-QpJn+o3Zi9siaEhib8if3wfR7ApyauhpfkMz5vMdglgYQh5gYKnfixer8Me+PHFJgWT3urrbm/CJQqnFPh4DyA=="],
 
     "toidentifier": ["toidentifier@1.0.1", "", {}, "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA=="],
 

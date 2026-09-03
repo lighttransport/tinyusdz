@@ -1,6 +1,6 @@
 # MCP (Model Context Protocol) Interface
 
-TinyUSDZ provides an MCP server for AI agents (Claude, GPT, etc.) to interact with USD data. The server exposes USD scene graph editing, composition arcs, querying, and scripting tools.
+LightUSD provides an MCP server for AI agents (Claude, GPT, etc.) to interact with USD data. The server exposes USD scene graph editing, composition arcs, querying, and scripting tools.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ TinyUSDZ provides an MCP server for AI agents (Claude, GPT, etc.) to interact wi
 │   ├── Composition      (refs, payloads, variants)    │
 │   ├── Query/Discover   (find by type, schema list)   │
 │   ├── Validation       (usd_validate: AOUSD Core)    │
-│   ├── Scripting        (run_script: JS + tinyusdz.*) │
+│   ├── Scripting        (run_script: JS + lightusd.*) │
 │   └── Legacy           (assets, screenshots)         │
 │                                                      │
 └──────────────────────────────────────────────────────┘
@@ -35,7 +35,7 @@ A C++ MCP server using CivetWeb HTTP library. JSON-RPC 2.0 over HTTP POST on `/m
 
 ```bash
 # Build with MCP server
-cmake .. -DTINYUSDZ_WITH_MCP_SERVER=ON
+cmake .. -DLIGHTUSD_WITH_MCP_SERVER=ON
 make -j16
 
 # Run the example MCP server (source: examples/mcp_server/example-mcp-server.cc)
@@ -46,7 +46,7 @@ Default port: 8085. Body-size limits are configured via `MCPServerOptions`.
 
 ### JS/WASM Server
 
-An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
+An Express-based MCP server bridging to LightUSD WASM. See `web/mcp-server/`.
 
 ## Tools
 
@@ -60,7 +60,7 @@ An Express-based MCP server bridging to TinyUSDZ WASM. See `web/mcp-server/`.
 | `stage_export` | Export stage to file | `uri`, `format` |
 | `stage_to_string` | Export stage to USDA string | `format` |
 | `stage_info` | Get stage metadata | — |
-| `get_version` | Get TinyUSDZ MCP server version | — |
+| `get_version` | Get LightUSD MCP server version | — |
 
 ### Scene Graph
 
@@ -179,29 +179,29 @@ which groups actually ran, so a core-only `ok` is not mistaken for full coverage
 
 ## JavaScript Scripting
 
-The MCP server includes a QuickJS engine (when built with `-DTINYUSDZ_WITH_QJS=ON`). JS scripts can be executed via the `run_script` tool and have access to the `tinyusdz.*` API:
+The MCP server includes a QuickJS engine (when built with `-DLIGHTUSD_WITH_QJS=ON`). JS scripts can be executed via the `run_script` tool and have access to the `lightusd.*` API:
 
 ```javascript
 // Stage info
-var info = tinyusdz.stage.info();
+var info = lightusd.stage.info();
 console.log("Up Axis: " + info.upAxis);
 
 // List children
-var result = tinyusdz.prim.listChildren("/World");
+var result = lightusd.prim.listChildren("/World");
 for (var i = 0; i < result.prims.length; i++) {
     console.log(result.prims[i].name + " (" + result.prims[i].type + ")");
 }
 
 // Get prim details
-var prim = tinyusdz.prim.get("/World/mesh0");
+var prim = lightusd.prim.get("/World/mesh0");
 console.log("Type: " + prim.type + ", Children: " + prim.childCount);
 
 // Find all meshes
-var meshes = tinyusdz.query.findAllByType("Mesh");
+var meshes = lightusd.query.findAllByType("Mesh");
 console.log("Found " + meshes.count + " meshes");
 
 // Export to USDA
-var usda = tinyusdz.stage.exportToString();
+var usda = lightusd.stage.exportToString();
 ```
 
 ## Value Format

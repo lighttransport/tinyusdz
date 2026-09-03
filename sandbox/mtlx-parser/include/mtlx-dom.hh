@@ -8,7 +8,7 @@
 #include <map>
 #include <variant>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 // Forward declarations
@@ -40,9 +40,9 @@ struct MtlxValue {
     TYPE_INT_VECTOR,
     TYPE_STRING_VECTOR
   };
-  
+
   Type type = TYPE_NONE;
-  
+
   // Value storage
   bool bool_val = false;
   int int_val = 0;
@@ -51,7 +51,7 @@ struct MtlxValue {
   std::vector<float> float_vec;
   std::vector<int> int_vec;
   std::vector<std::string> string_vec;
-  
+
   MtlxValue() = default;
   explicit MtlxValue(bool v) : type(TYPE_BOOL), bool_val(v) {}
   explicit MtlxValue(int v) : type(TYPE_INT), int_val(v) {}
@@ -67,21 +67,21 @@ class MtlxElement {
 public:
   MtlxElement() = default;
   virtual ~MtlxElement() = default;
-  
+
   // Common attributes
   const std::string& GetName() const { return name_; }
   void SetName(const std::string& name) { name_ = name; }
-  
+
   const std::string& GetType() const { return type_; }
   void SetType(const std::string& type) { type_ = type; }
-  
+
   const std::string& GetNodeDef() const { return nodedef_; }
   void SetNodeDef(const std::string& nodedef) { nodedef_ = nodedef; }
-  
+
   // Value access
   const MtlxValue& GetValue() const { return value_; }
   void SetValue(const MtlxValue& value) { value_ = value; }
-  
+
   // Get value as specific type
   bool GetValueAsBool(bool& out) const {
     if (value_.type == MtlxValue::TYPE_BOOL) {
@@ -90,7 +90,7 @@ public:
     }
     return false;
   }
-  
+
   bool GetValueAsInt(int& out) const {
     if (value_.type == MtlxValue::TYPE_INT) {
       out = value_.int_val;
@@ -98,7 +98,7 @@ public:
     }
     return false;
   }
-  
+
   bool GetValueAsFloat(float& out) const {
     if (value_.type == MtlxValue::TYPE_FLOAT) {
       out = value_.float_val;
@@ -106,7 +106,7 @@ public:
     }
     return false;
   }
-  
+
   bool GetValueAsString(std::string& out) const {
     if (value_.type == MtlxValue::TYPE_STRING) {
       out = value_.string_val;
@@ -114,7 +114,7 @@ public:
     }
     return false;
   }
-  
+
   bool GetValueAsFloatVector(std::vector<float>& out) const {
     if (value_.type == MtlxValue::TYPE_FLOAT_VECTOR) {
       out = value_.float_vec;
@@ -122,13 +122,13 @@ public:
     }
     return false;
   }
-  
+
   // Parse from XML node
   virtual bool ParseFromXML(XMLNodePtr xml_node);
-  
+
   // Get element type name
   virtual std::string GetElementType() const { return "element"; }
-  
+
 protected:
   std::string name_;
   std::string type_;
@@ -141,23 +141,23 @@ protected:
 class MtlxInput : public MtlxElement {
 public:
   MtlxInput() = default;
-  
+
   // Input-specific attributes
   const std::string& GetNodeName() const { return nodename_; }
   void SetNodeName(const std::string& nodename) { nodename_ = nodename; }
-  
+
   const std::string& GetOutput() const { return output_; }
   void SetOutput(const std::string& output) { output_ = output; }
-  
+
   const std::string& GetInterfaceName() const { return interfacename_; }
   void SetInterfaceName(const std::string& name) { interfacename_ = name; }
-  
+
   const std::string& GetChannels() const { return channels_; }
   void SetChannels(const std::string& channels) { channels_ = channels; }
-  
+
   bool ParseFromXML(XMLNodePtr xml_node) override;
   std::string GetElementType() const override { return "input"; }
-  
+
 private:
   std::string nodename_;
   std::string output_;
@@ -169,17 +169,17 @@ private:
 class MtlxOutput : public MtlxElement {
 public:
   MtlxOutput() = default;
-  
+
   // Output-specific attributes
   const std::string& GetNodeName() const { return nodename_; }
   void SetNodeName(const std::string& nodename) { nodename_ = nodename; }
-  
+
   const std::string& GetOutput() const { return output_; }
   void SetOutput(const std::string& output) { output_ = output; }
-  
+
   bool ParseFromXML(XMLNodePtr xml_node) override;
   std::string GetElementType() const override { return "output"; }
-  
+
 private:
   std::string nodename_;
   std::string output_;
@@ -189,19 +189,19 @@ private:
 class MtlxNode : public MtlxElement {
 public:
   MtlxNode() = default;
-  
+
   // Node-specific attributes
   const std::string& GetCategory() const { return category_; }
   void SetCategory(const std::string& category) { category_ = category; }
-  
+
   // Inputs
   void AddInput(MtlxInputPtr input) { inputs_.push_back(input); }
   const std::vector<MtlxInputPtr>& GetInputs() const { return inputs_; }
   MtlxInputPtr GetInput(const std::string& name) const;
-  
+
   bool ParseFromXML(XMLNodePtr xml_node) override;
   std::string GetElementType() const override { return "node"; }
-  
+
 private:
   std::string category_;
   std::vector<MtlxInputPtr> inputs_;
@@ -211,23 +211,23 @@ private:
 class MtlxNodeGraph : public MtlxElement {
 public:
   MtlxNodeGraph() = default;
-  
+
   // Nodes
   void AddNode(MtlxNodePtr node) { nodes_.push_back(node); }
   const std::vector<MtlxNodePtr>& GetNodes() const { return nodes_; }
   MtlxNodePtr GetNode(const std::string& name) const;
-  
+
   // Inputs
   void AddInput(MtlxInputPtr input) { inputs_.push_back(input); }
   const std::vector<MtlxInputPtr>& GetInputs() const { return inputs_; }
-  
+
   // Outputs
   void AddOutput(MtlxOutputPtr output) { outputs_.push_back(output); }
   const std::vector<MtlxOutputPtr>& GetOutputs() const { return outputs_; }
-  
+
   bool ParseFromXML(XMLNodePtr xml_node) override;
   std::string GetElementType() const override { return "nodegraph"; }
-  
+
 private:
   std::vector<MtlxNodePtr> nodes_;
   std::vector<MtlxInputPtr> inputs_;
@@ -238,20 +238,20 @@ private:
 class MtlxMaterial : public MtlxElement {
 public:
   MtlxMaterial() = default;
-  
+
   // Shader references
   const std::string& GetSurfaceShader() const { return surface_shader_; }
   void SetSurfaceShader(const std::string& shader) { surface_shader_ = shader; }
-  
+
   const std::string& GetDisplacementShader() const { return displacement_shader_; }
   void SetDisplacementShader(const std::string& shader) { displacement_shader_ = shader; }
-  
+
   const std::string& GetVolumeShader() const { return volume_shader_; }
   void SetVolumeShader(const std::string& shader) { volume_shader_ = shader; }
-  
+
   bool ParseFromXML(XMLNodePtr xml_node) override;
   std::string GetElementType() const override { return "material"; }
-  
+
 private:
   std::string surface_shader_;
   std::string displacement_shader_;
@@ -262,45 +262,45 @@ private:
 class MtlxDocument {
 public:
   MtlxDocument() = default;
-  
+
   // Parse from XML
   bool ParseFromXML(const std::string& xml_string);
   bool ParseFromFile(const std::string& filename);
-  
+
   // Document properties
   const std::string& GetVersion() const { return version_; }
   const std::string& GetColorSpace() const { return colorspace_; }
   const std::string& GetNamespace() const { return namespace_; }
-  
+
   // Access elements
   const std::vector<MtlxNodePtr>& GetNodes() const { return nodes_; }
   const std::vector<MtlxNodeGraphPtr>& GetNodeGraphs() const { return nodegraphs_; }
   const std::vector<MtlxMaterialPtr>& GetMaterials() const { return materials_; }
-  
+
   // Find elements by name
   MtlxNodePtr FindNode(const std::string& name) const;
   MtlxNodeGraphPtr FindNodeGraph(const std::string& name) const;
   MtlxMaterialPtr FindMaterial(const std::string& name) const;
-  
+
   // Get errors
   const std::string& GetError() const { return error_; }
   const std::string& GetWarning() const { return warning_; }
-  
+
 private:
   bool ParseElement(XMLNodePtr xml_node);
   MtlxValue ParseValue(const std::string& type, const std::string& value);
-  
+
   std::string version_;
   std::string colorspace_;
   std::string namespace_;
-  
+
   std::vector<MtlxNodePtr> nodes_;
   std::vector<MtlxNodeGraphPtr> nodegraphs_;
   std::vector<MtlxMaterialPtr> materials_;
-  
+
   std::string error_;
   std::string warning_;
 };
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

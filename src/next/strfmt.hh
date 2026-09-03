@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - freestanding integer<->string formatting
+// LightUSD Next - freestanding integer<->string formatting
 //
 // Locale-independent, libc-free decimal integer formatting (no std::to_string,
 // no snprintf). Output is byte-identical to `ss << v` under the classic locale:
@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // Format the decimal form of `v` into a caller buffer, returning the byte count.
@@ -69,4 +69,4 @@ inline std::string IntToStr(int64_t v) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

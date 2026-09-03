@@ -2,7 +2,7 @@
 // Copyright 2025 - Present, Light Transport Entertainment Inc.
 //
 // Regression: OpenUSD inserts variant-SELECTED children BEFORE the prim's local
-// children (locals keep authored order). tinyusdz previously APPENDED new variant
+// children (locals keep authored order). lightusd previously APPENDED new variant
 // children, so a referenced asset's `variantSet "LOD"` geometry came out after
 // the locally-authored `def Scope "Materials"` instead of before it (matching
 // usdcat). CompositeVariant now prepends new variant children and keeps the
@@ -11,10 +11,10 @@
 #include <iostream>
 #include <string>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "composition.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 int g_failures = 0;

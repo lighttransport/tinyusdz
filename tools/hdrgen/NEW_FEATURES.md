@@ -426,7 +426,7 @@ For issues or questions about new features:
 - Check examples in `examples/` directory
 - Read [CHANGELOG.md](./CHANGELOG.md)
 - See main [README.md](./README.md)
-- Report bugs: https://github.com/syoyo/tinyusdz
+- Report bugs: https://github.com/syoyo/lightusd
 
 ---
 
@@ -445,4 +445,4 @@ Future enhancements being considered:
 
 **Version:** 1.1.0
 **Date:** 2025-11-06
-**Author:** TinyUSDZ Project
+**Author:** LightUSD Project

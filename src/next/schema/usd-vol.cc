@@ -5,7 +5,7 @@
 
 #include "../eval/attribute-eval.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace {
 
@@ -134,4 +134,4 @@ bool GetParticleFieldData(const Stage& stage, const UsdPrim& prim,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,9 +1,9 @@
-export { TinyUSDZLoader, FetchAssetResolver } from './TinyUSDZLoader.js';
-export { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js';
-export { TextureLoadingManager } from './TinyUSDZLoaderUtils.js';
-export { TinyUSDZComposer } from './TinyUSDZComposer.js';
-export { TinyUSDZWorkerLoader } from './TinyUSDZWorkerLoader.js';
-export { OpenPBRMaterial } from './TinyUSDZOpenPBRSimple.js';
+export { LightUSDLoader, FetchAssetResolver } from './LightUSDLoader.js';
+export { LightUSDLoaderUtils } from './LightUSDLoaderUtils.js';
+export { TextureLoadingManager } from './LightUSDLoaderUtils.js';
+export { LightUSDComposer } from './LightUSDComposer.js';
+export { LightUSDWorkerLoader } from './LightUSDWorkerLoader.js';
+export { OpenPBRMaterial } from './LightUSDOpenPBRSimple.js';
 
 export * from './AnimClipUtils.js';
 export * from './EXRDecoder.js';
@@ -22,6 +22,6 @@ export * from './USDSceneSkinningPipeline.js';
 export * from './USDSkeletalHelper.js';
 export * from './USDSkeletonData.js';
 
-export * as MaterialX from './TinyUSDZMaterialX.js';
-export * as OpenPBRWebGL from './TinyUSDZOpenPBR_WebGL.js';
-export * as OpenPBRTSL from './TinyUSDZOpenPBR_TSL.js';
+export * as MaterialX from './LightUSDMaterialX.js';
+export * as OpenPBRWebGL from './LightUSDOpenPBR_WebGL.js';
+export * as OpenPBRTSL from './LightUSDOpenPBR_TSL.js';

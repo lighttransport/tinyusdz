@@ -1,5 +1,5 @@
 {
-  "name": "tinyusdz-batch-runner",
+  "name": "lightusd-batch-runner",
   "version": "1.0.0",
   "description": "Visual regression batch runner for USD files with headless Chrome",
   "type": "module",

@@ -3,9 +3,9 @@
 namespace light3d {
 
 // NOTE: tusdview does NOT load image files through light3d. Texture pixels come
-// already-decoded from the tinyusdz Tydra RenderScene (TextureImage / BufferData),
+// already-decoded from the lightusd Tydra RenderScene (TextureImage / BufferData),
 // so the original stb_image-based loadImage was removed to avoid duplicating
-// tinyusdz's own STB_IMAGE_IMPLEMENTATION (which would clash at link time).
+// lightusd's own STB_IMAGE_IMPLEMENTATION (which would clash at link time).
 // The declaration is kept for API compatibility; it returns an invalid Image.
 Image loadImage(const std::string& /*filepath*/, int /*desiredChannels*/) {
     return Image{};

@@ -14,17 +14,17 @@ This document describes the **direct binary16 dragonbox** implementation - a nat
 
 ```cpp
 // Enable direct binary16 dragonbox
-#define TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#define LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 
 // Disable to use fp16→fp32→dragonbox path (default)
-// #define TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+// #define LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 ```
 
 ## Two Implementation Paths
 
 ### Path 1: Direct Binary16 (Optimal)
 
-**Enable with:** `#define TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX`
+**Enable with:** `#define LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX`
 
 ```
 fp16 bits (16-bit)
@@ -51,7 +51,7 @@ Direct:  "0.3333"        (5 chars)
 
 ### Path 2: Via FP32 (Default)
 
-**Default when:** `TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX` not defined
+**Default when:** `LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX` not defined
 
 ```
 fp16 bits (16-bit)
@@ -173,7 +173,7 @@ The `dragonbox_binary16.hh` implementation:
 ### Example 1: Using Direct Binary16
 
 ```cpp
-#define TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#define LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 #include "print_fp.cc"
 
 internal::half h(0x3c00);  // 1.0 in fp16
@@ -188,7 +188,7 @@ std::cout << buffer << std::endl;  // Output: "1"
 ### Example 2: Using FP32 Path (Default)
 
 ```cpp
-// Do NOT define TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+// Do NOT define LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 #include "print_fp.cc"
 
 internal::half h(0x3c00);  // 1.0 in fp16
@@ -208,7 +208,7 @@ std::cout << buffer << std::endl;  // Output: "1e0"
 cd sandbox/print_fp
 
 # Compile with direct binary16 dragonbox
-g++ -O2 -std=c++14 -DTINYUSDZ_USE_DIRECT_FP16_DRAGONBOX \
+g++ -O2 -std=c++14 -DLIGHTUSD_USE_DIRECT_FP16_DRAGONBOX \
     print_fp.cc \
     -I ../../src/external/dragonbox/ \
     ../../src/external/dragonbox/dragonbox_to_chars.cpp \
@@ -246,7 +246,7 @@ g++ -O2 -std=c++14 \
     -o test_fp32_path
 
 # Build comparison test for direct binary16
-g++ -O2 -std=c++14 -DTINYUSDZ_USE_DIRECT_FP16_DRAGONBOX \
+g++ -O2 -std=c++14 -DLIGHTUSD_USE_DIRECT_FP16_DRAGONBOX \
     test_fp16_comparison.cc \
     -I ../../src/external/dragonbox/ \
     ../../src/external/dragonbox/dragonbox_to_chars.cpp \
@@ -291,7 +291,7 @@ diff fp32_results.txt direct_results.txt
    - Support different rounding modes
    - Configurable precision (fixed digit count)
 
-4. **Integration with TinyUSDZ**
+4. **Integration with LightUSD**
    - Direct integration with `value::half` type
    - Use in USD serialization/deserialization
    - Performance benchmarks vs current implementation
@@ -318,5 +318,5 @@ Both implementations are correct and safe. The direct binary16 implementation is
 - ✅ **Algorithm**: Correct and verified
 - ✅ **Testing**: Exhaustive (all 65,536 patterns tested)
 - ✅ **Buffer safety**: Verified (16 bytes allocated, only 8 needed)
-- ✅ **Compile-time switch**: Working (`TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX`)
+- ✅ **Compile-time switch**: Working (`LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX`)
 - ✅ **Documentation**: Complete

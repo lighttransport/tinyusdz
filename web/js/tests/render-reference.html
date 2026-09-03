@@ -46,10 +46,10 @@
         import * as THREE from 'three';
         import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
         import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-        // Note: Using same MeshPhysicalMaterial as TinyUSDZ for now
+        // Note: Using same MeshPhysicalMaterial as LightUSD for now
         // TODO: Integrate actual MaterialX reference implementation
 
-        // Material definitions (same as TinyUSDZ for consistency)
+        // Material definitions (same as LightUSD for consistency)
         const MATERIALS = {
             brass: {
                 name: 'Brass',
@@ -103,7 +103,7 @@
         const materialName = urlParams.get('material') || 'brass';
         const materialData = MATERIALS[materialName] || MATERIALS.brass;
 
-        // Create material from OpenPBR data (same as TinyUSDZ for baseline comparison)
+        // Create material from OpenPBR data (same as LightUSD for baseline comparison)
         function createMaterial(data) {
             const material = new THREE.MeshPhysicalMaterial({
                 color: new THREE.Color(...data.base_color),
@@ -150,7 +150,7 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
-        // Lighting setup (identical to TinyUSDZ renderer)
+        // Lighting setup (identical to LightUSD renderer)
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         scene.add(ambientLight);
 

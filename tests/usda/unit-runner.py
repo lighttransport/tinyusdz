@@ -3,7 +3,7 @@ import sys
 import glob
 import subprocess
 
-# Default configuration Assume running this script from <tinyusdz> root directory
+# Default configuration Assume running this script from <lightusd> root directory
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
@@ -11,11 +11,11 @@ if __name__ == '__main__':
     parser.add_argument("--app", type=str, default="./build/usda_parser")
     args = parser.parse_args()
 
-    app = args.app    
+    app = args.app
 
     failed = []
     false_negatives = []
-    
+
     print("Basedir: ", args.basedir)
     print("App: ", args.app)
 
@@ -40,7 +40,7 @@ if __name__ == '__main__':
             false_negatives.append(fname)
 
         cnt += 1
-         
+
     print("=================================")
 
     if len(failed) > 0:

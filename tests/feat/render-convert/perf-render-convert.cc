@@ -10,7 +10,7 @@
 // Pipeline selection at compile time:
 //   - PERFRC_ENABLE_LEGACY (=1 default): legacy tydra conversion.
 //   - PERFRC_ENABLE_NEXT: tydra-next conversion (requires tydra_next +
-//     tinyusdz_next libs; the standalone src/next tree cannot build the
+//     lightusd_next libs; the standalone src/next tree cannot build the
 //     legacy pipeline, so it sets PERFRC_ENABLE_LEGACY=0).
 // When both are compiled into one binary they are measured back to back on
 // the same input.
@@ -42,14 +42,14 @@
 #endif
 
 #if PERFRC_ENABLE_LEGACY
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #endif
 
 #if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_NEXT
 // The next pipeline headers live under src/next; consumers add src/ and
 // src/next to their include path.
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "tydra/next/render-converter.hh"
 #endif
 
@@ -286,7 +286,7 @@ struct BenchResult {
 
 namespace legacy_bench {
 
-void HashVertexAttribute(const tinyusdz::tydra::VertexAttribute &va,
+void HashVertexAttribute(const lightusd::tydra::VertexAttribute &va,
                          Hasher *hsh) {
   hsh->Str(va.name);
   hsh->Pod(va.format);
@@ -299,7 +299,7 @@ void HashVertexAttribute(const tinyusdz::tydra::VertexAttribute &va,
   hsh->Pod(va.variability);
 }
 
-void HashNode(const tinyusdz::tydra::Node &node, Hasher *hsh) {
+void HashNode(const lightusd::tydra::Node &node, Hasher *hsh) {
   hsh->Str(node.abs_path);
   hsh->U64(uint64_t(node.id));
   hsh->Pod(node.local_matrix);
@@ -310,7 +310,7 @@ void HashNode(const tinyusdz::tydra::Node &node, Hasher *hsh) {
   }
 }
 
-uint64_t HashScene(const tinyusdz::tydra::RenderScene &scene) {
+uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
   Hasher hsh;
 
   hsh.U64(scene.meshes.size());
@@ -326,7 +326,7 @@ uint64_t HashScene(const tinyusdz::tydra::RenderScene &scene) {
   for (const auto &m : scene.meshes) {
     hsh.Str(m.abs_path);
     hsh.U64(m.points.size());
-    hsh.Bytes(m.points.data(), m.points.size() * sizeof(tinyusdz::tydra::vec3));
+    hsh.Bytes(m.points.data(), m.points.size() * sizeof(lightusd::tydra::vec3));
     hsh.U64(m.faceVertexIndices().size());
     hsh.Bytes(m.faceVertexIndices().data(),
               m.faceVertexIndices().size() * sizeof(uint32_t));
@@ -365,24 +365,24 @@ uint64_t HashScene(const tinyusdz::tydra::RenderScene &scene) {
 BenchResult Bench(const std::string &path, int iters, int num_threads) {
   BenchResult res;
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn, err;
-  if (!tinyusdz::LoadUSDFromFile(path, &stage, &warn, &err)) {
+  if (!lightusd::LoadUSDFromFile(path, &stage, &warn, &err)) {
     res.err = "load failed: " + err;
     if (!warn.empty()) res.err += " warn: " + warn;
     return res;
   }
 
-  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::tydra::RenderSceneConverterEnv env(stage);
   env.usd_filename = path;
   if (num_threads != -2) {
     // -2 keeps the config default (auto); otherwise override for A/B runs.
     env.scene_config.num_threads = num_threads;
   }
 
-  tinyusdz::tydra::RenderSceneConverter converter;
+  lightusd::tydra::RenderSceneConverter converter;
 
-  tinyusdz::tydra::RenderScene scene;
+  lightusd::tydra::RenderScene scene;
   std::vector<double> times;
   for (int it = 0; it < iters; it++) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -426,7 +426,7 @@ void HashChunked(const ChunkedT &arr, Hasher *hsh) {
   }
 }
 
-uint64_t HashScene(const tinyusdz::tydra::next::RenderScene &scene) {
+uint64_t HashScene(const lightusd::tydra::next::RenderScene &scene) {
   Hasher hsh;
 
   hsh.U64(scene.meshes.size());
@@ -466,25 +466,25 @@ uint64_t HashScene(const tinyusdz::tydra::next::RenderScene &scene) {
 BenchResult Bench(const std::string &path, int iters, int threads) {
   BenchResult res;
 
-  tinyusdz::next::StageSession session;
+  lightusd::next::StageSession session;
   if (!session.OpenFile(path)) {
     res.err = "next StageSession open failed: " + session.GetError();
     return res;
   }
-  const tinyusdz::next::Stage &stage = session.GetStage();
+  const lightusd::next::Stage &stage = session.GetStage();
 
-  tinyusdz::tydra::next::ConverterConfig cfg;
+  lightusd::tydra::next::ConverterConfig cfg;
   cfg.max_worker_threads = (threads > 0) ? size_t(threads) : 0;
   cfg.mesh.compute_normals = true;
   cfg.mesh.triangulate = true;
   cfg.mesh.build_vertex_indices = true;
 
   std::vector<double> times;
-  tinyusdz::tydra::next::RenderScene ref_scene;
+  lightusd::tydra::next::RenderScene ref_scene;
   for (int it = 0; it < iters; it++) {
-    tinyusdz::tydra::next::RenderSceneConverter conv(cfg);
+    lightusd::tydra::next::RenderSceneConverter conv(cfg);
     const auto t0 = std::chrono::steady_clock::now();
-    tinyusdz::tydra::next::ConvertResult result = conv.Convert(stage);
+    lightusd::tydra::next::ConvertResult result = conv.Convert(stage);
     const auto t1 = std::chrono::steady_clock::now();
     if (!result.success) {
       res.err = "next Convert failed: " + result.error;

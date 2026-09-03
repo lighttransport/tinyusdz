@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Asset Resolution
+// LightUSD Next - Asset Resolution
 //
 // Resolves asset paths for references, payloads, and sublayers
 
@@ -15,7 +15,7 @@
 #include <mutex>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Resolved asset information
@@ -221,4 +221,4 @@ AssetResolver& GetDefaultResolver();
 void SetDefaultResolver(std::unique_ptr<AssetResolver> resolver);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

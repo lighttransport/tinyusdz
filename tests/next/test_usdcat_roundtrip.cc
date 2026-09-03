@@ -2,7 +2,7 @@
 /// Writes a Stage to USDC, then reads it back with pxrUSD's usdcat.
 /// Documents current pxrUSD compatibility level.
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usdc-writer.hh"
 #include <cstdio>
 #include <cstdlib>
@@ -10,7 +10,7 @@
 #include <vector>
 #include <cstring>
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int test_count = 0;
 static int pass_count = 0;

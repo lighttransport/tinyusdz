@@ -318,16 +318,16 @@ await testAsync('node texture processor caps concurrency to its memory budget', 
 // ============================================================
 console.log('Integration: loadWasm + convertFolderToUSDZ');
 // ============================================================
-const wasmJs = path.resolve(__dirname, '../src/tinyusdz/tinyusdz.js');
+const wasmJs = path.resolve(__dirname, '../src/lightusd/lightusd.js');
 const hasWasm = fs.existsSync(wasmJs);
 
 if (hasWasm) {
-  const wasmGlue = new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+  const wasmGlue = new URL('../src/lightusd/lightusd.js', import.meta.url).href;
 
   await testAsync('loadWasm succeeds', async () => {
     const native = await loadWasm(() => import(wasmGlue));
     assert.ok(native, 'native module should be truthy');
-    assert.ok(typeof native.TinyUSDZLoaderNative === 'function', 'TinyUSDZLoaderNative should exist');
+    assert.ok(typeof native.LightUSDLoaderNative === 'function', 'LightUSDLoaderNative should exist');
   });
 
   // Create a minimal USDA file for conversion testing.
@@ -721,7 +721,7 @@ def Xform "fromSub"
     assert.ok(!/\.usdz$/i.test(repacked.stats.rootPath),
       'root should resolve to the inner layer, not the .usdz');
     // The repacked archive must still be loadable.
-    const usd = new native.TinyUSDZLoaderNative();
+    const usd = new native.LightUSDLoaderNative();
     try {
       assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
         'repacked USDZ should load: ' + usd.error());
@@ -772,7 +772,7 @@ def Xform "fromSub"
     assert.notEqual(repacked.stats.lowHeapFlatten, true,
       'subdirectory-rooted input must fall back to the standard repack path');
     // The fallback output must still be loadable.
-    const usd = new native.TinyUSDZLoaderNative();
+    const usd = new native.LightUSDLoaderNative();
     try {
       assert.ok(usd.loadFromBinary(repacked.usdz, 'repacked.usdz'),
         'repacked nested-root USDZ should load: ' + usd.error());
@@ -815,7 +815,7 @@ def SkelRoot "root"
 `;
     const assetMap = new Map([['skel.usda', new TextEncoder().encode(skelUsda)]]);
     // Sanity-check the source actually has a skeleton + animation.
-    const src = new native.TinyUSDZLoaderNative();
+    const src = new native.LightUSDLoaderNative();
     assert.ok(src.loadFromBinary(new TextEncoder().encode(skelUsda), 'skel.usda'));
     assert.equal(src.numSkeletons(), 1, 'source should have a skeleton');
     assert.equal(src.numAnimations(), 1, 'source should have a skel animation');
@@ -824,7 +824,7 @@ def SkelRoot "root"
     const { usdz } = await convertFolderToUSDZ(native, assetMap, {
       rootPath: 'skel.usda', rootLayerFormat: 'usdc',
     });
-    const out = new native.TinyUSDZLoaderNative();
+    const out = new native.LightUSDLoaderNative();
     try {
       assert.ok(out.loadFromBinary(usdz, 'out.usdz'), 'converted USDZ should load');
       assert.equal(out.numSkeletons(), 1, 'skeleton should survive conversion');
@@ -858,11 +858,11 @@ def Material "M"
     }
 }
 `;
-    const usd = new native.TinyUSDZLoaderNative();
+    const usd = new native.LightUSDLoaderNative();
     assert.ok(usd.loadAsLayerFromBinary(new TextEncoder().encode(matUsda), 'm.usda'));
     const usdc = usd.exportAsUSDC();
     usd.delete();
-    const rt = new native.TinyUSDZLoaderNative();
+    const rt = new native.LightUSDLoaderNative();
     try {
       assert.ok(rt.loadAsLayerFromBinary(new Uint8Array(usdc), 'rt.usdc'), 'USDC reload');
       const out = rt.exportAsUSDA();

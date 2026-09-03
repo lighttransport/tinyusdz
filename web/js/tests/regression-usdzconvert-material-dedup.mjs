@@ -16,22 +16,22 @@ import {
 } from '../src/usdzconvert.js';
 import {
   NextRenderSceneAdapter,
-} from '../src/tinyusdz/TinyUSDZLoader.js';
+} from '../src/lightusd/LightUSDLoader.js';
 import {
   buildNextThreeNode,
   findNextArchiveEntry,
   loadNextArchiveTexture,
   nextArchiveUDIMLayout,
-} from '../src/tinyusdz/NextRenderSceneUtils.js';
-import { extractSkinnedMeshData } from '../src/tinyusdz/USDSceneSkinningData.js';
-import { buildSkeletonDataFromUSD } from '../src/tinyusdz/USDSkeletonData.js';
-import { applyUSDSceneSkinningPipeline } from '../src/tinyusdz/USDSceneSkinningPipeline.js';
+} from '../src/lightusd/NextRenderSceneUtils.js';
+import { extractSkinnedMeshData } from '../src/lightusd/USDSceneSkinningData.js';
+import { buildSkeletonDataFromUSD } from '../src/lightusd/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from '../src/lightusd/USDSceneSkinningPipeline.js';
 import {
   NextTextureLoadingManager,
   compactMaterialGroups,
   createNextMaterial,
   nextTextureWrapMode,
-} from '../src/tinyusdz/NextRenderSceneUtils.js';
+} from '../src/lightusd/NextRenderSceneUtils.js';
 import {
   INVALID_FACE_INDEX_USDA,
   ORIENTED_TRIANGLE_USDA,
@@ -55,13 +55,13 @@ async function test(name, fn) {
   }
 }
 
-const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
-const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
+const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
+const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
-const nextGlue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js' : '../src/tinyusdz/tinyusdz_next.js';
+const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js';
 const nextNative = await loadWasm(
   () => import(new URL(nextGlue, import.meta.url).href),
-  { locateFile: (file) => new URL('../src/tinyusdz/' + file, import.meta.url).pathname }
+  { locateFile: (file) => new URL('../src/lightusd/' + file, import.meta.url).pathname }
 );
 
 function makePngTexture() {
@@ -98,7 +98,7 @@ function rootUsdcFromUsdz(usdz) {
 }
 
 function assertReloadable(usdz, label) {
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   try {
     assert.ok(usd.loadFromBinary(usdz, `${label}.usdz`),
       `${label} should reload: ${usd.error()}`);

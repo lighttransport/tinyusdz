@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(tinyusdz_c VERSION 1.0.0 LANGUAGES C CXX)
+project(lightusd_c VERSION 1.0.0 LANGUAGES C CXX)
 
 # C99 standard for the API
 set(CMAKE_C_STANDARD 99)
@@ -14,81 +14,81 @@ option(BUILD_SHARED_LIBS "Build shared library" ON)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 
-# Find TinyUSDZ - adjust path as needed
-set(TINYUSDZ_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
-set(TINYUSDZ_SRC "${TINYUSDZ_ROOT}/src")
+# Find LightUSD - adjust path as needed
+set(LIGHTUSD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+set(LIGHTUSD_SRC "${LIGHTUSD_ROOT}/src")
 
-# Check that TinyUSDZ source exists
-if(NOT EXISTS "${TINYUSDZ_SRC}/tinyusdz.hh")
-    message(FATAL_ERROR "TinyUSDZ source not found at ${TINYUSDZ_SRC}")
+# Check that LightUSD source exists
+if(NOT EXISTS "${LIGHTUSD_SRC}/lightusd.hh")
+    message(FATAL_ERROR "LightUSD source not found at ${LIGHTUSD_SRC}")
 endif()
 
 # Create the C API library
-add_library(tinyusdz_c
-    tinyusdz_c.cpp
+add_library(lightusd_c
+    lightusd_c.cpp
 )
 
 # Set public headers
-set_target_properties(tinyusdz_c PROPERTIES
-    PUBLIC_HEADER tinyusdz_c.h
+set_target_properties(lightusd_c PROPERTIES
+    PUBLIC_HEADER lightusd_c.h
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 
 # Include directories
-target_include_directories(tinyusdz_c
+target_include_directories(lightusd_c
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        ${TINYUSDZ_SRC}
-        ${TINYUSDZ_ROOT}/src/external  # For dependencies
+        ${LIGHTUSD_SRC}
+        ${LIGHTUSD_ROOT}/src/external  # For dependencies
 )
 
-# Link with TinyUSDZ
+# Link with LightUSD
 # Note: In a real build, we'd either:
-# 1. Build TinyUSDZ as a static library and link it
-# 2. Include TinyUSDZ sources directly
-# For now, we'll compile key TinyUSDZ sources directly
+# 1. Build LightUSD as a static library and link it
+# 2. Include LightUSD sources directly
+# For now, we'll compile key LightUSD sources directly
 
-# Add TinyUSDZ sources (simplified - real build would include all needed files)
-set(TINYUSDZ_SOURCES
-    ${TINYUSDZ_SRC}/tinyusdz.cc
-    ${TINYUSDZ_SRC}/stage.cc
-    ${TINYUSDZ_SRC}/prim-types.cc
-    ${TINYUSDZ_SRC}/value-types.cc
-    ${TINYUSDZ_SRC}/usdGeom.cc
-    ${TINYUSDZ_SRC}/usdShade.cc
-    ${TINYUSDZ_SRC}/usdSkel.cc
-    ${TINYUSDZ_SRC}/usda-reader.cc
-    ${TINYUSDZ_SRC}/usdc-reader.cc
-    ${TINYUSDZ_SRC}/usdc-reader-property.cc
-    ${TINYUSDZ_SRC}/usdc-reader-prim.cc
-    ${TINYUSDZ_SRC}/usdc-reader-reconstruct.cc
-    ${TINYUSDZ_SRC}/crate-reader.cc
-    ${TINYUSDZ_SRC}/crate-reader-arrays.cc
-    ${TINYUSDZ_SRC}/crate-reader-values.cc
-    ${TINYUSDZ_SRC}/crate-reader-paths.cc
-    ${TINYUSDZ_SRC}/ascii-parser.cc
-    ${TINYUSDZ_SRC}/ascii-parser-props.cc
-    ${TINYUSDZ_SRC}/ascii-parser-entry.cc
-    ${TINYUSDZ_SRC}/asset-resolution.cc
-    ${TINYUSDZ_SRC}/composition.cc
-    ${TINYUSDZ_SRC}/composition-reconstruct.cc
-    ${TINYUSDZ_SRC}/prim-reconstruct.cc
-    ${TINYUSDZ_SRC}/prim-reconstruct-shader.cc
-    ${TINYUSDZ_SRC}/path.cc
-    ${TINYUSDZ_SRC}/str-util.cc
-    ${TINYUSDZ_SRC}/io-util.cc
-    ${TINYUSDZ_SRC}/math-util.cc
-    ${TINYUSDZ_SRC}/tiny-format.cc
+# Add LightUSD sources (simplified - real build would include all needed files)
+set(LIGHTUSD_SOURCES
+    ${LIGHTUSD_SRC}/lightusd.cc
+    ${LIGHTUSD_SRC}/stage.cc
+    ${LIGHTUSD_SRC}/prim-types.cc
+    ${LIGHTUSD_SRC}/value-types.cc
+    ${LIGHTUSD_SRC}/usdGeom.cc
+    ${LIGHTUSD_SRC}/usdShade.cc
+    ${LIGHTUSD_SRC}/usdSkel.cc
+    ${LIGHTUSD_SRC}/usda-reader.cc
+    ${LIGHTUSD_SRC}/usdc-reader.cc
+    ${LIGHTUSD_SRC}/usdc-reader-property.cc
+    ${LIGHTUSD_SRC}/usdc-reader-prim.cc
+    ${LIGHTUSD_SRC}/usdc-reader-reconstruct.cc
+    ${LIGHTUSD_SRC}/crate-reader.cc
+    ${LIGHTUSD_SRC}/crate-reader-arrays.cc
+    ${LIGHTUSD_SRC}/crate-reader-values.cc
+    ${LIGHTUSD_SRC}/crate-reader-paths.cc
+    ${LIGHTUSD_SRC}/ascii-parser.cc
+    ${LIGHTUSD_SRC}/ascii-parser-props.cc
+    ${LIGHTUSD_SRC}/ascii-parser-entry.cc
+    ${LIGHTUSD_SRC}/asset-resolution.cc
+    ${LIGHTUSD_SRC}/composition.cc
+    ${LIGHTUSD_SRC}/composition-reconstruct.cc
+    ${LIGHTUSD_SRC}/prim-reconstruct.cc
+    ${LIGHTUSD_SRC}/prim-reconstruct-shader.cc
+    ${LIGHTUSD_SRC}/path.cc
+    ${LIGHTUSD_SRC}/str-util.cc
+    ${LIGHTUSD_SRC}/io-util.cc
+    ${LIGHTUSD_SRC}/math-util.cc
+    ${LIGHTUSD_SRC}/tiny-format.cc
 )
 
 # Add sources to library
-target_sources(tinyusdz_c PRIVATE ${TINYUSDZ_SOURCES})
+target_sources(lightusd_c PRIVATE ${LIGHTUSD_SOURCES})
 
 # Compiler flags
-target_compile_options(tinyusdz_c PRIVATE
+target_compile_options(lightusd_c PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wextra -Wno-unused-parameter>
     $<$<CXX_COMPILER_ID:Clang>:-Wall -Wextra -Wno-unused-parameter>
     $<$<CXX_COMPILER_ID:MSVC>:/W3>
@@ -96,13 +96,13 @@ target_compile_options(tinyusdz_c PRIVATE
 
 # Add sanitizers if requested
 if(ENABLE_SANITIZERS)
-    target_compile_options(tinyusdz_c PRIVATE -fsanitize=address,undefined)
-    target_link_options(tinyusdz_c PRIVATE -fsanitize=address,undefined)
+    target_compile_options(lightusd_c PRIVATE -fsanitize=address,undefined)
+    target_link_options(lightusd_c PRIVATE -fsanitize=address,undefined)
 endif()
 
 # Platform-specific settings
 if(WIN32)
-    target_compile_definitions(tinyusdz_c PRIVATE
+    target_compile_definitions(lightusd_c PRIVATE
         NOMINMAX
         _CRT_SECURE_NO_WARNINGS
     )
@@ -110,14 +110,14 @@ endif()
 
 # Export symbols for shared library
 if(BUILD_SHARED_LIBS)
-    target_compile_definitions(tinyusdz_c PRIVATE TINYUSDZ_C_EXPORTS)
+    target_compile_definitions(lightusd_c PRIVATE LIGHTUSD_C_EXPORTS)
 endif()
 
 # Build examples
 if(BUILD_EXAMPLES)
     # Basic example
     add_executable(example_basic example_basic.c)
-    target_link_libraries(example_basic PRIVATE tinyusdz_c)
+    target_link_libraries(example_basic PRIVATE lightusd_c)
     target_compile_options(example_basic PRIVATE
         $<$<C_COMPILER_ID:GNU>:-Wall -Wextra>
         $<$<C_COMPILER_ID:Clang>:-Wall -Wextra>
@@ -125,7 +125,7 @@ if(BUILD_EXAMPLES)
 
     # Mesh example
     add_executable(example_mesh example_mesh.c)
-    target_link_libraries(example_mesh PRIVATE tinyusdz_c)
+    target_link_libraries(example_mesh PRIVATE lightusd_c)
     target_link_libraries(example_mesh PRIVATE m)  # for math functions
     target_compile_options(example_mesh PRIVATE
         $<$<C_COMPILER_ID:GNU>:-Wall -Wextra>
@@ -136,27 +136,27 @@ endif()
 # Installation
 include(GNUInstallDirs)
 
-install(TARGETS tinyusdz_c
+install(TARGETS lightusd_c
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/tinyusdz
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lightusd
 )
 
 # Generate pkg-config file
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/tinyusdz_c.pc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/tinyusdz_c.pc
+    ${CMAKE_CURRENT_SOURCE_DIR}/lightusd_c.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/lightusd_c.pc
     @ONLY
 )
 
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/tinyusdz_c.pc
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/lightusd_c.pc
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
 )
 
 # Print configuration summary
 message(STATUS "")
-message(STATUS "TinyUSDZ C API Configuration:")
+message(STATUS "LightUSD C API Configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Shared library: ${BUILD_SHARED_LIBS}")

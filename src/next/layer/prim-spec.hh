@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PrimSpec
+// LightUSD Next - PrimSpec
 // Unified prim specification that can serve as both spec and runtime prim
 // Avoids the PrimSpec→Prim tree duplication of the old design
 
@@ -20,11 +20,11 @@
 #include <deque>
 #include <memory>
 #include <map>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <shared_mutex>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Prim specifier (def, over, class)
@@ -41,7 +41,7 @@ struct TypeNameId {
 };
 
 /// Type name interning table
-/// Thread-safe under TINYUSDZ_ENABLE_THREAD (authoring interns new type names
+/// Thread-safe under LIGHTUSD_ENABLE_THREAD (authoring interns new type names
 /// at runtime, so concurrent readers need protection like PropNameTable).
 class TypeNameTable {
 public:
@@ -78,7 +78,7 @@ private:
   // hold after the lock is released; deque never relocates on push_back.
   std::deque<std::string> names_;
   std::unordered_map<std::string, uint16_t> name_to_id_;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   mutable std::shared_mutex mu_;
 #endif
 };
@@ -1479,4 +1479,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

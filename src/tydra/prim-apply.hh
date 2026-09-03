@@ -5,7 +5,7 @@
 
 #include <functional>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // forward decl.
 class Stage;
@@ -24,7 +24,7 @@ bool ApplyToGPrim(
 
 //
 // Prim which inherits MaterialBinding, i.e, GPrim and GeomSubset.
-// 
+//
 bool ApplyToMaterialBinding(
   const Stage &stage, const Prim &prim,
   std::function<bool(const Stage &stage, const MaterialBinding *mb)> fn);
@@ -42,4 +42,4 @@ bool ApplyToCollection(
   std::function<bool(const Collection *coll)> fn);
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

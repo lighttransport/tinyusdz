@@ -11,7 +11,7 @@
 #include "core/prim-spec.hh"
 #include "layer.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // ---------------------------------------------------------------------------
 // CompositeInherits: /Base has "myAttr", /Derived inherits /Base.

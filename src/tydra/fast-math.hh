@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace fast_math {
 
@@ -142,4 +142,4 @@ inline bool fvec3_notzero(FVec3 v) {
 
 }  // namespace fast_math
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

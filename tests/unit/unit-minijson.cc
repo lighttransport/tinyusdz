@@ -13,11 +13,11 @@
 #include <limits>
 #include <string>
 
-using tinyusdz::minijson::Error;
-using tinyusdz::minijson::Parse;
-using tinyusdz::minijson::ParseOptions;
-using tinyusdz::minijson::Serialize;
-using tinyusdz::minijson::Value;
+using lightusd::minijson::Error;
+using lightusd::minijson::Parse;
+using lightusd::minijson::ParseOptions;
+using lightusd::minijson::Serialize;
+using lightusd::minijson::Value;
 
 void minijson_parse_basic_test(void) {
   const std::string src =

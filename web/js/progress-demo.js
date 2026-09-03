@@ -1,21 +1,21 @@
-// TinyUSDZ Progress Demo with OpenPBR Material Support
+// LightUSD Progress Demo with OpenPBR Material Support
 // Demonstrates progress callbacks for USD loading with detailed stage reporting
 // Supports both main-thread and Web Worker loading modes
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZWorkerLoader } from 'tinyusdz/TinyUSDZWorkerLoader.js';
-import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
-import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
-import { getBackendFromURL, makeStaticNextParseOptions } from 'tinyusdz/LoaderConfigUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDWorkerLoader } from 'lightusd/LightUSDWorkerLoader.js';
+import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
+import { setLightUSD as setMaterialXLightUSD } from 'lightusd/LightUSDMaterialX.js';
+import { OpenPBRMaterial } from 'lightusd/LightUSDOpenPBRSimple.js';
+import { getBackendFromURL, makeStaticNextParseOptions } from 'lightusd/LoaderConfigUtils.js';
 import {
     buildNextThreeNode,
     isNextScene,
     nextCountsFromScene,
     readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
+} from 'lightusd/NextRenderSceneUtils.js';
 
 // ============================================================================
 // Constants
@@ -710,7 +710,7 @@ function createBaseOpenPBRMaterial(openPBR) {
 /**
  * Convert material data to OpenPBRMaterial with progress reporting
  * @param {Object} matData - Material data from USD
- * @param {Object} nativeLoader - TinyUSDZ native loader
+ * @param {Object} nativeLoader - LightUSD native loader
  * @param {Function} onProgress - Progress callback
  * @returns {Promise<OpenPBRMaterial>}
  */
@@ -743,7 +743,7 @@ async function convertToOpenPBRMaterialWithProgress(matData, nativeLoader, onPro
     for (const { param, mapName, label } of textureLoads) {
         try {
             const texId = getOpenPBRTextureId(param);
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            const texture = await LightUSDLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material[mapName] = texture;
                 material.userData.textures[mapName] = { textureId: texId, texture };
@@ -1056,7 +1056,7 @@ async function buildSceneWithProgress(usd, onProgress) {
     // Allow initial progress to render
     await new Promise(r => requestAnimationFrame(r));
 
-    const threeRoot = await TinyUSDZLoaderUtils.buildThreeNode(
+    const threeRoot = await LightUSDLoaderUtils.buildThreeNode(
         rootNode,
         null,
         usd,
@@ -1208,7 +1208,7 @@ function toggleWorkerMode() {
 
     // Persist preference
     try {
-        localStorage.setItem('tinyusdz-use-worker', loaderState.useWorker ? 'true' : 'false');
+        localStorage.setItem('lightusd-use-worker', loaderState.useWorker ? 'true' : 'false');
     } catch (e) {
         // Ignore localStorage errors
     }
@@ -1239,7 +1239,7 @@ function updateWorkerButton() {
  */
 function initWorkerMode() {
     try {
-        const saved = localStorage.getItem('tinyusdz-use-worker');
+        const saved = localStorage.getItem('lightusd-use-worker');
         if (saved !== null) {
             loaderState.useWorker = saved === 'true';
         }
@@ -1302,7 +1302,7 @@ async function loadWithWorker(source, isFile, stats) {
 
     // Initialize worker loader if needed
     if (!loaderState.workerLoader) {
-        loaderState.workerLoader = new TinyUSDZWorkerLoader({
+        loaderState.workerLoader = new LightUSDWorkerLoader({
             onProgress: (info) => {
                 // Worker reports progress - UI updates immediately since main thread is free!
                 const phaseMap = {
@@ -1379,7 +1379,7 @@ async function loadWithMainThread(source, isFile, stats) {
 
     // Initialize loader if needed
     if (!loaderState.loader) {
-        loaderState.loader = new TinyUSDZLoader(undefined, {
+        loaderState.loader = new LightUSDLoader(undefined, {
             onTydraProgress: (info) => {
                 const meshProgress = info.meshTotal > 0
                     ? `${info.meshCurrent}/${info.meshTotal}`
@@ -1404,7 +1404,7 @@ async function loadWithMainThread(source, isFile, stats) {
             }
         });
         await loaderState.loader.init();
-        setMaterialXTinyUSDZ(loaderState.loader);
+        setMaterialXLightUSD(loaderState.loader);
     }
 
     let usd;
@@ -1459,7 +1459,7 @@ async function loadUSDWithProgress(source, isFile = false) {
     try {
         let usd;
 
-        // Use Web Worker for responsive UI during parsing. TinyUSDZWorker
+        // Use Web Worker for responsive UI during parsing. LightUSDWorker
         // handles both backends (it dynamically imports the next-only module
         // when the load options request backend=next).
         if (loaderState.useWorker) {

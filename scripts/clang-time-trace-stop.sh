@@ -1,2 +1,2 @@
-#ClangBuildAnalyzer --start CMakeFiles/tinyusdz_static.dir/src
-ClangBuildAnalyzer --stop CMakeFiles/tinyusdz_static.dir/src capturefile
+#ClangBuildAnalyzer --start CMakeFiles/lightusd_static.dir/src
+ClangBuildAnalyzer --stop CMakeFiles/lightusd_static.dir/src capturefile

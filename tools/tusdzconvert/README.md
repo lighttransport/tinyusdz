@@ -14,7 +14,7 @@ Capabilities:
   (LIVRPS) into a single flattened stage before writing.
 - **Texture resize** — caps each texture's longest edge.
 - **Texture re-encode** — re-encodes PNG textures with [fpnge](https://github.com/veluca93/fpnge)
-  (fast SIMD PNG encoder) when the library is built with `-DTINYUSDZ_WITH_FPNGE=ON`,
+  (fast SIMD PNG encoder) when the library is built with `-DLIGHTUSD_WITH_FPNGE=ON`,
   otherwise falls back to the portable `fpng` encoder.
 - **Texture repack** — standalone channel merging (e.g. `R=gloss, G=roughness`)
   via a generic channel-map spec.
@@ -22,13 +22,13 @@ Capabilities:
 ## Build
 
 ```bash
-cmake -B build -DTINYUSDZ_BUILD_TOOLS=ON -DTINYUSDZ_WITH_TYDRA=ON \
-      -DTINYUSDZ_WITH_FPNGE=ON -DTINYUSDZ_FPNGE_SIMD=avx2
+cmake -B build -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON \
+      -DLIGHTUSD_WITH_FPNGE=ON -DLIGHTUSD_FPNGE_SIMD=avx2
 cmake --build build -j16
 # binary: build/tools/tusdzconvert/tusdzconvert
 ```
 
-`TINYUSDZ_FPNGE_SIMD` selects the fpnge code path at compile time:
+`LIGHTUSD_FPNGE_SIMD` selects the fpnge code path at compile time:
 `avx2` (default), `sse41`, `sse2`, or `scalar`. fpnge upstream requires SSE4.1
 minimum, so `sse2` and `scalar` do not compile fpnge and PNG encoding falls back
 to `fpng`.

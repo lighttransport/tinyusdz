@@ -6,15 +6,15 @@
 #include "acutest.h"
 
 #include "unit-namespace-edit.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 #include <string>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 static bool LoadUSDA(const std::string &usda, Stage *stage) {
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       stage, &warn, &err);
   if (!ok) TEST_MSG("USDA parse failed: %s", err.c_str());

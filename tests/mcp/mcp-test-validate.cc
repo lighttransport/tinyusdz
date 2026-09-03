@@ -10,18 +10,18 @@
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-tools-scene.hh"
 #include "tydra/mcp-tools-validate.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "str-util.hh"
 #include "tydra/js-script.hh"
 #include "usdc-writer.hh"
 
-using namespace tinyusdz::tydra::mcp;
+using namespace lightusd::tydra::mcp;
 using json = nlohmann::json;
 
 namespace {
 
 std::string B64(const std::string &s) {
-  return tinyusdz::base64_encode(
+  return lightusd::base64_encode(
       reinterpret_cast<const unsigned char *>(s.data()),
       static_cast<unsigned int>(s.size()));
 }
@@ -182,11 +182,11 @@ def Xform "World"
   // Binary data uses the same wrapper as tusdcat/web, so all-groups validation
   // includes USDC crate checks when the source bytes are USDC.
   {
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     std::vector<uint8_t> usdc;
     std::string warn;
     std::string write_err;
-    TEST_CHECK(tinyusdz::usdc::SaveAsUSDCToMemory(stage, &usdc, &warn,
+    TEST_CHECK(lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &warn,
                                                   &write_err));
     TEST_CHECK(!usdc.empty());
 

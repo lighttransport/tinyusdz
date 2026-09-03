@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Minimal hardened JSON parser/serializer for TinyUSDZ.
+// Minimal hardened JSON parser/serializer for LightUSD.
 #pragma once
 
 #include <cstddef>
@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace minijson {
 
 enum class Type {
@@ -250,4 +250,4 @@ inline std::string Value::get<std::string>() const {
 }
 
 }  // namespace minijson
-}  // namespace tinyusdz
+}  // namespace lightusd

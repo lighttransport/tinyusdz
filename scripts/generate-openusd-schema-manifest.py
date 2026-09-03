@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a deterministic compact manifest from OpenUSD schema.usda files.
 
-The generated JSON is build-time documentation/test data. TinyUSDZ does not
+The generated JSON is build-time documentation/test data. LightUSD does not
 depend on OpenUSD at runtime. The parser intentionally understands only the
 declarative schema.usda surface: classes, inheritance, API kind, and top-level
 property declarations.

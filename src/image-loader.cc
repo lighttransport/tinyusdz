@@ -12,7 +12,7 @@
 
 #include "safe-arithmetic.hh"
 
-#if defined(TINYUSDZ_WITH_NANOIMAGE)
+#if defined(LIGHTUSD_WITH_NANOIMAGE)
 extern "C" {
 #include "external/nanoimage/nanoimage.h"
 #include "external/nanoimage/nanoimage_jpeg.h"
@@ -22,22 +22,22 @@ extern "C" {
 }
 #endif
 
-#if defined(TINYUSDZ_WITH_EXR)
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_WITH_EXR)
+#if defined(LIGHTUSD_EXR_V3)
 // Pure-C11 tinyexr v3 C backend (default).
 #include "external/tinyexr/include/exr.h"
 #else
-// Legacy v1 backend (deprecated; TINYUSDZ_USE_TINYEXR_V3=OFF).
+// Legacy v1 backend (deprecated; LIGHTUSD_USE_TINYEXR_V3=OFF).
 #include "external/tinyexr.h"
 #endif
 #endif
 
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
 // KTX2 / GPU-compressed texture reader (pure-C11 texpipe + texcomp). Decodes a
 // KTX2 (uni / BC7 / ASTC LDR) to uncompressed RGBA8 at load. See
-// src/external/textools/README.tinyusdz.md.
+// src/external/textools/README.lightusd.md.
 #include "texpipe.h"  // pulls in texcomp.h; tp_ktx2_read / tp_ktx2_decode_level_rgba8
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -49,9 +49,9 @@ extern "C" {
 #endif
 #endif
 
-#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
 
-#ifndef TINYUSDZ_NO_WUFFS_IMPLEMENTATION
+#ifndef LIGHTUSD_NO_WUFFS_IMPLEMENTATION
 #define WUFFS_IMPLEMENTATION
 
 #define WUFFS_CONFIG__MODULES
@@ -65,10 +65,10 @@ extern "C" {
 
 #else
 
-#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+#if !defined( LIGHTUSD_NO_BUILTIN_IMAGE_LOADER)
 
 // stb_image
-#ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
+#ifndef LIGHTUSD_NO_STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #endif
 
@@ -88,18 +88,18 @@ extern "C" {
 #endif
 
 
-#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
 
 #include "external/wuffs-unsupported-snapshot.c"
 
 #else
 
-#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+#if !defined( LIGHTUSD_NO_BUILTIN_IMAGE_LOADER)
 
 // fpng, stb_image
 #include "external/fpng.h"
 
-// avoid duplicated symbols when tinyusdz is linked to an app/library whose also use stb_image.
+// avoid duplicated symbols when lightusd is linked to an app/library whose also use stb_image.
 #define STB_IMAGE_STATIC
 #include "external/stb_image.h"
 
@@ -107,7 +107,7 @@ extern "C" {
 
 #endif
 
-#if defined(TINYUSDZ_WITH_TIFF)
+#if defined(LIGHTUSD_WITH_TIFF)
 // stb_image is owned by this translation unit; TinyDNG's implementation lives
 // in tiny_dng_loader.cc and must not include a second stb_image copy here.
 #ifndef TINY_DNG_LOADER_NO_STB_IMAGE_INCLUDE
@@ -116,7 +116,7 @@ extern "C" {
 #include "external/tiny_dng_loader.h"
 #endif
 
-#if defined(TINYUSDZ_WITH_LIBTIFF)
+#if defined(LIGHTUSD_WITH_LIBTIFF)
 #include <tiffio.h>
 // tiny_dng_loader exposes these as namespace constants, while tiffio.h
 // defines same-named preprocessor macros. Keep the TinyDNG API usable below.
@@ -141,11 +141,11 @@ extern "C" {
 
 #include "image-loader.hh"
 #include "io-util.hh"
-#if defined(TINYUSDZ_WITH_EXR) && defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_WITH_EXR) && defined(LIGHTUSD_EXR_V3)
 #include "memory-budget.hh"  // bound v3 C EXR decode allocations
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace image {
 
 namespace {
@@ -178,7 +178,7 @@ inline size_t MaxMemoryBytes(uint64_t limit_mb) {
   return static_cast<size_t>(limit_mb * kBytesPerMiB);
 }
 
-#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
 
 bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image, std::string *warn,
@@ -205,7 +205,7 @@ bool GetImageInfoWUFF(const uint8_t *bytes, const size_t size,
 
 #else
 
-#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+#if !defined( LIGHTUSD_NO_BUILTIN_IMAGE_LOADER)
 
 // Decode image(png, jpg, ...) using STB
 // 16bit PNG is supported.
@@ -440,7 +440,7 @@ bool GetImageInfoHDR(const uint8_t *bytes, const size_t size,
 #endif
 #endif
 
-#if defined(TINYUSDZ_WITH_NANOIMAGE)
+#if defined(LIGHTUSD_WITH_NANOIMAGE)
 
 // Decode image (jpg, png, bmp, tga) using nanoimage.
 // nanoimage is a fuzz-tested, memory-safe C image decoder.
@@ -541,9 +541,9 @@ bool GetImageInfoNanoimage(const uint8_t *bytes, const size_t size,
 
 #endif
 
-#if defined(TINYUSDZ_WITH_EXR)
+#if defined(LIGHTUSD_WITH_EXR)
 
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_EXR_V3)
 
 // Wrapper around tinyexr v3's EXR_OK() macro, which uses an old-style cast
 // (`((int)(r) >= 0)`) that trips -Wold-style-cast at every expansion site. The
@@ -558,7 +558,7 @@ static inline bool ExrOk(exr_result r) { return static_cast<int>(r) >= 0; }
 // callback only receives the pointer); the 16-byte offset preserves the
 // 16-byte alignment malloc already provides.
 struct ExrBudgetAllocator {
-  tinyusdz::MemoryBudgetManager mgr;
+  lightusd::MemoryBudgetManager mgr;
   explicit ExrBudgetAllocator(uint64_t budget) : mgr(budget) {}
 
 #if defined(__clang__) || defined(__GNUC__)
@@ -767,13 +767,13 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
   return true;
 }
 
-#endif  // TINYUSDZ_EXR_V3
+#endif  // LIGHTUSD_EXR_V3
 
 #endif
 
-#if defined(TINYUSDZ_WITH_TIFF)
+#if defined(LIGHTUSD_WITH_TIFF)
 
-#if defined(TINYUSDZ_WITH_LIBTIFF)
+#if defined(LIGHTUSD_WITH_LIBTIFF)
 struct TiffMemory {
   const uint8_t *data = nullptr;
   toff_t size = 0;
@@ -819,7 +819,7 @@ TIFF *OpenMemoryTiff(const uint8_t *bytes, size_t size, TiffMemory *memory) {
   memory->size = static_cast<toff_t>(size);
   memory->offset = 0;
   TIFFSetWarningHandler(nullptr);
-  return TIFFClientOpen("tinyusdz-memory", "r", memory, TiffRead, TiffWrite,
+  return TIFFClientOpen("lightusd-memory", "r", memory, TiffRead, TiffWrite,
                         TiffSeek, TiffClose, TiffSize, TiffMap, TiffUnmap);
 }
 
@@ -956,7 +956,7 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
   }
 
   if (!ret) {
-#if defined(TINYUSDZ_WITH_LIBTIFF)
+#if defined(LIGHTUSD_WITH_LIBTIFF)
     if (DecodeTiledTIFF(bytes, size, uri, image, err)) return true;
 #endif
     (*err) += "Failed to load TIFF/DNG image: " + uri + "\n";
@@ -1021,8 +1021,8 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
 
 }  // namespace
 
-#if defined(TINYUSDZ_WITH_EXR)
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_WITH_EXR)
+#if defined(LIGHTUSD_EXR_V3)
 bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
                         const std::string &uri, Image *image,
                         std::string *err) {
@@ -1221,7 +1221,7 @@ bool DecodeImageEXRHalf(const uint8_t *bytes, size_t size,
   FreeEXRHeader(&header);
   return true;
 }
-#endif  // TINYUSDZ_EXR_V3
+#endif  // LIGHTUSD_EXR_V3
 #else
 bool DecodeImageEXRHalf(const uint8_t *, size_t, const std::string &, Image *,
                         std::string *) {
@@ -1229,10 +1229,10 @@ bool DecodeImageEXRHalf(const uint8_t *, size_t, const std::string &, Image *,
 }
 #endif
 
-#if defined(TINYUSDZ_WITH_EXR)
+#if defined(LIGHTUSD_WITH_EXR)
 // EXR magic-number detection, backend-agnostic.
 static inline bool ExrIsEXR(const uint8_t *addr, size_t sz) {
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_EXR_V3)
   return exr_is_exr_memory(addr, sz) != 0;
 #else
   return TINYEXR_SUCCESS == IsEXRFromMemory(addr, sz);
@@ -1240,7 +1240,7 @@ static inline bool ExrIsEXR(const uint8_t *addr, size_t sz) {
 }
 #endif
 
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
 // KTX2 container magic (identifier bytes, KTX 2.0 spec).
 static inline bool IsKTX2FromMemory(const uint8_t *addr, size_t sz) {
   static const uint8_t id[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
@@ -1255,7 +1255,7 @@ static inline bool IsKTX2FromMemory(const uint8_t *addr, size_t sz) {
 // compressed). This is the legacy-friendly path: a .ktx2 asset becomes an
 // ordinary RGBA8 Image, so every existing consumer (software renderers,
 // re-encode to png/jpg for USDZ, web fallback) works unchanged.
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
 // KTX2 supercompressionScheme 2 (Zstd) decompressor callback: wraps the
 // vendored ZSTD_decompress into the tp_zstd_decompress_fn contract (return
 // bytes written, or 0 on error).
@@ -1290,7 +1290,7 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
   // via tp_ktx2_image_free (with the same allocator).
   size_t alloc_cap = kMaxDecodedImageBytes;
   const tir_allocator kalloc{&alloc_cap, &KTX2BudgetAlloc, &KTX2BudgetFree};
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
   tp_result r =
       tp_ktx2_read_zstd(addr, sz, &kalloc, &KTX2ZstdDecompress, nullptr, &kimg);
 #else
@@ -1393,7 +1393,7 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
   tp_ktx2_image_free(&kalloc, &kimg);  // no-op unless a Zstd buffer was owned
   return ok;
 }
-#endif  // TINYUSDZ_WITH_TEXTOOLS
+#endif  // LIGHTUSD_WITH_TEXTOOLS
 
 nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
     const uint8_t *addr, size_t sz, const std::string &uri) {
@@ -1404,7 +1404,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   ret.image.uri = uri;
   std::string err;
 
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
   // KTX2 (GPU-compressed / uni). Distinct 12-byte magic, checked first.
   if (IsKTX2FromMemory(addr, sz)) {
     bool ok = DecodeImageKTX2(addr, sz, uri, &ret.image, &err);
@@ -1415,7 +1415,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_WITH_EXR)
+#if defined(LIGHTUSD_WITH_EXR)
   if (ExrIsEXR(addr, sz)) {
 
     bool ok = DecodeImageEXR(addr, sz, uri, &ret.image, &err);
@@ -1428,7 +1428,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_WITH_TIFF)
+#if defined(LIGHTUSD_WITH_TIFF)
   {
     std::string msg;
     if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), sz, &msg)) {
@@ -1444,7 +1444,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_WITH_NANOIMAGE)
+#if defined(LIGHTUSD_WITH_NANOIMAGE)
   // Try nanoimage for common formats (jpg, png, bmp, tga).
   // Fuzz-tested, memory-safe C decoder. Falls through to STB/WUFFS on failure.
   {
@@ -1459,7 +1459,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 
   // HDR (Radiance RGBE) detection - must be before generic STB fallback
   // to ensure we decode as float instead of uint8
-#if !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER) && !defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER) && !defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
   if (IsHDRFromMemory(addr, sz)) {
     bool ok = DecodeImageHDR(addr, sz, uri, &ret.image, &ret.warning, &err);
 
@@ -1471,9 +1471,9 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
   bool ok = DecodeImageWUFF(addr, sz, uri, &ret.image, &ret.warning, &err);
-#elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+#elif !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER)
   bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
 #else
   // TODO: Use user-supplied image loader
@@ -1495,9 +1495,9 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   image::ImageInfoResult ret;
   std::string err;
 
-#if defined(TINYUSDZ_WITH_EXR)
+#if defined(LIGHTUSD_WITH_EXR)
   if (ExrIsEXR(addr, sz)) {
-#if defined(TINYUSDZ_EXR_V3)
+#if defined(LIGHTUSD_EXR_V3)
     // Parse headers + offset tables only (no pixel decode) for fast info query.
     ExrBudgetAllocator budget(kMaxDecodedImageBytes);
     exr_allocator alloc = budget.handle();
@@ -1534,7 +1534,7 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_WITH_TIFF)
+#if defined(LIGHTUSD_WITH_TIFF)
   if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), sz, &err)) {
     std::vector<tinydng::FieldInfo> custom_fields;
     std::vector<tinydng::DNGImage> images;
@@ -1543,7 +1543,7 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
     if (!tinydng::LoadDNGMetadataFromMemory(
             reinterpret_cast<const char *>(addr), sz, custom_fields,
             &images, &warn, &dngerr) || images.empty()) {
-#if defined(TINYUSDZ_WITH_LIBTIFF)
+#if defined(LIGHTUSD_WITH_LIBTIFF)
       if (GetTiledTIFFInfo(addr, sz, &ret.width, &ret.height,
                            &ret.channels)) {
         return std::move(ret);
@@ -1564,7 +1564,7 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_WITH_NANOIMAGE)
+#if defined(LIGHTUSD_WITH_NANOIMAGE)
   {
     bool ok = GetImageInfoNanoimage(addr, sz, uri, &ret.width, &ret.height,
                                     &ret.channels, &ret.warning, &err);
@@ -1576,7 +1576,7 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 #endif
 
   // HDR (Radiance RGBE) detection
-#if !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER) && !defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER) && !defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
   if (IsHDRFromMemory(addr, sz)) {
     bool ok = GetImageInfoHDR(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
     if (!ok) {
@@ -1586,9 +1586,9 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   }
 #endif
 
-#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+#if defined(LIGHTUSD_USE_WUFFS_IMAGE_LOADER)
   bool ok = GetImageInfoWUFF(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
-#elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+#elif !defined(LIGHTUSD_NO_BUILTIN_IMAGE_LOADER)
   bool ok = GetImageInfoSTB(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
 #else
   (void)addr;
@@ -1689,4 +1689,4 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(
 }
 
 }  // namespace image
-}  // namespace tinyusdz
+}  // namespace lightusd

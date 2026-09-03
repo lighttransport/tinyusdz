@@ -2,7 +2,7 @@
 
 **Author**: Analysis of OpenUSD v0.13.0 codebase
 **Date**: 2025-11-01
-**Source**: `/home/syoyo/work/tinyusdz-git/timesamples-refactor/aousd/OpenUSD/pxr/usd/sdf/`
+**Source**: `/home/syoyo/work/lightusd-git/timesamples-refactor/aousd/OpenUSD/pxr/usd/sdf/`
 
 This document provides a comprehensive analysis of the OpenUSD Crate binary format (`.usdc` files) implementation, based on exploration of the official OpenUSD codebase.
 

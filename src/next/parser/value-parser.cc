@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Value Parser implementation
+// LightUSD Next - Value Parser implementation
 
 #include "value-parser.hh"
 #include "value-parser-numeric.hh"
@@ -20,11 +20,11 @@
 #include <unordered_map>
 #include <vector>
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -227,4 +227,4 @@ ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type) {
 
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

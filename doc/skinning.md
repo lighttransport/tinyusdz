@@ -76,7 +76,7 @@ localSkinnedPoint = skelSkinnedPoint * skelLocalToWorld * inv(gprimLocalToWorld)
 
 USD selects DQS via `primvars:skel:skinningMethod = "DualQuaternion"` (same
 pipeline as LBS but with dual-quaternion interpolation, which preserves volume
-better). **Not yet implemented in TinyUSDZ**: the skinning utilities below are
+better). **Not yet implemented in LightUSD**: the skinning utilities below are
 LBS-only and `skinningMethod` is not currently read.
 
 ## Blend Shapes
@@ -85,7 +85,7 @@ Applied BEFORE joint skinning: offsets added to input positions, then standard s
 
 ---
 
-## TinyUSDZ Tydra Data Export
+## LightUSD Tydra Data Export
 
 The RenderScene conversion exports **raw USD skinning data** (it does not bake
 skinned positions); mesh xformOps are kept rather than stripped. Standalone
@@ -154,9 +154,9 @@ p_world_blender(t) = M_parentAboveSkel(t) * M_parentBelowSkel(t) * M_meshLocal
 
 **Key difference**: Blender applies mesh and parent xformOps, which deviates from the USD spec.
 
-### TinyUSDZ / Three.js Evaluation
+### LightUSD / Three.js Evaluation
 
-TinyUSDZ exports the **full USD scene graph** and lets Three.js's world-space `bind()` produce the correct result.
+LightUSD exports the **full USD scene graph** and lets Three.js's world-space `bind()` produce the correct result.
 
 ```
 W_mesh_bind   = A * M_mesh

@@ -25,8 +25,8 @@ function progress(info) {
 async function ensureWasm() {
   if (native) return native;
   progress({ stage: 'wasm', current: 0, total: 1, message: 'Loading converter module' });
-  native = await loadWasm(() => import('./src/tinyusdz/tinyusdz.js'), {
-    onTinyUSDZDebug(event) {
+  native = await loadWasm(() => import('./src/lightusd/lightusd.js'), {
+    onLightUSDDebug(event) {
       const now = performance.now();
       if (now - lastDebugPostMs < 120) return;
       lastDebugPostMs = now;

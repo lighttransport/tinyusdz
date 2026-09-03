@@ -37,7 +37,7 @@
 #include "namespace-mapping.hh"
 #include "tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class Stage;
@@ -297,7 +297,7 @@ class PrimIndex {
 };
 
 // Incremental payload (un)load helpers (friends of PrimIndex).
-CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+CompNode &GetMutableNode(PrimIndex &index LIGHTUSD_LIFETIMEBOUND,
                          uint16_t node_idx);
 void RecomputeStrengthOrder(PrimIndex &index);
 
@@ -859,8 +859,8 @@ class PrimIndexBuilder {
 
 }  // namespace composition_graph
 
-// Convenience aliases at tinyusdz namespace level
+// Convenience aliases at lightusd namespace level
 using CompositionGraph = composition_graph::CompositionGraph;
 using CompositionGraphOptions = composition_graph::CompositionGraphOptions;
 
-}  // namespace tinyusdz
+}  // namespace lightusd

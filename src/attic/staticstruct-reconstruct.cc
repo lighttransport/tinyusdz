@@ -2,7 +2,7 @@
 /// Need to define in header file.
 namespace staticstruct {
 
-using namespace tinyusdz::value;
+using namespace lightusd::value;
 
 // -- For Reconstructor
 

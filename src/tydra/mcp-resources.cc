@@ -13,7 +13,7 @@
 
 using namespace nlohmann;
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -24,7 +24,7 @@ static bool ListResourcesImpl(const Context &ctx, json &result) {
   result["resources"] = nlohmann::json::array();
 
   for (const auto &res : ctx.assets) {
-    
+
     json res_j;
 
     res_j["name"] = res.second.name;
@@ -40,13 +40,13 @@ static bool ListResourcesImpl(const Context &ctx, json &result) {
 } // namespace
 
 bool GetResourcesList(const Context &ctx, nlohmann::json &result) {
-  
+
   return ListResourcesImpl(ctx, result);
 }
 
 bool ReadResource(const Context &ctx, const std::string &name, nlohmann::json &result) {
   // TODO: multiple resources
-  
+
 
   if (!ctx.assets.count(name)) {
     // TODO: report error
@@ -68,4 +68,4 @@ bool ReadResource(const Context &ctx, const std::string &name, nlohmann::json &r
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

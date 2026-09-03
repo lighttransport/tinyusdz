@@ -1,5 +1,5 @@
-# Makefile for building C++ application with OpenUSD and TinyUSDZ
-# Requires: OpenUSD built in ../dist and TinyUSDZ built in ../../build
+# Makefile for building C++ application with OpenUSD and LightUSD
+# Requires: OpenUSD built in ../dist and LightUSD built in ../../build
 
 # Compiler settings
 CXX = clang++-20
@@ -10,15 +10,15 @@ TARGET = usd_comparison
 
 # Directories
 OPENUSD_ROOT = ../dist
-TINYUSDZ_ROOT = ../..
-TINYUSDZ_BUILD = $(TINYUSDZ_ROOT)/build
+LIGHTUSD_ROOT = ../..
+LIGHTUSD_BUILD = $(LIGHTUSD_ROOT)/build
 
 # Include paths
 INCLUDES = \
 	-I$(OPENUSD_ROOT)/include \
 	-I$(OPENUSD_ROOT)/include/boost-1_82 \
-	-I$(TINYUSDZ_ROOT)/src \
-	-I$(TINYUSDZ_ROOT)/src/external
+	-I$(LIGHTUSD_ROOT)/src \
+	-I$(LIGHTUSD_ROOT)/src/external
 
 # Compiler flags
 CXXFLAGS = -std=c++17 -O2 -g -Wall -Wno-deprecated -Wno-deprecated-declarations \
@@ -26,7 +26,7 @@ CXXFLAGS = -std=c++17 -O2 -g -Wall -Wno-deprecated -Wno-deprecated-declarations 
 	$(INCLUDES)
 
 # Linker flags and libraries
-LDFLAGS = -L$(OPENUSD_ROOT)/lib -L$(TINYUSDZ_BUILD)
+LDFLAGS = -L$(OPENUSD_ROOT)/lib -L$(LIGHTUSD_BUILD)
 
 # OpenUSD libraries (order matters!)
 USD_LIBS = \
@@ -55,14 +55,14 @@ USD_LIBS = \
 	-lvt \
 	-lar
 
-# TinyUSDZ library
-TINYUSDZ_LIBS = -ltinyusdz_static
+# LightUSD library
+LIGHTUSD_LIBS = -llightusd_static
 
 # System libraries
 SYS_LIBS = -ltbb -lpthread -ldl -lm
 
 # All libraries
-LIBS = $(USD_LIBS) $(TINYUSDZ_LIBS) $(SYS_LIBS)
+LIBS = $(USD_LIBS) $(LIGHTUSD_LIBS) $(SYS_LIBS)
 
 # Source files
 SRCS = main.cpp
@@ -90,7 +90,7 @@ run: $(TARGET)
 debug:
 	@echo "CXX: $(CXX)"
 	@echo "OPENUSD_ROOT: $(OPENUSD_ROOT)"
-	@echo "TINYUSDZ_BUILD: $(TINYUSDZ_BUILD)"
+	@echo "LIGHTUSD_BUILD: $(LIGHTUSD_BUILD)"
 	@echo "INCLUDES: $(INCLUDES)"
 	@echo "LIBS: $(LIBS)"
 

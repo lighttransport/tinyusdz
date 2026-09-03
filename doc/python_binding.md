@@ -1,11 +1,11 @@
-# TinyUSDZ Python Binding
+# LightUSD Python Binding
 
-TinyUSDZ ships a CPython extension package named `tinyusdz` **v1.0.0**
+LightUSD ships a CPython extension package named `lightusd` **v1.0.0**
 (next core, `preview` npm dist-tag), built on the **next core**
 (`src/next/` + `src/tydra/next/`) through the C API (`src/c-api/`). The
-legacy tinyusdz core is not linked into the Python wheel. Native C++ (`cmake
+legacy lightusd core is not linked into the Python wheel. Native C++ (`cmake
 -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
-`TINYUSDZ_WASM_PRODUCT=legacy/next/combined`) still build and ship the legacy
+`LIGHTUSD_WASM_PRODUCT=legacy/next/combined`) still build and ship the legacy
 path.
 
 End-user package documentation lives in [../python/README.md](../python/README.md).
@@ -13,7 +13,7 @@ This page is for source builds and maintainer notes.
 
 ## Package Status
 
-- Package name: `tinyusdz`
+- Package name: `lightusd`
 - Python support: CPython 3.10+ (stable ABI) and free-threaded CPython 3.14
 - Wheels: `cp310-abi3` (one wheel covers 3.10+) and `cp314t` (free-threaded,
   `Py_mod_gil = Py_MOD_GIL_NOT_USED`)
@@ -24,11 +24,11 @@ This page is for source builds and maintainer notes.
 ## Architecture
 
 ```
-python/tinyusdz/__init__.py   pure-python facade (pathlib, value normalizer)
-python/tinyusdz/tydra.py      render-scene shim
-src/python/py-*.c             raw CPython C-API extension (tinyusdz._core)
-src/c-api/tinyusdz-c.*        core C API (tusd_*): stage/prim/attr/authoring
-src/c-api/tinyusdz-render-c.* tydra render C API (buffers, materials, nodes)
+python/lightusd/__init__.py   pure-python facade (pathlib, value normalizer)
+python/lightusd/tydra.py      render-scene shim
+src/python/py-*.c             raw CPython C-API extension (lightusd._core)
+src/c-api/lightusd-c.*        core C API (tusd_*): stage/prim/attr/authoring
+src/c-api/lightusd-render-c.* tydra render C API (buffers, materials, nodes)
 src/next/                     next core (parser, crate, composition, writers)
 src/tydra/next/               render-scene converter
 ```
@@ -51,9 +51,9 @@ pip install -e .          # drives CMake on src/next, then builds the extension
 pytest python/tests -q
 ```
 
-Environment overrides: `TINYUSDZ_PY_LIMITED_API=0` (force a non-abi3 dev
-build), `TINYUSDZ_CMAKE_ARGS` (extra CMake args),
-`TINYUSDZ_TEST_ASSETS` (pytest asset dir).
+Environment overrides: `LIGHTUSD_PY_LIMITED_API=0` (force a non-abi3 dev
+build), `LIGHTUSD_CMAKE_ARGS` (extra CMake args),
+`LIGHTUSD_TEST_ASSETS` (pytest asset dir).
 
 Wheels are built by `.github/workflows/wheels.yml` with cibuildwheel (v3.x,
 `enable = ["cpython-freethreading"]`); configuration lives in
@@ -62,8 +62,8 @@ Publishing (OIDC), unchanged.
 
 ## C API notes
 
-`src/c-api/tinyusdz-c.h` is a standalone C11 FFI surface usable from any
+`src/c-api/lightusd-c.h` is a standalone C11 FFI surface usable from any
 language (Rust/C#/Deno/...): opaque owning handles + by-value `tusd_prim`
 handles, thread-local `tusd_last_error()`, zero-copy `tusd_value_view` /
 `tusd_buffer_view` views, batched authoring calls. Smoke-tested from pure C
-by `tests/c-api/test_tinyusdz_c.c` (ctest: `next_test_c_api`).
+by `tests/c-api/test_lightusd_c.c` (ctest: `next_test_c_api`).

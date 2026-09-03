@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Syoyo Fujita & Light Transport Entertainment Inc.
 //
-// Variant Converter for TinyUSDZ RenderScene
+// Variant Converter for LightUSD RenderScene
 // Converts USD variant structures into RenderScene variant groups
 //
 
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class Stage;
@@ -69,7 +69,7 @@ class VariantConverter {
   /// @return The extracted VariantSet, or empty on error
   tydra::VariantSet ExtractVariantSetDefinition(
       const std::string &variant_set_name,
-      const tinyusdz::VariantSet &usd_variant_set,
+      const lightusd::VariantSet &usd_variant_set,
       RenderScene *scene,
       std::string *err);
 
@@ -81,7 +81,7 @@ class VariantConverter {
   /// @return The extracted VariantOption
   VariantOption ExtractVariantOption(
       const std::string &variant_name,
-      const tinyusdz::Variant &variant,
+      const lightusd::Variant &variant,
       RenderScene *scene,
       std::string *err);
 
@@ -91,7 +91,7 @@ class VariantConverter {
   /// @param err Error message
   /// @return List of nested VariantSets
   std::vector<std::shared_ptr<tydra::VariantSet>> ExtractNestedVariantSets(
-      const tinyusdz::Variant &variant,
+      const lightusd::Variant &variant,
       RenderScene *scene,
       std::string *err);
 
@@ -116,4 +116,4 @@ class VariantConverter {
 };
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

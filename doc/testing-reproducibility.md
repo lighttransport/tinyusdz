@@ -9,10 +9,10 @@ network updates.
 ## Clean full run
 
 Use a new cache for an independent reproduction. The cache may be placed
-elsewhere with `TINYUSDZ_VERIFY_CACHE`.
+elsewhere with `LIGHTUSD_VERIFY_CACHE`.
 
 ```bash
-export TINYUSDZ_VERIFY_CACHE=/tmp/tinyusdz-verification-clean
+export LIGHTUSD_VERIFY_CACHE=/tmp/lightusd-verification-clean
 scripts/verify.sh prepare --profile full
 scripts/verify.sh test --profile full --offline --software
 ```
@@ -30,7 +30,7 @@ The full profile covers:
 - web Node/WASM tests, MuJoCo physics, Menagerie MJCF/USD/MJCF closure,
   five-model URDF browser rendering, and the full OffscreenCanvas worker sweep;
 - USD-WG asset parsing; and
-- TinyUSDZ/OpenUSD `usdcat` comparison and checker parity.
+- LightUSD/OpenUSD `usdcat` comparison and checker parity.
 
 Browser phases need loopback access for Vite and Puppeteer. In restricted
 sandboxes, run the test command with the environment's approved loopback
@@ -69,7 +69,7 @@ scripts/prepare-usd-assets.sh --checkout-only
 `scripts/prepare-mujoco-wasm.sh` checks out and builds the pinned manifest
 ref into the verification cache. This pin upgrades the fork's MuJoCo base
 from 3.7.0 to 3.10.1 and includes the physics-only COM-Jacobian and spatial-
-tendon bindings used by TinyUSDZ. The pinned head also gates emscripten's
+tendon bindings used by LightUSD. The pinned head also gates emscripten's
 `--emit-tsd` behind `MUJOCO_WASM_EMIT_TSD` (default OFF) because the typings
 codegen shells out to `tsc --outFile`, which TypeScript 5.x removed. Point
 the physics tests at the built artifacts with

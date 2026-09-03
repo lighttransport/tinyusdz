@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache arc expansion.
+// LightUSD Next - PCP Cache arc expansion.
 // Included inside Cache::Impl.
 
   // --- arc expansion (inherits/variants/references/payloads/specializes) ---

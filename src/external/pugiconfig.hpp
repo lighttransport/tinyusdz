@@ -27,7 +27,7 @@
 // #define PUGIXML_NO_STL
 
 // Uncomment this to disable exceptions
-// tinyusdz mod
+// lightusd mod
 #define PUGIXML_NO_EXCEPTIONS
 
 // Set this to control attributes for public classes/functions, i.e.:

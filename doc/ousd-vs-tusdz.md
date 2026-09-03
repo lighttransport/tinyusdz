@@ -1,9 +1,9 @@
-# AOUSD Core 1.0.1, OpenUSD, and TinyUSDZ `next`/Tydra-next review
+# AOUSD Core 1.0.1, OpenUSD, and LightUSD `next`/Tydra-next review
 
 | Review input | Pinned value |
 |---|---|
 | Review date | 2026-07-12 |
-| TinyUSDZ revision | `d4a4053e7c501717709ac512c41e6eb31ad6f9a2` (`physics-2026-fix2`) plus the reviewed remediation working tree described below |
+| LightUSD revision | `d4a4053e7c501717709ac512c41e6eb31ad6f9a2` (`physics-2026-fix2`) plus the reviewed remediation working tree described below |
 | OpenUSD source revision | `2095fafafd033fa23386d7ec6d58c7cc33974518` (`v26.03-278-g2095fafaf`) |
 | OpenUSD comparison tool | `../OpenUSD/dist/bin/usdcat`; installed headers report `PXR_VERSION 2605` |
 | Normative specification | [AOUSD Core Specification 1.0.1](../aousd/core/1.0.1/core_spec.md), source revision `b7bc21a`, 2025-12-12 |
@@ -17,7 +17,7 @@ The gaps selected for the 2026-07-11 remediation pass and the 2026-07-12 deeper 
 
 | Requested area | Current status | Implementation |
 |---|---|---|
-| Unicode identifiers | **Fixed** | `next` reuses TinyUSDZ's generated Unicode XID tables for UTF-8 lexing and prim-name validation. |
+| Unicode identifiers | **Fixed** | `next` reuses LightUSD's generated Unicode XID tables for UTF-8 lexing and prim-name validation. |
 | Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `next_usdcat --aousd-strict` enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
 | Spline support | **Implemented** | Typed splines parse, evaluate (`timeSamples > spline > default`, held/linear/bezier/hermite + extrapolation + `autoEase`), and serialize to USDC type-59. Per-knot `customData` now survives USDA and the Crate `unordered_map<double, VtDictionary>` framing. |
 | Unsupported typed-value loss | **Mitigated; `frame4d`/`pathExpression` first-class, `opaque`/`group` blocks supported** | Typed values round-trip; `opaque`/`group` declarations and their only agreeing value (`None`) are accepted. Other extension defaults are preserved as raw authored values, and strict mode rejects unencodable values. |
@@ -37,11 +37,11 @@ The gaps selected for the 2026-07-11 remediation pass and the 2026-07-12 deeper 
 
 The dedicated [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) regression covers Unicode, the normative §8 valid/invalid path examples, typed spline parse/evaluate/USDC round-trip, the expanded foundational type matrix, `opaque`/`group` block USDA/USDC round trips, dictionary and multi-site relationship composition, raw/forwarded relationship targets and cycles, authored-empty defaultPrim/documentation/dictionaries/color metadata/namespace orders/relationships, the complete reviewed `apiSchemas`, `variantSetNames`, and `clipSets` sublist matrices, ordinary/direct-inherit/multi-inherit/specialize specifier matrices, ancestry and model-hierarchy queries, fixture-backed USDA/USDC namespace order, composed defaultPrim references, the exact §12.6 interpolation matrix, schema fallback/population, value clips (set ordering, manifest gating, and bracketing interpolation), and strict missing-loader behavior. Pxr-authored USDC fixtures separately verify empty order/list field presence and that unknown fields at every core spec scope cannot bypass strict loss detection.
 
-TinyUSDZ still must not claim full AOUSD Core 1.0.1 compliance, but the supplemental composition delta that used to be the largest measured blocker is now **closed: all 138 supplemental composition cases pass** (see [Supplemental corpus](#verification-performed)). OpenUSD domain-schema breadth and the full `SdfVariableExpression` function grammar remain outside the completed AOUSD Core schema and asset-path-substitution subsets.
+LightUSD still must not claim full AOUSD Core 1.0.1 compliance, but the supplemental composition delta that used to be the largest measured blocker is now **closed: all 138 supplemental composition cases pass** (see [Supplemental corpus](#verification-performed)). OpenUSD domain-schema breadth and the full `SdfVariableExpression` function grammar remain outside the completed AOUSD Core schema and asset-path-substitution subsets.
 
 ## Executive conclusion
 
-TinyUSDZ `next` is a substantial, security-conscious USD implementation, and its tested USDA, USDC, USDZ, composition, validation, and Tydra conversion surfaces are much broader than a minimal reader. After the remediation above, it is safer and materially closer to the normative behavior, but it is still **not fully conformant with AOUSD Core Specification 1.0.1** under the specification's section 4 compliance definition.
+LightUSD `next` is a substantial, security-conscious USD implementation, and its tested USDA, USDC, USDZ, composition, validation, and Tydra conversion surfaces are much broader than a minimal reader. After the remediation above, it is safer and materially closer to the normative behavior, but it is still **not fully conformant with AOUSD Core Specification 1.0.1** under the specification's section 4 compliance definition.
 
 That conclusion is not based merely on missing OpenUSD APIs. It follows from confirmed normative behavior differences in each of the three mandatory compliance areas:
 
@@ -59,11 +59,11 @@ This review covers:
 
 - `src/next` core data model, USDA/USDC/USDZ I/O, composition, resource resolution, validation, and value evaluation;
 - `src/tydra/next` render-scene conversion and access behavior;
-- relevant legacy TinyUSDZ behavior where `tusdcat` provides a useful second implementation point;
+- relevant legacy LightUSD behavior where `tusdcat` provides a useful second implementation point;
 - the checked-out OpenUSD source and `usdcat` as the expected behavior oracle where the AOUSD text is ambiguous;
 - the normative AOUSD Core Specification 1.0.1 stored in this repository.
 
-It does **not** require TinyUSDZ to reproduce every OpenUSD library, plugin, Python binding, imaging subsystem, or command-line option. Those are OpenUSD parity questions, not automatically AOUSD conformance requirements. Conversely, a small API surface can still be conformant if its implemented stage, resolution, and format behavior meets section 4.
+It does **not** require LightUSD to reproduce every OpenUSD library, plugin, Python binding, imaging subsystem, or command-line option. Those are OpenUSD parity questions, not automatically AOUSD conformance requirements. Conversely, a small API surface can still be conformant if its implemented stage, resolution, and format behavior meets section 4.
 
 The December 2025 AOUSD supplemental release is integrated as an optional external corpus through [`run-aousd-supplemental.py`](../tests/next/run-aousd-supplemental.py). It is Apache-2.0 but is not vendored, avoiding 19 MB of binary fixtures. The Core Specification remains normative; the adapter supplies a measurable regression baseline rather than a compliance declaration.
 
@@ -71,7 +71,7 @@ The December 2025 AOUSD supplemental release is integrated as an optional extern
 
 The findings below are grounded primarily in these implementation areas:
 
-| Concern | TinyUSDZ source |
+| Concern | LightUSD source |
 |---|---|
 | USDA property parsing and unsupported suffix handling | [`ascii-parser-prim.cc`](../src/next/parser/ascii-parser-prim.cc) |
 | Foundational type registry and values | [`type-id.hh`](../src/next/types/type-id.hh), [`type-info.cc`](../src/next/types/type-info.cc), [`value.hh`](../src/next/types/value.hh) |
@@ -189,7 +189,7 @@ The canonical validator now runs at the programmatic authoring boundaries (`Path
 
 At baseline, rewriting the OpenUSD namespace-order fixture lost root, property, and child order. `next` now retains the sparse population fields separately from natural child storage. The renewed audit found that the first USDC implementation only reordered the natural `properties` vector; it now also writes and reads the actual Crate `primOrder`/`propertyOrder` fields.
 
-There is also an ecosystem wording issue worth separating from the implementation defect: an AOUSD example uses `reorder propertyChildren`, while the reviewed OpenUSD parser expects `reorder properties`. This remains a specification/OpenUSD grammar clarification rather than a TinyUSDZ population-order gap.
+There is also an ecosystem wording issue worth separating from the implementation defect: an AOUSD example uses `reorder propertyChildren`, while the reviewed OpenUSD parser expects `reorder properties`. This remains a specification/OpenUSD grammar clarification rather than a LightUSD population-order gap.
 
 ### AOUSD-COMP-001 — Dictionaries replace instead of recursively composing (P0)
 
@@ -504,7 +504,7 @@ The Crate reader keeps a reference item but warns and skips its per-item diction
 
 ### OpenUSD library and service surface
 
-| OpenUSD area | TinyUSDZ `next`/Tydra status | Conformance significance |
+| OpenUSD area | LightUSD `next`/Tydra status | Conformance significance |
 |---|---|---|
 | `Sdf` layer/spec/path/value model | Substantial custom equivalent | Core-relevant; exact gaps are documented above. |
 | `Pcp` composition cache/index | Substantial custom PCP and legacy flattening paths | Core-relevant. Backend divergence must be reduced. |
@@ -658,7 +658,7 @@ The first remediation pass completed the loss policy, Unicode/path handling, rec
 ### Phase 3 — Make compliance measurable (adapter complete; composition ratchet active)
 
 1. The external AOUSD Core supplemental adapter is implemented for data types, file formats, stage population, and value-resolution entry assets. Add a fixture revision manifest if a second upstream release is admitted.
-2. For each case, compare TinyUSDZ against the normative expected result and, when needed, the pinned OpenUSD oracle.
+2. For each case, compare LightUSD against the normative expected result and, when needed, the pinned OpenUSD oracle.
 3. Produce a machine-readable manifest containing spec version, implementation revision, supported feature/version matrix, pass/fail/skip reason, and whether any lossy mode was enabled.
 4. Fail a future “conformance” mode on any non-empty `skippedGroups` entry (the
    semantic checker now exposes requested/checked/skipped groups in JSON).
@@ -696,7 +696,7 @@ The generated-coverage/supplemental pass adds 13 generated AOUSD Core schema pro
 | Value-resolution entry layers | **8/8 load/compose pass** |
 | Composition expected paths | **138/138 pass; 0 measured gaps** |
 
-Configure the optional full gate with `-DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT=/path/to/core-spec-supplemental-release_dec2025`. The ordinary tree does not require or download this external corpus; `next_aousd_generated_tables` always checks the committed generated tables.
+Configure the optional full gate with `-DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT=/path/to/core-spec-supplemental-release_dec2025`. The ordinary tree does not require or download this external corpus; `next_aousd_generated_tables` always checks the committed generated tables.
 
 With that external path configured, the complete standalone regression run passes **36/36** CTest targets (all `add_test` entries in `src/next/CMakeLists.txt`, including the corpus and supplemental gates). The composition ratchet (`--max-composition-fail`) is now **0**: every supplemental composition case must pass, so any file-format, data-type, value-entry, or composition regression fails the gate.
 
@@ -730,7 +730,7 @@ The `web/build_ninja` WASM next-core/Tydra module also rebuilt successfully. Dir
 
 ### Differential probe summary
 
-| Probe | TinyUSDZ `next` | OpenUSD `usdcat` | Expected action |
+| Probe | LightUSD `next` | OpenUSD `usdcat` | Expected action |
 |---|---|---|---|
 | Unicode prim `München` | **Now accepts in strict and compatibility modes** | Accepts | Fixed with shared XID tables. |
 | `spline_basic.usda` rewrite | Parses/evaluates typed splines; USDC type-59 round-trips | Typed splines retained | Fixed for reviewed cases. |
@@ -740,7 +740,7 @@ The `web/build_ninja` WASM next-core/Tydra module also rebuilt successfully. Dir
 | Sublayer scale `-2`/NaN | Strict rejects; compatibility warns and uses identity | Warns and uses default mapping | Fixed. |
 | External reference with omitted prim path | Preserves empty path and target `defaultPrim` semantics | Uses target `defaultPrim` | Fixed; `</>` is no longer synthesized. |
 | Relationship forwarding chain + cycle | Returns ordered, deduplicated terminal targets, terminates cycles, and remaps prototype targets to instance paths | Same reviewed ordinary-stage result | Fixed for ordinary and native instance-proxy paths. |
-| Authored-empty documentation | Layer/prim/property authored state survives USDA and next USDC | Prim/property survive; reviewed OpenUSD normalizes empty layer documentation away | TinyUSDZ now follows the normative authored-state requirement; Crate uses `documentation`, not USDA's `doc` alias. |
+| Authored-empty documentation | Layer/prim/property authored state survives USDA and next USDC | Prim/property survive; reviewed OpenUSD normalizes empty layer documentation away | LightUSD now follows the normative authored-state requirement; Crate uses `documentation`, not USDA's `doc` alias. |
 | Authored-empty `defaultPrim` | Preserved through USDA/USDC and blocks a weaker defaultPrim | Preserved through USDA/USDC | Fixed with explicit layer/stage authored state. |
 | Authored-empty namespace order | Pseudo-root `primOrder` plus prim `primOrder`/`propertyOrder` survive USDC | OpenUSD authoring API preserves all three in USDC; USDA rejects empty reorder syntax | Fixed for the representable USDC path; fixture is stored as deterministic hex. |
 | `variantSetNames` list-op matrix | Explicit-empty, explicit, add, prepend, append, delete, order, and mixed sublists survive OpenUSD-USDC → next → OpenUSD-USDC | Sdf reports the same authored sublists | Fixed for layer read/write; explicit-empty has no valid USDA spelling and generic cross-site composition remains. |
@@ -795,7 +795,7 @@ At minimum add named tests for:
 
 ## Known review limitations
 
-- The TinyUSDZ working tree contains unrelated untracked `.tmp-*` files; they were not read as review evidence or modified. The reviewed code baseline and remediation working tree are identified separately above.
+- The LightUSD working tree contains unrelated untracked `.tmp-*` files; they were not read as review evidence or modified. The reviewed code baseline and remediation working tree are identified separately above.
 - The former MaterialX memory-flatten gate was a stale test type assertion
   (`token` versus the schema-defined `string`) and is now corrected.
 - The OpenUSD source checkout and installed comparison binary are not proven to be the same build: source describes `v26.03-278`, while installed headers report version 26.05. This was recorded rather than hidden; conformance tests should rebuild and pin one oracle.
@@ -805,6 +805,6 @@ At minimum add named tests for:
 
 ## Final assessment
 
-TinyUSDZ `next` is already credible as a bounded, portable USD ingestion and rendering foundation, especially for controlled content profiles. Its USDZ writer, broad Crate machinery, composition graph work, diagnostics, and Tydra conversion coverage are notable strengths.
+LightUSD `next` is already credible as a bounded, portable USD ingestion and rendering foundation, especially for controlled content profiles. Its USDZ writer, broad Crate machinery, composition graph work, diagnostics, and Tydra conversion coverage are notable strengths.
 
 For arbitrary AOUSD Core 1.0.1 content, the current implementation remains **profile-based, not fully conformant**. The renewed passes closed the reviewed defaultPrim-reference and authored-empty defaultPrim, population/order, AOUSD Core generated schemas, generated elective-field inventory, expression asset paths, `apiSchemas`/`variantSetNames` authored sublists, compression-bit, interpolation, relationship-forwarding, documentation/dictionary/color fields, reviewed specifier matrices, ancestry/model queries, explicit-empty relationship/API-schema, and strict all-spec-scope field-loss gaps. The supplemental composition delta is now closed as well (138/138; per-layer-stack relocates, prefix-map sets, ancestral arc targets, and full implied-class chains). The measured critical path is now direct sampled-value oracle comparison, non-core OpenUSD schema breadth, the general variable-expression function language, and registry-driven cross-site composition for unregistered list-op fields.

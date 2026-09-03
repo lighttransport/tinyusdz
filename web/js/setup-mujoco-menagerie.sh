@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCK_FILE="$SCRIPT_DIR/tests/fixtures/mujoco-menagerie.lock"
 DEFAULT_DIR="$SCRIPT_DIR/.cache/mujoco_menagerie"
 DATASET_DIR="${MUJOCO_MENAGERIE:-$DEFAULT_DIR}"
-OFFLINE="${TINYUSDZ_VERIFY_OFFLINE:-0}"
+OFFLINE="${LIGHTUSD_VERIFY_OFFLINE:-0}"
 
 usage() {
   sed -n '2,24p' "$0"

@@ -13,14 +13,14 @@
 
 #include "image_decode.hh"
 #include "next/reader/usdz-reader.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-data.hh"
 
 namespace tusdql {
 
-namespace tnext = ::tinyusdz::next;
-namespace tyn = ::tinyusdz::tydra::next;
+namespace tnext = ::lightusd::next;
+namespace tyn = ::lightusd::tydra::next;
 
 const char* LoadPhaseName(LoadPhase phase) {
   switch (phase) {
@@ -174,9 +174,9 @@ class TextureSource {
     for (char& c : ext) c = static_cast<char>(::tolower(c));
     if (ext != ".usdz") return;
 
-    ::tinyusdz::next::USDZReadOptions zopts;
+    ::lightusd::next::USDZReadOptions zopts;
     zopts.max_archive_size = max_archive_bytes;
-    zip_ = std::make_unique<::tinyusdz::next::USDZReader>();
+    zip_ = std::make_unique<::lightusd::next::USDZReader>();
     if (!zip_->OpenFile(root_path, zopts)) zip_.reset();
   }
 
@@ -217,7 +217,7 @@ class TextureSource {
 
  private:
   std::string root_path_;
-  std::unique_ptr<::tinyusdz::next::USDZReader> zip_;
+  std::unique_ptr<::lightusd::next::USDZReader> zip_;
   size_t max_image_bytes_ = 0;
 };
 

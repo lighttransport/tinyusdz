@@ -18,7 +18,7 @@ bash build.sh                                # -> texcomp_web.mjs + texcomp_web.
 
 `texcomp_web.{mjs,wasm}` are generated build artifacts (git-ignored). The module
 is pure C11 compiled from `src/external/textools/texcomp` + `texcomp_web.c`; it
-does not link tinyusdz.
+does not link lightusd.
 
 ## Run
 

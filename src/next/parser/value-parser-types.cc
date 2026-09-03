@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USD type-name parser table.
+// LightUSD Next - USD type-name parser table.
 
 #include "value-parser.hh"
 
 #include <string>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -150,4 +150,4 @@ TypeId ParseTypeName(const std::string& type_name, bool& is_array) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

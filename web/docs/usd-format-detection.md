@@ -2,14 +2,14 @@
 
 The WASM module exposes magic-number based helpers to classify USD container
 bytes **without** relying on the file extension. These are free functions on the
-`Module` object (registered in `web/binding.cc`, `EMSCRIPTEN_BINDINGS(tinyusdz_module)`).
+`Module` object (registered in `web/binding.cc`, `EMSCRIPTEN_BINDINGS(lightusd_module)`).
 
-They are backed by `tinyusdz::IsUSD()` in `src/tinyusdz.cc`, so they stay in sync
+They are backed by `lightusd::IsUSD()` in `src/lightusd.cc`, so they stay in sync
 with what the loader actually accepts.
 
 ## Why this exists
 
-The top-level loader (`loadFromBinary` → `tinyusdz::LoadUSDFromMemory`) already
+The top-level loader (`loadFromBinary` → `lightusd::LoadUSDFromMemory`) already
 auto-detects a bare `.usd` file by magic bytes (zstd / `PXR-USDC` / `#usda` / ZIP),
 so the extension is only used as the asset-resolution base dir.
 
@@ -66,7 +66,7 @@ const fmt = Module.detectUSDFormatHeader(new Uint8Array(head)); // "usdc" | "usd
 ```js
 const fmt = Module.detectUSDFormatHeader(rootBytes); // typically "usdc" or "usda"
 const ext = fmt === "usdc" || fmt === "usda" ? `.${fmt}` : null;
-// rename the archive entry from `Scene.usd` -> `Scene${ext}` so tinyusdz finds it
+// rename the archive entry from `Scene.usd` -> `Scene${ext}` so lightusd finds it
 ```
 
 ## Notes

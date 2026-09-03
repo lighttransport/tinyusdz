@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdSkel Schema
+// LightUSD Next - UsdSkel Schema
 // Skeleton, SkelAnimation, BlendShape, SkelRoot convenience wrappers
 
 #pragma once
@@ -11,7 +11,7 @@
 #include <vector>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -147,4 +147,4 @@ bool SkelSortInfluences(std::vector<int>& indices,
                         int numInfluencesPerComponent);
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

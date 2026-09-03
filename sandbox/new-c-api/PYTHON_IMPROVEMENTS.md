@@ -1,12 +1,12 @@
-# TinyUSDZ Python Bindings - Improvements Summary
+# LightUSD Python Bindings - Improvements Summary
 
 ## Overview
 
-The Python bindings for TinyUSDZ have been significantly improved from the initial basic implementation to a comprehensive, production-ready Pythonic API. This document outlines the enhancements made in `tinyusdz_improved.py`.
+The Python bindings for LightUSD have been significantly improved from the initial basic implementation to a comprehensive, production-ready Pythonic API. This document outlines the enhancements made in `lightusd_improved.py`.
 
 ## Files
 
-- **tinyusdz_improved.py** (922 lines) - Full implementation with all improvements
+- **lightusd_improved.py** (922 lines) - Full implementation with all improvements
 - **example_improved_python.py** (400+ lines) - Comprehensive feature showcase with 10 detailed examples
 
 ## Key Improvements
@@ -15,7 +15,7 @@ The Python bindings for TinyUSDZ have been significantly improved from the initi
 
 **Before:**
 ```python
-tz = TinyUSDZ()
+tz = LightUSD()
 try:
     stage = tz.load_file("model.usd")
     # ... work ...
@@ -25,7 +25,7 @@ finally:
 
 **After:**
 ```python
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
     # ... work ...
     # Automatic cleanup on exit
@@ -66,11 +66,11 @@ def get_statistics(self) -> Dict[str, Any]:
 Five custom exception types for better error handling:
 
 ```python
-TinyUSDZError                # Base exception
-├── TinyUSDZLoadError        # Loading/parsing errors
-├── TinyUSDZTypeError        # Type conversion errors
-├── TinyUSDZValueError       # Invalid values
-└── TinyUSDZNotFoundError    # Prim/property not found
+LightUSDError                # Base exception
+├── LightUSDLoadError        # Loading/parsing errors
+├── LightUSDTypeError        # Type conversion errors
+├── LightUSDValueError       # Invalid values
+└── LightUSDNotFoundError    # Prim/property not found
 ```
 
 **Before:**
@@ -86,12 +86,12 @@ except:
 ```python
 try:
     stage = tz.load_file("missing.usd")
-except TinyUSDZLoadError as e:
+except LightUSDLoadError as e:
     print(f"Failed to load file: {e}")
-except TinyUSDZNotFoundError as e:
+except LightUSDNotFoundError as e:
     print(f"Prim not found: {e}")
-except TinyUSDZError as e:
-    print(f"Other TinyUSDZ error: {e}")
+except LightUSDError as e:
+    print(f"Other LightUSD error: {e}")
 ```
 
 ---
@@ -301,7 +301,7 @@ import logging
 # Enable detailed logging
 logging.basicConfig(level=logging.DEBUG)
 
-with TinyUSDZ(enable_logging=True) as tz:
+with LightUSD(enable_logging=True) as tz:
     stage = tz.load_file("model.usd")
 
     # All operations are logged:
@@ -316,9 +316,9 @@ with TinyUSDZ(enable_logging=True) as tz:
 ## API Coverage Comparison
 
 ### Function Count
-- **Old binding (tinyusdz.py):** ~30 functions (~30% coverage)
-- **Complete binding (tinyusdz_complete.py):** 70+ functions (99% coverage)
-- **Improved binding (tinyusdz_improved.py):** 70+ functions (99% coverage) + **ergonomics**
+- **Old binding (lightusd.py):** ~30 functions (~30% coverage)
+- **Complete binding (lightusd_complete.py):** 70+ functions (99% coverage)
+- **Improved binding (lightusd_improved.py):** 70+ functions (99% coverage) + **ergonomics**
 
 ### Feature Matrix
 
@@ -346,11 +346,11 @@ with TinyUSDZ(enable_logging=True) as tz:
 ## Classes and Structure
 
 ### Exception Classes (5)
-- `TinyUSDZError`
-- `TinyUSDZLoadError`
-- `TinyUSDZTypeError`
-- `TinyUSDZValueError`
-- `TinyUSDZNotFoundError`
+- `LightUSDError`
+- `LightUSDLoadError`
+- `LightUSDTypeError`
+- `LightUSDValueError`
+- `LightUSDNotFoundError`
 
 ### Enum Classes (3)
 - `Format` (USDA, USDC, USDZ)
@@ -368,7 +368,7 @@ with TinyUSDZ(enable_logging=True) as tz:
 - `Value` - USD value wrapper with auto-conversion
 - `Prim` - USD primitive with type checking and iteration
 - `Stage` - USD stage with search and statistics
-- `TinyUSDZ` - Main API with context manager support
+- `LightUSD` - Main API with context manager support
 
 ### Helper Classes (1)
 - `_FFI` - Internal ctypes wrapper for cleaner calls
@@ -386,7 +386,7 @@ Data Structures       150      Dataclasses with properties
 Value Class           120      Auto-type conversion
 Prim Class            250      Iteration, traversal, properties
 Stage Class           200      Scene access, queries, statistics
-TinyUSDZ Class        150      Main API with context manager
+LightUSD Class        150      Main API with context manager
 Helper/FFI             50      ctypes wrapper utilities
 ─────────────────────────────────────────────────────────────
 Total                 ~920     Complete Python binding
@@ -398,9 +398,9 @@ Total                 ~920     Complete Python binding
 
 ### Quick Start
 ```python
-from tinyusdz_improved import TinyUSDZ
+from lightusd_improved import LightUSD
 
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
 
     # Traverse scene
@@ -410,7 +410,7 @@ with TinyUSDZ() as tz:
 
 ### Extract Meshes
 ```python
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
 
     for mesh in stage.iter_all_meshes():
@@ -423,7 +423,7 @@ with TinyUSDZ() as tz:
 
 ### Query Scene
 ```python
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
 
     # Find all materials
@@ -440,7 +440,7 @@ with TinyUSDZ() as tz:
 
 ### Analyze Scene
 ```python
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
 
     # Get statistics
@@ -471,15 +471,15 @@ The improved bindings maintain the same performance as the complete bindings sin
 
 ## Backward Compatibility
 
-The improved bindings are **not** backward compatible with the old `tinyusdz.py`, but **are** compatible with `tinyusdz_complete.py` at the function level.
+The improved bindings are **not** backward compatible with the old `lightusd.py`, but **are** compatible with `lightusd_complete.py` at the function level.
 
 Migration path:
 ```python
 # Old code
-stage = tinyusdz.load_from_file("model.usd")
+stage = lightusd.load_from_file("model.usd")
 
 # New code
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
 ```
 
@@ -493,14 +493,14 @@ To use the improved bindings:
 
 1. **Copy the file:**
    ```bash
-   cp tinyusdz_improved.py /path/to/project/
+   cp lightusd_improved.py /path/to/project/
    ```
 
 2. **Import and use:**
    ```python
-   from tinyusdz_improved import TinyUSDZ
+   from lightusd_improved import LightUSD
 
-   with TinyUSDZ() as tz:
+   with LightUSD() as tz:
        stage = tz.load_file("model.usd")
    ```
 
@@ -508,7 +508,7 @@ To use the improved bindings:
 
 4. **Requirements:**
    - Python 3.7+
-   - `libtinyusdz_c` (compiled C library)
+   - `liblightusd_c` (compiled C library)
    - `numpy` (optional, for NumPy arrays)
 
 ---
@@ -538,7 +538,7 @@ Potential improvements for future versions:
 
 ## Summary
 
-The improved Python bindings represent a significant quality-of-life improvement for Python developers using TinyUSDZ. They provide:
+The improved Python bindings represent a significant quality-of-life improvement for Python developers using LightUSD. They provide:
 
 ✓ **99%+ API coverage** of all C functions
 ✓ **Pythonic design** with context managers and generators

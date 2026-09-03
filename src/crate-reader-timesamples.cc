@@ -35,7 +35,7 @@
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 
@@ -62,7 +62,7 @@
 #pragma clang diagnostic ignored "-Wundefined-func-template"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 // constexpr auto kTypeName = "typeName";
@@ -269,7 +269,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     // Unpack failed — clear any partial data and fall back to empty TimeSamples.
     // This preserves backward compatibility with USDC files whose TimeSamples
     // encoding doesn't match the expected layout (e.g., files written by
-    // TinyUSDZ's crate writer which uses a slightly different format).
+    // LightUSD's crate writer which uses a slightly different format).
     d->clear();
     _err.clear();
   }
@@ -776,7 +776,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to scalar quatf value.");
     }
     // Crate wire layout is [x, y, z, w] = (imag, real); see
-    // value-types.hh:957. tinyusdz's value::quatf struct matches the
+    // value-types.hh:957. lightusd's value::quatf struct matches the
     // Crate layout, so memcpy reads the bytes directly. (Note: USDA
     // uses the opposite [w, x, y, z] order at the textual layer.)
     value::quatf val;
@@ -1395,21 +1395,21 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
 
 /* Decode inline ValueRep payload (already masked to 48 bits) into the target
  * int type. Must match the scalar decoder in crate-reader-values.cc: OpenUSD
- * (and TinyUSDZ's own writer) inline an int64 as an exact int32 payload, so the
+ * (and LightUSD's own writer) inline an int64 as an exact int32 payload, so the
  * common case is a 32-bit value that needs sign-extension from bit 31 — NOT
- * bit 47. Older TinyUSDZ files used the full 48-bit payload; keep that as a
+ * bit 47. Older LightUSD files used the full 48-bit payload; keep that as a
  * fallback when bits 32-47 are non-zero.
  */
 static inline int64_t int64_inline_decode_INT64(uint64_t p) {
   if ((p >> 32) == 0) {
-    /* OpenUSD/TinyUSDZ inline int64 as an exact int32 representation. */
+    /* OpenUSD/LightUSD inline int64 as an exact int32 representation. */
     int32_t rep32 = 0;
     uint32_t payload32 = static_cast<uint32_t>(p);
     memcpy(&rep32, &payload32, sizeof(rep32));
     return static_cast<int64_t>(rep32);
   }
   if (p & (1ull << 47)) {
-    /* Legacy TinyUSDZ inline payload: sign-extend from bit 47. */
+    /* Legacy LightUSD inline payload: sign-extend from bit 47. */
     return static_cast<int64_t>(p | (~((1ull << 48) - 1)));
   }
   return static_cast<int64_t>(p);
@@ -1654,7 +1654,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   // Dedup map: ValueRep raw data -> first sample index in TimeSamples.
   // USDC files often deduplicate time sample values (multiple frames pointing
   // to the same file offset). Caching avoids redundant reads/decompression.
-  tinyusdz::HashMap<uint64_t, size_t> dedup_map;
+  lightusd::HashMap<uint64_t, size_t> dedup_map;
   dedup_map.reserve(vreps.size());
 
   for (size_t i = 0; i < vreps.size(); i++) {
@@ -1732,7 +1732,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
 
 
 }  // namespace crate
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #ifdef __clang__
 #pragma clang diagnostic pop

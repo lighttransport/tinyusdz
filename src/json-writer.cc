@@ -8,19 +8,19 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace json {
 
 
 namespace detail {
 
-// NOTE: Use tinyusdz::dtos() from str-util.hh instead
+// NOTE: Use lightusd::dtos() from str-util.hh instead
 
 
 
 } // namespace detal
 
-bool JsonWriter::to_json(const tinyusdz::Layer &layer, std::string *out_json) {
+bool JsonWriter::to_json(const lightusd::Layer &layer, std::string *out_json) {
 
   (void)layer;
   (void)out_json;
@@ -30,4 +30,4 @@ bool JsonWriter::to_json(const tinyusdz::Layer &layer, std::string *out_json) {
 }
 
 } // namespace json
-}  // namespace tinyusdz
+}  // namespace lightusd

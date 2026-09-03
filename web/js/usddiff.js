@@ -1,4 +1,4 @@
-// usddiff — TinyUSDZ WASM diff visualizer
+// usddiff — LightUSD WASM diff visualizer
 //
 // Pick two USD files (.usd/.usda/.usdc/.usdz) and view a structured diff:
 //   - value-level reasons (value / type / variability / connections / meta:*, ...)
@@ -11,7 +11,7 @@
 
 import { loadWasm } from './src/usdzconvert.js';
 import { McpFetchClient, toBase64 } from './src/mcp-fetch-client.js';
-import { basenameFromUri, mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
+import { basenameFromUri, mountBackendSelector } from './src/lightusd/LoaderConfigUtils.js';
 
 // ---------------------------------------------------------------------------
 // UI
@@ -20,7 +20,7 @@ import { basenameFromUri, mountBackendSelector } from './src/tinyusdz/LoaderConf
 const container = document.createElement('div');
 container.style.cssText = 'max-width:1000px;margin:28px auto;padding:20px;font-family:system-ui,sans-serif;color:#eee';
 container.innerHTML = `
-  <h1 style="margin:0 0 6px">TinyUSDZ — usddiff</h1>
+  <h1 style="margin:0 0 6px">LightUSD — usddiff</h1>
   <p style="color:#aaa;margin:0 0 16px">
     Compare two USD files (<b>.usd / .usda / .usdc / .usdz</b>) at the Layer / Prim /
     Attribute level, with value-level reasons and ULP-tolerant float comparison.
@@ -148,7 +148,7 @@ async function ensureWasm() {
   // next::Layer with the same options/result contract).
   const params = new URLSearchParams(window.location.search);
   const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
-  const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+  const glue = useNext ? './src/lightusd/lightusd_next.js' : './src/lightusd/lightusd.js';
   native = await loadWasm(() => import(/* @vite-ignore */ new URL(glue, import.meta.url).href));
   setStatus('');
   return native;

@@ -2,8 +2,8 @@
 
 Reference notes on **how the upstream OpenUSD (pxr) reference implementation creates USDZ
 packages** and **what `usdchecker --arkit` validates**, gathered by reading the OpenUSD source
-tree (local checkout at `/mnt/nvme02/work/tinyusdz-repo/OpenUSD`, paths below are relative to that
-root). Written to inform tinyusdz's own USDZ creation / conversion pipeline (MJCF/URDF → USD,
+tree (local checkout at `/mnt/nvme02/work/lightusd-repo/OpenUSD`, paths below are relative to that
+root). Written to inform lightusd's own USDZ creation / conversion pipeline (MJCF/URDF → USD,
 UE-export large-scene conversion).
 
 Two questions motivated this:
@@ -112,7 +112,7 @@ Evidence:
   (`SetResolveUdimPaths(false)`).
 - Only USD **layers** are ever modified (path localization, and ARKit flattening).
 
-**Implication for tinyusdz:** if we want texture conversion (e.g. TGA/BMP → PNG), resizing/mipmap
+**Implication for lightusd:** if we want texture conversion (e.g. TGA/BMP → PNG), resizing/mipmap
 budget control, or atlas repacking, we must implement it ourselves — there is no upstream behavior
 to match or rely on. The reference tool's contract is "copy what you reference." This is consistent
 with our existing decision to embed texture bytes for USDZ (see `[[mjcf-texture-asset-paths]]`).
@@ -188,14 +188,14 @@ runtime-side limit.
 
 ---
 
-## 5. Status in tinyusdz — `tusdchecker --arkit`
+## 5. Status in lightusd — `tusdchecker --arkit`
 
 The rules above are **implemented** in the dependency-free `next` validator
 (`src/next/validation/usd-validation.{hh,cc}`) as an opt-in `arkit` rule group, and are exposed by
 the `tusdchecker` CLI (`tools/tusdchecker/`):
 
 ```sh
-cmake -S . -B build_ninja -G Ninja -DTINYUSDZ_BUILD_TOOLS=ON
+cmake -S . -B build_ninja -G Ninja -DLIGHTUSD_BUILD_TOOLS=ON
 cmake --build build_ninja --target tusdchecker
 
 build_ninja/tusdchecker --arkit asset.usdz         # ARKit profile, exit 1 on any arkit.* error
@@ -231,7 +231,7 @@ valid USD, just not ARKit-deliverable.
 
 ### Deliberately not implemented
 
-- **Full SDR-driven `ShaderPropertyTypeConformance`.** tinyusdz has no shader-definition registry;
+- **Full SDR-driven `ShaderPropertyTypeConformance`.** lightusd has no shader-definition registry;
   input types are checked against the generated `UsdPreviewSurface` table and the `UsdUVTexture` /
   `UsdPrimvarReader` schemas only. Arbitrary `ND_*` MaterialX node inputs are not type-checked.
 - **Composed-stage / per-variant evaluation.** The `arkit` rules run on the uncomposed `next::Layer`

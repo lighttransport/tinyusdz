@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenUSD Setup Script for comparison with TinyUSDZ
+# OpenUSD Setup Script for comparison with LightUSD
 # This script clones, builds, and installs OpenUSD with Python bindings
 
 set -e  # Exit on error

@@ -8,10 +8,10 @@
 #include "stream-writer.hh"
 #include <sstream>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 
 // Worker function for printing Prims
 static void print_prim_worker(void* user_data) {
@@ -414,7 +414,7 @@ template void print_primspecs_parallel<4096, 16>(
     uint32_t indent,
     const ParallelPrintConfig& config);
 
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

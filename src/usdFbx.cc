@@ -2,20 +2,20 @@
 //
 #include <string>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "io-util.hh"
 #include "security-policy.hh"
 #include "usdFbx.hh"
 
 //#include "math-util.inc"
 
-#ifdef TINYUSDZ_USE_USDFBX
+#ifdef LIGHTUSD_USE_USDFBX
 
 #include "external/OpenFBX/src/ofbx.h"
 
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace usdFbx {
 
@@ -25,9 +25,9 @@ namespace {
 
 }
 
-bool ReadFbxFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::string *err)
+bool ReadFbxFromFile(const std::string &filepath, lightusd::GPrim *prim, std::string *err)
 {
-#if !defined(TINYUSDZ_USE_USDFBX)
+#if !defined(LIGHTUSD_USE_USDFBX)
   (void)filepath;
   (void)prim;
   if (err) {
@@ -52,9 +52,9 @@ bool ReadFbxFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 }
 
 
-bool ReadFbxFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
+bool ReadFbxFromString(const std::string &str, lightusd::GPrim *prim, std::string *err)
 {
-#if !defined(TINYUSDZ_USE_USDFBX)
+#if !defined(LIGHTUSD_USE_USDFBX)
   (void)str;
   (void)prim;
   if (err) {
@@ -75,4 +75,4 @@ bool ReadFbxFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
 } // namespace usdFbx
 
-} // tinyusdz
+} // lightusd

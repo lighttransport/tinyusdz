@@ -10,7 +10,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace safe {
 
 ///
@@ -82,4 +82,4 @@ inline bool n_to_size(uint64_t n, size_t* out) {
 }
 
 }  // namespace safe
-}  // namespace tinyusdz
+}  // namespace lightusd

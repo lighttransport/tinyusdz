@@ -9,7 +9,7 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value
 // is stored in Crate directly)
@@ -142,4 +142,4 @@ DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

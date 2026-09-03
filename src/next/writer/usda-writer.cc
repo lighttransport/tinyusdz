@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA Writer Implementation
+// LightUSD Next - USDA Writer Implementation
 
 #include "usda-writer.hh"
 #include "value-printer.hh"
@@ -17,12 +17,12 @@
 #include <deque>
 #include <unordered_set>
 #include <vector>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -1633,7 +1633,7 @@ void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
   }
 }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 
 // Resolve the effective worker count from the option (1 = serial; <=0 = auto;
 // >1 = exactly that many). The parallel writer formats balanced segments (one
@@ -1849,7 +1849,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   for (auto& th : pool) th.join();
 }
 
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 }  // anonymous namespace
 
@@ -1930,7 +1930,7 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
   meta.rootPrimOrder_set = root_layer->meta().rootPrimOrder_set;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);
   if (nthreads > 1) {
     WriteStageBodyParallel(os, *root_layer, meta, options, nthreads);
@@ -2013,7 +2013,7 @@ USDAWriteResult WriteLayer(StreamWriter& os, const Layer& layer,
   // and >1 worker is requested, else the serial streaming path. The Layer's own
   // metadata is used directly (no Stage->LayerMeta synthesis). Output is
   // byte-identical regardless of thread count.
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);
   if (nthreads > 1) {
     WriteStageBodyParallel(os, layer, layer.meta(), options, nthreads);
@@ -2061,4 +2061,4 @@ USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

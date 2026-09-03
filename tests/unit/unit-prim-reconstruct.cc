@@ -12,7 +12,7 @@
 #include "acutest.h"
 
 #include "unit-prim-reconstruct.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "core/prim.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
@@ -23,7 +23,7 @@
 
 #include <cstring>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // ---------------------------------------------------------------------------
 // Helper: parse a USDA string into a Stage

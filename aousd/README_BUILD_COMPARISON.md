@@ -198,8 +198,8 @@ All three have **identical runtime performance** for C++ code. The Python builds
 
 ## Recommendations
 
-### For TinyUSDZ Comparison Testing
-**Use Standard or No-Python build** - Most compatible with TinyUSDZ's C++ focus.
+### For LightUSD Comparison Testing
+**Use Standard or No-Python build** - Most compatible with LightUSD's C++ focus.
 
 ### For Pipeline Development
 **Use Standard build** - Python scripting is essential for pipelines.

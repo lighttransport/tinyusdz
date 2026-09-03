@@ -15,8 +15,8 @@ unaffected:
 
 ```sh
 cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DTINYUSDZ_BUILD_EXAMPLES=ON -DTINYUSDZ_WITH_TYDRA=ON \
-  -DTINYUSDZ_BUILD_GUI_VIEWER=ON
+  -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build_ninja -j16 --target tusdview
 ```
 
@@ -31,7 +31,7 @@ cmake --build build_ninja -j16 --target tusdview
   (Regenerate the embedded SPIR-V with `vk/shaders/build-shaders.sh` after a
   shader change — that script is the only thing that needs `glslangValidator`.)
   Common PNG/JPEG/BMP/TGA decoding uses the vendored fuzz-tested nanoimage
-  backend by default (`-DTINYUSDZ_WITH_NANOIMAGE=ON`); TinyEXR v3 remains the
+  backend by default (`-DLIGHTUSD_WITH_NANOIMAGE=ON`); TinyEXR v3 remains the
   default OpenEXR backend and preserves fp16/HDR data for the texture pipeline.
   The raster descriptor ABI uses four bound sets (material images, per-mesh
   deformation data, frame data, and material parameters), matching Vulkan's
@@ -425,14 +425,14 @@ export PATH="$LLVM_MINGW_DIR/bin:$PATH"                    # + ninja on PATH
 cmake -S . -B build-llvm-mingw -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-win64.cmake \
   -DCMAKE_BUILD_TYPE=Release \
-  -DTINYUSDZ_BUILD_EXAMPLES=ON -DTINYUSDZ_WITH_TYDRA=ON \
-  -DTINYUSDZ_BUILD_GUI_VIEWER=ON
+  -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build-llvm-mingw -j16 --target tusdview
 ```
 
-- Builds clean under clang's `-Weverything -Werror`; no `-DTINYUSDZ_NO_WERROR=ON`
+- Builds clean under clang's `-Weverything -Werror`; no `-DLIGHTUSD_NO_WERROR=ON`
   needed.
-- Add `-DTINYUSDZ_BUILD_TOOLS=ON --target tusdrender` to also build the CPU/Vulkan
+- Add `-DLIGHTUSD_BUILD_TOOLS=ON --target tusdrender` to also build the CPU/Vulkan
   preview ray-tracer (`tools/tusdrender/`), which is likewise self-contained under
   MinGW.
 - Look for `tusdview: Vulkan backend ENABLED (runtime-loaded via volk; embedded
@@ -526,8 +526,8 @@ TUSDVIEW_HDR=/path/to/studio.hdr \
   examples/tusdview/tests/run-alab-photoreal-vulkan.sh
 ```
 
-With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
-`src/external/textools/README.tinyusdz.md`) tusdview uses the vendored
+With `LIGHTUSD_WITH_TEXTOOLS=ON` (default; see
+`src/external/textools/README.lightusd.md`) tusdview uses the vendored
 tir/texcomp/texpipe/envmap libraries:
 
 - Texture resize (`--texture-max-size`, `--texture-budget-mb`) runs through
@@ -1167,7 +1167,7 @@ NVIDIA GLVND vendor file exists and that the command is running under Xvfb (or
 a real X session) with the offload variables above.
 
 For the complete native CTest viewer coverage, configure with
-`-DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON`. At configure time CMake checks the
+`-DLIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON`. At configure time CMake checks the
 NVIDIA kernel device, the GLVND vendor file, and `vulkaninfo --summary`. When
 the Vulkan summary contains an NVIDIA physical device, CMake attaches the GL
 offload environment and `TUSDVIEW_VK_DEVICE=nvidia` to every `tusdview-*` test
@@ -1178,8 +1178,8 @@ failure. Unrelated tests are unchanged.
 
 ```sh
 cmake -S . -B build_ninja -G Ninja \
-  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_GUI_VIEWER=ON \
-  -DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
+  -DLIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON
 cmake --build build_ninja -j16
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ctest --test-dir build_ninja -R '^tusdview' --output-on-failure

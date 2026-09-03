@@ -14,7 +14,7 @@
 
 #include "audio-loader.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace audio {
 
 namespace {
@@ -34,4 +34,4 @@ nonstd::expected<audio::AudioResult, std::string> LoadAudioFromMemory(
 }
 
 }  // namespace audio
-}  // namespace tinyusdz
+}  // namespace lightusd

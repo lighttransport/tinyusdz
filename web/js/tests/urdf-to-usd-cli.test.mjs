@@ -34,7 +34,7 @@ async function testAsync(name, fn) {
 }
 
 function withTempDir(fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tinyusdz-urdf-cli-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lightusd-urdf-cli-'));
   let result;
   try {
     result = fn(dir);

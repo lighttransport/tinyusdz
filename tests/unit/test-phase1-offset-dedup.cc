@@ -7,8 +7,8 @@
 #include "timesamples.hh"
 #include "value-types.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::value;
+using namespace lightusd;
+using namespace lightusd::value;
 
 // Helper function to check if two arrays are equal
 template<typename T>

@@ -1,8 +1,8 @@
-# TinyUSDZ C99 API - Project Completion Summary
+# LightUSD C99 API - Project Completion Summary
 
 ## Project Overview
 
-This project delivers a complete, minimal C99 API for TinyUSDZ with comprehensive language bindings and documentation.
+This project delivers a complete, minimal C99 API for LightUSD with comprehensive language bindings and documentation.
 
 **Status:** ✅ **COMPLETE**
 
@@ -12,14 +12,14 @@ This project delivers a complete, minimal C99 API for TinyUSDZ with comprehensiv
 
 ### Core C99 API (3 files, 2,050 lines)
 
-1. **tinyusdz_c.h** (628 lines)
+1. **lightusd_c.h** (628 lines)
    - Pure C99 public interface
    - 70+ function declarations
    - Complete type definitions
    - Opaque handle pattern for implementation hiding
    - Full Doxygen documentation
 
-2. **tinyusdz_c.cpp** (1,422 lines)
+2. **lightusd_c.cpp** (1,422 lines)
    - Complete C++ implementation
    - PIMPL pattern for ABI stability
    - Error handling with result codes and error strings
@@ -29,11 +29,11 @@ This project delivers a complete, minimal C99 API for TinyUSDZ with comprehensiv
 3. **Build System** (CMake + Make)
    - CMakeLists.txt - Modern CMake configuration
    - Makefile - Simple alternative build system
-   - tinyusdz_c.pc.in - pkg-config metadata
+   - lightusd_c.pc.in - pkg-config metadata
 
 ### Language Bindings (5 languages, 1,710 lines)
 
-1. **Python** (tinyusdz_improved.py - 922 lines)
+1. **Python** (lightusd_improved.py - 922 lines)
    - ✅ 99%+ API coverage (70+ functions)
    - Context managers for resource management
    - Full type hints for IDE support
@@ -51,14 +51,14 @@ This project delivers a complete, minimal C99 API for TinyUSDZ with comprehensiv
    - Cargo-compatible
    - Zero-cost abstractions
 
-3. **C#** (TinyUSDZ.cs - 450 lines)
+3. **C#** (LightUSD.cs - 450 lines)
    - P/Invoke for .NET
    - IDisposable pattern
    - Exception-based error handling
    - Unity compatible
    - Framework & Core support
 
-4. **TypeScript** (tinyusdz.d.ts - 280 lines)
+4. **TypeScript** (lightusd.d.ts - 280 lines)
    - Complete type definitions
    - Enum and interface definitions
    - JSDoc documentation
@@ -328,21 +328,21 @@ sudo make install
 ### Python Deployment
 ```bash
 # No build required - just copy
-cp tinyusdz_improved.py /path/to/project/
+cp lightusd_improved.py /path/to/project/
 
 # Use immediately
-import tinyusdz_improved
+import lightusd_improved
 ```
 
 ### Rust Integration
 ```toml
 [dependencies]
-tinyusdz = { path = "sandbox/new-c-api" }
+lightusd = { path = "sandbox/new-c-api" }
 ```
 
 ### C# Usage
 ```bash
-csc TinyUSDZ.cs /target:library
+csc LightUSD.cs /target:library
 # Use in Visual Studio or dotnet
 ```
 
@@ -394,17 +394,17 @@ csc TinyUSDZ.cs /target:library
 
 ### Core API ✅
 - [x] Design complete C99 API
-- [x] Implement tinyusdz_c.h header
-- [x] Implement tinyusdz_c.cpp functions
+- [x] Implement lightusd_c.h header
+- [x] Implement lightusd_c.cpp functions
 - [x] Create build system (CMake + Make)
 - [x] Write design documentation
 - [x] Write API reference
 
 ### Language Bindings ✅
-- [x] Python bindings (tinyusdz_improved.py)
+- [x] Python bindings (lightusd_improved.py)
 - [x] Rust bindings (lib.rs)
-- [x] C# bindings (TinyUSDZ.cs)
-- [x] TypeScript definitions (tinyusdz.d.ts)
+- [x] C# bindings (LightUSD.cs)
+- [x] TypeScript definitions (lightusd.d.ts)
 - [x] Language bindings matrix documentation
 
 ### Examples & Tests ✅
@@ -435,18 +435,18 @@ csc TinyUSDZ.cs /target:library
 ```
 sandbox/new-c-api/
 ├── Core API
-│   ├── tinyusdz_c.h              # C99 header (628 lines)
-│   ├── tinyusdz_c.cpp             # Implementation (1,422 lines)
+│   ├── lightusd_c.h              # C99 header (628 lines)
+│   ├── lightusd_c.cpp             # Implementation (1,422 lines)
 │   ├── CMakeLists.txt             # CMake build
 │   ├── Makefile                   # Make build
-│   └── tinyusdz_c.pc.in          # pkg-config
+│   └── lightusd_c.pc.in          # pkg-config
 │
 ├── Language Bindings
-│   ├── tinyusdz_improved.py       # Python (922 lines)
-│   ├── tinyusdz_complete.py       # Python complete (400 lines)
+│   ├── lightusd_improved.py       # Python (922 lines)
+│   ├── lightusd_complete.py       # Python complete (400 lines)
 │   ├── lib.rs                     # Rust (530 lines)
-│   ├── TinyUSDZ.cs               # C# (450 lines)
-│   └── tinyusdz.d.ts             # TypeScript (280 lines)
+│   ├── LightUSD.cs               # C# (450 lines)
+│   └── lightusd.d.ts             # TypeScript (280 lines)
 │
 ├── Examples
 │   ├── example_improved_python.py  # Python showcase (400 lines)
@@ -471,12 +471,12 @@ sandbox/new-c-api/
 ## Validation
 
 ### Syntax Validation
-- ✅ tinyusdz_c.h - Valid C99
-- ✅ tinyusdz_c.cpp - Valid C++
-- ✅ tinyusdz_improved.py - Python 3.7+ (922 lines, 18 classes, 74 functions)
+- ✅ lightusd_c.h - Valid C99
+- ✅ lightusd_c.cpp - Valid C++
+- ✅ lightusd_improved.py - Python 3.7+ (922 lines, 18 classes, 74 functions)
 - ✅ lib.rs - Valid Rust
-- ✅ TinyUSDZ.cs - Valid C#
-- ✅ tinyusdz.d.ts - Valid TypeScript
+- ✅ LightUSD.cs - Valid C#
+- ✅ lightusd.d.ts - Valid TypeScript
 
 ### Documentation Validation
 - ✅ All files present
@@ -533,9 +533,9 @@ For future enhancement:
 
 ### For Python Users
 ```python
-from tinyusdz_improved import TinyUSDZ
+from lightusd_improved import LightUSD
 
-with TinyUSDZ() as tz:
+with LightUSD() as tz:
     stage = tz.load_file("model.usd")
     for mesh in stage.iter_all_meshes():
         print(f"{mesh.name}: {mesh.mesh_data.vertex_count} vertices")
@@ -543,7 +543,7 @@ with TinyUSDZ() as tz:
 
 ### For C Users
 ```c
-#include <tinyusdz_c.h>
+#include <lightusd_c.h>
 
 tusdz_init();
 tusdz_stage stage;
@@ -555,7 +555,7 @@ tusdz_shutdown();
 
 ### For Rust Users
 ```rust
-use tinyusdz::{init, shutdown, load_from_file};
+use lightusd::{init, shutdown, load_from_file};
 
 init()?;
 let stage = load_from_file("model.usd", None)?;
@@ -568,4 +568,4 @@ shutdown();
 **Project Status:** ✅ **COMPLETE AND READY FOR USE**
 
 All deliverables complete. All documentation comprehensive. All examples working.
-Ready for integration into TinyUSDZ or external projects.
+Ready for integration into LightUSD or external projects.

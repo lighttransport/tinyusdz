@@ -5,13 +5,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
+import LightUSDFactory from '../src/lightusd/lightusd.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_USDA = path.resolve(__dirname, '../assets/physics-robot-arm.usda');
-const DEFAULT_MUJOCO_DIST = path.resolve(process.env.TINYUSDZ_VERIFY_CACHE ||
-  path.join(__dirname, '../../../.cache/tinyusdz-verification'), 'mujoco/wasm/dist');
+const DEFAULT_MUJOCO_DIST = path.resolve(process.env.LIGHTUSD_VERIFY_CACHE ||
+  path.join(__dirname, '../../../.cache/lightusd-verification'), 'mujoco/wasm/dist');
 const MUJOCO_DIST = path.resolve(process.env.MUJOCO_WASM_DIR || DEFAULT_MUJOCO_DIST);
 const MUJOCO_JS = path.resolve(process.env.MUJOCO_PHYSICS_JS ||
   path.join(MUJOCO_DIST, 'mujoco_physics.js'));
@@ -22,7 +22,7 @@ const RAD_TO_DEG = 180 / Math.PI;
 
 function printHelp() {
   console.log(`
-TinyUSDZ USD Physics + MuJoCo physics-only batch simulator
+LightUSD USD Physics + MuJoCo physics-only batch simulator
 
 Usage:
   node cli/phys-sim.js [options]
@@ -36,7 +36,7 @@ Options:
   --dump-trajectory <p>  Write per-step trajectory JSON to path, or "-" for stdout
   --trajectory-stride <n>
                          Record every n simulation steps (default: 1)
-  --dump-physics-json    Print TinyUSDZ extracted physics JSON
+  --dump-physics-json    Print LightUSD extracted physics JSON
   --require-newton       Require extracted Newton API schemas
   --json                 Print machine-readable result JSON
   Environment: MUJOCO_WASM_DIR, MUJOCO_PHYSICS_JS, MUJOCO_PHYSICS_WASM
@@ -127,18 +127,18 @@ function parseTarget(text) {
   return [parts[0] * DEG_TO_RAD, parts[1] * DEG_TO_RAD];
 }
 
-async function loadTinyUSDZPhysics(usdaPath) {
+async function loadLightUSDPhysics(usdaPath) {
   const text = fs.readFileSync(usdaPath, 'utf8');
   const bytes = new TextEncoder().encode(text);
-  const tinyusdz = await TinyUSDZFactory();
-  const native = new tinyusdz.TinyUSDZLoaderNative();
+  const lightusd = await LightUSDFactory();
+  const native = new lightusd.LightUSDLoaderNative();
   try {
     if (!native.loadFromBinary(bytes, path.basename(usdaPath))) {
-      throw new Error(native.error() || 'TinyUSDZ loadFromBinary failed');
+      throw new Error(native.error() || 'LightUSD loadFromBinary failed');
     }
     const jsonText = native.extractPhysicsSceneJSON();
     if (!jsonText) {
-      throw new Error(native.error() || 'TinyUSDZ extractPhysicsSceneJSON returned empty JSON');
+      throw new Error(native.error() || 'LightUSD extractPhysicsSceneJSON returned empty JSON');
     }
     return {
       text,
@@ -172,7 +172,7 @@ function addBox(mj, body, name, halfSize, pos, rgba, mass = 0) {
 
 function buildModel(mj) {
   const spec = new mj.MjSpec();
-  spec.setModelName('TinyUSDZBatchArm');
+  spec.setModelName('LightUSDBatchArm');
   spec.setTimestep(0.005);
   spec.setGravity(0, 0, -9.80665);
   const worldBody = spec.worldBody();
@@ -288,7 +288,7 @@ function trajectorySample(step, time, data, target, motorTorque) {
 }
 
 async function runSimulation(opts) {
-  const loaded = await loadTinyUSDZPhysics(opts.usdaPath);
+  const loaded = await loadLightUSDPhysics(opts.usdaPath);
   const extracted = validatePhysicsJSON(loaded.physics, opts);
   const mj = await loadMuJoCoPhysics();
   const model = buildModel(mj);

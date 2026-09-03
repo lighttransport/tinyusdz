@@ -14,7 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>  // ProcessRSS()/AvailableSystemMemory() use std::ifstream
-                    // unconditionally (was only included under TINYUSDZ_WITH_QJS)
+                    // unconditionally (was only included under LIGHTUSD_WITH_QJS)
 #include <iostream>
 #include <mutex>
 #include <new>
@@ -40,7 +40,7 @@
 #include "image-writer.hh"
 #include "io-util.hh"
 #include "mmap-array-ref.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
@@ -58,7 +58,7 @@
 #include "next/reader/usdz-reader.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/stage/stage.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/types/value.hh"
 #include "tydra/next/scene-access.hh"
 
@@ -68,7 +68,7 @@ extern "C" {
 #include "lightrt_c_tri.h"
 }
 
-#ifdef TINYUSDZ_WITH_QJS
+#ifdef LIGHTUSD_WITH_QJS
 #include <fstream>
 #include <sstream>
 
@@ -100,13 +100,13 @@ uint8_t FloatToByte(float v) {
   return static_cast<uint8_t>(std::round(v * 255.0f));
 }
 
-tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
-  tinyusdz::Image img;
+lightusd::Image MakeBlankImage(const Options &opt, int height) {
+  lightusd::Image img;
   img.width = std::max(1, opt.width);
   img.height = std::max(1, height);
   img.channels = 4;
   img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data.resize(size_t(img.width) * size_t(img.height) * 4);
   const uint8_t r = FloatToByte(opt.bg.x);
   const uint8_t g = FloatToByte(opt.bg.y);
@@ -236,7 +236,7 @@ void AppendGpuPointDisc(const Vec3 &center, const Vec3 &normal, float radius,
 }
 
 void CollectGpuPointsRec(
-    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
+    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
     const matrix4d &parent_world,
     double time, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos, size_t depth) {
@@ -249,24 +249,24 @@ void CollectGpuPointsRec(
   }
   if (!prim.IsActive()) return;
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
   if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
-    tinyusdz::next::ParticleFieldData field;
+    lightusd::next::ParticleFieldData field;
     std::string field_warning;
-    if (!tinyusdz::next::GetParticleFieldData(
+    if (!lightusd::next::GetParticleFieldData(
             stage, prim, &field, time, &field_warning)) {
       std::cerr << "Gaussian fallback: invalid ParticleField data at "
                 << prim.GetPath().str() << ".\n";
       return;
     }
     if (!field_warning.empty()) std::cerr << field_warning << "\n";
-    tinyusdz::tydra::next::ValueArrayRead<float> points;
-    tinyusdz::tydra::next::ValueArrayRead<float> scales;
-    tinyusdz::tydra::next::ValueArrayRead<float> orientations;
-    tinyusdz::tydra::next::ValueArrayRead<float> opacities;
-    tinyusdz::tydra::next::ValueArrayRead<float> sh;
+    lightusd::tydra::next::ValueArrayRead<float> points;
+    lightusd::tydra::next::ValueArrayRead<float> scales;
+    lightusd::tydra::next::ValueArrayRead<float> orientations;
+    lightusd::tydra::next::ValueArrayRead<float> opacities;
+    lightusd::tydra::next::ValueArrayRead<float> sh;
     const bool have_points = !field.positions_property.empty() &&
         ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
                                &points);
@@ -288,7 +288,7 @@ void CollectGpuPointsRec(
                 << prim.GetPath().str() << "; using fallback color.\n";
     const size_t count = have_points ? points.size() / 3 : 0;
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
-      for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                             depth + 1);
       return;
@@ -339,14 +339,14 @@ void CollectGpuPointsRec(
       Vec3 major_axis{1.0f, 0.0f, 0.0f};
       const size_t orientation_index = orientations.size() == 4 ? 0 : i * 4;
       if (have_orientations && orientation_index + 3 < orientations.size()) {
-        tinyusdz::value::quatf q;
+        lightusd::value::quatf q;
         q.real = orientations[orientation_index + 0];
         q.imag[0] = orientations[orientation_index + 1];
         q.imag[1] = orientations[orientation_index + 2];
         q.imag[2] = orientations[orientation_index + 3];
-        const tinyusdz::value::matrix3d r = tinyusdz::to_matrix3x3(q);
-        const tinyusdz::value::matrix4d r4 =
-            tinyusdz::to_matrix(r, tinyusdz::value::double3{0.0, 0.0, 0.0});
+        const lightusd::value::matrix3d r = lightusd::to_matrix3x3(q);
+        const lightusd::value::matrix4d r4 =
+            lightusd::to_matrix(r, lightusd::value::double3{0.0, 0.0, 0.0});
         normal = TransformVector(world, TransformVector(
             r4, Vec3{0.0f, 0.0f, 1.0f}));
         major_axis = TransformVector(world, TransformVector(
@@ -397,9 +397,9 @@ void CollectGpuPointsRec(
               << ", GPU chunks: " << (geos->size() - gaussian_geo_first)
               << ", limit: " << batch_limit << " tris\n";
   } else if (prim.GetTypeName() == "Points") {
-    tinyusdz::tydra::next::ValueArrayRead<float> points;
-    tinyusdz::tydra::next::ValueArrayRead<float> widths;
-    tinyusdz::tydra::next::ValueArrayRead<float> normals;
+    lightusd::tydra::next::ValueArrayRead<float> points;
+    lightusd::tydra::next::ValueArrayRead<float> widths;
+    lightusd::tydra::next::ValueArrayRead<float> normals;
     const bool have_points = ReadFloatArrayViewLazy(prim, "points", time, &points);
     ReadFloatArrayViewLazy(prim, "widths", time, &widths);
     ReadFloatArrayViewLazy(prim, "normals", time, &normals);
@@ -414,7 +414,7 @@ void CollectGpuPointsRec(
       emitted = 0;
     };
     if (!have_points) {
-      for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                             depth + 1);
       return;
@@ -451,7 +451,7 @@ void CollectGpuPointsRec(
     }
     flush();
   }
-  for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
     CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                         depth + 1);
 }
@@ -506,9 +506,9 @@ bool AppendGpuRoundCurves(
 #endif
 
 bool WriteBlankImage(const Options &opt, int height) {
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(
       opt.output, MakeBlankImage(opt, height), wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
@@ -562,15 +562,15 @@ static void ApplyLargeSceneProfile(Options *opt) {
   const uint64_t host_capacity =
       host_available
           ? std::min<uint64_t>(host_available,
-                               tinyusdz::tydra::next::GiB(32))
-          : tinyusdz::tydra::next::GiB(32);
-  const tinyusdz::tydra::next::ResourceBudget budget =
-      tinyusdz::tydra::next::ComputeResourceBudget(
+                               lightusd::tydra::next::GiB(32))
+          : lightusd::tydra::next::GiB(32);
+  const lightusd::tydra::next::ResourceBudget budget =
+      lightusd::tydra::next::ComputeResourceBudget(
           host_capacity, QueryDeviceLocalVRAMBytes());
   const double host_gib = double(budget.host_limit) /
-                          double(tinyusdz::tydra::next::GiB(1));
+                          double(lightusd::tydra::next::GiB(1));
   const double vram_gib = double(budget.vram_limit) /
-                          double(tinyusdz::tydra::next::GiB(1));
+                          double(lightusd::tydra::next::GiB(1));
 
   if (!opt->backend_explicit) {
     opt->vulkan = true;
@@ -582,8 +582,8 @@ static void ApplyLargeSceneProfile(Options *opt) {
   // Bound texture residency the way geometry already is. -texMaxSize /
   // -texBudgetMb still win; these only fill in the profile defaults.
   {
-    const tinyusdz::tydra::next::TextureBudget texture_budget =
-        tinyusdz::tydra::next::DeriveTextureBudget(budget);
+    const lightusd::tydra::next::TextureBudget texture_budget =
+        lightusd::tydra::next::DeriveTextureBudget(budget);
     if (!opt->texture_max_size_explicit && texture_budget.max_edge > 0) {
       opt->texture_max_size = int(texture_budget.max_edge);
     }
@@ -636,9 +636,9 @@ static void ApplyLargeSceneProfile(Options *opt) {
 // Resolve the GPU render camera exactly like the flat -vk/-vkr path (named
 // camera, else USD record camera for -autoframe, else auto-fit). *out_height
 // starts at opt.height (<=0 = derive).
-static CameraFrame ResolveGpuCameraInst(const tinyusdz::next::Stage &stage,
+static CameraFrame ResolveGpuCameraInst(const lightusd::next::Stage &stage,
                                         const Options &opt, const Bounds &bounds,
-                                        tinyusdz::Axis usdUp, int *out_height) {
+                                        lightusd::Axis usdUp, int *out_height) {
   const int cam_width = opt.width > 0 ? opt.width : 960;
   CameraFrame camera;
   Options auto_opt = opt;
@@ -688,11 +688,11 @@ static void NormalMatrixFromO2W(const float o2w[12], float n2w[9]) {
 // transform (the instance transform is applied by the TLAS). Displacement IS
 // applied here (once per prototype, in object space — the instance transform
 // scales it, like any other prototype-local geometry).
-static bool ExtractProtoGeo(const tinyusdz::next::Stage &stage,
+static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
                             const Options &opt, TextureCache &tc,
-                            const tinyusdz::next::UsdPrim &prim,
+                            const lightusd::next::UsdPrim &prim,
                             GpuInstProto *out) {
-  const tinyusdz::next::Value *val = prim.GetPropertyValue("points");
+  const lightusd::next::Value *val = prim.GetPropertyValue("points");
   if (!val) return false;
   const std::vector<float> *pts = val->as_float_array();
   if (!pts || pts->empty()) return false;
@@ -712,7 +712,7 @@ static bool ExtractProtoGeo(const tinyusdz::next::Stage &stage,
   }
 
   val = prim.GetPropertyValue("faceVertexIndices");
-  const tinyusdz::next::Value *cval = prim.GetPropertyValue("faceVertexCounts");
+  const lightusd::next::Value *cval = prim.GetPropertyValue("faceVertexCounts");
   if (!val) return false;
   const std::vector<int> *idx = val->as_int_array();
   const std::vector<int> *cnt = cval ? cval->as_int_array() : nullptr;
@@ -749,22 +749,22 @@ static bool ExtractProtoGeo(const tinyusdz::next::Stage &stage,
   // primvars:st) and offset each vertex along its area-weighted smooth normal.
   if (opt.displace && opt.displace_scale != 0.0f) {
     std::vector<float> uvs;
-    if (const tinyusdz::next::Value *uv = prim.GetPropertyValue("primvars:st")) {
+    if (const lightusd::next::Value *uv = prim.GetPropertyValue("primvars:st")) {
       const std::vector<float> *u = uv->as_float_array();
       if (u && !u->empty()) uvs = *u;
     }
     float disp_const = 0.0f;
     ScalarTex disp_tex;
-    const std::vector<tinyusdz::next::Path> *bind =
+    const std::vector<lightusd::next::Path> *bind =
         prim.GetRelationship("material:binding");
     if (bind && !bind->empty()) {
-      tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+      lightusd::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
       if (mat.IsValid()) {
-        tinyusdz::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
+        lightusd::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
         if (!surf.IsValid())
           surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
         if (surf.IsValid()) {
-          if (const tinyusdz::next::Value *d =
+          if (const lightusd::next::Value *d =
                   surf.GetPropertyValue("inputs:displacement"))
             if (const float *f = d->as_float()) disp_const = *f;
           ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc, &disp_tex);
@@ -817,7 +817,7 @@ static bool ExtractProtoGeo(const tinyusdz::next::Stage &stage,
   }
 
   out->base_color = Vec3{0.5f, 0.5f, 0.5f};
-  if (const tinyusdz::next::Value *dcv =
+  if (const lightusd::next::Value *dcv =
           prim.GetPropertyValue("primvars:displayColor")) {
     const std::vector<float> *dc = dcv->as_float_array();
     if (dc && dc->size() >= 3) out->base_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
@@ -873,7 +873,7 @@ static void ChunkProto(const GpuInstProto &src, uint32_t chunk,
 // two-level GPU TLAS. Returns true if it produced an image; false to fall back to
 // the flat path. Geometry is stored ONCE per prototype regardless of instance
 // count (the memory-sharing win over the flat world-space soup).
-static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
+static bool TryRunInstancedVk(const lightusd::next::Stage &stage,
                               const Options &opt) {
   GpuInstancedScene scene;
   // Each source prim maps to one OR MORE sub-prototype indices (a huge prototype
@@ -918,8 +918,8 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
   // WITHOUT materializing a MeshJobNext per instance, so a huge instanced scene
   // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
   // memory per placement instead of a ~392 B MeshJobNext.
-  auto place = [&](const tinyusdz::next::UsdPrim &prim, const matrix4d &world,
-                   tinyusdz::Purpose purpose) {
+  auto place = [&](const lightusd::next::UsdPrim &prim, const matrix4d &world,
+                   lightusd::Purpose purpose) {
     if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
     const std::string key = prim.GetPath().str();
     auto it = proto_id.find(key);
@@ -966,7 +966,7 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
   for (const auto &root : stage.GetRootPrims()) {
     if (emitted >= budget) break;
     emitted += CollectRTInstancePlacementsNext(
-        stage, root, matrix4d::identity(), tinyusdz::Purpose::Default,
+        stage, root, matrix4d::identity(), lightusd::Purpose::Default,
         opt.timecode, opt.mask, place, budget - emitted);
   }
   if (emitted >= budget)
@@ -999,9 +999,9 @@ static bool TryRunInstancedVk(const tinyusdz::next::Stage &stage,
     if (up == "Z") up_axis = 2.0;
     else if (up == "X") up_axis = 0.0;
   }
-  tinyusdz::Axis usdUp = (up_axis == 2.0)   ? tinyusdz::Axis::Z
-                         : (up_axis == 0.0) ? tinyusdz::Axis::X
-                                            : tinyusdz::Axis::Y;
+  lightusd::Axis usdUp = (up_axis == 2.0)   ? lightusd::Axis::Z
+                         : (up_axis == 0.0) ? lightusd::Axis::X
+                                            : lightusd::Axis::Y;
   int out_height = opt.height;
   CameraFrame camera = ResolveGpuCameraInst(stage, opt, bounds, usdUp, &out_height);
 
@@ -1176,11 +1176,11 @@ int main(int argc, char **argv) {
   // profile. Explicit texture flags remain authoritative, including an
   // explicit zero when a caller intentionally requests source resolution.
   {
-    const tinyusdz::tydra::next::ResourceBudget budget =
-        tinyusdz::tydra::next::ComputeResourceBudget(
+    const lightusd::tydra::next::ResourceBudget budget =
+        lightusd::tydra::next::ComputeResourceBudget(
             MemBudget::Get().Cap(), QueryDeviceLocalVRAMBytes());
-    const tinyusdz::tydra::next::TextureBudget texture_budget =
-        tinyusdz::tydra::next::DeriveTextureBudget(budget);
+    const lightusd::tydra::next::TextureBudget texture_budget =
+        lightusd::tydra::next::DeriveTextureBudget(budget);
     if (!opt.texture_max_size_explicit && texture_budget.max_edge > 0)
       opt.texture_max_size = static_cast<int>(texture_budget.max_edge);
     if (!opt.texture_budget_explicit && texture_budget.budget_bytes > 0) {
@@ -1204,11 +1204,11 @@ int main(int argc, char **argv) {
   // stdio control server. Both keep the scene + BVH resident for repeated
   // re-rendering.
   if (opt.mcp || !opt.js_script.empty()) {
-#ifdef TINYUSDZ_WITH_QJS
+#ifdef LIGHTUSD_WITH_QJS
     if (opt.mcp) return RunMCPMode(opt);
     return RunJSScriptMode(opt, opt.js_script);
 #else
-    std::cerr << "-js/-mcp require building with -DTINYUSDZ_WITH_QJS=ON.\n";
+    std::cerr << "-js/-mcp require building with -DLIGHTUSD_WITH_QJS=ON.\n";
     return EXIT_FAILURE;
 #endif
   }
@@ -1268,8 +1268,8 @@ int main(int argc, char **argv) {
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
   if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) {
     // Load through next loader.
-    tinyusdz::next::Stage stage;
-    tinyusdz::next::ValueClipStageLoader clip_stage_loader;
+    lightusd::next::Stage stage;
+    lightusd::next::ValueClipStageLoader clip_stage_loader;
     std::string warn, err;
     if (!LoadNextStageBudgeted(opt, &stage, &warn, &err,
                                &clip_stage_loader)) {
@@ -1342,7 +1342,7 @@ int main(int argc, char **argv) {
         // scene-wide transient peak on top of the final GPU chunk stream.
         std::vector<MeshJobNext> mesh_jobs;
         CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                                   tinyusdz::Purpose::Default, opt.timecode,
+                                   lightusd::Purpose::Default, opt.timecode,
                                    opt.mask, &mesh_jobs,
                                    /*expand_instancers=*/true);
 
@@ -1352,11 +1352,11 @@ int main(int argc, char **argv) {
         // path; the GPU path used to render every purpose unconditionally, so the
         // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
         if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
-        tinyusdz::next::UsdPrim &prim = job.prim;
+        lightusd::next::UsdPrim &prim = job.prim;
         ResolveMeshMaterialCached(stage, prim, tc, material_cache, &job);
         RTPreviewStats::MeshGeometry geo;
         uint32_t nv = 0;
-        const tinyusdz::next::Value *val = prim.GetPropertyValue("points");
+        const lightusd::next::Value *val = prim.GetPropertyValue("points");
         if (!val) continue;
         const std::vector<float> *pts = val->as_float_array();
         if (!pts || pts->empty()) continue;
@@ -1407,7 +1407,7 @@ int main(int argc, char **argv) {
         // and scrambles triangles (e.g. a 468-quad + 32-tri Suzanne collapses
         // from 968 triangles to 656, rendering with holes).
         val = prim.GetPropertyValue("faceVertexIndices");
-        const tinyusdz::next::Value *cval =
+        const lightusd::next::Value *cval =
             prim.GetPropertyValue("faceVertexCounts");
         if (val) {
           const std::vector<int> *idx = val->as_int_array();
@@ -1440,17 +1440,17 @@ int main(int argc, char **argv) {
         if (opt.displace && opt.displace_scale != 0.0f && !geo.indices.empty()) {
           float disp_const = 0.0f;
           ScalarTex disp_tex;
-          const std::vector<tinyusdz::next::Path> *bind =
+          const std::vector<lightusd::next::Path> *bind =
               prim.GetRelationship("material:binding");
           if (bind && !bind->empty()) {
-            tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+            lightusd::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
             if (mat.IsValid()) {
-              tinyusdz::next::UsdPrim surf =
+              lightusd::next::UsdPrim surf =
                   ConnectedPrimNext(stage, mat, "outputs:surface");
               if (!surf.IsValid())
                 surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
               if (surf.IsValid()) {
-                if (const tinyusdz::next::Value *d =
+                if (const lightusd::next::Value *d =
                         surf.GetPropertyValue("inputs:displacement"))
                   if (const float *f = d->as_float()) disp_const = *f;
                 ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
@@ -1504,7 +1504,7 @@ int main(int argc, char **argv) {
 
         // Base color from primvars:displayColor (constant); mid-grey default.
         Vec3 display_color{1.0f, 1.0f, 1.0f};
-        if (const tinyusdz::next::Value *dcv =
+        if (const lightusd::next::Value *dcv =
                 prim.GetPropertyValue("primvars:displayColor")) {
           const std::vector<float> *dc = dcv->as_float_array();
           if (dc && dc->size() >= 3)
@@ -1552,17 +1552,17 @@ int main(int argc, char **argv) {
           float intensity = 1.0f, exposure = 0.0f;
           Vec3 light_color{1.0f, 1.0f, 1.0f};
           bool normalize = false;
-          if (const tinyusdz::next::Value *v =
+          if (const lightusd::next::Value *v =
                   job.prim.GetPropertyValue("inputs:intensity"))
             if (const float *f = v->as_float()) intensity = *f;
-          if (const tinyusdz::next::Value *v =
+          if (const lightusd::next::Value *v =
                   job.prim.GetPropertyValue("inputs:exposure"))
             if (const float *f = v->as_float()) exposure = *f;
-          if (const tinyusdz::next::Value *v =
+          if (const lightusd::next::Value *v =
                   job.prim.GetPropertyValue("inputs:color"))
             if (const float *f = v->as_float3())
               light_color = Vec3{f[0], f[1], f[2]};
-          if (const tinyusdz::next::Value *v =
+          if (const lightusd::next::Value *v =
                   job.prim.GetPropertyValue("inputs:normalize"))
             if (const bool *b = v->as_bool()) normalize = *b;
           float area = 0.0f;
@@ -1606,7 +1606,7 @@ int main(int argc, char **argv) {
     Bounds gpu_flat_bounds;
     RenderContext gpu_curve_ctx;
     std::vector<CurveJobNext> gpu_curve_jobs;
-    stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
+    stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
       const std::string &type = prim.GetTypeName();
       if (type == "BasisCurves" || type == "HermiteCurves" ||
           type == "NurbsCurves") {
@@ -1628,7 +1628,7 @@ int main(int argc, char **argv) {
       gpu_curve_ctx.clip_stage_loader = clip_stage_loader;
       for (const auto &root : stage.GetRootPrims()) {
         CollectCurvesNextRec(root, matrix4d::identity(),
-                             tinyusdz::Purpose::Default, opt.timecode,
+                             lightusd::Purpose::Default, opt.timecode,
                              &gpu_curve_jobs);
       }
       if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
@@ -1649,7 +1649,7 @@ int main(int argc, char **argv) {
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
     if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty()) {
-      stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
+      stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
         const std::string &type = prim.GetTypeName();
         if (type == "Points" || type == "BasisCurves" ||
             type == "HermiteCurves" || type == "NurbsCurves") {
@@ -1689,9 +1689,9 @@ int main(int argc, char **argv) {
       if (up == "Z") up_axis = 2.0;
       else if (up == "X") up_axis = 0.0;
     }
-    tinyusdz::Axis usdUp = (up_axis == 2.0) ? tinyusdz::Axis::Z
-                           : (up_axis == 0.0) ? tinyusdz::Axis::X
-                           : tinyusdz::Axis::Y;
+    lightusd::Axis usdUp = (up_axis == 2.0) ? lightusd::Axis::Z
+                           : (up_axis == 0.0) ? lightusd::Axis::X
+                           : lightusd::Axis::Y;
 
     Bounds bounds = gpu_flat_bounds;
     for (const auto &g : geos) {
@@ -1918,10 +1918,10 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
   std::string err;
-  tinyusdz::USDLoadOptions load_options;
+  lightusd::USDLoadOptions load_options;
   load_options.mmap_zero_copy = opt.rt_preview;
   load_options.max_memory_limit_in_mb = opt.rt_preview ? 65536 : 16384;
   load_options.load_assets = !opt.rt_preview;
@@ -1945,7 +1945,7 @@ int main(int argc, char **argv) {
   }
 
   if (opt.rt_preview) {
-    if (tinyusdz::IsUSDC(opt.input) && !stage.has_mmap_zero_copy()) {
+    if (lightusd::IsUSDC(opt.input) && !stage.has_mmap_zero_copy()) {
       std::cerr << "RT preview requires mmap zero-copy metadata for USDC input. "
                 << "Write flattened USDC without --compress-float-arrays.\n";
       return EXIT_FAILURE;
@@ -2069,7 +2069,7 @@ int main(int argc, char **argv) {
     std::vector<FlatTri> flat_tris;
     std::vector<TriMat> flat_mats;
     SplitTriInfos(tris, &flat_tris, &flat_mats);
-    tinyusdz::Image img =
+    lightusd::Image img =
         RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
                     nullptr, camera, opt, height);
     const auto render_t1 = std::chrono::steady_clock::now();
@@ -2080,9 +2080,9 @@ int main(int argc, char **argv) {
     }
     lrt_tri_scene_free(lrt_scene);
 
-    tinyusdz::image::WriteOption wopt;
-    wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-    auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+    lightusd::image::WriteOption wopt;
+    wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+    auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
     if (!ret) {
       std::cerr << "Failed to write image: " << ret.error() << "\n";
       return EXIT_FAILURE;
@@ -2090,16 +2090,16 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
   }
 
-  tinyusdz::tydra::RenderScene render_scene;
-  tinyusdz::tydra::RenderSceneConverter converter;
-  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::tydra::RenderScene render_scene;
+  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::tydra::RenderSceneConverterEnv env(stage);
   env.timecode = opt.timecode;
   env.mesh_config.triangulate = !opt.direct_prims;
   env.mesh_config.subdivision_level = opt.subdivision_level;
   env.mesh_config.build_vertex_indices = !opt.direct_prims;
   env.mesh_config.compute_tangents_and_binormals = false;
   env.scene_config.load_texture_assets = true;
-  env.set_search_paths({tinyusdz::io::GetBaseDir(opt.input)});
+  env.set_search_paths({lightusd::io::GetBaseDir(opt.input)});
   if (opt.no_assetresolver) {
     SetupNullAssetResolution(&env.asset_resolver);
   }
@@ -2199,7 +2199,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  tinyusdz::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
+  lightusd::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
   CameraFrame camera = MakeCameraFrame(render_scene, opt, bounds, height,
                                        up_axis);
   CollectLights(render_scene, &light_cache);
@@ -2254,7 +2254,7 @@ int main(int argc, char **argv) {
   std::vector<FlatTri> flat_tris;
   std::vector<TriMat> flat_mats;
   SplitTriInfos(tris, &flat_tris, &flat_mats);
-  tinyusdz::Image img =
+  lightusd::Image img =
       RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
                   ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
                   legacy_textures.empty() ? nullptr : &legacy_textures,
@@ -2269,9 +2269,9 @@ int main(int argc, char **argv) {
   }
   if (lrt_scene) lrt_tri_scene_free(lrt_scene);
 
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
     return EXIT_FAILURE;

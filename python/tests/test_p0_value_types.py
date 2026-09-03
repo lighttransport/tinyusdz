@@ -2,13 +2,13 @@
 """P0: Value types, Array zero-copy matrix, ValueBlock, type helpers."""
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
 
 def test_half_scalar_and_array():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     # half scalar
     p.set("h", 1.5, type="half")
@@ -16,7 +16,7 @@ def test_half_scalar_and_array():
     # half array via float16 numpy – core materializes as float32 Array
     arr16 = np.array([1.0, 2.0, 3.0], dtype=np.float16)
     p.set("h_arr", arr16, type="half[]")
-    st2 = tinyusdz.load_bytes(st.export_usdc())
+    st2 = lightusd.load_bytes(st.export_usdc())
     a = st2.prim_at("/P")["h_arr"]
     # float16 arrays are promoted to float32 on read
     assert a.dtype == "float32"
@@ -39,31 +39,31 @@ def test_vector_and_matrix_types():
         ("normal3f", "normal3f", (0.0, 1.0, 0.0)),
     ]
     for name, t, val in cases:
-        st = tinyusdz.Stage.create()
+        st = lightusd.Stage.create()
         p = st.define_prim("/P", "Xform")
         p.set(name, val, type=t)
-        st2 = tinyusdz.loads(st.export_usda())
+        st2 = lightusd.loads(st.export_usda())
         got = st2.prim_at("/P")[name]
         assert got == pytest.approx(val) if isinstance(val[0], float) else got == val
 
     # matrix4d via numpy eye
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/P", "Xform").set("m", np.eye(4), type="matrix4d")
-    st2 = tinyusdz.load_bytes(st.export_usdc())
+    st2 = lightusd.load_bytes(st.export_usdc())
     m = st2.prim_at("/P")["m"]
     assert len(m) == 16
     assert np.allclose(np.asarray(m).reshape(4, 4), np.eye(4))
 
 
 def test_string_token_asset_and_arrays():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     p.set("tok", "hello", type="token")
     p.set("str", "world", type="string")
     p.set("asset", "a.png", type="asset")
     p.set("tok_arr", ["a", "b", "c"], type="token[]")
     p.set("str_arr", ["x", "y"], type="string[]")
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     q = st2.prim_at("/P")
     assert q["tok"] == "hello"
     assert q["str"] == "world"
@@ -74,12 +74,12 @@ def test_string_token_asset_and_arrays():
 
 
 def test_array_zero_copy_all_integer_types():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     # exercised via int32/uint32 paths; uchar maps internally to uint8 but
     # Python facade promotes via int/uint – just verify uint roundtrip
     p.set("u_arr", np.array([1, 2, 255], dtype=np.uint32), type="uint[]")
-    st2 = tinyusdz.load_bytes(st.export_usdc())
+    st2 = lightusd.load_bytes(st.export_usdc())
     arr = st2.prim_at("/P")["u_arr"]
     a = np.asarray(arr)
     assert a.tolist() == [1, 2, 255]
@@ -88,19 +88,19 @@ def test_array_zero_copy_all_integer_types():
 
 
 def test_value_block_identity():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     p.set("v", 1.0, type="float")
     p.attribute("v").block()
-    assert p["v"] is tinyusdz.ValueBlock
+    assert p["v"] is lightusd.ValueBlock
     # reload preserves block via USDA (None)
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     # USDA writes `float v = None` – parser should produce ValueBlock
     # Some cores keep block as authored None; verify either block or missing
     # For now ensure value is block or exception path
     try:
         val = st2.prim_at("/P")["v"]
-        assert val is tinyusdz.ValueBlock
+        assert val is lightusd.ValueBlock
     except KeyError:
         pass  # if block prunes property
 
@@ -109,19 +109,19 @@ def test_type_helpers_roundtrip():
     for name in ["float", "double", "int", "uint", "int64", "uint64", "half",
                  "float3", "double4", "point3f", "color3f", "matrix4d",
                  "token", "string", "asset"]:
-        tid = tinyusdz.type_from_name(name)
+        tid = lightusd.type_from_name(name)
         assert tid != 0, f"type_from_name failed for {name}"
-        back = tinyusdz.type_name(tid)
+        back = lightusd.type_name(tid)
         # asset maps to asset_path in some cores
         assert back in (name, "asset_path") or name in back
-    assert tinyusdz.type_from_name("not_a_type") == 0
-    assert tinyusdz.type_name(9999) is not None
+    assert lightusd.type_from_name("not_a_type") == 0
+    assert lightusd.type_name(9999) is not None
 
 
 def test_asarray_and_memoryview_zero_copy():
-    st = tinyusdz.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,1,1)] }')
+    st = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,1,1)] }')
     arr = st.prim_at("/M")["points"]
-    a = tinyusdz.asarray(arr)
+    a = lightusd.asarray(arr)
     b = np.asarray(arr)
     assert a.__array_interface__["data"][0] == b.__array_interface__["data"][0]
     assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]

@@ -1,8 +1,8 @@
-# TinyUSDZ C99 API Design Document
+# LightUSD C99 API Design Document
 
 ## Overview
 
-This document describes the design of a minimal C99 API for TinyUSDZ, providing a clean, dependency-free interface to USD functionality without requiring C++ knowledge or toolchains.
+This document describes the design of a minimal C99 API for LightUSD, providing a clean, dependency-free interface to USD functionality without requiring C++ knowledge or toolchains.
 
 ## Design Principles
 
@@ -200,7 +200,7 @@ tusdz_result tusdz_stage_export_to_file(tusdz_stage stage, const char* filepath,
 
 ## Implementation Strategy
 
-### Phase 1: Core Implementation (tinyusdz_c.h/c)
+### Phase 1: Core Implementation (lightusd_c.h/c)
 1. Define all enums and structs in header
 2. Implement opaque handle wrappers
 3. Core loading and traversal functions

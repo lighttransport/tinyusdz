@@ -9,7 +9,7 @@
 #include <set>
 #include <utility>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 namespace {
@@ -34,41 +34,41 @@ std::string KeyOrIndex(const std::string& key, size_t index,
 }
 
 bool KindAffected(RenderResourceKind kind,
-                  ::tinyusdz::next::StageChangeFlag flags) {
-  using Flag = ::tinyusdz::next::StageChangeFlag;
-  if (::tinyusdz::next::HasStageChange(flags, Flag::Resync)) return true;
+                  ::lightusd::next::StageChangeFlag flags) {
+  using Flag = ::lightusd::next::StageChangeFlag;
+  if (::lightusd::next::HasStageChange(flags, Flag::Resync)) return true;
   switch (kind) {
     case RenderResourceKind::Node:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Transform) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Visibility) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Metadata);
+      return ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Visibility) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Metadata);
     case RenderResourceKind::Mesh:
     case RenderResourceKind::Points:
     case RenderResourceKind::Curves:
     case RenderResourceKind::PointInstancer:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Topology) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Primvar) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Transform) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Animation) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Visibility);
+      return ::lightusd::next::HasStageChange(flags, Flag::Topology) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Primvar) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Animation) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Visibility);
     case RenderResourceKind::Material:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Material);
+      return ::lightusd::next::HasStageChange(flags, Flag::Material);
     case RenderResourceKind::Texture:
     case RenderResourceKind::Image:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Texture) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Material);
+      return ::lightusd::next::HasStageChange(flags, Flag::Texture) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Material);
     case RenderResourceKind::Light:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Light) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Transform) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Animation);
+      return ::lightusd::next::HasStageChange(flags, Flag::Light) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Animation);
     case RenderResourceKind::Camera:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Camera) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Transform) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Animation);
+      return ::lightusd::next::HasStageChange(flags, Flag::Camera) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Transform) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Animation);
     case RenderResourceKind::Animation:
     case RenderResourceKind::Skeleton:
-      return ::tinyusdz::next::HasStageChange(flags, Flag::Animation) ||
-             ::tinyusdz::next::HasStageChange(flags, Flag::Topology);
+      return ::lightusd::next::HasStageChange(flags, Flag::Animation) ||
+             ::lightusd::next::HasStageChange(flags, Flag::Topology);
   }
   return true;
 }
@@ -86,7 +86,7 @@ struct RenderSession::Impl {
   std::map<RenderResourceKind, IdMap> ids;
 
   bool IsAffected(RenderResourceKind kind, const std::string& key,
-                  const ::tinyusdz::next::StageChangeSet& changes) const {
+                  const ::lightusd::next::StageChangeSet& changes) const {
     if (revision == 0 || changes.full_resync ||
         changes.base_revision != revision) {
       return true;
@@ -100,12 +100,12 @@ struct RenderSession::Impl {
     return changes.stage_metadata_changed && kind == RenderResourceKind::Node;
   }
 
-  bool HasRenderEffect(const ::tinyusdz::next::StageChangeSet& changes) const {
+  bool HasRenderEffect(const ::lightusd::next::StageChangeSet& changes) const {
     if (changes.full_resync) return true;
     if (changes.stage_metadata_changed) return true;
     for (const auto& change : changes.prims) {
-      if (::tinyusdz::next::HasStageChange(
-              change.flags, ::tinyusdz::next::StageChangeFlag::Resync)) {
+      if (::lightusd::next::HasStageChange(
+              change.flags, ::lightusd::next::StageChangeFlag::Resync)) {
         return true;
       }
       for (const auto& kind_map : ids) {
@@ -120,7 +120,7 @@ struct RenderSession::Impl {
     return false;
   }
 
-  RenderUpdateResult ApplyNoOp(const ::tinyusdz::next::StageSnapshot& snapshot,
+  RenderUpdateResult ApplyNoOp(const ::lightusd::next::StageSnapshot& snapshot,
                                SceneUpdateSink* sink) {
     RenderUpdateResult out;
     out.revision = revision;
@@ -155,7 +155,7 @@ struct RenderSession::Impl {
 
   template <typename T, typename KeyFn, typename EmitFn>
   bool EmitVector(RenderResourceKind kind, const std::vector<T>& values,
-                  const ::tinyusdz::next::StageChangeSet& changes,
+                  const ::lightusd::next::StageChangeSet& changes,
                   KeyFn key_fn, EmitFn emit,
                   IdMap* next_keys, size_t* upserts) {
     std::unordered_map<std::string, size_t> occurrences;
@@ -175,8 +175,8 @@ struct RenderSession::Impl {
     return true;
   }
 
-  RenderUpdateResult Apply(const ::tinyusdz::next::StageSnapshot& snapshot,
-                           const ::tinyusdz::next::StageChangeSet& requested,
+  RenderUpdateResult Apply(const ::lightusd::next::StageSnapshot& snapshot,
+                           const ::lightusd::next::StageChangeSet& requested,
                            SceneUpdateSink* sink) {
     RenderUpdateResult out;
     out.revision = revision;
@@ -190,7 +190,7 @@ struct RenderSession::Impl {
       return out;
     }
 
-    ::tinyusdz::next::StageChangeSet changes = requested;
+    ::lightusd::next::StageChangeSet changes = requested;
     if (revision == 0 || changes.base_revision != revision ||
         changes.new_revision != snapshot.revision) {
       changes.base_revision = revision;
@@ -295,16 +295,16 @@ RenderSession::RenderSession(RenderSession&&) noexcept = default;
 RenderSession& RenderSession::operator=(RenderSession&&) noexcept = default;
 
 RenderUpdateResult RenderSession::Initialize(
-    const ::tinyusdz::next::StageSnapshot& snapshot, SceneUpdateSink* sink) {
-  ::tinyusdz::next::StageChangeSet full;
+    const ::lightusd::next::StageSnapshot& snapshot, SceneUpdateSink* sink) {
+  ::lightusd::next::StageChangeSet full;
   full.new_revision = snapshot.revision;
   full.full_resync = true;
   return impl_->Apply(snapshot, full, sink);
 }
 
 RenderUpdateResult RenderSession::Apply(
-    const ::tinyusdz::next::StageSnapshot& snapshot,
-    const ::tinyusdz::next::StageChangeSet& changes, SceneUpdateSink* sink) {
+    const ::lightusd::next::StageSnapshot& snapshot,
+    const ::lightusd::next::StageChangeSet& changes, SceneUpdateSink* sink) {
   return impl_->Apply(snapshot, changes, sink);
 }
 
@@ -322,4 +322,4 @@ void RenderSession::Reset() {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

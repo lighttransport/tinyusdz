@@ -78,7 +78,7 @@ function loadContext(opts) {
   const root = opts.root || process.cwd();
   const manifestPath = path.join(root, 'tests/verification/manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const cache = path.resolve(root, process.env.TINYUSDZ_VERIFY_CACHE || manifest.cache_dir);
+  const cache = path.resolve(root, process.env.LIGHTUSD_VERIFY_CACHE || manifest.cache_dir);
   const reportDir = path.join(cache, 'reports');
   fs.mkdirSync(reportDir, { recursive: true });
   const manifestDigest = sha256(manifestPath);
@@ -104,20 +104,20 @@ function report(ctx, status, error = null) {
 }
 
 function prepareMenagerie(ctx) {
-  const env = { TINYUSDZ_VERIFY_MANIFEST: ctx.manifestPath };
-  if (ctx.offline) env.TINYUSDZ_VERIFY_OFFLINE = '1';
+  const env = { LIGHTUSD_VERIFY_MANIFEST: ctx.manifestPath };
+  if (ctx.offline) env.LIGHTUSD_VERIFY_OFFLINE = '1';
   run(ctx.root, 'MuJoCo Menagerie', 'bash', ['web/js/setup-mujoco-menagerie.sh', '--cache-dir', path.join(ctx.cache, 'menagerie')], env);
 }
 
 function prepareMujoco(ctx) {
-  const env = { TINYUSDZ_VERIFY_MANIFEST: ctx.manifestPath, TINYUSDZ_VERIFY_CACHE: ctx.cache };
-  if (ctx.offline) env.TINYUSDZ_VERIFY_OFFLINE = '1';
+  const env = { LIGHTUSD_VERIFY_MANIFEST: ctx.manifestPath, LIGHTUSD_VERIFY_CACHE: ctx.cache };
+  if (ctx.offline) env.LIGHTUSD_VERIFY_OFFLINE = '1';
   run(ctx.root, 'MuJoCo physics WASM', 'bash', ['scripts/prepare-mujoco-wasm.sh'], env);
 }
 
 function prepareAssets(ctx) {
-  const env = { TINYUSDZ_VERIFY_MANIFEST: ctx.manifestPath, TINYUSDZ_VERIFY_CACHE: ctx.cache };
-  if (ctx.offline) env.TINYUSDZ_VERIFY_OFFLINE = '1';
+  const env = { LIGHTUSD_VERIFY_MANIFEST: ctx.manifestPath, LIGHTUSD_VERIFY_CACHE: ctx.cache };
+  if (ctx.offline) env.LIGHTUSD_VERIFY_OFFLINE = '1';
   run(ctx.root, 'USD-WG assets', 'bash', ['scripts/prepare-usd-assets.sh'], env);
 }
 
@@ -128,7 +128,7 @@ function prepareOpenUsd(ctx) {
 
 function prepareWeb(ctx) {
   prepareNpm(ctx);
-  run(ctx.root, 'Pinned Menagerie', 'bash', ['web/js/setup-mujoco-menagerie.sh', '--cache-dir', path.join(ctx.cache, 'menagerie')], ctx.offline ? { TINYUSDZ_VERIFY_OFFLINE: '1' } : {});
+  run(ctx.root, 'Pinned Menagerie', 'bash', ['web/js/setup-mujoco-menagerie.sh', '--cache-dir', path.join(ctx.cache, 'menagerie')], ctx.offline ? { LIGHTUSD_VERIFY_OFFLINE: '1' } : {});
   prepareMujoco(ctx);
   prepareWasm(ctx);
 }
@@ -138,12 +138,12 @@ function prepareNpm(ctx) {
 }
 
 function prepareWasm(ctx) {
-  run(ctx.root, 'TinyUSDZ WASM modules', 'bash', ['web/demo/scripts/prepare-local-tinyusdz.sh'], { TINYUSDZ_VERIFY_CACHE: ctx.cache });
+  run(ctx.root, 'LightUSD WASM modules', 'bash', ['web/demo/scripts/prepare-local-lightusd.sh'], { LIGHTUSD_VERIFY_CACHE: ctx.cache });
 }
 
 function testNative(ctx) {
   const build = path.join(ctx.cache, 'native-build');
-  run(ctx.root, 'Native configure', 'cmake', ['-S', ctx.root, '-B', build, '-G', 'Ninja', '-DTINYUSDZ_BUILD_TESTS=ON', '-DTINYUSDZ_BUILD_EXAMPLES=ON', `-DTINYUSDZ_TEST_FIXTURE_DIR=${ctx.root}`]);
+  run(ctx.root, 'Native configure', 'cmake', ['-S', ctx.root, '-B', build, '-G', 'Ninja', '-DLIGHTUSD_BUILD_TESTS=ON', '-DLIGHTUSD_BUILD_EXAMPLES=ON', `-DLIGHTUSD_TEST_FIXTURE_DIR=${ctx.root}`]);
   run(ctx.root, 'Native build', 'cmake', ['--build', build]);
   run(ctx.root, 'Native CTest', 'ctest', ['--test-dir', build, '--output-on-failure'], {
     USD_WG_ASSETS_DIR: path.join(ctx.cache, 'usd-assets'),
@@ -152,7 +152,7 @@ function testNative(ctx) {
 
 function testNext(ctx) {
   const build = path.join(ctx.cache, 'next-build');
-  run(ctx.root, 'next configure', 'cmake', ['-S', path.join(ctx.root, 'src/next'), '-B', build, '-G', 'Ninja', '-DTINYUSDZ_NEXT_BUILD_TESTS=ON', '-DCMAKE_BUILD_TYPE=Debug']);
+  run(ctx.root, 'next configure', 'cmake', ['-S', path.join(ctx.root, 'src/next'), '-B', build, '-G', 'Ninja', '-DLIGHTUSD_NEXT_BUILD_TESTS=ON', '-DCMAKE_BUILD_TYPE=Debug']);
   run(ctx.root, 'next build', 'cmake', ['--build', build]);
   run(ctx.root, 'next CTest', 'ctest', ['--test-dir', build, '--output-on-failure']);
 }
@@ -164,7 +164,7 @@ function testWeb(ctx) {
     MUJOCO_WASM_DIR: path.join(ctx.cache, 'mujoco', 'wasm', 'dist'),
     VITE_MUJOCO_WASM_DIR: path.join(ctx.cache, 'mujoco', 'wasm', 'dist'),
     USD_WG_ASSETS_DIR: path.join(ctx.cache, 'usd-assets'),
-    TINYUSDZ_SKIP_WASM_PREPARE: '1',
+    LIGHTUSD_SKIP_WASM_PREPARE: '1',
   };
   const args = ['tests/run-regression.mjs', '--profile', 'full', ctx.browser === 'hardware' ? '--hardware' : '--software'];
   run(ctx.root, 'Web regression', 'node', args, env, path.join(ctx.root, 'web/js'));
@@ -172,7 +172,7 @@ function testWeb(ctx) {
 
 function testMujocoWasm(ctx) {
   const env = {
-    TINYUSDZ_VERIFY_CACHE: ctx.cache,
+    LIGHTUSD_VERIFY_CACHE: ctx.cache,
     MUJOCO_WASM_DIR: path.join(ctx.cache, 'mujoco', 'wasm', 'dist'),
   };
   run(ctx.root, 'MuJoCo WASM binding smoke test', 'node',
@@ -186,8 +186,8 @@ function testWebProfile(ctx, profile) {
     MUJOCO_MENAGERIE: path.join(ctx.cache, 'menagerie'),
     MUJOCO_WASM_DIR: path.join(ctx.cache, 'mujoco', 'wasm', 'dist'),
     VITE_MUJOCO_WASM_DIR: path.join(ctx.cache, 'mujoco', 'wasm', 'dist'),
-    TINYUSDZ_VERIFY_CACHE: ctx.cache,
-    TINYUSDZ_SKIP_WASM_PREPARE: '1',
+    LIGHTUSD_VERIFY_CACHE: ctx.cache,
+    LIGHTUSD_SKIP_WASM_PREPARE: '1',
   };
   const browserArg = profile === 'browser' ? (ctx.browser === 'hardware' ? '--hardware' : '--software') : null;
   const args = ['tests/run-regression.mjs', '--profile', profile, ...(browserArg ? [browserArg] : [])];
@@ -199,7 +199,7 @@ function testOracle(ctx) {
     TUSDCAT_PATH: path.join(ctx.cache, 'native-build', 'tusdcat'),
     USDCAT_PATH: path.join(ctx.cache, 'openusd-install', 'bin', 'usdcat'),
   };
-  run(ctx.root, 'TinyUSDZ/OpenUSD comparison', 'bash', ['tests/run-usdcat-compare.sh'], env);
+  run(ctx.root, 'LightUSD/OpenUSD comparison', 'bash', ['tests/run-usdcat-compare.sh'], env);
 }
 
 function testAssets(ctx) {

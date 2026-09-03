@@ -20,7 +20,7 @@
 
 namespace tusdview {
 
-namespace tydra = tinyusdz::tydra;
+namespace tydra = lightusd::tydra;
 using DrawLightRtOpenPBRCPU = tydra::LightRtOpenPBRParams;
 
 // Halton(2,3) sub-pixel jitter offset in [-0.5, 0.5) for supersampled ray-traced

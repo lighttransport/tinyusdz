@@ -443,7 +443,7 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = w;
   img.height = h;
   img.channels = 4;
@@ -501,9 +501,9 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
     }
   });
 
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
     return false;
@@ -554,7 +554,7 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = w;
   img.height = h;
   img.channels = 4;
@@ -640,9 +640,9 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
     }
   });
 
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
     return false;
@@ -656,7 +656,7 @@ bool ShadeAndWriteGaussianImage(
     int h, int spp) {
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = w;
   img.height = h;
   img.channels = 4;
@@ -708,9 +708,9 @@ bool ShadeAndWriteGaussianImage(
       }
     }
   });
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  lightusd::image::WriteOption wopt;
+  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
+  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
   if (!ret) {
     std::cerr << "Failed to write image: " << ret.error() << "\n";
     return false;

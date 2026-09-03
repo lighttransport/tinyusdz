@@ -12,7 +12,7 @@
 
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 template <typename T>
 class ListOp {
@@ -262,4 +262,4 @@ DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

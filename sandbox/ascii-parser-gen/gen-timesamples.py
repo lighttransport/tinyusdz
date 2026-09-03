@@ -5,13 +5,13 @@ import copy
 
 basefilename = "ascii-parser-timesamples"
 
-# typename in USD ascc, typename in TinyUSDZ C++
+# typename in USD ascc, typename in LightUSD C++
 types = {
     "float": "float",
     "float2": "value::float2",
 }
 
-try_parse_timesamples_template = 
+try_parse_timesamples_template =
 """
 nonstd::optional<AsciiParser::TimeSampleData<__ty>>
 AsciiParser::TryParseTimeSamples() {
@@ -175,6 +175,6 @@ def gen():
 
 if __name__ == '__main__':
     gen()
-    
+
 
 

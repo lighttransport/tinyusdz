@@ -17,7 +17,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Result of expanding template clip metadata
 struct ExpandedClipMetadata {
@@ -519,7 +519,7 @@ inline bool ParseOneClipSetDict(const Dictionary &d, ClipSetMetadata *result,
 /// 12.3.4.1.1 allows multiple clip sets, e.g. `clips = { dict anim = {...},
 /// dict layout = {...} }`). Each named sub-dictionary becomes one
 /// ClipSetMetadata. Sets are returned in the dictionary's (deterministic, name-
-/// sorted) order; tinyusdz does not yet honor an explicit `clipSets` ordering
+/// sorted) order; lightusd does not yet honor an explicit `clipSets` ordering
 /// list-op, so name order approximates clip-set strength.
 ///
 /// @return true if at least one usable clip set was found.
@@ -577,8 +577,8 @@ inline bool ParseClipSetMetadataFull(
 /// @return true if manifest was loaded and attributes discovered
 ///
 /// Note: This function is declared inline but depends on LoadLayerFromFile
-/// which is defined in tinyusdz.cc. In practice, use it from .cc files
-/// that include tinyusdz.hh.
+/// which is defined in lightusd.cc. In practice, use it from .cc files
+/// that include lightusd.hh.
 ///
 inline bool DiscoverClipAttributes(
     const std::string &manifestAssetPath,
@@ -604,4 +604,4 @@ inline bool DiscoverClipAttributes(
   return false;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

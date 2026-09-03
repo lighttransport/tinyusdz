@@ -27,7 +27,7 @@ jobs:
       - name: Configure
         run: |
           mkdir build_arm64
-          cmake -G "Visual Studio 18 2026" -A ARM64 -Bbuild_arm64 -DTINYUSDZ_WITH_EXR=1 -DTINYUSDZ_WITH_TIFF=1 -S.
+          cmake -G "Visual Studio 18 2026" -A ARM64 -Bbuild_arm64 -DLIGHTUSD_WITH_EXR=1 -DLIGHTUSD_WITH_TIFF=1 -S.
       - name: Build
         run: cmake --build build_arm64 --config Release
 
@@ -46,7 +46,7 @@ jobs:
   #     - name: Configure
   #       run: |
   #         mkdir build_arm32
-  #         cmake -G "Visual Studio 18 2026" -A ARM -Bbuild_arm32  -DTINYUSDZ_WITH_EXR=1 -DTINYUSDZ_WITH_TIFF=1 -S.
+  #         cmake -G "Visual Studio 18 2026" -A ARM -Bbuild_arm32  -DLIGHTUSD_WITH_EXR=1 -DLIGHTUSD_WITH_TIFF=1 -S.
   #     - name: Build
   #       run: cmake --build build_arm32 --config Release
 

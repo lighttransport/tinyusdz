@@ -10,7 +10,7 @@
 #include <limits>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -239,4 +239,4 @@ inline uint32_t TextureFitPercent(const TextureFit& fit) {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

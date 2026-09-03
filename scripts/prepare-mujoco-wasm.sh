@@ -3,13 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CACHE_DIR="${TINYUSDZ_VERIFY_CACHE:-${ROOT_DIR}/.cache/tinyusdz-verification}"
+CACHE_DIR="${LIGHTUSD_VERIFY_CACHE:-${ROOT_DIR}/.cache/lightusd-verification}"
 SRC_DIR="${CACHE_DIR}/mujoco"
 BUILD_DIR="${CACHE_DIR}/mujoco-build"
-MANIFEST="${TINYUSDZ_VERIFY_MANIFEST:-${ROOT_DIR}/tests/verification/manifest.json}"
+MANIFEST="${LIGHTUSD_VERIFY_MANIFEST:-${ROOT_DIR}/tests/verification/manifest.json}"
 CHECKOUT_ONLY=0
 BUILD_ONLY=0
-OFFLINE="${TINYUSDZ_VERIFY_OFFLINE:-0}"
+OFFLINE="${LIGHTUSD_VERIFY_OFFLINE:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

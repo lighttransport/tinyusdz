@@ -40,7 +40,7 @@ export default defineConfig({
     emptyOutDir: true
   },
   optimizeDeps: {
-    exclude: ['tinyusdz']
+    exclude: ['lightusd']
   },
   assetsInclude: ['**/*.wasm']
 });

@@ -6,15 +6,15 @@
 #include "acutest.h"
 
 #include "unit-typed-array-timesamples.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "timesamples.hh"
 #include "typed-array.hh"
 
 #include <vector>
 #include <string>
 
-using namespace tinyusdz;
-using namespace tinyusdz::value;
+using namespace lightusd;
+using namespace lightusd::value;
 
 // Helper: test TypedArray dedup for a given type
 template<typename T>

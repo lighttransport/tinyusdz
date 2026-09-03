@@ -52,7 +52,7 @@ endif()
 # Find the Python interpreter and development libraries
 # ---------------------------------------------------------------------------
 
-# TinyUSDZ fix: find_package(Python3) is invoked at project toplevel.
+# LightUSD fix: find_package(Python3) is invoked at project toplevel.
 
 #set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
 #find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)

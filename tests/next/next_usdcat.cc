@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - next_usdcat
+// LightUSD Next - next_usdcat
 //
 // Minimal tusdcat-compatible CLI for the src/next module, so the usd-wg
 // asset-corpus regression gate (tests/parse-asset-corpus.mjs) can drive next
@@ -19,16 +19,16 @@
 #include <string>
 #include <vector>
 
-#include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
+#include "logger.hh"  // lightusd::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static void emit_lines(const std::string &msgs, const char *prefix) {
   size_t pos = 0;
@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
   // no threading). -1 means auto = hardware concurrency.
   // It is byte-identical to serial; it helps small compose-bound scenes and
   // currently regresses huge instanced ones, so it stays off by default.
-  // (Independent of the writer's TINYUSDZ_NEXT_NUM_THREADS.)
+  // (Independent of the writer's LIGHTUSD_NEXT_NUM_THREADS.)
   int compose_threads = 1;
   bool load_payloads = true;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
@@ -167,15 +167,15 @@ int main(int argc, char **argv) {
 
   // Opt-in wall-clock attribution (load+compose vs write). Printed to stderr with
   // a non-"WARN/ERR : " prefix so the corpus categorizer ignores it; off unless
-  // TINYUSDZ_NEXT_TIMING is set. Used to prioritize/measure perf work.
-  const bool timing = std::getenv("TINYUSDZ_NEXT_TIMING") != nullptr;
+  // LIGHTUSD_NEXT_TIMING is set. Used to prioritize/measure perf work.
+  const bool timing = std::getenv("LIGHTUSD_NEXT_TIMING") != nullptr;
   if (timing) {
     // The next library emits its [next_build]/[next_warm]/[next_compose] timing
-    // through tinyusdz::logging now (not a hardcoded stderr fprintf). Point the
+    // through lightusd::logging now (not a hardcoded stderr fprintf). Point the
     // logger at stderr and enable Info so those lines appear like before.
-    tinyusdz::logging::Logger::getInstance().setStream(&std::cerr);
-    tinyusdz::logging::Logger::getInstance().setLogLevel(
-        tinyusdz::logging::LogLevel::Info);
+    lightusd::logging::Logger::getInstance().setStream(&std::cerr);
+    lightusd::logging::Logger::getInstance().setLogLevel(
+        lightusd::logging::LogLevel::Info);
   }
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::duration d) {
@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
     // Parse-thread hint (large-array parallel parse): explicit arg to the library
     // (which no longer reads the environment itself). 0 = auto, 1 = serial.
     int parse_threads = 0;
-    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       parse_threads = std::atoi(nt);
     }
     pcp::LayerLoadOptions load_opts;
@@ -208,8 +208,8 @@ int main(int argc, char **argv) {
 
     USDAWriteOptions wopts;
     wopts.emit_custom = openusd_compat;
-    wopts.num_threads = 0;  // auto; TINYUSDZ_NEXT_NUM_THREADS overrides (1 = serial)
-    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+    wopts.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides (1 = serial)
+    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
     std::FILE* fp = stdout;
@@ -317,8 +317,8 @@ int main(int argc, char **argv) {
   // a binary crate (benchmark vehicle for the next crate writer).
   if (flatten && out_path && IsUSDCPath(out_path)) {
     USDCWriteOptions copts;
-    copts.crate_options.num_threads = 0;  // auto; TINYUSDZ_NEXT_NUM_THREADS overrides
-    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+    copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides
+    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }
     const auto t_w0 = Clock::now();
@@ -355,11 +355,11 @@ int main(int argc, char **argv) {
     // The stage came from pcp composition: emit composed-stage semantics
     // (consumed subLayers/relocates dropped, apiSchemas composed to explicit).
     wopts.composed_stage_output = true;
-    // Parallel subtree serialization (only effective in a TINYUSDZ_ENABLE_THREAD
-    // build). Default auto (= hardware_concurrency); TINYUSDZ_NEXT_NUM_THREADS
+    // Parallel subtree serialization (only effective in a LIGHTUSD_ENABLE_THREAD
+    // build). Default auto (= hardware_concurrency); LIGHTUSD_NEXT_NUM_THREADS
     // overrides (1 = serial). Output is byte-identical regardless of count.
     wopts.num_threads = 0;  // auto
-    if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
+    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
     // Write through the next StreamWriter with the native C-stdio backend

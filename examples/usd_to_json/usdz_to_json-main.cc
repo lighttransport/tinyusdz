@@ -23,16 +23,16 @@ int main(int argc, char **argv) {
   }
 
   std::string filename = argv[1];
-  
+
   // Check if file is USDZ
-  std::string ext = tinyusdz::io::GetFileExtension(filename);
+  std::string ext = lightusd::io::GetFileExtension(filename);
   bool is_usdz = (ext == "usdz" || ext == "USDZ");
-  
+
   if (!is_usdz) {
     std::cerr << "This tool is specifically for USDZ files. For other USD formats, use the regular USD to JSON converter.\n";
     return 1;
   }
-  
+
   // Determine output prefix
   std::string output_prefix;
   if (argc >= 3) {
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     size_t dot_pos = filename.find_last_of('.');
     size_t slash_pos = filename.find_last_of("/\\");
     if (slash_pos == std::string::npos) slash_pos = 0; else slash_pos++;
-    
+
     if (dot_pos != std::string::npos && dot_pos > slash_pos) {
       output_prefix = filename.substr(slash_pos, dot_pos - slash_pos);
     } else {
@@ -51,27 +51,27 @@ int main(int argc, char **argv) {
   }
 
   std::cout << "Converting USDZ to JSON: " << filename << std::endl;
-  
+
   // Convert USDZ to JSON
-  tinyusdz::USDZToJSONResult result;
+  lightusd::USDZToJSONResult result;
   std::string warn, err;
-  tinyusdz::USDToJSONOptions options;
-  
-  bool success = tinyusdz::USDZToJSON(filename, &result, &warn, &err, options);
-  
+  lightusd::USDToJSONOptions options;
+
+  bool success = lightusd::USDZToJSON(filename, &result, &warn, &err, options);
+
   if (!warn.empty()) {
     std::cerr << "Warnings: " << warn << std::endl;
   }
-  
+
   if (!success) {
     std::cerr << "Failed to convert USDZ to JSON: " << err << std::endl;
     return 1;
   }
-  
+
   std::cout << "Successfully converted USDZ!" << std::endl;
   std::cout << "Main USD file: " << result.main_usd_filename << std::endl;
   std::cout << "Total assets: " << result.asset_filenames.size() << std::endl;
-  
+
   // Write USD content to JSON file
   std::string usd_json_filename = output_prefix + "_usd.json";
   std::ofstream usd_file(usd_json_filename);
@@ -79,11 +79,11 @@ int main(int argc, char **argv) {
     std::cerr << "Failed to create USD JSON file: " << usd_json_filename << std::endl;
     return 1;
   }
-  
+
   usd_file << result.usd_json;
   usd_file.close();
   std::cout << "USD content written to: " << usd_json_filename << std::endl;
-  
+
   // Write assets to JSON file
   std::string assets_json_filename = output_prefix + "_assets.json";
   std::ofstream assets_file(assets_json_filename);
@@ -91,18 +91,18 @@ int main(int argc, char **argv) {
     std::cerr << "Failed to create assets JSON file: " << assets_json_filename << std::endl;
     return 1;
   }
-  
+
   assets_file << result.assets_json;
   assets_file.close();
   std::cout << "Assets written to: " << assets_json_filename << std::endl;
-  
+
   // Print summary
   std::cout << "\nAsset summary:" << std::endl;
   for (const auto& asset_filename : result.asset_filenames) {
     std::cout << "  - " << asset_filename << std::endl;
   }
-  
+
   std::cout << "\nConversion complete!" << std::endl;
-  
+
   return 0;
 }

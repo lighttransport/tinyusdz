@@ -1,0 +1,17 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Tools",
+  "Description": "Headless MetaHuman to USD/MaterialX export harness for LightUSD.",
+  "Modules": [],
+  "Plugins": [
+    { "Name": "MetaHumanCharacter", "Enabled": true },
+    { "Name": "HairStrands", "Enabled": true },
+    { "Name": "LightUSDGroomExport", "Enabled": true },
+    { "Name": "USDImporter", "Enabled": true },
+    { "Name": "USDCore", "Enabled": true },
+    { "Name": "PythonScriptPlugin", "Enabled": true },
+    { "Name": "EditorScriptingUtilities", "Enabled": true },
+    { "Name": "AndroidFileServer", "Enabled": false }
+  ]
+}

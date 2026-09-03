@@ -4,7 +4,7 @@ Guidance for AI coding agents (Claude Code, Copilot, Cursor, etc.) working in th
 
 ## Project Overview
 
-TinyUSDZ is a secure, portable, dependency-free C++17 library for parsing and writing USD (Universal Scene Description) files in USDA (ASCII), USDC (binary/Crate), and USDZ (zip archive) formats. Security-focused alternative to Pixar's pxrUSD with minimal dependencies. No C++ exceptions; error handling via `nonstd::expected`.
+LightUSD is a secure, portable, dependency-free C++17 library for parsing and writing USD (Universal Scene Description) files in USDA (ASCII), USDC (binary/Crate), and USDZ (zip archive) formats. Security-focused alternative to Pixar's pxrUSD with minimal dependencies. No C++ exceptions; error handling via `nonstd::expected`.
 
 ## Repository Layout
 
@@ -38,7 +38,7 @@ src/                       Core library sources (~250 .cc/.hh files)
                              reconstruction, graph
   prim-reconstruct*          Per-schema field reconstruction tables
   ascii-parser-entry.cc      Registers prim/attr meta names
-  tinyusdz.{hh,cc}           Main API (LoadUSDFromFile, etc.)
+  lightusd.{hh,cc}           Main API (LoadUSDFromFile, etc.)
   stage.{hh,cc}              USD Stage (scene graph)
   prim-types.{hh,cc}         Primitive type definitions
   value-types.{hh,cc}        Value type system + DEFINE_TYPE_TRAIT
@@ -54,15 +54,15 @@ src/                       Core library sources (~250 .cc/.hh files)
   usdMtlx.{hh,cc}            MaterialX nodegraphs
   usdAR.{hh,cc}              UsdAR (anchor / image / face)
   usdFbx, usdMedia, usdObj   Adjacent format/asset schemas
-  c-tinyusd.{h}              C API surface (stable, MIT-friendly)
-  c-tinyusd-helpers.{h,cc}   C API impl + helpers (composition arc
+  c-lightusd.{h}              C API surface (stable, MIT-friendly)
+  c-lightusd-helpers.{h,cc}   C API impl + helpers (composition arc
                              authoring, variant content, attribute
                              setters, etc.)
-  c-tinyusd-tydra.{h,cc}     C API for Tydra scene access
-  python/module.c            CPython abi3 extension entry (tinyusdz
+  c-lightusd-tydra.{h,cc}     C API for Tydra scene access
+  python/module.c            CPython abi3 extension entry (lightusd
                              Python module — Stage / Prim / Attribute
                              / Value / RenderScene types). Backed by
-                             the C API in c-tinyusd-helpers.
+                             the C API in c-lightusd-helpers.
   core/                      Schema-agnostic primitives split out for
                              tighter dependency graphs:
     attribute.hh, attr-metas.hh, prim-metas.hh, metadata-base.hh,
@@ -90,7 +90,7 @@ python/                    CPython abi3 wheel (built from
                            src/python/module.c via setuptools +
                            CMake). Layout:
   pyproject.toml             Build config (declared at repo root)
-  tinyusdz/                  Installed package (`import tinyusdz`)
+  lightusd/                  Installed package (`import lightusd`)
     __init__.py              Public re-exports
     _core.pyi                Type stubs (kept in sync with module.c)
   tests/                     pytest suite (~40 files, ~780 tests)
@@ -137,7 +137,7 @@ the user explicitly asks to reuse another configured build tree.
 ```bash
 # Native build (Linux/macOS)
 cmake -S . -B build_ninja -G Ninja \
-  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build_ninja
 
 # Or use bootstrap script
@@ -158,7 +158,7 @@ Preferred build folders for coding agents: `build_ninja/` (native),
 # Python extension (CPython abi3 wheel)
 pip install -e . --no-build-isolation
 # editable install builds into build_py_ext/ (gitignored).
-# Re-run after touching src/python/module.c, c-tinyusd-helpers.{h,cc},
+# Re-run after touching src/python/module.c, c-lightusd-helpers.{h,cc},
 # or any header transitively included by them.
 
 cd python && python3 -m pytest tests/ -q
@@ -166,14 +166,14 @@ cd python && python3 -m pytest tests/ -q
 
 ### Key CMake Options
 
-- `TINYUSDZ_BUILD_TESTS=ON` - Build unit tests
-- `TINYUSDZ_BUILD_EXAMPLES=ON` - Build example apps
-- `TINYUSDZ_PRODUCTION_BUILD=ON` - Disable debug logging
-- `TINYUSDZ_WITH_TYDRA=ON` - Tydra framework (default ON)
-- `TINYUSDZ_WITH_EXR=ON` - EXR/HDR texture support
-- `TINYUSDZ_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
-- `TINYUSDZ_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
-- `TINYUSDZ_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `tusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
+- `LIGHTUSD_BUILD_TESTS=ON` - Build unit tests
+- `LIGHTUSD_BUILD_EXAMPLES=ON` - Build example apps
+- `LIGHTUSD_PRODUCTION_BUILD=ON` - Disable debug logging
+- `LIGHTUSD_WITH_TYDRA=ON` - Tydra framework (default ON)
+- `LIGHTUSD_WITH_EXR=ON` - EXR/HDR texture support
+- `LIGHTUSD_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
+- `LIGHTUSD_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
+- `LIGHTUSD_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `tusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
   - `TUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
 
 ### GUI viewer (`tusdview`) + Vulkan debugging
@@ -187,7 +187,7 @@ descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
 The procedure is in that doc; the threaded VK-RT case study is in
 [examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
 For NVIDIA hardware viewer regression under a headless display, use the
-documented `xvfb-run` + `TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
+documented `xvfb-run` + `LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
 [doc/testing-cpp.md](doc/testing-cpp.md#headless-nvidia-viewer-regression); do
 not force `TUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
 confirms an NVIDIA physical device.
@@ -200,8 +200,8 @@ the viewer tests under a real Xvfb screen:
 
 ```sh
 cmake -S . -B build_ninja -G Ninja \
-  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_GUI_VIEWER=ON \
-  -DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
+  -DLIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON
 cmake --build build_ninja -j16
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
@@ -250,7 +250,7 @@ Before merging refactors or feature branches, confirm all required checks pass:
 1. Validate clean build and native regression coverage
 
 ```bash
-cmake -S . -B build -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake -S . -B build -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build -j16
 cd build
 ctest --output-on-failure
@@ -262,7 +262,7 @@ ctest -R feat --output-on-failure
 2. Run stable `next` checks
 
 ```bash
-cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-next -j16
 ctest --test-dir build-next --output-on-failure
 ```
@@ -302,7 +302,7 @@ cd "$ROOT_DIR"
 JOBS="${JOBS:-16}"
 
 cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build" \
-  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build "$ROOT_DIR/build" -j"$JOBS"
 
 cd "$ROOT_DIR/build"
@@ -313,7 +313,7 @@ ctest -R feat --output-on-failure
 
 cd "$ROOT_DIR"
 cmake -S "$ROOT_DIR/src/next" -B "$ROOT_DIR/build-next" \
-  -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build "$ROOT_DIR/build-next" -j"$JOBS"
 ctest --test-dir "$ROOT_DIR/build-next" --output-on-failure
 
@@ -333,13 +333,13 @@ fi
 ctest --output-on-failure
 
 # Run only unit tests
-ctest -R unit-test-tinyusdz --output-on-failure
+ctest -R unit-test-lightusd --output-on-failure
 
 # Run only roundtrip tests
 ctest -R roundtrip --output-on-failure
 
 # Run a single Acutest unit test by name
-./build/unit-test-tinyusdz crate_writer_cone_test
+./build/unit-test-lightusd crate_writer_cone_test
 
 # Roundtrip comparison: tusdcat vs pxrUSD usdcat
 USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
@@ -355,7 +355,7 @@ node tests/compare-usda.js --detailed-diff \
 
 | Name | What It Tests |
 |------|---------------|
-| `unit-test-tinyusdz` | ~1020 Acutest unit tests (parser, writer, math, materials, etc.) |
+| `unit-test-lightusd` | ~1020 Acutest unit tests (parser, writer, math, materials, etc.) |
 | `usda-parser-unit-test` | Load all `tests/usda/*.usda` + expected-failure cases |
 | `usdc-parser-unit-test` | Load all `tests/usdc/*.usdc` files |
 | `usda-roundtrip-test` | USDA parse -> export -> reparse -> compare |
@@ -367,7 +367,7 @@ node tests/compare-usda.js --detailed-diff \
 2. Implement in `tests/unit/unit-<module>.cc`
 3. Register in `tests/unit/unit-main.cc` (`TEST_LIST` array)
 4. Rebuild and verify: `cmake --build build_ninja` then
-   `ctest --test-dir build_ninja -R unit-test-tinyusdz --output-on-failure`
+   `ctest --test-dir build_ninja -R unit-test-lightusd --output-on-failure`
 
 ## Key Data Flow
 
@@ -403,14 +403,14 @@ Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body o
 
 ## Release / Versioning
 
-Cutting a release (version bump, git tag, PyPI wheel publish, npm package publish) is documented in **[doc/ci.md](doc/ci.md)**. Read it before bumping any version or pushing a `v*.*.*` tag — a final `vX.Y.Z` tag push triggers an automated PyPI publish via `.github/workflows/wheels.yml` (OIDC trusted publishing; pre-release tags with a `-` suffix skip the PyPI publish by design), and the npm publish is a manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml`. The version sources that need hand-editing are `src/tinyusdz.hh` (C++ constants) and `web/{npm,js}/package.json` (npm packages); the Python wheel version is derived from the git tag by `setuptools_scm` and must NOT be edited by hand.
+Cutting a release (version bump, git tag, PyPI wheel publish, npm package publish) is documented in **[doc/ci.md](doc/ci.md)**. Read it before bumping any version or pushing a `v*.*.*` tag — a final `vX.Y.Z` tag push triggers an automated PyPI publish via `.github/workflows/wheels.yml` (OIDC trusted publishing; pre-release tags with a `-` suffix skip the PyPI publish by design), and the npm publish is a manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml`. The version sources that need hand-editing are `src/lightusd.hh` (C++ constants) and `web/{npm,js}/package.json` (npm packages); the Python wheel version is derived from the git tag by `setuptools_scm` and must NOT be edited by hand.
 
 ### Versioning and tagging checklist
 
 Use this for release preparation and tag creation:
 
 1. Decide bump level (MAJOR/MINOR/PATCH) and update all version sources in the same commit:
-   - `src/tinyusdz.hh`
+   - `src/lightusd.hh`
    - `web/npm/package.json`
    - `web/js/package.json`
 2. Run the standard regression checks above (pre-merge checklist).
@@ -457,11 +457,11 @@ root = pathlib.Path(sys.argv[1]).resolve()
 version = sys.argv[2]
 major, minor, patch = version.split(".")
 
-header = root / "src/tinyusdz.hh"
+header = root / "src/lightusd.hh"
 text = header.read_text()
-text = re.sub(r"#define TINYUSDZ_VERSION_MAJOR +[0-9]+", f"#define TINYUSDZ_VERSION_MAJOR {major}", text)
-text = re.sub(r"#define TINYUSDZ_VERSION_MINOR +[0-9]+", f"#define TINYUSDZ_VERSION_MINOR {minor}", text)
-text = re.sub(r"#define TINYUSDZ_VERSION_PATCH +[0-9]+", f"#define TINYUSDZ_VERSION_PATCH {patch}", text)
+text = re.sub(r"#define LIGHTUSD_VERSION_MAJOR +[0-9]+", f"#define LIGHTUSD_VERSION_MAJOR {major}", text)
+text = re.sub(r"#define LIGHTUSD_VERSION_MINOR +[0-9]+", f"#define LIGHTUSD_VERSION_MINOR {minor}", text)
+text = re.sub(r"#define LIGHTUSD_VERSION_PATCH +[0-9]+", f"#define LIGHTUSD_VERSION_PATCH {patch}", text)
 header.write_text(text)
 
 for rel in ("web/npm/package.json", "web/js/package.json"):
@@ -471,7 +471,7 @@ for rel in ("web/npm/package.json", "web/js/package.json"):
     p.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
-git add "$ROOT_DIR/src/tinyusdz.hh" "$ROOT_DIR/web/npm/package.json" "$ROOT_DIR/web/js/package.json"
+git add "$ROOT_DIR/src/lightusd.hh" "$ROOT_DIR/web/npm/package.json" "$ROOT_DIR/web/js/package.json"
 echo "Version bump prepared for $VERSION"
 
 USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}" \
@@ -591,7 +591,7 @@ The common culprits in this repo:
 
 - `build/`, `build_py/`, `build_py_ext/`, `build_test/`, `web/build/`, `web/build_64*/` — CMake / ninja output trees.
 - `*.a`, `*.o`, `*.obj`, `*.so`, `*.dylib`, `*.dll`, `*.lib`, `*.pdb` — compiled object files / libraries.
-- `python/tinyusdz/_core.abi3.so` — the editable-install Python extension binary; regenerated by `pip install -e .`.
+- `python/lightusd/_core.abi3.so` — the editable-install Python extension binary; regenerated by `pip install -e .`.
 - `*.ninja_deps`, `*.ninja_log`, `build.ninja`, `CMakeCache.txt`, `CMakeFiles/`, `CTestTestfile.cmake`, `compile_commands.json` — CMake/ninja state.
 - `__pycache__/`, `*.pyc`, `node_modules/`, `dist/`, `*.egg-info/`.
 

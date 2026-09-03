@@ -1,11 +1,11 @@
-# Resume: AOUSD Core conformance for TinyUSDZ `next`
+# Resume: AOUSD Core conformance for LightUSD `next`
 
 Handoff for a fresh coding-agent session. The AOUSD supplemental **composition**
 gate is fully closed (138/138); this file lists what remains and how to work on it.
 
 ## Orientation
 
-- **Repo / branch:** `/mnt/nvme02/work/tinyusdz-repo/physics-2026`, branch `physics-2026-fix2`.
+- **Repo / branch:** `/mnt/nvme02/work/lightusd-repo/physics-2026`, branch `physics-2026-fix2`.
 - **Module under work:** `src/next/` — a standalone C++14 USD core (parser, crate,
   pcp composition, eval, validation, writer). It is NOT built by the top-level
   CMake; it has its own project + tests.
@@ -29,11 +29,11 @@ cmake --build build-next-threaded-debug -j16 && ctest --test-dir build-next-thre
 - **Fetch (pinned, stable path):** `bash scripts/fetch-aousd-supplemental.sh`
   clones `aousd/core-spec-supplemental-public` at tag `release/1.0.1.post0`
   (commit `c15ae0cad3ed`) and prints the suite root:
-  `~/.cache/tinyusdz/core-spec-supplemental-release_dec2025/releases/1.0.1`.
+  `~/.cache/lightusd/core-spec-supplemental-release_dec2025/releases/1.0.1`.
   It is intentionally NOT vendored.
-- `build-next` is configured with `-DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT` pointing there.
+- `build-next` is configured with `-DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT` pointing there.
 - **pxr oracle (PINNED):** OpenUSD **26.05** dist at
-  `/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist` — use its `bin/usdcat` and its
+  `/mnt/nvme02/work/lightusd-repo/OpenUSD/dist` — use its `bin/usdcat` and its
   python (`PYTHONPATH=.../dist/lib/python`, `Usd.GetVersion()==(0,26,5)`) for
   ALL differential gates and expectation baking. Do not mix with
   `/home/syoyo/local/USD` or the v26.03 source checkout.
@@ -176,7 +176,7 @@ MaterialX — prioritize from application requirements.
   `aousd-unknown-property-metadata.usda`, one USDC variant) — the LEGACY binary,
   which `next` does not feed. XFAIL; only relevant if touching `src/usda-*`.
 - Oracle pinning: RESOLVED — standardized on the OpenUSD 26.05 dist
-  (`/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist`, binary + python) for all
+  (`/mnt/nvme02/work/lightusd-repo/OpenUSD/dist`, binary + python) for all
   differential gates; see "The supplemental corpus" section above.
 
 ## Working rules

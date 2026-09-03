@@ -2490,7 +2490,7 @@ function main() {
       const content1 = fs.readFileSync(options.files[0], 'utf-8');
       const content2 = fs.readFileSync(options.files[1], 'utf-8');
 
-      // Check for VALUE_PPRINT placeholder (TinyUSDZ pprinter bug)
+      // Check for VALUE_PPRINT placeholder (LightUSD pprinter bug)
       const vprintWarnings = [];
       for (const [content, label] of [[content1, label1], [content2, label2]]) {
         const vpLines = content.split('\n')
@@ -2501,7 +2501,7 @@ function main() {
         }
       }
       if (vprintWarnings.length > 0) {
-        console.error(`\nERROR: VALUE_PPRINT placeholder detected (TinyUSDZ pprinter bug):`);
+        console.error(`\nERROR: VALUE_PPRINT placeholder detected (LightUSD pprinter bug):`);
         for (const w of vprintWarnings) {
           console.error(`  ${w.file}:${w.lineNum}: ${w.text.substring(0, 120)}`);
         }

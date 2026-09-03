@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdPhysics Applied API Schema Implementation
+// LightUSD Next - UsdPhysics Applied API Schema Implementation
 
 #include "physics-api.hh"
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -352,4 +352,4 @@ bool GetPhysicsLimitData(const UsdPrim& prim, const std::string& dof,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

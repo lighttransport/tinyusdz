@@ -1,5 +1,5 @@
 # JavaScript Scripting Example - Load USD as Layer and query LayerMetas
-# Assume this cmake is called from tinyusdz root(../../)
+# Assume this cmake is called from lightusd root(../../)
 
 set(EXAMPLE_TARGET "js-script")
 
@@ -11,11 +11,11 @@ add_executable(${EXAMPLE_TARGET} ${JS_SCRIPT_SOURCES})
 add_sanitizers(${EXAMPLE_TARGET})
 
 target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_link_libraries(${EXAMPLE_TARGET} tinyusdz_static)
+target_link_libraries(${EXAMPLE_TARGET} lightusd_static)
 
 # This example requires QuickJS support
-if(NOT TINYUSDZ_WITH_QJS)
-    message(WARNING "js-script example requires QuickJS support. Enable with -DTINYUSDZ_WITH_QJS=ON")
+if(NOT LIGHTUSD_WITH_QJS)
+    message(WARNING "js-script example requires QuickJS support. Enable with -DLIGHTUSD_WITH_QJS=ON")
 endif()
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

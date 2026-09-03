@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "tydra/next/scene-access.hh"
 
 #include <algorithm>
@@ -29,14 +29,14 @@
 #include "next_scene_loader.hh"  // BuildNextRtDeformedVertices (selection-highlight re-pose)
 #include "pprint-enum.hh"
 #include "skinning.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
 namespace tusdview {
 
-namespace tydra = tinyusdz::tydra;
+namespace tydra = lightusd::tydra;
 
 namespace {
 
@@ -145,13 +145,13 @@ bool ViewportRay(const OrbitCamera& camera, bool zeroToOneDepth, float px,
   return true;
 }
 
-std::string TinyUsdVersionString() {
-  std::string v = std::to_string(tinyusdz::version_major) + "." +
-                  std::to_string(tinyusdz::version_minor) + "." +
-                  std::to_string(tinyusdz::version_micro);
-  if (tinyusdz::version_rev && tinyusdz::version_rev[0] != '\0') {
+std::string LightUsdVersionString() {
+  std::string v = std::to_string(lightusd::version_major) + "." +
+                  std::to_string(lightusd::version_minor) + "." +
+                  std::to_string(lightusd::version_micro);
+  if (lightusd::version_rev && lightusd::version_rev[0] != '\0') {
     v += "-";
-    v += tinyusdz::version_rev;
+    v += lightusd::version_rev;
   }
   return v;
 }
@@ -209,24 +209,24 @@ const char* CompilerString() {
 #endif
 }
 
-const tinyusdz::Prim* FindPrimByPath(const tinyusdz::Prim& prim,
+const lightusd::Prim* FindPrimByPath(const lightusd::Prim& prim,
                                      const std::string& path) {
   if (prim.absolute_path().full_path_name() == path) return &prim;
   for (const auto& c : prim.children()) {
-    if (const tinyusdz::Prim* p = FindPrimByPath(c, path)) return p;
+    if (const lightusd::Prim* p = FindPrimByPath(c, path)) return p;
   }
   return nullptr;
 }
 
 // --- Hierarchy search predicates (name + type + abs path) ---
-bool PrimPasses(ImGuiTextFilter& f, const tinyusdz::Prim& prim) {
+bool PrimPasses(ImGuiTextFilter& f, const lightusd::Prim& prim) {
   std::string typeName = prim.prim_type_name();
   if (typeName.empty()) typeName = prim.type_name();
   std::string s = prim.element_name() + " " + typeName + " " +
                   prim.absolute_path().full_path_name();
   return f.PassFilter(s.c_str());
 }
-bool PrimSubtreePasses(ImGuiTextFilter& f, const tinyusdz::Prim& prim) {
+bool PrimSubtreePasses(ImGuiTextFilter& f, const lightusd::Prim& prim) {
   if (PrimPasses(f, prim)) return true;
   for (const auto& c : prim.children()) {
     if (PrimSubtreePasses(f, c)) return true;
@@ -448,15 +448,15 @@ void Gui::drawAboutModal() {
     return;
   }
 
-  constexpr const char* kRepoUrl = "https://github.com/lighttransport/tinyusdz";
+  constexpr const char* kRepoUrl = "https://github.com/lighttransport/lightusd";
   const RendererCaps* caps = renderer_ ? &renderer_->caps() : nullptr;
-  const std::string tinyVersion = TinyUsdVersionString();
+  const std::string tinyVersion = LightUsdVersionString();
   const std::string cpuInfo = CpuInfoString();
 
   ImGui::TextUnformatted("tusdview");
   ImGui::Separator();
   ImGui::Text("tusdview version: %s", "development build");
-  ImGui::Text("tinyusdz version: %s", tinyVersion.c_str());
+  ImGui::Text("lightusd version: %s", tinyVersion.c_str());
   ImGui::Text("Backend: %s", caps ? caps->backend_name : "?");
   ImGui::Text("GPU: %s", (caps && !caps->gpu_name.empty()) ? caps->gpu_name.c_str() : "?");
   ImGui::Text("Graphics API: %s",
@@ -1292,7 +1292,7 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
   revealSelectionInHierarchy_ = !absPath.empty();
   if (loaded_) {
     for (const auto& root : loaded_->stage.root_prims()) {
-      if (const tinyusdz::Prim* p = FindPrimByPath(root, absPath)) {
+      if (const lightusd::Prim* p = FindPrimByPath(root, absPath)) {
         selPrim_ = p;
         break;
       }
@@ -1300,9 +1300,9 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
     // FindPrimByPath misses prims whose composed absolute_path is unset (e.g.
     // GeomSubset children); fall back to the stage's path lookup.
     if (!selPrim_ && !absPath.empty()) {
-      const tinyusdz::Prim* p = nullptr;
+      const lightusd::Prim* p = nullptr;
       std::string err;
-      if (loaded_->stage.find_prim_at_path(tinyusdz::Path(absPath, ""), p, &err) && p) {
+      if (loaded_->stage.find_prim_at_path(lightusd::Path(absPath, ""), p, &err) && p) {
         selPrim_ = p;
       }
     }
@@ -1340,8 +1340,8 @@ void Gui::rebuildSubsetHighlight() {
   const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
 
   if (selPrim_) {
-    if (const auto* gs = selPrim_->as<tinyusdz::GeomSubset>()) {
-      if (gs->elementType.get_value() == tinyusdz::GeomSubset::ElementType::Face) {
+    if (const auto* gs = selPrim_->as<lightusd::GeomSubset>()) {
+      if (gs->elementType.get_value() == lightusd::GeomSubset::ElementType::Face) {
         std::set<uint32_t> faces;
         if (auto opt = gs->indices.get_value()) {
           std::vector<int32_t> fi;
@@ -1491,8 +1491,8 @@ void Gui::rebuildSubsetHighlight() {
       }
     }
   } else if (m.skelId >= 0 && m.skinMatrixBase >= 0 && !m.jointIdx.empty() && loaded_) {
-    std::unordered_map<int, std::vector<tinyusdz::value::matrix4d>> skinCache;
-    std::vector<tinyusdz::value::matrix4d> composed;
+    std::unordered_map<int, std::vector<lightusd::value::matrix4d>> skinCache;
+    std::vector<lightusd::value::matrix4d> composed;
     if (BuildComposedSkinningMatrices(loaded_->render, m, timeline_.applied,
                                       &skinCache, &composed)) {
       skinnedVerts = m.vertices;
@@ -1740,7 +1740,7 @@ bool Gui::framePath(const std::string& absPath) {
   return found;
 }
 
-bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
+bool Gui::drawPrimTree(const lightusd::Prim& prim) {
   // When filtering, hide whole subtrees that contain no match; expand the rest
   // so matches are visible in context.
   const bool filtering = hierFilter_.IsActive();
@@ -1763,44 +1763,44 @@ bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
     auto tryPurpose = [&](auto* gprim) -> std::string {
       if (gprim->purpose.authored()) {
         auto v = gprim->purpose.get_value();
-        if (v != tinyusdz::Purpose::Default) return tinyusdz::to_string(v);
+        if (v != lightusd::Purpose::Default) return lightusd::to_string(v);
       }
       return {};
     };
     std::string purpose;
-    if (auto* m = prim.as<tinyusdz::GeomMesh>()) purpose = tryPurpose(m);
-    else if (auto* s = prim.as<tinyusdz::GeomSphere>()) purpose = tryPurpose(s);
-    else if (auto* c = prim.as<tinyusdz::GeomCube>()) purpose = tryPurpose(c);
-    else if (auto* y = prim.as<tinyusdz::GeomCylinder>()) purpose = tryPurpose(y);
-    else if (auto* o = prim.as<tinyusdz::GeomCone>()) purpose = tryPurpose(o);
-    else if (auto* p = prim.as<tinyusdz::GeomCapsule>()) purpose = tryPurpose(p);
-    else if (auto* n = prim.as<tinyusdz::GeomPlane>()) purpose = tryPurpose(n);
-    else if (auto* b = prim.as<tinyusdz::GeomBasisCurves>()) purpose = tryPurpose(b);
-    else if (auto* pt = prim.as<tinyusdz::GeomPoints>()) purpose = tryPurpose(pt);
+    if (auto* m = prim.as<lightusd::GeomMesh>()) purpose = tryPurpose(m);
+    else if (auto* s = prim.as<lightusd::GeomSphere>()) purpose = tryPurpose(s);
+    else if (auto* c = prim.as<lightusd::GeomCube>()) purpose = tryPurpose(c);
+    else if (auto* y = prim.as<lightusd::GeomCylinder>()) purpose = tryPurpose(y);
+    else if (auto* o = prim.as<lightusd::GeomCone>()) purpose = tryPurpose(o);
+    else if (auto* p = prim.as<lightusd::GeomCapsule>()) purpose = tryPurpose(p);
+    else if (auto* n = prim.as<lightusd::GeomPlane>()) purpose = tryPurpose(n);
+    else if (auto* b = prim.as<lightusd::GeomBasisCurves>()) purpose = tryPurpose(b);
+    else if (auto* pt = prim.as<lightusd::GeomPoints>()) purpose = tryPurpose(pt);
     if (!purpose.empty()) badges += " [purpose:" + purpose + "]";
   }
   // Material badge
   const std::string absPath = prim.absolute_path().full_path_name();
   if (loaded_ && loaded_->ok &&
-      (prim.is<tinyusdz::GeomMesh>() || prim.is<tinyusdz::GeomBasisCurves>() ||
-       prim.is<tinyusdz::GeomPoints>())) {
-    tinyusdz::Path matPath;
-    const tinyusdz::Material* matPtr = nullptr;
+      (prim.is<lightusd::GeomMesh>() || prim.is<lightusd::GeomBasisCurves>() ||
+       prim.is<lightusd::GeomPoints>())) {
+    lightusd::Path matPath;
+    const lightusd::Material* matPtr = nullptr;
     std::string matErr;
-    if (tinyusdz::tydra::GetDirectlyBoundMaterial(
+    if (lightusd::tydra::GetDirectlyBoundMaterial(
             loaded_->stage, prim, "", &matPath, &matPtr, &matErr)) {
       badges += " [mat:" + std::string(matPath.prim_part().c_str()) + "]";
     }
   }
   // Instance / composition arc badges
   if (!prim.IsActive()) badges += " [inactive]";
-  if (prim.specifier() == tinyusdz::Specifier::Over) badges += " [over]";
-  else if (prim.specifier() == tinyusdz::Specifier::Class) badges += " [class]";
+  if (prim.specifier() == lightusd::Specifier::Over) badges += " [over]";
+  else if (prim.specifier() == lightusd::Specifier::Class) badges += " [class]";
   if (prim.IsInstance()) badges += " [instance]";
   if (prim.metas().get_instanceable()) badges += " [instanceable]";
   {
     const auto& m = prim.metas();
-    if (m.has_kind()) badges += " [" + tinyusdz::to_string(m.get_kind()) + "]";
+    if (m.has_kind()) badges += " [" + lightusd::to_string(m.get_kind()) + "]";
     if (m.references.has_value() && !m.references->empty()) {
       size_t count = 0;
       for (const auto& [qual, refs] : *m.references) count += refs.size();
@@ -1968,7 +1968,7 @@ void Gui::rebuildInspectorCache() {
   for (const std::string& name : names) {
     InspectorPropRow row;
     row.name = name;
-    tinyusdz::Property prop;
+    lightusd::Property prop;
     std::string perr;
     row.gotProperty = tydra::GetProperty(*selPrim_, name, &prop, &perr);
     if (row.gotProperty) {
@@ -1985,19 +1985,19 @@ void Gui::rebuildInspectorCache() {
         if (a.has_value() && (tn == "color3f" || tn == "color4f" || tn == "color3d")) {
           const auto& v = a.get_var().value_raw();
           if (tn == "color3f") {
-            if (const auto* c = v.as<tinyusdz::value::color3f>()) {
+            if (const auto* c = v.as<lightusd::value::color3f>()) {
               row.hasColor = true;
               row.color[0] = c->r; row.color[1] = c->g;
               row.color[2] = c->b; row.color[3] = 1.0f;
             }
           } else if (tn == "color4f") {
-            if (const auto* c = v.as<tinyusdz::value::color4f>()) {
+            if (const auto* c = v.as<lightusd::value::color4f>()) {
               row.hasColor = true;
               row.color[0] = c->r; row.color[1] = c->g;
               row.color[2] = c->b; row.color[3] = c->a;
             }
           } else if (tn == "color3d") {
-            if (const auto* c = v.as<tinyusdz::value::color3d>()) {
+            if (const auto* c = v.as<lightusd::value::color3d>()) {
               row.hasColor = true;
               row.color[0] = static_cast<float>(c->r); row.color[1] = static_cast<float>(c->g);
               row.color[2] = static_cast<float>(c->b); row.color[3] = 1.0f;
@@ -2014,7 +2014,7 @@ void Gui::rebuildInspectorCache() {
   }
 }
 
-bool Gui::drawNextPrimTree(const tinyusdz::next::UsdPrim& prim) {
+bool Gui::drawNextPrimTree(const lightusd::next::UsdPrim& prim) {
   if (!prim.IsValid()) return false;
   const std::string path = prim.GetPath().str();
   const std::string label = prim.GetName() + "  " + prim.GetTypeName();
@@ -2022,7 +2022,7 @@ bool Gui::drawNextPrimTree(const tinyusdz::next::UsdPrim& prim) {
                        hierFilter_.PassFilter(path.c_str());
   bool descendant_matches = false;
   for (size_t i = 0; i < prim.GetChildCount() && !descendant_matches; ++i) {
-    const tinyusdz::next::UsdPrim child = prim.GetChildAt(i);
+    const lightusd::next::UsdPrim child = prim.GetChildAt(i);
     const std::string child_label =
         child.GetName() + "  " + child.GetTypeName() + "  " +
         child.GetPath().str();
@@ -2069,9 +2069,9 @@ bool Gui::drawNextPrimTree(const tinyusdz::next::UsdPrim& prim) {
 
 namespace {
 
-std::string NextValueSummary(const tinyusdz::next::Value& value) {
+std::string NextValueSummary(const lightusd::next::Value& value) {
   if (value.is_array()) {
-    const char* type = tinyusdz::next::GetTypeName(value.type_id());
+    const char* type = lightusd::next::GetTypeName(value.type_id());
     return std::string(type ? type : "value") + "[" +
            std::to_string(value.array_size()) + "]";
   }
@@ -2083,7 +2083,7 @@ std::string NextValueSummary(const tinyusdz::next::Value& value) {
   if (const std::string* v = value.as_string()) return *v;
   if (const std::string* v = value.as_token()) return *v;
   if (const std::string* v = value.as_asset_path()) return "@" + *v + "@";
-  const char* type = tinyusdz::next::GetTypeName(value.type_id());
+  const char* type = lightusd::next::GetTypeName(value.type_id());
   return type ? type : "value";
 }
 
@@ -2094,7 +2094,7 @@ void Gui::drawNextInspector() {
     HintWrapped("Select a prim to inspect it.");
     return;
   }
-  const tinyusdz::next::UsdPrim prim = nextStage_->GetPrimAtPath(selPath_);
+  const lightusd::next::UsdPrim prim = nextStage_->GetPrimAtPath(selPath_);
   if (!prim.IsValid()) {
     HintWrapped("The selected prim is not present in the composed stage.");
     return;
@@ -2104,10 +2104,10 @@ void Gui::drawNextInspector() {
   ImGui::TextWrapped("%s", selPath_.c_str());
   if (ImGui::SmallButton("Copy path")) ImGui::SetClipboardText(selPath_.c_str());
   ImGui::TextDisabled("Type: %s", prim.GetTypeName().c_str());
-  ImGui::Text("Specifier: %s", prim.GetSpecifier() == tinyusdz::next::PrimSpecifier::Def
+  ImGui::Text("Specifier: %s", prim.GetSpecifier() == lightusd::next::PrimSpecifier::Def
                                    ? "def"
                                    : prim.GetSpecifier() ==
-                                             tinyusdz::next::PrimSpecifier::Over
+                                             lightusd::next::PrimSpecifier::Over
                                          ? "over"
                                          : "class");
   ImGui::Text("Active: %s", prim.IsActive() ? "true" : "false");
@@ -2123,11 +2123,11 @@ void Gui::drawNextInspector() {
   if (shaderBallPos != std::string::npos &&
       shaderBallPos + shaderBallSuffix.size() == selPath_.size()) {
     const std::string sceneRoot = selPath_.substr(0, shaderBallPos);
-    const tinyusdz::next::UsdPrim materialScope = nextStage_->GetPrimAtPath(
+    const lightusd::next::UsdPrim materialScope = nextStage_->GetPrimAtPath(
         sceneRoot + "/materials/examples/mtlx");
     std::vector<std::string> choices;
     if (materialScope.IsValid()) {
-      for (const tinyusdz::next::UsdPrim& child : materialScope.GetChildren()) {
+      for (const lightusd::next::UsdPrim& child : materialScope.GetChildren()) {
         if (child.GetTypeName() == "Material") choices.push_back(child.GetName());
       }
       std::sort(choices.begin(), choices.end());
@@ -2171,10 +2171,10 @@ void Gui::drawNextInspector() {
     }
   }
 
-  const tinyusdz::next::PrimSpecMeta& meta = prim.GetMeta();
+  const lightusd::next::PrimSpecMeta& meta = prim.GetMeta();
   if (!meta.variantSets().empty() &&
       ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
-    for (const tinyusdz::next::VariantSetData& set : meta.variantSets()) {
+    for (const lightusd::next::VariantSetData& set : meta.variantSets()) {
       std::string selected = set.selected;
       for (const auto& authored : meta.variantSelections()) {
         if (authored.first == set.name) selected = authored.second;
@@ -2182,7 +2182,7 @@ void Gui::drawNextInspector() {
       if (selected.empty()) selected = "(default)";
       const std::string id = set.name + "##next_variant";
       if (ImGui::BeginCombo(id.c_str(), selected.c_str())) {
-        for (const tinyusdz::next::VariantData& variant : set.variants) {
+        for (const lightusd::next::VariantData& variant : set.variants) {
           const bool current = variant.name == selected;
           if (ImGui::Selectable(variant.name.c_str(), current) && !current) {
             std::map<std::string, std::string> selections;
@@ -2212,7 +2212,7 @@ void Gui::drawNextInspector() {
     }
   }
 
-  const std::string material = tinyusdz::tydra::next::GetBoundMaterial(prim);
+  const std::string material = lightusd::tydra::next::GetBoundMaterial(prim);
   if (!material.empty() &&
       ImGui::CollapsingHeader("Material binding",
                               ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2229,12 +2229,12 @@ void Gui::drawNextInspector() {
       ImGui::TableSetupColumn("Value");
       ImGui::TableHeadersRow();
       for (const std::string& name : prim.GetPropertyNames()) {
-        const tinyusdz::next::Value* value = prim.GetPropertyValue(name);
+        const lightusd::next::Value* value = prim.GetPropertyValue(name);
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(name.c_str());
         ImGui::TableNextColumn();
-        const char* type = value ? tinyusdz::next::GetTypeName(value->type_id())
+        const char* type = value ? lightusd::next::GetTypeName(value->type_id())
                                  : "relationship";
         ImGui::TextUnformatted(type ? type : "value");
         ImGui::TableNextColumn();
@@ -2242,7 +2242,7 @@ void Gui::drawNextInspector() {
         ImGui::TextUnformatted(summary.c_str());
       }
       for (const std::string& name : prim.GetRelationshipNames()) {
-        const std::vector<tinyusdz::next::Path>* targets =
+        const std::vector<lightusd::next::Path>* targets =
             prim.GetRelationship(name);
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -2304,7 +2304,7 @@ void Gui::drawHierarchy() {
     if (showRenderNodes_) {
       for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
     } else if (nextStage_) {
-      for (const tinyusdz::next::UsdPrim& root : nextStage_->GetRootPrims()) {
+      for (const lightusd::next::UsdPrim& root : nextStage_->GetRootPrims()) {
         drawNextPrimTree(root);
       }
     } else {
@@ -2434,12 +2434,12 @@ void Gui::drawInspector() {
 
     // Material binding
     if (loaded_ && loaded_->ok &&
-        (selPrim_->is<tinyusdz::GeomMesh>() || selPrim_->is<tinyusdz::GeomBasisCurves>() ||
-         selPrim_->is<tinyusdz::GeomPoints>())) {
-      tinyusdz::Path matPath;
-      const tinyusdz::Material* matPtr = nullptr;
+        (selPrim_->is<lightusd::GeomMesh>() || selPrim_->is<lightusd::GeomBasisCurves>() ||
+         selPrim_->is<lightusd::GeomPoints>())) {
+      lightusd::Path matPath;
+      const lightusd::Material* matPtr = nullptr;
       std::string matErr;
-      if (tinyusdz::tydra::GetDirectlyBoundMaterial(
+      if (lightusd::tydra::GetDirectlyBoundMaterial(
               loaded_->stage, *selPrim_, "", &matPath, &matPtr, &matErr)) {
         const std::string matPathStr = matPath.full_path_name();
         std::string matLabel = "Material: " + matPathStr;
@@ -2454,15 +2454,15 @@ void Gui::drawInspector() {
     }
 
     // Shader graph viewer (for Material/Shader prims).
-    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<tinyusdz::Material>()) {
+    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<lightusd::Material>()) {
       if (ImGui::CollapsingHeader("Shader graph", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Recursive lambda to trace shader connections.
         std::function<void(const std::string&, int)> traceShader;
         traceShader = [&](const std::string& shaderPath, int depth) {
           if (depth > 4) { ImGui::TextDisabled("  ..."); return; }
-          const tinyusdz::Prim* sprim = nullptr;
-          std::function<void(const tinyusdz::Prim&, const std::string&)> findPrim;
-          findPrim = [&](const tinyusdz::Prim& p, const std::string& target) {
+          const lightusd::Prim* sprim = nullptr;
+          std::function<void(const lightusd::Prim&, const std::string&)> findPrim;
+          findPrim = [&](const lightusd::Prim& p, const std::string& target) {
             if (p.absolute_path().full_path_name() == target) { sprim = &p; return; }
             for (const auto& c : p.children()) findPrim(c, target);
           };
@@ -2473,7 +2473,7 @@ void Gui::drawInspector() {
           std::string perr;
           if (tydra::GetPropertyNames(*sprim, &names, &perr)) {
             for (const auto& n : names) {
-              tinyusdz::Property prop;
+              lightusd::Property prop;
               if (tydra::GetProperty(*sprim, n, &prop, &perr) &&
                   prop.is_attribute() && prop.get_attribute().has_connections()) {
                 for (const auto& cpath : prop.get_attribute().connections()) {
@@ -2489,7 +2489,7 @@ void Gui::drawInspector() {
         std::string perr;
         if (tydra::GetPropertyNames(*selPrim_, &pnames, &perr)) {
           for (const auto& n : pnames) {
-            tinyusdz::Property prop;
+            lightusd::Property prop;
             if (tydra::GetProperty(*selPrim_, n, &prop, &perr) &&
                 prop.is_attribute() && prop.get_attribute().has_connections()) {
               for (const auto& cp : prop.get_attribute().connections()) {
@@ -3201,7 +3201,7 @@ void Gui::drawPayloads() {
       return;
     }
     std::unordered_map<std::string, std::string> authoredAssets;
-    nextStage_->Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+    nextStage_->Traverse([&](const lightusd::next::UsdPrim& prim) {
       for (const std::string& payload : prim.GetMeta().payloads) {
         authoredAssets.emplace(prim.GetPath().str(), payload);
       }
@@ -3553,7 +3553,7 @@ void Gui::drawOpenPbrMaterialPanel() {
   }
 
   if (changed) {
-    tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+    lightusd::tydra::ClampRealtimePbrMaterial(&p);
     openPbrMaterialEdit_.materialId = openPbrEditorMaterial_;
     openPbrMaterialEdit_.constants = p;
     openPbrMaterialEdit_.makeConstant = makeConstant;
@@ -3792,7 +3792,7 @@ void Gui::drawCompositionGraph() {
   if (m.references.has_value() && !m.references->empty()) {
     for (const auto& [qual, refs] : *m.references) {
       for (const auto& ref : refs) {
-        std::string qstr = tinyusdz::to_string(qual);
+        std::string qstr = lightusd::to_string(qual);
         std::string detail = qstr + " " + ref.asset_path.GetAssetPath();
         addArc("reference", detail, IM_COL32(100, 180, 255, 220));
       }
@@ -6544,7 +6544,7 @@ void Gui::buildHelpers() {
 
   // Extent attribute bbox
   if (showExtent_ && loaded_ && selPrim_) {
-    tinyusdz::Property extentProp;
+    lightusd::Property extentProp;
     std::string extentErr;
     if (tydra::GetProperty(*selPrim_, "extent", &extentProp, &extentErr)) {
       if (extentProp.is_attribute()) {
@@ -6649,7 +6649,7 @@ void Gui::buildHelpers() {
         if (drewDenseSamples) continue;
       }
       const light3d::Mat4 W = skelWorld(si, densePointSamples);
-      std::vector<tinyusdz::value::matrix4d> jointWorlds;
+      std::vector<lightusd::value::matrix4d> jointWorlds;
       if (!BuildSkeletonJointWorlds(loaded_->render, static_cast<int>(si),
                                     timeline_.applied, &jointWorlds) ||
           jointWorlds.size() != nj) {
@@ -6762,7 +6762,7 @@ void Gui::drawStageMeta() {
         ImGui::TextWrapped("%s", v.c_str());
       };
       if (nextStage_) {
-        const tinyusdz::next::StageMeta& next_meta = nextStage_->GetMeta();
+        const lightusd::next::StageMeta& next_meta = nextStage_->GetMeta();
         row("upAxis", next_meta.upAxis);
         row("metersPerUnit", std::to_string(next_meta.metersPerUnit));
         row("framesPerSecond", std::to_string(next_meta.framesPerSecond));
@@ -6775,7 +6775,7 @@ void Gui::drawStageMeta() {
         if (!next_meta.defaultPrim.empty()) row("defaultPrim", next_meta.defaultPrim);
         if (!next_meta.comment.empty()) row("comment", next_meta.comment);
         if (!next_meta.doc.empty()) row("documentation", next_meta.doc);
-        const tinyusdz::next::Layer* layer = nextStage_->GetRootLayer();
+        const lightusd::next::Layer* layer = nextStage_->GetRootLayer();
         if (layer && !layer->meta().subLayers.empty()) {
           std::string sublayers;
           for (const std::string& sublayer : layer->meta().subLayers) {

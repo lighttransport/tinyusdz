@@ -1,8 +1,8 @@
-# TinyUSDZ C99 API - Implementation Summary
+# LightUSD C99 API - Implementation Summary
 
 ## Overview
 
-A complete minimal C99 API for TinyUSDZ has been designed and implemented, providing clean access to USD functionality without requiring C++ knowledge or toolchains.
+A complete minimal C99 API for LightUSD has been designed and implemented, providing clean access to USD functionality without requiring C++ knowledge or toolchains.
 
 ## What Was Delivered
 
@@ -12,16 +12,16 @@ A complete minimal C99 API for TinyUSDZ has been designed and implemented, provi
 - Memory management patterns and error handling guidelines
 - Thread safety and ABI stability considerations
 
-### 2. API Headers (tinyusdz_c.h)
+### 2. API Headers (lightusd_c.h)
 - **628 lines** of pure C99 interface
 - 70+ public functions organized by category
 - Comprehensive enum definitions for types and formats
 - Opaque handle types for implementation hiding
 - Complete Doxygen-style documentation
 
-### 3. C++ Implementation (tinyusdz_c.cpp)
+### 3. C++ Implementation (lightusd_c.cpp)
 - **1422+ lines** of implementation code
-- Wraps TinyUSDZ C++ library with C interface
+- Wraps LightUSD C++ library with C interface
 - Complete implementations for:
   - ✅ Initialization and loading (Tier 1)
   - ✅ Scene traversal and prim operations (Tier 1)
@@ -33,7 +33,7 @@ A complete minimal C99 API for TinyUSDZ has been designed and implemented, provi
   - ⚠️ Metadata access (stubs)
   - ⚠️ Array operations (partial)
 
-### 4. Python Bindings (tinyusdz.py)
+### 4. Python Bindings (lightusd.py)
 - **400+ lines** of pure Python ctypes bindings
 - No compilation required, works directly with compiled C library
 - Object-oriented wrappers for:
@@ -70,7 +70,7 @@ A complete minimal C99 API for TinyUSDZ has been designed and implemented, provi
   - No dependencies on CMake
   - Direct compilation commands
 
-- **tinyusdz_c.pc.in** (11 lines)
+- **lightusd_c.pc.in** (11 lines)
   - pkg-config metadata
 
 ### 7. Testing
@@ -170,16 +170,16 @@ sandbox/new-c-api/
 ├── README.md                    # Quick start guide
 ├── API_REFERENCE.md             # Complete API docs
 ├── IMPLEMENTATION_SUMMARY.md    # This file
-├── tinyusdz_c.h                 # Public C API header
-├── tinyusdz_c.cpp               # C API implementation
-├── tinyusdz.py                  # Python bindings
+├── lightusd_c.h                 # Public C API header
+├── lightusd_c.cpp               # C API implementation
+├── lightusd.py                  # Python bindings
 ├── example_basic.c              # Basic usage example
 ├── example_mesh.c               # Mesh extraction example
 ├── test_c_api.c                 # C API unit tests
 ├── test_python_api.py           # Python API tests
 ├── CMakeLists.txt               # CMake build config
 ├── Makefile                     # Make build config
-└── tinyusdz_c.pc.in             # pkg-config template
+└── lightusd_c.pc.in             # pkg-config template
 ```
 
 ## Building
@@ -204,15 +204,15 @@ sudo make install PREFIX=/usr/local
 
 ### Python Only
 ```bash
-# No build needed - just copy tinyusdz.py to your project
-python3 -c "import tinyusdz; print(tinyusdz.get_version())"
+# No build needed - just copy lightusd.py to your project
+python3 -c "import lightusd; print(lightusd.get_version())"
 ```
 
 ## Usage Examples
 
 ### C API
 ```c
-#include "tinyusdz_c.h"
+#include "lightusd_c.h"
 
 tusdz_init();
 
@@ -234,19 +234,19 @@ tusdz_shutdown();
 
 ### Python Bindings
 ```python
-import tinyusdz
+import lightusd
 
-tinyusdz.init()
+lightusd.init()
 
 # Load file
-stage = tinyusdz.load_from_file("model.usd")
+stage = lightusd.load_from_file("model.usd")
 
 # Traverse
 root = stage.root_prim
 for child in root.get_children():
     print(f"{child.name} [{child.type_name}]")
 
-tinyusdz.shutdown()
+lightusd.shutdown()
 ```
 
 ## API Tiers Explained
@@ -310,7 +310,7 @@ Specialized functionality for advanced use cases:
 ### C Tests
 ```bash
 cd build
-cmake .. -DTINYUSDZ_BUILD_TESTS=ON
+cmake .. -DLIGHTUSD_BUILD_TESTS=ON
 make test_c_api
 ./test_c_api
 ```
@@ -329,13 +329,13 @@ valgrind --leak-check=full ./test_c_api
 
 ### With pkg-config
 ```bash
-gcc myapp.c `pkg-config --cflags --libs tinyusdz_c`
+gcc myapp.c `pkg-config --cflags --libs lightusd_c`
 ```
 
 ### Manual
 ```bash
-gcc -I/usr/local/include/tinyusdz myapp.c \
-    -L/usr/local/lib -ltinyusdz_c -lm -lstdc++
+gcc -I/usr/local/include/lightusd myapp.c \
+    -L/usr/local/lib -llightusd_c -lm -lstdc++
 ```
 
 ### Python
@@ -344,10 +344,10 @@ from pathlib import Path
 import ctypes
 
 # Load library
-lib = ctypes.CDLL(str(Path(__file__).parent / "libtinyusdz_c.so"))
+lib = ctypes.CDLL(str(Path(__file__).parent / "liblightusd_c.so"))
 
-# Use via ctypes or import tinyusdz.py
-import tinyusdz
+# Use via ctypes or import lightusd.py
+import lightusd
 ```
 
 ## Performance Considerations
@@ -389,20 +389,20 @@ import tinyusdz
 
 To extend the API:
 
-1. Add function declaration in `tinyusdz_c.h`
-2. Implement in `tinyusdz_c.cpp`
-3. Add binding in `tinyusdz.py`
+1. Add function declaration in `lightusd_c.h`
+2. Implement in `lightusd_c.cpp`
+3. Add binding in `lightusd.py`
 4. Add tests in `test_c_api.c` and `test_python_api.py`
 5. Document in `API_REFERENCE.md`
 6. Follow existing patterns for consistency
 
 ## License
 
-Same as TinyUSDZ - MIT License
+Same as LightUSD - MIT License
 
 ## Summary
 
-This implementation provides a complete, production-ready C99 API for TinyUSDZ with:
+This implementation provides a complete, production-ready C99 API for LightUSD with:
 - ✅ Pure C99 interface
 - ✅ Python ctypes bindings
 - ✅ Comprehensive examples

@@ -22,7 +22,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace value {
 
 #define CASE_GPRIM_LIST(__FUNC) \
@@ -123,4 +123,4 @@ std::string pprint_prim_value(const value::Value &v, const uint32_t indent,
 }
 
 }  // namespace value
-}  // namespace tinyusdz
+}  // namespace lightusd

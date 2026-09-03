@@ -1,7 +1,7 @@
 /// Schema tests for the next library.
 /// Tests detection functions (IsMesh, IsCamera, etc.) and data getters.
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
 #include "next/schema/geom-xform.hh"
@@ -15,7 +15,7 @@
 #include <vector>
 #include <cmath>
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int test_count = 0;
 static int pass_count = 0;
@@ -478,10 +478,10 @@ void test_prim_children() {
 
 void test_color_transform_numeric() {
   TEST("ColorTransformNumeric");
-  using tinyusdz::color::BuildColorTransform;
-  using tinyusdz::color::ColorSpaceDesc;
-  using tinyusdz::color::ColorTransform;
-  using tinyusdz::color::GetBuiltinColorSpace;
+  using lightusd::color::BuildColorTransform;
+  using lightusd::color::ColorSpaceDesc;
+  using lightusd::color::ColorTransform;
+  using lightusd::color::GetBuiltinColorSpace;
 
   ColorSpaceDesc srgb, linear, ap0, raw;
   if (!GetBuiltinColorSpace("sRGB", &srgb) ||
@@ -492,8 +492,8 @@ void test_color_transform_numeric() {
   }
   if (srgb.name != "srgb_rec709_scene" ||
       linear.name != "lin_rec709_scene" ||
-      !tinyusdz::color::IsLinear(linear) ||
-      !tinyusdz::color::IsData(raw)) {
+      !lightusd::color::IsLinear(linear) ||
+      !lightusd::color::IsData(raw)) {
     FAIL("builtin classification"); return;
   }
 
@@ -502,7 +502,7 @@ void test_color_transform_numeric() {
     FAIL("sRGB decode transform"); return;
   }
   float samples[6] = {0.04045f, 0.5f, -0.5f, 1.0f, 0.0f, 0.25f};
-  tinyusdz::color::TransformRGBSpan(decode, samples, 2);
+  lightusd::color::TransformRGBSpan(decode, samples, 2);
   const float decoded[6] = {0.0031308f, 0.21404114f, -0.21404114f,
                             1.0f, 0.0f, 0.05087609f};
   for (int i = 0; i < 6; ++i) {
@@ -517,7 +517,7 @@ void test_color_transform_numeric() {
   }
   float rgba[8] = {samples[0], samples[1], samples[2], 0.125f,
                    samples[3], samples[4], samples[5], 0.75f};
-  tinyusdz::color::TransformRGBASpan(encode, rgba, 2);
+  lightusd::color::TransformRGBASpan(encode, rgba, 2);
   const float roundtrip[8] = {0.04045f, 0.5f, -0.5f, 0.125f,
                               1.0f, 0.0f, 0.25f, 0.75f};
   for (int i = 0; i < 8; ++i) {
@@ -540,7 +540,7 @@ void test_color_transform_numeric() {
     }
   }
   float macbeth_dark_skin[3] = {0.11877f, 0.08709f, 0.05895f};
-  tinyusdz::color::TransformRGB(gamut, macbeth_dark_skin);
+  lightusd::color::TransformRGB(gamut, macbeth_dark_skin);
   const float expected_patch[3] = {0.17788282f, 0.08103929f, 0.05372536f};
   for (int i = 0; i < 3; ++i) {
     if (std::abs(macbeth_dark_skin[i] - expected_patch[i]) > 3.0e-5f) {
@@ -553,7 +553,7 @@ void test_color_transform_numeric() {
     FAIL("raw bypass transform"); return;
   }
   float data[3] = {-2.0f, 0.5f, 4.0f};
-  tinyusdz::color::TransformRGB(bypass, data);
+  lightusd::color::TransformRGB(bypass, data);
   if (data[0] != -2.0f || data[1] != 0.5f || data[2] != 4.0f) {
     FAIL("raw values changed"); return;
   }
@@ -561,7 +561,7 @@ void test_color_transform_numeric() {
   const float degenerate[2] = {0.0f, 0.0f};
   const float white[2] = {0.3127f, 0.3290f};
   ColorSpaceDesc invalid;
-  if (tinyusdz::color::MakeColorSpaceFromChromaticities(
+  if (lightusd::color::MakeColorSpaceFromChromaticities(
           "invalid", degenerate, degenerate, degenerate, white, 1.0f, 0.0f,
           &invalid)) {
     FAIL("degenerate primaries accepted"); return;
@@ -699,7 +699,7 @@ def Scope "Legacy" (
   std::string definition_error;
   if (!color_management::ResolveColorSpaceDefinition(
           legacy, "legacy_linear", &legacy_definition, &definition_error) ||
-      !tinyusdz::color::IsLinear(legacy_definition) ||
+      !lightusd::color::IsLinear(legacy_definition) ||
       !definition_error.empty()) {
     FAIL("legacy ColorSpaceDefinitionAPI"); return;
   }
@@ -718,7 +718,7 @@ def Scope "Legacy" (
     FAIL("sRGB transform build"); return;
   }
   float linear[3] = {0.5f, 0.5f, 0.5f};
-  ::tinyusdz::color::TransformRGB(transform, linear);
+  ::lightusd::color::TransformRGB(transform, linear);
   if (std::abs(linear[0] - 0.214041f) > 1.0e-4f ||
       std::abs(linear[1] - linear[0]) > 1.0e-5f ||
       std::abs(linear[2] - linear[0]) > 1.0e-5f) {
@@ -732,7 +732,7 @@ def Scope "Legacy" (
     FAIL("custom wide-gamut transform build"); return;
   }
   float custom_patch[3] = {0.11877f, 0.08709f, 0.05895f};
-  ::tinyusdz::color::TransformRGB(custom_gamut, custom_patch);
+  ::lightusd::color::TransformRGB(custom_gamut, custom_patch);
   const float expected_patch[3] = {0.17788282f, 0.08103929f, 0.05372536f};
   for (int i = 0; i < 3; ++i) {
     if (std::abs(custom_patch[i] - expected_patch[i]) > 4.0e-5f) {

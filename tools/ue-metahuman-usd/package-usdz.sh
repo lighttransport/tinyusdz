@@ -8,7 +8,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 input="${1:-$script_dir/output/MetaHuman_Hero.usda}"
 output="${2:-$script_dir/output/MetaHuman_Hero.usdz}"
-converter="${TINYUSDZCONVERT:-$repo_root/build_ninja/tools/tusdzconvert/tusdzconvert}"
+converter="${LIGHTUSDCONVERT:-$repo_root/build_ninja/tools/tusdzconvert/tusdzconvert}"
 
 if [ ! -f "$input" ]; then
   echo "Missing MetaHuman hero layer: $input" >&2

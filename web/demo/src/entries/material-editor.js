@@ -4,8 +4,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { GUI } from 'lil-gui';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
 const SAMPLE_ASSETS = [
   { label: 'Suzanne PBR', url: './assets/suzanne-pbr.usda' },
@@ -124,12 +124,12 @@ let loader = null;
 
 async function ensureLoader() {
   if (loader) return loader;
-  setStatus('Initializing TinyUSDZ WASM...');
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    showLoader('Loading TinyUSDZ WASM...', document.getElementById('viewport'));
+  setStatus('Initializing LightUSD WASM...');
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+    showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
   await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
     hideLoader();
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
 }
 
@@ -257,9 +257,9 @@ async function loadUSD(url, label) {
   });
 
   setStatus(`Building scene...`);
-  const defaultMat = TinyUSDZLoaderUtils.createDefaultMaterial();
+  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
   defaultMat.envMap = envMap;
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
     usd.getDefaultRootNode(), defaultMat, usd, {
       preferredMaterialType: 'usdpreviewsurface',
       envMap,
@@ -324,9 +324,9 @@ async function loadLocalFile(file) {
       preferredMaterialType: 'usdpreviewsurface',
     });
   });
-  const defaultMat = TinyUSDZLoaderUtils.createDefaultMaterial();
+  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
   defaultMat.envMap = envMap;
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
     usd.getDefaultRootNode(), defaultMat, usd, {
       preferredMaterialType: 'usdpreviewsurface',
       envMap,

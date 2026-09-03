@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the tinyusdz vs OpenUSD benchmark over a set of USD files.
+"""Run the lightusd vs OpenUSD benchmark over a set of USD files.
 
 Usage:
   python3 runner.py [--build-dir build] [--iters 10] [files...]
@@ -48,13 +48,13 @@ def main():
     ap.add_argument("--iters", type=int, default=10)
     args = ap.parse_args()
 
-    tiny = os.path.join(args.build_dir, "bench_tinyusdz")
+    tiny = os.path.join(args.build_dir, "bench_lightusd")
     pxr = os.path.join(args.build_dir, "bench_openusd")
     if not os.path.exists(tiny):
         sys.exit(f"missing {tiny}; build the harness first (see README.md)")
     has_pxr = os.path.exists(pxr)
     if not has_pxr:
-        print("note: bench_openusd not found, reporting tinyusdz only\n")
+        print("note: bench_openusd not found, reporting lightusd only\n")
 
     files = args.files or [
         os.path.normpath(os.path.join(SCRIPT_DIR, m)) for m in DEFAULT_MODELS]
@@ -62,7 +62,7 @@ def main():
     if not files:
         sys.exit("no input files found")
 
-    header = f"{'op':<12} {'tinyusdz (ms)':>14} {'OpenUSD (ms)':>14} {'ratio':>8}"
+    header = f"{'op':<12} {'lightusd (ms)':>14} {'OpenUSD (ms)':>14} {'ratio':>8}"
     for f in files:
         size_kb = os.path.getsize(f) / 1024.0
         print(f"=== {f} ({size_kb:.1f} KB, median of {args.iters} runs) ===")
@@ -76,7 +76,7 @@ def main():
             ratio = f"{pv / tv:.2f}x" if tv and pv else "-"
             print(f"{op:<12} {ts:>14} {ps:>14} {ratio:>8}")
         print()
-    print("ratio = OpenUSD time / tinyusdz time (>1 means tinyusdz is faster)")
+    print("ratio = OpenUSD time / lightusd time (>1 means lightusd is faster)")
 
 
 if __name__ == "__main__":

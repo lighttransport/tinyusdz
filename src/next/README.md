@@ -1,8 +1,8 @@
-# TinyUSDZ Next - Architecture Redesign
+# LightUSD Next - Architecture Redesign
 
 ## Overview
 
-The `src/next/` directory contains a complete redesign of TinyUSDZ's core architecture, focusing on:
+The `src/next/` directory contains a complete redesign of LightUSD's core architecture, focusing on:
 
 - **Minimal template usage** - Replace 78+ `DEFINE_TYPE_TRAIT` macros with runtime type dispatch
 - **Fast compilation times** - O(1) table lookup instead of 65+ if-else chains
@@ -57,7 +57,7 @@ by extraction/downstream layers such as `tydra/next`.
 | UsdLux | ✅ Complete | `schema/usd-lux.{hh,cc}` |
 | UsdShade | ✅ Complete | `schema/usd-shade.{hh,cc}` |
 | **Integration** | | |
-| Unified Header | ✅ Complete | `tinyusdz-next.{hh,cc}` |
+| Unified Header | ✅ Complete | `lightusd-next.{hh,cc}` |
 | Compat Header | ✅ Complete | `compat.hh` |
 | **Tydra/Next** | | |
 | Render Data | ✅ Complete | `../tydra/next/render-data.{hh,cc}` |
@@ -83,7 +83,7 @@ USD_WG_ASSETS_DIR=/path/to/usd-wg/assets RUN_CORPUS=1 scripts/run-next-checks.sh
 RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
 RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
 
-# Manual labeled test selection after configuring with TINYUSDZ_NEXT_BUILD_TESTS=ON.
+# Manual labeled test selection after configuring with LIGHTUSD_NEXT_BUILD_TESTS=ON.
 ctest --test-dir build-next --output-on-failure -L next -LE 'benchmark|corpus'
 ```
 
@@ -170,8 +170,8 @@ Stage/Layer ──► WriteUSDC()  ──► USDC file (via CrateWriter)
 src/next/
 ├── CMakeLists.txt
 ├── README.md                    # This file
-├── tinyusdz-next.hh            # Unified header (includes all components)
-├── tinyusdz-next.cc            # High-level API implementation
+├── lightusd-next.hh            # Unified header (includes all components)
+├── lightusd-next.cc            # High-level API implementation
 ├── compat.hh                   # Compatibility header for #ifdef switching
 │
 ├── types/                       # Core type system
@@ -351,7 +351,7 @@ current cleanup/refactor queue rather than a historical checklist.
 
 ### Why no templates?
 
-The original TinyUSDZ used heavy template metaprogramming (78+ `DEFINE_TYPE_TRAIT` macros) which caused:
+The original LightUSD used heavy template metaprogramming (78+ `DEFINE_TYPE_TRAIT` macros) which caused:
 - Slow compilation (template instantiation in every TU)
 - Large object files (3.5-4.4MB for parser)
 - Hard to understand error messages
@@ -480,9 +480,9 @@ Measured with GCC 13.3.0 on Linux.
 ### Simple Usage (Unified Header)
 
 ```cpp
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 int main() {
   Stage stage;
@@ -511,10 +511,10 @@ int main() {
 ### Using Compatibility Header (#ifdef switching)
 
 ```cpp
-// Use -DTINYUSDZ_USE_NEXT=ON to switch architectures
+// Use -DLIGHTUSD_USE_NEXT=ON to switch architectures
 #include "next/compat.hh"
 
-using namespace tinyusdz::compat;
+using namespace lightusd::compat;
 
 int main() {
   Stage stage;
@@ -537,7 +537,7 @@ int main() {
 #include "next/writer/usda-writer.hh"
 #include "next/stage/stage.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // Load USDA with options
 LoadOptions opts;
@@ -570,7 +570,7 @@ WriteUSDAToFile("output.usda", stage, write_opts);
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-xform.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // Get all meshes from stage
 auto meshes = GetAllMeshes(stage);
@@ -618,7 +618,7 @@ if (xform.IsValid()) {
 ```cpp
 #include "next/schema/usd-geom-camera.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 UsdPrim camPrim = stage.GetPrimAtPath("/World/Camera");
 if (IsCamera(camPrim)) {
@@ -644,7 +644,7 @@ if (IsCamera(camPrim)) {
 ```cpp
 #include "next/schema/usd-lux.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 stage.Traverse([&](const UsdPrim& prim) {
   if (IsLight(prim)) {
@@ -675,7 +675,7 @@ stage.Traverse([&](const UsdPrim& prim) {
 ```cpp
 #include "next/schema/usd-shade.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 UsdPrim matPrim = stage.GetPrimAtPath("/Materials/Metal");
 if (IsMaterial(matPrim)) {
@@ -705,7 +705,7 @@ if (IsMaterial(matPrim)) {
 ```cpp
 #include "next/eval/attribute-eval.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 AttributeEval eval(&stage);
 eval.SetTime(1.0);  // Frame 1
@@ -738,7 +738,7 @@ if (result.success) {
 ```cpp
 #include "tydra/next/materialx.hh"
 
-using namespace tinyusdz::tydra::next;
+using namespace lightusd::tydra::next;
 
 MtlxConverter converter;
 
@@ -774,7 +774,7 @@ if (converter.ConvertUsdMtlxMaterial(stage, matPrim, &material)) {
 ```cpp
 #include "next/stage/stage.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 StageBuilder builder;
 builder.SetDefaultPrim("World");

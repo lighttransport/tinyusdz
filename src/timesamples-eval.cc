@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace value {
 
 #define DEFINE_LERP_TRAIT(ty)       \
@@ -277,4 +277,4 @@ bool TimeSamples::get_value_at(value::Value *out, double t,
 }
 
 } // namespace value
-} // namespace tinyusdz
+} // namespace lightusd

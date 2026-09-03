@@ -14,8 +14,8 @@
 
 #include <string>
 
-#include "tinyusdz.hh"
-#include "usdGeom.hh"  // GPrim (no longer re-exported by tinyusdz.hh)
+#include "lightusd.hh"
+#include "usdGeom.hh"  // GPrim (no longer re-exported by lightusd.hh)
 #include "io-util.hh"
 #include "linear-algebra.hh"
 #include "security-policy.hh"
@@ -24,7 +24,7 @@
 
 //#include "math-util.inc"
 
-#ifdef TINYUSDZ_USE_USDOBJ
+#ifdef LIGHTUSD_USE_USDOBJ
 
 // Assume implementation is done in external/tiny_obj_loader.cc
 //#define TINYOBJLOADER_IMPLEMENTATION
@@ -32,7 +32,7 @@
 
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace usdObj {
 
@@ -42,9 +42,9 @@ namespace {
 
 }
 
-bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::string *err)
+bool ReadObjFromFile(const std::string &filepath, lightusd::GPrim *prim, std::string *err)
 {
-#if !defined(TINYUSDZ_USE_USDOBJ)
+#if !defined(LIGHTUSD_USE_USDOBJ)
   (void)filepath;
   (void)prim;
   if (err) {
@@ -69,9 +69,9 @@ bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 }
 
 
-bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
+bool ReadObjFromString(const std::string &str, lightusd::GPrim *prim, std::string *err)
 {
-#if !defined(TINYUSDZ_USE_USDOBJ)
+#if !defined(LIGHTUSD_USE_USDOBJ)
   (void)str;
   (void)prim;
   if (err) {
@@ -122,7 +122,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   memcpy(pts.data(), attrs.vertices.data(), byte_count);
   primvar::PrimVar ptsVar;
   ptsVar.set_value(pts);
-  pointsAttr.set_var(std::move(ptsVar)); 
+  pointsAttr.set_var(std::move(ptsVar));
   Property pointsProp(pointsAttr, /* custom */false);
   prim->props.emplace("points", pointsProp);
 
@@ -133,7 +133,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   std::vector<int32_t> vertexCounts;
 
   // Make normals and texcoords facevarying
-  // TODO: provide indices for each normals and uvs 
+  // TODO: provide indices for each normals and uvs
   std::vector<value::float2> facevaryingTexcoords;
   std::vector<value::float3> facevaryingNormals;
 
@@ -262,7 +262,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     texcoordsAttr.set_var(std::move(var));
     Property prop(texcoordsAttr, false);
 
-    
+
     prim->props.emplace("prmvars:uv", prop);
   }
 
@@ -274,4 +274,4 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
 } // namespace usdObj
 
-} // tinyusdz
+} // lightusd

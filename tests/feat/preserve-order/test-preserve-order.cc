@@ -8,7 +8,7 @@
 // Stage reconstruction path records that field, but the Layer (flatten) path
 // dropped it, so a flattened crate came out lexicographically sorted instead of
 // in authored order (e.g. usdcat preserves authored order on UE-exported scenes;
-// tinyusdz re-sorted the root/children).
+// lightusd re-sorted the root/children).
 //
 // pprint::SetPreserveAuthoredOrder(true) opts in: the USDC Layer reader records
 // `primChildren` and the Stage writer emits children in that order (entries in
@@ -23,12 +23,12 @@
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "composition.hh"
 #include "usdc-writer.hh"
 #include "pprinter.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

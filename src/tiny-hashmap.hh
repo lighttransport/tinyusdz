@@ -4,7 +4,7 @@
 // In-tree open-addressing robin-hood hash map.
 //
 // Goals: header-only, exceptions-free, RTTI-free, drop-in for the lookup-only
-// `std::unordered_map<K,V>` sites in tinyusdz. Iteration order is
+// `std::unordered_map<K,V>` sites in lightusd. Iteration order is
 // unspecified.
 //
 // Algorithm: open addressing with linear probing and robin-hood reordering
@@ -30,7 +30,7 @@
 
 #include "compiler-features.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 template <typename Key, typename Value, typename Hash = std::hash<Key>,
           typename KeyEqual = std::equal_to<Key>>
@@ -207,13 +207,13 @@ class HashMap {
 
     iterator() : _m(nullptr), _i(0) {}
     iterator(HashMap *m, size_type i) : _m(m), _i(i) { advance_to_occupied(); }
-    reference operator*() const TINYUSDZ_LIFETIMEBOUND {
+    reference operator*() const LIGHTUSD_LIFETIMEBOUND {
       return _m->_buckets[_i].kv;
     }
-    pointer operator->() const TINYUSDZ_LIFETIMEBOUND {
+    pointer operator->() const LIGHTUSD_LIFETIMEBOUND {
       return &_m->_buckets[_i].kv;
     }
-    iterator &operator++() TINYUSDZ_LIFETIMEBOUND {
+    iterator &operator++() LIGHTUSD_LIFETIMEBOUND {
       ++_i;
       advance_to_occupied();
       return *this;
@@ -228,10 +228,10 @@ class HashMap {
     }
     bool operator!=(const iterator &o) const { return !(*this == o); }
 
-    const Key &key() const TINYUSDZ_LIFETIMEBOUND {
+    const Key &key() const LIGHTUSD_LIFETIMEBOUND {
       return _m->_buckets[_i].kv.first;
     }
-    Value &mapped() const TINYUSDZ_LIFETIMEBOUND {
+    Value &mapped() const LIGHTUSD_LIFETIMEBOUND {
       return _m->_buckets[_i].kv.second;
     }
   };
@@ -257,13 +257,13 @@ class HashMap {
     const_iterator(const HashMap *m, size_type i) : _m(m), _i(i) {
       advance_to_occupied();
     }
-    reference operator*() const TINYUSDZ_LIFETIMEBOUND {
+    reference operator*() const LIGHTUSD_LIFETIMEBOUND {
       return _m->_buckets[_i].kv;
     }
-    pointer operator->() const TINYUSDZ_LIFETIMEBOUND {
+    pointer operator->() const LIGHTUSD_LIFETIMEBOUND {
       return &_m->_buckets[_i].kv;
     }
-    const_iterator &operator++() TINYUSDZ_LIFETIMEBOUND {
+    const_iterator &operator++() LIGHTUSD_LIFETIMEBOUND {
       ++_i;
       advance_to_occupied();
       return *this;
@@ -278,10 +278,10 @@ class HashMap {
     }
     bool operator!=(const const_iterator &o) const { return !(*this == o); }
 
-    const Key &key() const TINYUSDZ_LIFETIMEBOUND {
+    const Key &key() const LIGHTUSD_LIFETIMEBOUND {
       return _m->_buckets[_i].kv.first;
     }
-    const Value &mapped() const TINYUSDZ_LIFETIMEBOUND {
+    const Value &mapped() const LIGHTUSD_LIFETIMEBOUND {
       return _m->_buckets[_i].kv.second;
     }
   };
@@ -398,7 +398,7 @@ class HashMap {
     return {iterator(this, r.index), r.inserted};
   }
 
-  Value &operator[](const Key &k) TINYUSDZ_LIFETIMEBOUND {
+  Value &operator[](const Key &k) LIGHTUSD_LIFETIMEBOUND {
     grow_if_needed();
     auto r = insert_into_table(Key(k), Value());
     if (!r.ok) {
@@ -408,7 +408,7 @@ class HashMap {
     }
     return _buckets[r.index].kv.second;
   }
-  Value &operator[](Key &&k) TINYUSDZ_LIFETIMEBOUND {
+  Value &operator[](Key &&k) LIGHTUSD_LIFETIMEBOUND {
     grow_if_needed();
     auto r = insert_into_table(std::move(k), Value());
     if (!r.ok) {
@@ -422,7 +422,7 @@ class HashMap {
   // Hardened: on miss, return a static fallback without aborting.
   // Callers are expected to check `find`/`contains` first; this is a safety
   // net for unexpected miss cases.
-  Value &at(const Key &k) TINYUSDZ_LIFETIMEBOUND {
+  Value &at(const Key &k) LIGHTUSD_LIFETIMEBOUND {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
       static thread_local Value sink{};
@@ -431,7 +431,7 @@ class HashMap {
     }
     return _buckets[i].kv.second;
   }
-  const Value &at(const Key &k) const TINYUSDZ_LIFETIMEBOUND {
+  const Value &at(const Key &k) const LIGHTUSD_LIFETIMEBOUND {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
       static const Value sink{};
@@ -440,20 +440,20 @@ class HashMap {
     return _buckets[i].kv.second;
   }
 
-  Value *find_value_ptr(const Key &k) TINYUSDZ_LIFETIMEBOUND {
+  Value *find_value_ptr(const Key &k) LIGHTUSD_LIFETIMEBOUND {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) return nullptr;
     return &_buckets[i].kv.second;
   }
 
-  const Value *find_value_ptr(const Key &k) const TINYUSDZ_LIFETIMEBOUND {
+  const Value *find_value_ptr(const Key &k) const LIGHTUSD_LIFETIMEBOUND {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) return nullptr;
     return &_buckets[i].kv.second;
   }
 
   template <typename Predicate>
-  const Value *find_value_if(Predicate &&pred) const TINYUSDZ_LIFETIMEBOUND {
+  const Value *find_value_if(Predicate &&pred) const LIGHTUSD_LIFETIMEBOUND {
     for (const Bucket &bucket : _buckets) {
       if (bucket.dist != 0 && pred(bucket.kv.first, bucket.kv.second)) {
         return &bucket.kv.second;
@@ -555,4 +555,4 @@ inline void swap(HashMap<K, V, H, E> &a, HashMap<K, V, H, E> &b) noexcept {
   a.swap(b);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

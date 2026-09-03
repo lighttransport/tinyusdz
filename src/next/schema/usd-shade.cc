@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdShade Schema Implementation
+// LightUSD Next - UsdShade Schema Implementation
 
 #include "usd-shade.hh"
 
 #include <algorithm>
 #include <cmath>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool IsMaterial(const UsdPrim& prim) {
@@ -694,7 +694,7 @@ std::string GetPrimvarReaderVarname(const Stage& stage,
   std::string value = TokenishValue(shader.GetPropertyValue("inputs:varname"));
   if (!value.empty()) return value;
 
-  const ::tinyusdz::next::PrimSpec* spec = shader.GetPrimSpec();
+  const ::lightusd::next::PrimSpec* spec = shader.GetPrimSpec();
   const std::vector<Path>* conns =
       spec ? spec->connection("inputs:varname") : nullptr;
   for (int hop = 0; conns && !conns->empty() && hop < 4; ++hop) {
@@ -707,11 +707,11 @@ std::string GetPrimvarReaderVarname(const Stage& stage,
     if (!src.IsValid()) break;
     value = TokenishValue(src.GetPropertyValue(prop_name));
     if (!value.empty()) return value;
-    const ::tinyusdz::next::PrimSpec* src_spec = src.GetPrimSpec();
+    const ::lightusd::next::PrimSpec* src_spec = src.GetPrimSpec();
     conns = src_spec ? src_spec->connection(prop_name) : nullptr;
   }
   return "";
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

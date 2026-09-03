@@ -1,6 +1,6 @@
-# UnregisteredValue Handling: OpenUSD vs TinyUSDZ
+# UnregisteredValue Handling: OpenUSD vs LightUSD
 
-This document describes how "unregistered values" (properties/metadata not defined in any schema) are handled in both OpenUSD and TinyUSDZ, with emphasis on type inference rules.
+This document describes how "unregistered values" (properties/metadata not defined in any schema) are handled in both OpenUSD and LightUSD, with emphasis on type inference rules.
 
 ## Background
 
@@ -193,7 +193,7 @@ Note: quoted strings in the original USDA are stored with quotes as part of the 
 
 ---
 
-## TinyUSDZ Behavior
+## LightUSD Behavior
 
 ### Key Types
 
@@ -265,7 +265,7 @@ The crate reader handles unregistered values based on the inner value type:
 
 ### Numeric Parsing
 
-TinyUSDZ parses numbers in `src/ascii-parser-basetype-impl.inc`:
+LightUSD parses numbers in `src/ascii-parser-basetype-impl.inc`:
 - `parseInt()`: Integer parsing with overflow checks
 - `ParseFloat()`: Uses `fast_float::from_chars()`
 - `ParseDouble()`: Uses `fast_float::from_chars()`
@@ -274,7 +274,7 @@ Float detection (`src/ascii-parser.cc`, the token-reading number path):
 - Contains `.` → float/double
 - Contains `e` or `E` → float/double (exponential notation)
 
-**Key difference**: TinyUSDZ does NOT infer types from literal values. Types must always be explicitly declared in USDA syntax for dictionary/metadata values.
+**Key difference**: LightUSD does NOT infer types from literal values. Types must always be explicitly declared in USDA syntax for dictionary/metadata values.
 
 ### Writers
 
@@ -288,7 +288,7 @@ Float detection (`src/ascii-parser.cc`, the token-reading number path):
 
 ## Comparison
 
-| Aspect | OpenUSD | TinyUSDZ |
+| Aspect | OpenUSD | LightUSD |
 |---|---|---|
 | **Unregistered non-dict values** | Stored as raw string | Stored as string (via crate reader) |
 | **Dictionary values** | Fully typed via `VtDictionary` | Fully typed via `CustomDataType` (map of MetaVariable) |
@@ -302,10 +302,10 @@ Float detection (`src/ascii-parser.cc`, the token-reading number path):
 
 ### Key Takeaways
 
-1. **Neither library infers types for unregistered values** — OpenUSD stores them as strings, TinyUSDZ behaves similarly for crate-sourced unregistered values.
+1. **Neither library infers types for unregistered values** — OpenUSD stores them as strings, LightUSD behaves similarly for crate-sourced unregistered values.
 
 2. **Dictionaries are the exception** in both libraries — they carry inline type annotations, so sub-values are fully typed.
 
 3. **OpenUSD's numeric inference (int64/uint64/double)** only applies to registered fields during lexing. The 32-bit narrowing happens later via `GfNumericCast` based on the schema type.
 
-4. **TinyUSDZ's `MetaVariable` constraints** (no TimeSamples/Connections/Relationships, no `custom`, value-must-be-assigned) are a deliberate hardening choice for metadata, not a limitation to fix. The accepted *value* types for dictionary entries are broad.
+4. **LightUSD's `MetaVariable` constraints** (no TimeSamples/Connections/Relationships, no `custom`, value-must-be-assigned) are a deliberate hardening choice for metadata, not a limitation to fix. The accepted *value* types for dictionary entries are broad.

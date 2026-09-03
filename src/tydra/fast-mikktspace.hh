@@ -50,14 +50,14 @@
 #include <algorithm>
 #include <numeric>
 
-#ifdef TINYUSDZ_ENABLE_THREAD
+#ifdef LIGHTUSD_ENABLE_THREAD
 #include <thread>
 #endif
 
 #include "value-types.hh"
 #include "fast-math.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace fast_mikkt {
@@ -98,12 +98,12 @@ static inline bool notzero(float f) {
 
 // ---------------------------------------------------------------------------
 // Parallel for: splits [begin, end) across std::threads when threading is on.
-// Falls back to serial loop when TINYUSDZ_ENABLE_THREAD is not defined or
+// Falls back to serial loop when LIGHTUSD_ENABLE_THREAD is not defined or
 // the workload is too small to justify thread overhead.
 // ---------------------------------------------------------------------------
 template <typename Func>
 static inline void tangent_parallel_for(size_t begin, size_t end, const Func &func) {
-#ifdef TINYUSDZ_ENABLE_THREAD
+#ifdef LIGHTUSD_ENABLE_THREAD
   size_t n = end - begin;
   if (n > 8192) {
     unsigned hw = std::thread::hardware_concurrency();
@@ -1161,4 +1161,4 @@ inline bool ComputeTangentsHybrid(
 
 }  // namespace fast_mikkt
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

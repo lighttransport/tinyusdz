@@ -296,7 +296,7 @@ async function phaseBrowser() {
 
       // Check for key globals
       const hasApp = await page.evaluate(() => {
-        return !!(window.__tinyusdzDemoApp || window.__usdAssetsViewer || window.__usdAssetsBrowser || window.__vizRenderer || window.__usdAssetsBrowser?.renderer);
+        return !!(window.__lightusdDemoApp || window.__usdAssetsViewer || window.__usdAssetsBrowser || window.__vizRenderer || window.__usdAssetsBrowser?.renderer);
       }).catch(() => false);
 
       // Screenshot
@@ -378,7 +378,7 @@ function generateReport() {
 // ============================================================================
 
 async function main() {
-  console.log(`\n${bold('TinyUSDZ Web Demo QA')} ${dim(`(${new Date().toISOString()})`)}`);
+  console.log(`\n${bold('LightUSD Web Demo QA')} ${dim(`(${new Date().toISOString()})`)}`);
   console.log(`  ${dim(`Chrome: ${chromePath}`)}`);
   console.log(`  ${dim(`Timeout: ${timeout}ms`)}`);
 

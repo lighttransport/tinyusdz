@@ -14,7 +14,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 // ============================================================================
@@ -35,7 +35,7 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     // upAxis (token: "X", "Y", or "Z")
     if (metas.upAxis.authored()) {
       Axis axis = metas.upAxis.get_value();
-      std::string axis_str = tinyusdz::to_string(axis);  // "X", "Y", or "Z"
+      std::string axis_str = lightusd::to_string(axis);  // "X", "Y", or "Z"
       crate::CrateValue axis_value;
       value::token axis_tok(axis_str);
       axis_value.Set(axis_tok);
@@ -262,7 +262,7 @@ bool CrateWriter::ConvertSinglePrimSpec(
   if (metas.has_kind()) {
     // `kind` is a `token`-typed field. Store it as a value::token (the crate
     // writer interns it); storing the raw token *index* as a uint produces a
-    // mistyped field that strict readers (incl. tinyusdz's own) reject.
+    // mistyped field that strict readers (incl. lightusd's own) reject.
     crate::CrateValue kind_value;
     kind_value.Set(value::token(metas.get_kind()));
     fields.push_back({"kind", kind_value});
@@ -907,7 +907,7 @@ bool CrateWriter::ConvertVariantSpecToFields(
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

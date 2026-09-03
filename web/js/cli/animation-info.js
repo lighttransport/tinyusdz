@@ -3,7 +3,7 @@
 // Example: node animation-info.js ../../models/suzanne-subd-lv4.usdc
 // Example: node animation-info.js ../../models/animation.usd --detailed
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 
 // Format bytes to human readable format
@@ -177,7 +177,7 @@ function printAnimationClips(usd, detailed = false, dumpKeyframes = false) {
               console.log(`    Skeletal Joint Channels: ${skeletalChannels}`);
             }
 
-            // Track information (main animation data in TinyUSDZ)
+            // Track information (main animation data in LightUSD)
             if (anim.tracks && anim.tracks.length) {
               console.log(`\n  Track Information:`);
               console.log(`    Total Tracks: ${anim.tracks.length}`);
@@ -331,7 +331,7 @@ async function main() {
 
   try {
     // Initialize loader
-    const loader = new TinyUSDZLoader();
+    const loader = new LightUSDLoader();
     await loader.init({ useMemory64: false });
     loader.setMaxMemoryLimitMB(512);
 

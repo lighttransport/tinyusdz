@@ -13,7 +13,7 @@
 #include "render-converter.hh"
 #include "next/stage/change-set.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -97,10 +97,10 @@ class RenderSession {
   RenderSession& operator=(const RenderSession&) = delete;
 
   RenderUpdateResult Initialize(
-      const ::tinyusdz::next::StageSnapshot& snapshot,
+      const ::lightusd::next::StageSnapshot& snapshot,
       SceneUpdateSink* sink);
-  RenderUpdateResult Apply(const ::tinyusdz::next::StageSnapshot& snapshot,
-                           const ::tinyusdz::next::StageChangeSet& changes,
+  RenderUpdateResult Apply(const ::lightusd::next::StageSnapshot& snapshot,
+                           const ::lightusd::next::StageChangeSet& changes,
                            SceneUpdateSink* sink);
 
   uint64_t revision() const;
@@ -114,4 +114,4 @@ class RenderSession {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,7 +1,7 @@
 {
   "name": "blender-bridge",
   "version": "0.1.0",
-  "description": "WebSocket bridge for streaming Blender scenes to browser via TinyUSDZ",
+  "description": "WebSocket bridge for streaming Blender scenes to browser via LightUSD",
   "type": "module",
   "main": "server.js",
   "scripts": {

@@ -1,6 +1,6 @@
-# TinyUSDZ C99 API
+# LightUSD C99 API
 
-A minimal, clean C99 API for TinyUSDZ that provides USD file loading and scene traversal without requiring C++ knowledge or toolchains.
+A minimal, clean C99 API for LightUSD that provides USD file loading and scene traversal without requiring C++ knowledge or toolchains.
 
 ## Features
 
@@ -48,7 +48,7 @@ sudo make install PREFIX=/usr/local
 ## Basic Usage
 
 ```c
-#include <tinyusdz_c.h>
+#include <lightusd_c.h>
 #include <stdio.h>
 
 int main() {
@@ -220,7 +220,7 @@ Not yet implemented:
 - C99 compiler (gcc, clang, msvc)
 - C++14 compiler (for implementation only)
 - CMake 3.10+ or GNU Make
-- TinyUSDZ source code (in parent directory)
+- LightUSD source code (in parent directory)
 
 ### Platform Notes
 
@@ -247,18 +247,18 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
 
 ### With pkg-config
 ```bash
-gcc myapp.c `pkg-config --cflags --libs tinyusdz_c`
+gcc myapp.c `pkg-config --cflags --libs lightusd_c`
 ```
 
 ### Manual compilation
 ```bash
-gcc -I/usr/local/include/tinyusdz myapp.c -L/usr/local/lib -ltinyusdz_c -lm
+gcc -I/usr/local/include/lightusd myapp.c -L/usr/local/lib -llightusd_c -lm
 ```
 
 ### Python via ctypes
 ```python
 import ctypes
-lib = ctypes.CDLL("libtinyusdz_c.so")
+lib = ctypes.CDLL("liblightusd_c.so")
 lib.tusdz_init()
 # ... use the API
 ```
@@ -284,7 +284,7 @@ helgrind ./example_basic model.usd
 
 ## License
 
-Same as TinyUSDZ - MIT License
+Same as LightUSD - MIT License
 
 ## Contributing
 

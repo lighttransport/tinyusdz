@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Composition Implementation
+// LightUSD Next - Composition Implementation
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "composition.hh"
@@ -15,7 +15,7 @@
 #include <system_error>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -2359,4 +2359,4 @@ bool HasCompositionArcs(const PrimSpec& prim) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

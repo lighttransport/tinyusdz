@@ -24,7 +24,7 @@ namespace tusdr {
 // ===========================================================================
 // Legacy stage load WITH composition.
 //
-// `tinyusdz::LoadUSDFromFile` parses a single layer; it does NOT expand
+// `lightusd::LoadUSDFromFile` parses a single layer; it does NOT expand
 // composition arcs. The legacy path used it directly, so every prim contributed
 // by a reference / payload / sublayer / inherit / variant simply did not exist:
 // a Material referenced from a look layer was missing (the mesh fell back to the
@@ -35,7 +35,7 @@ namespace tusdr {
 
 namespace {
 
-bool LayerHasCompositionArcs(const tinyusdz::Layer &layer) {
+bool LayerHasCompositionArcs(const lightusd::Layer &layer) {
   return !layer.metas().subLayers.empty() ||
          layer.check_unresolved_references() ||
          layer.check_unresolved_payload() ||
@@ -46,18 +46,18 @@ bool LayerHasCompositionArcs(const tinyusdz::Layer &layer) {
 
 // LIVRPS to a fixed point. tusdrender's legacy path is eager: every payload and
 // reference loads (no deferred-arc policy — that lives on the `next` path).
-bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
-                         tinyusdz::Layer &&src, tinyusdz::Layer *composed,
+bool ComposeToFixedPoint(lightusd::AssetResolutionResolver &resolver,
+                         lightusd::Layer &&src, lightusd::Layer *composed,
                          std::string *warn, std::string *err) {
-  tinyusdz::Layer work = std::move(src);
+  lightusd::Layer work = std::move(src);
 
   // A layer-relative asset path may climb with '..' — real layer stacks reach
   // sibling asset directories that way (ALab's looks live several levels up), and
   // rejecting them fails composition outright. Matches tusdview's default and the
   // `next` resolver's `allow_parent_paths`.
-  tinyusdz::ReferencesCompositionOptions ref_opts;
+  lightusd::ReferencesCompositionOptions ref_opts;
   ref_opts.allow_parent_relative_paths = true;
-  tinyusdz::PayloadCompositionOptions pl_opts;
+  lightusd::PayloadCompositionOptions pl_opts;
   pl_opts.allow_parent_relative_paths = true;
 
   constexpr int kMaxIteration = 64;
@@ -66,8 +66,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
 
     if (work.check_unresolved_references()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeReferences(resolver, work, &tmp, warn, err,
+      lightusd::Layer tmp;
+      if (!lightusd::CompositeReferences(resolver, work, &tmp, warn, err,
                                          ref_opts)) {
         return false;
       }
@@ -76,8 +76,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
 
     if (work.check_unresolved_payload()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositePayload(resolver, work, &tmp, warn, err,
+      lightusd::Layer tmp;
+      if (!lightusd::CompositePayload(resolver, work, &tmp, warn, err,
                                       pl_opts)) {
         return false;
       }
@@ -86,8 +86,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
 
     if (work.check_unresolved_inherits()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeInherits(work, &tmp, warn, err)) return false;
+      lightusd::Layer tmp;
+      if (!lightusd::CompositeInherits(work, &tmp, warn, err)) return false;
       work = std::move(tmp);
     }
 
@@ -99,16 +99,16 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
       const bool arcs_settled = !work.check_unresolved_references() &&
                                 !work.check_unresolved_payload();
       if (arcs_settled) {
-        tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeVariant(work, &tmp, warn, err)) return false;
+        lightusd::Layer tmp;
+        if (!lightusd::CompositeVariant(work, &tmp, warn, err)) return false;
         work = std::move(tmp);
       }
     }
 
     if (work.check_unresolved_specializes()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeSpecializes(work, &tmp, warn, err)) return false;
+      lightusd::Layer tmp;
+      if (!lightusd::CompositeSpecializes(work, &tmp, warn, err)) return false;
       work = std::move(tmp);
     }
 
@@ -125,8 +125,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
 }  // namespace
 
 bool LoadStageComposedLegacy(const std::string &path,
-                             const tinyusdz::USDLoadOptions &load_options,
-                             tinyusdz::Stage *stage, std::string *warn,
+                             const lightusd::USDLoadOptions &load_options,
+                             lightusd::Stage *stage, std::string *warn,
                              std::string *err) {
   if (!stage) return false;
 
@@ -138,58 +138,58 @@ bool LoadStageComposedLegacy(const std::string &path,
   const bool is_usdz =
       lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".usdz") == 0;
   if (is_usdz) {
-    return tinyusdz::LoadUSDFromFile(path, stage, warn, err, load_options);
+    return lightusd::LoadUSDFromFile(path, stage, warn, err, load_options);
   }
 
-  tinyusdz::Layer root;
+  lightusd::Layer root;
   std::string lwarn, lerr;
-  if (!tinyusdz::LoadLayerFromFile(path, &root, &lwarn, &lerr)) {
+  if (!lightusd::LoadLayerFromFile(path, &root, &lwarn, &lerr)) {
     // Not layer-loadable (or an unsupported flavor) — fall back to the direct
     // parser rather than failing the render outright.
-    return tinyusdz::LoadUSDFromFile(path, stage, warn, err, load_options);
+    return lightusd::LoadUSDFromFile(path, stage, warn, err, load_options);
   }
 
   if (!LayerHasCompositionArcs(root)) {
     // No arcs: keep the direct parser path. LayerToStage drops some less-common
     // concrete schemas (e.g. NurbsPatch) and the direct load retains zero-copy
     // USDC storage, so composing here would only lose things.
-    return tinyusdz::LoadUSDFromFile(path, stage, warn, err, load_options);
+    return lightusd::LoadUSDFromFile(path, stage, warn, err, load_options);
   }
 
   if (warn) *warn += lwarn;
 
-  tinyusdz::AssetResolutionResolver resolver;
+  lightusd::AssetResolutionResolver resolver;
   resolver.set_search_paths({DirName(path)});
 
   if (!root.metas().subLayers.empty()) {
-    tinyusdz::SublayersCompositionOptions sl_opts;
+    lightusd::SublayersCompositionOptions sl_opts;
     sl_opts.allow_parent_relative_paths = true;
-    tinyusdz::Layer tmp;
-    if (!tinyusdz::CompositeSublayers(resolver, root, &tmp, warn, err,
+    lightusd::Layer tmp;
+    if (!lightusd::CompositeSublayers(resolver, root, &tmp, warn, err,
                                       sl_opts)) {
       return false;
     }
     root = std::move(tmp);
   }
 
-  tinyusdz::Layer composed;
+  lightusd::Layer composed;
   if (!ComposeToFixedPoint(resolver, std::move(root), &composed, warn, err)) {
     return false;
   }
-  return tinyusdz::LayerToStage(std::move(composed), stage, warn, err);
+  return lightusd::LayerToStage(std::move(composed), stage, warn, err);
 }
 
 
-using tinyusdz::value::color3f;
-using tinyusdz::value::float3;
-using tinyusdz::value::matrix4d;
-using tinyusdz::tydra::Node;
-using tinyusdz::tydra::NodeType;
-using tinyusdz::tydra::RenderCamera;
-using tinyusdz::tydra::RenderLight;
-using tinyusdz::tydra::RenderMaterial;
-using tinyusdz::tydra::RenderMesh;
-using tinyusdz::tydra::RenderScene;
+using lightusd::value::color3f;
+using lightusd::value::float3;
+using lightusd::value::matrix4d;
+using lightusd::tydra::Node;
+using lightusd::tydra::NodeType;
+using lightusd::tydra::RenderCamera;
+using lightusd::tydra::RenderLight;
+using lightusd::tydra::RenderMaterial;
+using lightusd::tydra::RenderMesh;
+using lightusd::tydra::RenderScene;
 
 // ===========================================================================
 // Memory budget / manager.
@@ -220,8 +220,8 @@ using tinyusdz::tydra::RenderScene;
 
 namespace {
 
-WrapMode ToTusdrWrapLegacy(tinyusdz::tydra::UVTexture::WrapMode m) {
-  using W = tinyusdz::tydra::UVTexture::WrapMode;
+WrapMode ToTusdrWrapLegacy(lightusd::tydra::UVTexture::WrapMode m) {
+  using W = lightusd::tydra::UVTexture::WrapMode;
   switch (m) {
     case W::REPEAT: return WrapMode::Repeat;
     case W::MIRROR: return WrapMode::Mirror;
@@ -233,8 +233,8 @@ WrapMode ToTusdrWrapLegacy(tinyusdz::tydra::UVTexture::WrapMode m) {
 
 // Source channel of a scalar (roughness/metallic/occlusion/opacity) texture:
 // 0=r, 1=g, 2=b, 3=a — matching TriInfo::{rough,metal,occ,opacity}_ch.
-uint8_t ScalarChannel(const tinyusdz::tydra::UVTexture &tex) {
-  using C = tinyusdz::tydra::UVTexture::Channel;
+uint8_t ScalarChannel(const lightusd::tydra::UVTexture &tex) {
+  using C = lightusd::tydra::UVTexture::Channel;
   switch (tex.connectedOutputChannel) {
     case C::G: return 1;
     case C::B: return 2;
@@ -250,7 +250,7 @@ uint8_t ScalarChannel(const tinyusdz::tydra::UVTexture &tex) {
 // (examples/tusdview/mesh_build.cc DecodeToRGBA8): tydra may hand back UInt8,
 // UInt16, Half or Float texels depending on the source image.
 bool DecodeLegacyImageRGBA8(const RenderScene &scene,
-                            const tinyusdz::tydra::TextureImage &img,
+                            const lightusd::tydra::TextureImage &img,
                             Texture *out) {
   if (img.buffer_id < 0 || size_t(img.buffer_id) >= scene.buffers.size()) {
     return false;
@@ -258,7 +258,7 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
   if (!img.decoded || img.width <= 0 || img.height <= 0 || img.channels <= 0) {
     return false;
   }
-  const tinyusdz::tydra::BufferData &buf =
+  const lightusd::tydra::BufferData &buf =
       scene.buffers[size_t(img.buffer_id)];
   const size_t w = size_t(img.width);
   const size_t h = size_t(img.height);
@@ -290,7 +290,7 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
     return c < ch ? float(p[i * ch + c]) * scale : 0.0f;
   };
 
-  using CT = tinyusdz::tydra::ComponentType;
+  using CT = lightusd::tydra::ComponentType;
   switch (img.texelComponentType) {
     case CT::UInt8: {
       if (buf.data.size() < npix * ch) return false;
@@ -328,11 +328,11 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
   }
 }
 
-bool SetLegacyTextureColorTransform(tinyusdz::tydra::ColorSpace color_space,
+bool SetLegacyTextureColorTransform(lightusd::tydra::ColorSpace color_space,
                                     Texture *texture) {
   if (!texture) return false;
   const char *source = nullptr;
-  using LegacyColorSpace = tinyusdz::tydra::ColorSpace;
+  using LegacyColorSpace = lightusd::tydra::ColorSpace;
   switch (color_space) {
     case LegacyColorSpace::sRGB:
     case LegacyColorSpace::sRGB_Texture:
@@ -369,12 +369,12 @@ bool SetLegacyTextureColorTransform(tinyusdz::tydra::ColorSpace color_space,
     default:
       return false;
   }
-  tinyusdz::color::ColorSpaceDesc source_desc;
-  tinyusdz::color::ColorSpaceDesc display_desc;
-  if (!tinyusdz::color::GetBuiltinColorSpace(source, &source_desc) ||
-      !tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+  lightusd::color::ColorSpaceDesc source_desc;
+  lightusd::color::ColorSpaceDesc display_desc;
+  if (!lightusd::color::GetBuiltinColorSpace(source, &source_desc) ||
+      !lightusd::color::GetBuiltinColorSpace("lin_rec709_scene",
                                              &display_desc) ||
-      !tinyusdz::color::BuildColorTransform(
+      !lightusd::color::BuildColorTransform(
           source_desc, display_desc, &texture->color_transform)) {
     return false;
   }
@@ -401,7 +401,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
     if (slot != -2) return slot;  // decoded (or already known-bad)
     slot = -1;
 
-    const tinyusdz::tydra::UVTexture &tex = scene.textures[size_t(tydra_id)];
+    const lightusd::tydra::UVTexture &tex = scene.textures[size_t(tydra_id)];
     if (tex.texture_image_id < 0 ||
         size_t(tex.texture_image_id) >= scene.images.size()) {
       return slot;
@@ -413,19 +413,19 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
     }
     t.wrap_s = ToTusdrWrapLegacy(tex.wrapS);
     t.wrap_t = ToTusdrWrapLegacy(tex.wrapT);
-    const tinyusdz::tydra::TextureImage &image =
+    const lightusd::tydra::TextureImage &image =
         scene.images[size_t(tex.texture_image_id)];
-    const tinyusdz::tydra::ColorSpace image_color_space = image.colorSpace;
-    t.srgb = image_color_space == tinyusdz::tydra::ColorSpace::sRGB;
+    const lightusd::tydra::ColorSpace image_color_space = image.colorSpace;
+    t.srgb = image_color_space == lightusd::tydra::ColorSpace::sRGB;
     if (image.colorTransformValid && !image.colorTransformApplied) {
-      tinyusdz::color::ColorTransform transform;
+      lightusd::color::ColorTransform transform;
       transform.source.name = image.sourceColorSpaceName;
       transform.source.gamma = image.sourceGamma;
       transform.source.linear_bias = image.sourceLinearBias;
       transform.source.kind = image.sourceColorIsData
-          ? tinyusdz::color::ColorSpaceKind::Data
-          : tinyusdz::color::ColorSpaceKind::Color;
-      (void)tinyusdz::color::GetBuiltinColorSpace(
+          ? lightusd::color::ColorSpaceKind::Data
+          : lightusd::color::ColorSpaceKind::Color;
+      (void)lightusd::color::GetBuiltinColorSpace(
           "lin_rec709_scene", &transform.destination);
       transform.bypass = image.colorTransformBypass;
       std::copy(image.sourceToDisplayLinear,
@@ -449,7 +449,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
   };
 
   for (size_t i = 0; i < scene.materials.size(); ++i) {
-    const tinyusdz::tydra::RenderMaterial &mat = scene.materials[i];
+    const lightusd::tydra::RenderMaterial &mat = scene.materials[i];
     LegacyMaterialTex &b = bindings[i];
 
     auto chan = [&](int32_t tydra_id) -> uint8_t {
@@ -457,7 +457,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       return ScalarChannel(scene.textures[size_t(tydra_id)]);
     };
     if (mat.surfaceShader.has_value()) {
-      const tinyusdz::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+      const lightusd::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
       b.diffuse = resolve(s.diffuseColor.texture_id);
       b.emissive = resolve(s.emissiveColor.texture_id);
       b.normal = resolve(s.normal.texture_id);
@@ -474,7 +474,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       // Preview Surface counterparts. Previously only constants were read from
       // openPBRShader, leaving every MaterialX texture unbound even though
       // Tydra had decoded it and resolved its colorspace transform.
-      const tinyusdz::tydra::OpenPBRSurfaceShader &s = *mat.openPBRShader;
+      const lightusd::tydra::OpenPBRSurfaceShader &s = *mat.openPBRShader;
       b.diffuse = resolve(s.base_color.texture_id);
       b.normal = resolve(s.normal.texture_id);
       b.roughness = resolve(s.base_roughness.texture_id);
@@ -493,7 +493,7 @@ std::vector<int> FaceMaterialIds(const RenderMesh &mesh) {
   const std::vector<uint32_t> &counts = mesh.faceVertexCounts();
   std::vector<int> ids(counts.size(), mesh.material_id);
   for (const auto &kv : mesh.material_subsetMap) {
-    const tinyusdz::tydra::MaterialSubset &subset = kv.second;
+    const lightusd::tydra::MaterialSubset &subset = kv.second;
     const std::vector<int> &faces = subset.indices();
     for (int f : faces) {
       if (f >= 0 && size_t(f) < ids.size()) {
@@ -529,7 +529,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
 
   // Primary UV set. tydra converts texcoords to FACEVARYING (one per face
   // corner), but a vertex-varying set is still possible, so index accordingly.
-  const tinyusdz::tydra::VertexAttribute *uv_attr = nullptr;
+  const lightusd::tydra::VertexAttribute *uv_attr = nullptr;
   if (tri_uvs) {
     auto it = mesh.texcoords.find(0);
     if (it != mesh.texcoords.end()) uv_attr = &it->second;
@@ -716,7 +716,7 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
     CollectGeometry(scene, root, vertices, tris, bounds, skip_paths, lights,
                     tri_uvs, mat_tex, pv);
   }
-  for (const tinyusdz::tydra::RenderInstance &inst : scene.instances) {
+  for (const lightusd::tydra::RenderInstance &inst : scene.instances) {
     if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < scene.meshes.size() &&
         inst.visible) {
       const RenderMesh &mesh = scene.meshes[size_t(inst.mesh_id)];
@@ -729,13 +729,13 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
 
 
 template <typename T>
-bool BorrowMMapArray(const tinyusdz::Stage &stage, const std::string &prim_path,
+bool BorrowMMapArray(const lightusd::Stage &stage, const std::string &prim_path,
                      const std::string &attr_name, BorrowedArrayView<T> *out) {
   if (!out || !stage.has_mmap_zero_copy()) return false;
-  const tinyusdz::MMapArrayRef *ref =
+  const lightusd::MMapArrayRef *ref =
       stage.mmap_table()->find_compatible(prim_path, attr_name);
   if (!ref) return false;
-  const tinyusdz::MMapDataSource *source = stage.mmap_source();
+  const lightusd::MMapDataSource *source = stage.mmap_source();
   if (!source || !source->is_valid()) return false;
   if (ref->element_size != sizeof(T)) return false;
   if (ref->element_count > (UINT64_MAX / sizeof(T))) return false;
@@ -783,11 +783,11 @@ T ReadBorrowedArrayValue(const BorrowedArrayView<T> &view, size_t index) {
 // mmap_zero_copy mode; the caller should try BorrowMMapArray() first).
 template <typename T>
 const std::vector<T> *BorrowScalarVector(
-    const tinyusdz::TypedAttribute<tinyusdz::Animatable<std::vector<T>>> &attr) {
+    const lightusd::TypedAttribute<lightusd::Animatable<std::vector<T>>> &attr) {
   if (attr.is_blocked() || attr.has_connections()) return nullptr;
   const auto &opt = attr.get_value_ref();
   if (!opt) return nullptr;
-  const tinyusdz::Animatable<std::vector<T>> &anim = opt.value();
+  const lightusd::Animatable<std::vector<T>> &anim = opt.value();
   if (anim.is_scalar() && anim.has_default()) {
     return &anim.get_scalar_ref();
   }
@@ -802,95 +802,95 @@ unsigned WorkerThreadCount(int requested) {
   return hw > 0 ? hw : 1u;
 }
 
-const tinyusdz::Xformable *AsPreviewXformable(const tinyusdz::Prim &prim) {
-  if (const tinyusdz::Xform *x = prim.as<tinyusdz::Xform>()) return x;
-  if (const tinyusdz::GeomMesh *m = prim.as<tinyusdz::GeomMesh>()) return m;
-  if (const tinyusdz::GeomCamera *c = prim.as<tinyusdz::GeomCamera>()) return c;
+const lightusd::Xformable *AsPreviewXformable(const lightusd::Prim &prim) {
+  if (const lightusd::Xform *x = prim.as<lightusd::Xform>()) return x;
+  if (const lightusd::GeomMesh *m = prim.as<lightusd::GeomMesh>()) return m;
+  if (const lightusd::GeomCamera *c = prim.as<lightusd::GeomCamera>()) return c;
   return nullptr;
 }
 
-const tinyusdz::GPrim *AsPreviewGPrim(const tinyusdz::Prim &prim) {
-  if (const tinyusdz::Xform *p = prim.as<tinyusdz::Xform>()) return p;
-  if (const tinyusdz::GeomMesh *p = prim.as<tinyusdz::GeomMesh>()) return p;
-  if (const tinyusdz::GeomCamera *p = prim.as<tinyusdz::GeomCamera>()) return p;
-  if (const tinyusdz::GeomCube *p = prim.as<tinyusdz::GeomCube>()) return p;
-  if (const tinyusdz::GeomSphere *p = prim.as<tinyusdz::GeomSphere>()) return p;
-  if (const tinyusdz::GeomCone *p = prim.as<tinyusdz::GeomCone>()) return p;
-  if (const tinyusdz::GeomCylinder *p = prim.as<tinyusdz::GeomCylinder>()) return p;
-  if (const tinyusdz::GeomCapsule *p = prim.as<tinyusdz::GeomCapsule>()) return p;
-  if (const tinyusdz::GeomPlane *p = prim.as<tinyusdz::GeomPlane>()) return p;
-  if (const tinyusdz::GeomTetMesh *p = prim.as<tinyusdz::GeomTetMesh>()) return p;
-  if (const tinyusdz::GeomNurbsPatch *p = prim.as<tinyusdz::GeomNurbsPatch>()) {
+const lightusd::GPrim *AsPreviewGPrim(const lightusd::Prim &prim) {
+  if (const lightusd::Xform *p = prim.as<lightusd::Xform>()) return p;
+  if (const lightusd::GeomMesh *p = prim.as<lightusd::GeomMesh>()) return p;
+  if (const lightusd::GeomCamera *p = prim.as<lightusd::GeomCamera>()) return p;
+  if (const lightusd::GeomCube *p = prim.as<lightusd::GeomCube>()) return p;
+  if (const lightusd::GeomSphere *p = prim.as<lightusd::GeomSphere>()) return p;
+  if (const lightusd::GeomCone *p = prim.as<lightusd::GeomCone>()) return p;
+  if (const lightusd::GeomCylinder *p = prim.as<lightusd::GeomCylinder>()) return p;
+  if (const lightusd::GeomCapsule *p = prim.as<lightusd::GeomCapsule>()) return p;
+  if (const lightusd::GeomPlane *p = prim.as<lightusd::GeomPlane>()) return p;
+  if (const lightusd::GeomTetMesh *p = prim.as<lightusd::GeomTetMesh>()) return p;
+  if (const lightusd::GeomNurbsPatch *p = prim.as<lightusd::GeomNurbsPatch>()) {
     return p;
   }
-  if (const tinyusdz::GeomBasisCurves *p = prim.as<tinyusdz::GeomBasisCurves>()) {
+  if (const lightusd::GeomBasisCurves *p = prim.as<lightusd::GeomBasisCurves>()) {
     return p;
   }
-  if (const tinyusdz::GeomHermiteCurves *p =
-          prim.as<tinyusdz::GeomHermiteCurves>()) {
+  if (const lightusd::GeomHermiteCurves *p =
+          prim.as<lightusd::GeomHermiteCurves>()) {
     return p;
   }
-  if (const tinyusdz::GeomNurbsCurves *p = prim.as<tinyusdz::GeomNurbsCurves>()) {
+  if (const lightusd::GeomNurbsCurves *p = prim.as<lightusd::GeomNurbsCurves>()) {
     return p;
   }
-  if (const tinyusdz::GeomPoints *p = prim.as<tinyusdz::GeomPoints>()) return p;
-  if (const tinyusdz::GeomPointInstancer *p =
-          prim.as<tinyusdz::GeomPointInstancer>()) {
+  if (const lightusd::GeomPoints *p = prim.as<lightusd::GeomPoints>()) return p;
+  if (const lightusd::GeomPointInstancer *p =
+          prim.as<lightusd::GeomPointInstancer>()) {
     return p;
   }
   return nullptr;
 }
 
-matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
+matrix4d LocalMatrixOrIdentity(const lightusd::Xformable *xformable, double time,
                                bool *reset) {
   if (reset) *reset = false;
   if (!xformable) return matrix4d::identity();
   bool local_reset = false;
   auto ret = xformable->GetLocalMatrix(
-      time, tinyusdz::value::TimeSampleInterpolationType::Linear, &local_reset);
+      time, lightusd::value::TimeSampleInterpolationType::Linear, &local_reset);
   if (reset) *reset = local_reset;
   if (!ret) return matrix4d::identity();
   return ret.value();
 }
 
 template <typename T>
-bool EvalAnim(const tinyusdz::Stage &stage,
-              const tinyusdz::TypedAttribute<tinyusdz::Animatable<T>> &attr,
+bool EvalAnim(const lightusd::Stage &stage,
+              const lightusd::TypedAttribute<lightusd::Animatable<T>> &attr,
               const std::string &name, double time, T *out) {
   std::string err;
-  return tinyusdz::tydra::EvaluateTypedAnimatableAttribute(
+  return lightusd::tydra::EvaluateTypedAnimatableAttribute(
       stage, attr, name, out, &err, time);
 }
 
 template <typename T>
 bool EvalAnimFallback(
-    const tinyusdz::Stage &stage,
-    const tinyusdz::TypedAttributeWithFallback<tinyusdz::Animatable<T>> &attr,
+    const lightusd::Stage &stage,
+    const lightusd::TypedAttributeWithFallback<lightusd::Animatable<T>> &attr,
     const std::string &name, double time, T *out) {
   std::string err;
-  return tinyusdz::tydra::EvaluateTypedAnimatableAttribute(
+  return lightusd::tydra::EvaluateTypedAnimatableAttribute(
       stage, attr, name, out, &err, time);
 }
 
-uint32_t PurposeBit(tinyusdz::Purpose purpose) {
+uint32_t PurposeBit(lightusd::Purpose purpose) {
   switch (purpose) {
-    case tinyusdz::Purpose::Render:
+    case lightusd::Purpose::Render:
       return kPurposeRenderBit;
-    case tinyusdz::Purpose::Proxy:
+    case lightusd::Purpose::Proxy:
       return kPurposeProxyBit;
-    case tinyusdz::Purpose::Guide:
+    case lightusd::Purpose::Guide:
       return kPurposeGuideBit;
-    case tinyusdz::Purpose::Default:
+    case lightusd::Purpose::Default:
     default:
       return kPurposeDefaultBit;
   }
 }
 
-tinyusdz::Purpose ResolvePurpose(const tinyusdz::Prim &prim,
-                                 tinyusdz::Purpose inherited) {
-  if (const tinyusdz::GPrim *gprim = AsPreviewGPrim(prim)) {
-    tinyusdz::Purpose purpose = gprim->purpose.get_value();
-    if (purpose != tinyusdz::Purpose::Default) return purpose;
+lightusd::Purpose ResolvePurpose(const lightusd::Prim &prim,
+                                 lightusd::Purpose inherited) {
+  if (const lightusd::GPrim *gprim = AsPreviewGPrim(prim)) {
+    lightusd::Purpose purpose = gprim->purpose.get_value();
+    if (purpose != lightusd::Purpose::Default) return purpose;
   }
   return inherited;
 }
@@ -905,43 +905,43 @@ bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask) {
 // tydra RenderScene carries neither, so without this the legacy shaded path
 // drew guide/proxy geometry unconditionally (-purpose/-hideProxy/... were
 // no-ops) and rendered invisible prims.
-void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+void BuildLegacyPurposeVisibility(const lightusd::Stage &stage,
                                   PurposeVisibilityMap *out) {
   if (!out) return;
-  std::function<void(const tinyusdz::Prim &, tinyusdz::Purpose, bool)> walk =
-      [&](const tinyusdz::Prim &prim, tinyusdz::Purpose inherited,
+  std::function<void(const lightusd::Prim &, lightusd::Purpose, bool)> walk =
+      [&](const lightusd::Prim &prim, lightusd::Purpose inherited,
           bool invisible) {
-        if (const tinyusdz::GPrim *gp = AsPreviewGPrim(prim)) {
-          tinyusdz::Visibility vis = tinyusdz::Visibility::Inherited;
+        if (const lightusd::GPrim *gp = AsPreviewGPrim(prim)) {
+          lightusd::Visibility vis = lightusd::Visibility::Inherited;
           if (gp->visibility.get_value().get_default(&vis) &&
-              vis == tinyusdz::Visibility::Invisible) {
+              vis == lightusd::Visibility::Invisible) {
             invisible = true;
           }
         }
         inherited = ResolvePurpose(prim, inherited);
         const std::string path = prim.absolute_path().full_path_name();
         (*out)[path] = invisible ? 0u : PurposeBit(inherited);
-        for (const tinyusdz::Prim &child : prim.children()) {
+        for (const lightusd::Prim &child : prim.children()) {
           walk(child, inherited, invisible);
         }
       };
-  for (const tinyusdz::Prim &root : stage.root_prims()) {
-    walk(root, tinyusdz::Purpose::Default, false);
+  for (const lightusd::Prim &root : stage.root_prims()) {
+    walk(root, lightusd::Purpose::Default, false);
   }
 }
 
 
-bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path,
-                      const tinyusdz::GeomMesh &mesh, const matrix4d &world,
-                      double time, tinyusdz::Purpose purpose,
+bool AddRTPreviewMesh(const lightusd::Stage &stage, const std::string &prim_path,
+                      const lightusd::GeomMesh &mesh, const matrix4d &world,
+                      double time, lightusd::Purpose purpose,
                       uint32_t purpose_mask,
                       std::vector<float> *vertices, std::vector<TriInfo> *tris,
                       Bounds *bounds, RTPreviewStats *stats) {
   if (!vertices || !tris || !bounds || !stats) return false;
-  BorrowedArrayView<tinyusdz::value::point3f> points;
+  BorrowedArrayView<lightusd::value::point3f> points;
   if (BorrowMMapArray(stage, prim_path, "points", &points)) {
     stats->meshes_with_mmap_points++;
-  } else if (const std::vector<tinyusdz::value::point3f> *pv =
+  } else if (const std::vector<lightusd::value::point3f> *pv =
                  BorrowScalarVector(mesh.points)) {
     // Zero-copy: in-memory (materialized) points vector.
     points.data = pv->data();
@@ -961,7 +961,7 @@ bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path
     points.mmap = false;
     stats->meshes_with_owned_points++;
     stats->copied_point_bytes +=
-        uint64_t(points.count) * sizeof(tinyusdz::value::point3f);
+        uint64_t(points.count) * sizeof(lightusd::value::point3f);
   }
 
   // Topology: prefer zero-copy const-ref to the in-memory vectors; fall back to
@@ -1070,16 +1070,16 @@ bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path
 // Serial: resolve world matrices / purpose (parent-dependent) and flatten the
 // renderable GeomMesh prims into `jobs`. The per-triangle work happens later in
 // parallel; this walk only does cheap per-prim xform/purpose evaluation.
-void CollectRTPreviewMeshes(const tinyusdz::Prim &prim,
+void CollectRTPreviewMeshes(const lightusd::Prim &prim,
                             const matrix4d &parent_world, double time,
-                            tinyusdz::Purpose inherited_purpose,
+                            lightusd::Purpose inherited_purpose,
                             std::vector<MeshJob> *jobs) {
   bool reset = false;
   const matrix4d local =
       LocalMatrixOrIdentity(AsPreviewXformable(prim), time, &reset);
   const matrix4d world = reset ? local : (local * parent_world);
-  const tinyusdz::Purpose purpose = ResolvePurpose(prim, inherited_purpose);
-  if (const tinyusdz::GeomMesh *mesh = prim.as<tinyusdz::GeomMesh>()) {
+  const lightusd::Purpose purpose = ResolvePurpose(prim, inherited_purpose);
+  if (const lightusd::GeomMesh *mesh = prim.as<lightusd::GeomMesh>()) {
     MeshJob job;
     job.mesh = mesh;
     job.world = world;
@@ -1087,7 +1087,7 @@ void CollectRTPreviewMeshes(const tinyusdz::Prim &prim,
     job.prim_path = prim.absolute_path().full_path_name();
     jobs->push_back(std::move(job));
   }
-  for (const tinyusdz::Prim &child : prim.children()) {
+  for (const lightusd::Prim &child : prim.children()) {
     CollectRTPreviewMeshes(child, world, time, purpose, jobs);
   }
 }
@@ -1111,7 +1111,7 @@ void MergeBounds(Bounds *dst, const Bounds &src) {
   Expand(dst, src.hi);
 }
 
-bool BuildRTPreviewScene(const tinyusdz::Stage &stage, const Options &opt,
+bool BuildRTPreviewScene(const lightusd::Stage &stage, const Options &opt,
                          std::vector<float> *vertices,
                          std::vector<TriInfo> *tris, Bounds *bounds,
                          RTPreviewStats *stats, std::string *err) {
@@ -1127,9 +1127,9 @@ bool BuildRTPreviewScene(const tinyusdz::Stage &stage, const Options &opt,
 
   // Pass A (serial, cheap): flatten the prim tree into per-mesh jobs.
   std::vector<MeshJob> jobs;
-  for (const tinyusdz::Prim &root : stage.root_prims()) {
+  for (const lightusd::Prim &root : stage.root_prims()) {
     CollectRTPreviewMeshes(root, matrix4d::identity(), opt.timecode,
-                           tinyusdz::Purpose::Default, &jobs);
+                           lightusd::Purpose::Default, &jobs);
   }
   stats->meshes = jobs.size();
 
@@ -1196,23 +1196,23 @@ bool BuildRTPreviewScene(const tinyusdz::Stage &stage, const Options &opt,
   return true;
 }
 
-bool MatchPrimNameOrPath(const tinyusdz::Prim &prim, const std::string &query) {
+bool MatchPrimNameOrPath(const lightusd::Prim &prim, const std::string &query) {
   if (query.empty()) return true;
   const std::string path = prim.absolute_path().full_path_name();
   return path == query || prim.element_name() == query;
 }
 
-bool CameraFrameFromGeomCamera(const tinyusdz::Stage &stage,
-                               const tinyusdz::GeomCamera &cam,
+bool CameraFrameFromGeomCamera(const lightusd::Stage &stage,
+                               const lightusd::GeomCamera &cam,
                                const matrix4d &world, double time,
                                CameraFrame *frame) {
   if (!frame) return false;
   float focal_length = 50.0f;
   float vertical_aperture = 15.2908f;
   float horizontal_aperture = 20.955f;
-  tinyusdz::value::float2 clipping_range{0.1f, 1000000.0f};
-  tinyusdz::GeomCamera::Projection projection =
-      tinyusdz::GeomCamera::Projection::Perspective;
+  lightusd::value::float2 clipping_range{0.1f, 1000000.0f};
+  lightusd::GeomCamera::Projection projection =
+      lightusd::GeomCamera::Projection::Perspective;
   EvalAnimFallback(stage, cam.focalLength, "focalLength", time, &focal_length);
   EvalAnimFallback(stage, cam.verticalAperture, "verticalAperture", time,
                    &vertical_aperture);
@@ -1233,12 +1233,12 @@ bool CameraFrameFromGeomCamera(const tinyusdz::Stage &stage,
   frame->ymag = vertical_aperture;
   frame->znear = std::max(1.0e-5f, clipping_range[0]);
   frame->zfar = std::max(frame->znear, clipping_range[1]);
-  frame->ortho = projection == tinyusdz::GeomCamera::Projection::Orthographic;
+  frame->ortho = projection == lightusd::GeomCamera::Projection::Orthographic;
   return true;
 }
 
-bool FindStageCameraFrameRecursive(const tinyusdz::Stage &stage,
-                                   const tinyusdz::Prim &prim,
+bool FindStageCameraFrameRecursive(const lightusd::Stage &stage,
+                                   const lightusd::Prim &prim,
                                    const std::string &query,
                                    const matrix4d &parent_world, double time,
                                    CameraFrame *frame) {
@@ -1246,12 +1246,12 @@ bool FindStageCameraFrameRecursive(const tinyusdz::Stage &stage,
   const matrix4d local =
       LocalMatrixOrIdentity(AsPreviewXformable(prim), time, &reset);
   const matrix4d world = reset ? local : (local * parent_world);
-  if (const tinyusdz::GeomCamera *cam = prim.as<tinyusdz::GeomCamera>()) {
+  if (const lightusd::GeomCamera *cam = prim.as<lightusd::GeomCamera>()) {
     if (MatchPrimNameOrPath(prim, query)) {
       return CameraFrameFromGeomCamera(stage, *cam, world, time, frame);
     }
   }
-  for (const tinyusdz::Prim &child : prim.children()) {
+  for (const lightusd::Prim &child : prim.children()) {
     if (FindStageCameraFrameRecursive(stage, child, query, world, time, frame)) {
       return true;
     }
@@ -1259,9 +1259,9 @@ bool FindStageCameraFrameRecursive(const tinyusdz::Stage &stage,
   return false;
 }
 
-bool FindStageCameraFrame(const tinyusdz::Stage &stage, const std::string &query,
+bool FindStageCameraFrame(const lightusd::Stage &stage, const std::string &query,
                           double time, CameraFrame *frame) {
-  for (const tinyusdz::Prim &root : stage.root_prims()) {
+  for (const lightusd::Prim &root : stage.root_prims()) {
     if (FindStageCameraFrameRecursive(stage, root, query, matrix4d::identity(),
                                       time, frame)) {
       return true;
@@ -1271,21 +1271,21 @@ bool FindStageCameraFrame(const tinyusdz::Stage &stage, const std::string &query
 }
 
 template <typename T>
-bool EvalFallback(const tinyusdz::Stage &stage,
-                  const tinyusdz::TypedAttributeWithFallback<T> &attr,
+bool EvalFallback(const lightusd::Stage &stage,
+                  const lightusd::TypedAttributeWithFallback<T> &attr,
                   const std::string &name, T *out) {
   std::string err;
-  return tinyusdz::tydra::EvaluateTypedAttribute(stage, attr, name, out, &err);
+  return lightusd::tydra::EvaluateTypedAttribute(stage, attr, name, out, &err);
 }
 
-bool EvalAxis(const tinyusdz::TypedAttributeWithFallback<tinyusdz::Axis> &attr,
-              tinyusdz::Axis *out) {
+bool EvalAxis(const lightusd::TypedAttributeWithFallback<lightusd::Axis> &attr,
+              lightusd::Axis *out) {
   if (!out) return false;
   *out = attr.get_value();
   return true;
 }
 
-std::string PrimPathString(const tinyusdz::Prim &prim) {
+std::string PrimPathString(const lightusd::Prim &prim) {
   return prim.absolute_path().full_path_name();
 }
 
@@ -1356,18 +1356,18 @@ void AddDirectCube(double size, const matrix4d &world, std::vector<float> *verti
   }
 }
 
-void AddDirectPlane(double width, double length, tinyusdz::Axis axis,
+void AddDirectPlane(double width, double length, lightusd::Axis axis,
                     const matrix4d &world, std::vector<float> *vertices,
                     std::vector<TriInfo> *tris, Bounds *bounds) {
   float hw = float(width * 0.5);
   float hl = float(length * 0.5);
   Vec3 local[4];
-  if (axis == tinyusdz::Axis::X) {
+  if (axis == lightusd::Axis::X) {
     local[0] = Vec3{0.0f, -hw, -hl};
     local[1] = Vec3{0.0f,  hw, -hl};
     local[2] = Vec3{0.0f,  hw,  hl};
     local[3] = Vec3{0.0f, -hw,  hl};
-  } else if (axis == tinyusdz::Axis::Y) {
+  } else if (axis == lightusd::Axis::Y) {
     local[0] = Vec3{-hw, 0.0f, -hl};
     local[1] = Vec3{ hw, 0.0f, -hl};
     local[2] = Vec3{ hw, 0.0f,  hl};
@@ -1406,7 +1406,7 @@ double BSplineBasis(int i, int degree, double u, const std::vector<double> &knot
   return left + right;
 }
 
-Vec3 EvalNurbsPatchPoint(const std::vector<tinyusdz::value::point3f> &points,
+Vec3 EvalNurbsPatchPoint(const std::vector<lightusd::value::point3f> &points,
                          const std::vector<double> &weights, int u_count,
                          int v_count, int u_order, int v_order,
                          const std::vector<double> &u_knots,
@@ -1435,12 +1435,12 @@ Vec3 EvalNurbsPatchPoint(const std::vector<tinyusdz::value::point3f> &points,
   return sum;
 }
 
-void AddNurbsPatchTriangles(const tinyusdz::Stage &stage,
-                            const tinyusdz::GeomNurbsPatch &patch,
+void AddNurbsPatchTriangles(const lightusd::Stage &stage,
+                            const lightusd::GeomNurbsPatch &patch,
                             const matrix4d &world, double time,
                             std::vector<float> *vertices,
                             std::vector<TriInfo> *tris, Bounds *bounds) {
-  std::vector<tinyusdz::value::point3f> points;
+  std::vector<lightusd::value::point3f> points;
   int u_count = 0, v_count = 0, u_order = 0, v_order = 0;
   std::vector<double> u_knots, v_knots, weights;
   if (!EvalAnim(stage, patch.points, "points", time, &points) ||
@@ -1461,7 +1461,7 @@ void AddNurbsPatchTriangles(const tinyusdz::Stage &stage,
   double u1 = u_knots[u_knots.size() - size_t(std::max(1, u_order))];
   double v0 = v_knots[size_t(std::max(0, v_order - 1))];
   double v1 = v_knots[v_knots.size() - size_t(std::max(1, v_order))];
-  tinyusdz::value::double2 range;
+  lightusd::value::double2 range;
   if (EvalAnim(stage, patch.uRange, "uRange", time, &range)) {
     u0 = range[0];
     u1 = range[1];
@@ -1497,7 +1497,7 @@ void AddNurbsPatchTriangles(const tinyusdz::Stage &stage,
 // Fixed base color for unmaterialed curve geometry (the `next` path doesn't
 // resolve curve displayColor yet). One value for every hair segment.
 
-void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &points,
+void AppendLinearCurveStrands(const std::vector<lightusd::value::point3f> &points,
                               const std::vector<int> &counts,
                               const std::vector<float> &widths,
                               const matrix4d &world,
@@ -1677,7 +1677,7 @@ void AppendHermiteCurveStrands(const float *points, const float *tangents,
   }
 }
 
-void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &prim,
                          const std::unordered_map<std::string, matrix4d> &matrices,
                          double time, DirectScene *direct,
                          std::vector<float> *vertices, std::vector<TriInfo> *tris,
@@ -1697,9 +1697,9 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
   const std::string path = PrimPathString(prim);
   const matrix4d world = MatrixForPath(matrices, path);
   matrix4d inv_world;
-  bool has_inv = tinyusdz::inverse(world, inv_world, 1.0e-12);
+  bool has_inv = lightusd::inverse(world, inv_world, 1.0e-12);
 
-  if (const tinyusdz::GeomSphere *sphere = prim.as<tinyusdz::GeomSphere>()) {
+  if (const lightusd::GeomSphere *sphere = prim.as<lightusd::GeomSphere>()) {
     double radius = 2.0;
     EvalAnimFallback(stage, sphere->radius, "radius", time, &radius);
     Vec3 c = TransformPoint(world, Vec3{0.0f, 0.0f, 0.0f});
@@ -1715,19 +1715,19 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
   } else if (has_inv) {
     DirectShape shape;
     bool add_shape = false;
-    if (const tinyusdz::GeomCylinder *cyl = prim.as<tinyusdz::GeomCylinder>()) {
+    if (const lightusd::GeomCylinder *cyl = prim.as<lightusd::GeomCylinder>()) {
       shape.type = DirectShape::Type::Cylinder;
       EvalAnimFallback(stage, cyl->radius, "radius", time, &shape.radius);
       EvalAnimFallback(stage, cyl->height, "height", time, &shape.height);
       EvalAxis(cyl->axis, &shape.axis);
       add_shape = true;
-    } else if (const tinyusdz::GeomCone *cone = prim.as<tinyusdz::GeomCone>()) {
+    } else if (const lightusd::GeomCone *cone = prim.as<lightusd::GeomCone>()) {
       shape.type = DirectShape::Type::Cone;
       EvalAnimFallback(stage, cone->radius, "radius", time, &shape.radius);
       EvalAnimFallback(stage, cone->height, "height", time, &shape.height);
       EvalAxis(cone->axis, &shape.axis);
       add_shape = true;
-    } else if (const tinyusdz::GeomCapsule *cap = prim.as<tinyusdz::GeomCapsule>()) {
+    } else if (const lightusd::GeomCapsule *cap = prim.as<lightusd::GeomCapsule>()) {
       shape.type = DirectShape::Type::Capsule;
       EvalAnimFallback(stage, cap->radius, "radius", time, &shape.radius);
       EvalAnimFallback(stage, cap->height, "height", time, &shape.height);
@@ -1747,22 +1747,22 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
     }
   }
 
-  if (const tinyusdz::GeomCube *cube = prim.as<tinyusdz::GeomCube>()) {
+  if (const lightusd::GeomCube *cube = prim.as<lightusd::GeomCube>()) {
     double size = 2.0;
     EvalAnimFallback(stage, cube->size, "size", time, &size);
     AddDirectCube(size, world, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const tinyusdz::GeomPlane *plane = prim.as<tinyusdz::GeomPlane>()) {
+  } else if (const lightusd::GeomPlane *plane = prim.as<lightusd::GeomPlane>()) {
     double width = 2.0;
     double length = 2.0;
-    tinyusdz::Axis axis = tinyusdz::Axis::Z;
+    lightusd::Axis axis = lightusd::Axis::Z;
     EvalAnimFallback(stage, plane->width, "width", time, &width);
     EvalAnimFallback(stage, plane->length, "length", time, &length);
     EvalAxis(plane->axis, &axis);
     AddDirectPlane(width, length, axis, world, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const tinyusdz::GeomPoints *pts = prim.as<tinyusdz::GeomPoints>()) {
-    std::vector<tinyusdz::value::point3f> points;
+  } else if (const lightusd::GeomPoints *pts = prim.as<lightusd::GeomPoints>()) {
+    std::vector<lightusd::value::point3f> points;
     std::vector<float> widths;
     if (EvalAnim(stage, pts->points, "points", time, &points)) {
       EvalAnim(stage, pts->widths, "widths", time, &widths);
@@ -1782,9 +1782,9 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
       }
       direct->direct_paths.insert(path);
     }
-  } else if (const tinyusdz::GeomTetMesh *tet = prim.as<tinyusdz::GeomTetMesh>()) {
-    std::vector<tinyusdz::value::point3f> points;
-    std::vector<tinyusdz::value::int4> indices;
+  } else if (const lightusd::GeomTetMesh *tet = prim.as<lightusd::GeomTetMesh>()) {
+    std::vector<lightusd::value::point3f> points;
+    std::vector<lightusd::value::int4> indices;
     if (EvalAnim(stage, tet->points, "points", time, &points) &&
         EvalAnim(stage, tet->tetVertexIndices, "tetVertexIndices", time, &indices)) {
       for (const auto &idx : indices) {
@@ -1818,8 +1818,8 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
     }
   }
 
-  if (const tinyusdz::GeomBasisCurves *curves = prim.as<tinyusdz::GeomBasisCurves>()) {
-    std::vector<tinyusdz::value::point3f> points;
+  if (const lightusd::GeomBasisCurves *curves = prim.as<lightusd::GeomBasisCurves>()) {
+    std::vector<lightusd::value::point3f> points;
     std::vector<int> counts;
     std::vector<float> widths;
     if (EvalAnim(stage, curves->points, "points", time, &points) &&
@@ -1836,8 +1836,8 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
       }
       direct->direct_paths.insert(path);
     }
-  } else if (const tinyusdz::GeomNurbsCurves *nurbsCurves = prim.as<tinyusdz::GeomNurbsCurves>()) {
-    std::vector<tinyusdz::value::point3f> points;
+  } else if (const lightusd::GeomNurbsCurves *nurbsCurves = prim.as<lightusd::GeomNurbsCurves>()) {
+    std::vector<lightusd::value::point3f> points;
     std::vector<int> counts;
     std::vector<float> widths;
     if (EvalAnim(stage, nurbsCurves->points, "points", time, &points) &&
@@ -1848,12 +1848,12 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
                                &direct->round_curve_info, bounds);
       direct->direct_paths.insert(path);
     }
-  } else if (const tinyusdz::GeomNurbsPatch *patch = prim.as<tinyusdz::GeomNurbsPatch>()) {
+  } else if (const lightusd::GeomNurbsPatch *patch = prim.as<lightusd::GeomNurbsPatch>()) {
     AddNurbsPatchTriangles(stage, *patch, world, time, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const tinyusdz::GeomHermiteCurves *hermiteCurves = prim.as<tinyusdz::GeomHermiteCurves>()) {
-    std::vector<tinyusdz::value::point3f> points;
-    std::vector<tinyusdz::value::vector3f> tangents;
+  } else if (const lightusd::GeomHermiteCurves *hermiteCurves = prim.as<lightusd::GeomHermiteCurves>()) {
+    std::vector<lightusd::value::point3f> points;
+    std::vector<lightusd::value::vector3f> tangents;
     std::vector<int> counts;
     std::vector<float> widths;
     if (EvalAnim(stage, hermiteCurves->points, "points", time, &points) &&
@@ -1902,7 +1902,7 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
     }
   }
 
-  for (const tinyusdz::Prim &child : prim.children()) {
+  for (const lightusd::Prim &child : prim.children()) {
     TraverseDirectPrims(stage, child, matrices, time, direct, vertices, tris,
                         bounds, sphere_data, round_points, round_radii,
                         round_first, round_count, flat_points, flat_radii,
@@ -1911,7 +1911,7 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
   }
 }
 
-bool BuildDirectScene(const tinyusdz::Stage &stage, const RenderScene &render_scene,
+bool BuildDirectScene(const lightusd::Stage &stage, const RenderScene &render_scene,
                       const Options &opt, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       DirectScene *direct, std::string *err) {
@@ -1923,7 +1923,7 @@ bool BuildDirectScene(const tinyusdz::Stage &stage, const RenderScene &render_sc
   std::vector<float> tet_aabbs;
   std::vector<uint32_t> round_first, round_count, flat_first, flat_count;
   std::unordered_map<std::string, matrix4d> matrices = BuildNodeMatrixMap(render_scene);
-  for (const tinyusdz::Prim &root : stage.root_prims()) {
+  for (const lightusd::Prim &root : stage.root_prims()) {
     TraverseDirectPrims(stage, root, matrices, opt.timecode, direct, vertices,
                         tris, bounds, &sphere_data, &round_points, &round_radii,
                         &round_first, &round_count, &flat_points, &flat_radii,
@@ -2036,7 +2036,7 @@ const Node *FindCameraNode(const RenderScene &scene, const std::string &query) {
 
 CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
                             const Bounds &bounds, int height,
-                            tinyusdz::Axis up_axis) {
+                            lightusd::Axis up_axis) {
   CameraFrame frame;
   const Node *cam_node = FindCameraNode(scene, opt.camera);
   if (!cam_node && !opt.camera.empty()) {
@@ -2056,7 +2056,7 @@ CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
     frame.ymag = cam.ymag;
     frame.znear = std::max(1.0e-5f, cam.znear);
     frame.zfar = cam.zfar;
-    frame.ortho = cam.projection == tinyusdz::GeomCamera::Projection::Orthographic;
+    frame.ortho = cam.projection == lightusd::GeomCamera::Projection::Orthographic;
     return frame;
   }
 
@@ -2074,10 +2074,10 @@ CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
   }
   Vec3 up_axis_vec{0.0f, 1.0f, 0.0f};
   Vec3 view_dir{0.0f, 0.15f, 1.8f};
-  if (up_axis == tinyusdz::Axis::Z) {
+  if (up_axis == lightusd::Axis::Z) {
     up_axis_vec = Vec3{0.0f, 0.0f, 1.0f};
     view_dir = Normalize(Vec3{-0.95f, -1.15f, 0.62f});
-  } else if (up_axis == tinyusdz::Axis::X) {
+  } else if (up_axis == lightusd::Axis::X) {
     up_axis_vec = Vec3{1.0f, 0.0f, 0.0f};
     view_dir = Normalize(Vec3{0.62f, -0.95f, -1.15f});
   }

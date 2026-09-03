@@ -153,7 +153,7 @@ The implementation has minimal dependencies:
 | Header-only | ✅ PASSED | No separate .cc file needed |
 | Portable | ✅ PASSED | Automatic fallback to mutex |
 
-The task queue implementation successfully meets all requirements for use in TinyUSDZ:
+The task queue implementation successfully meets all requirements for use in LightUSD:
 - Exception-free error handling
 - No RTTI dependency
 - Lock-free when possible

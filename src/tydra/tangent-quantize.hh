@@ -44,7 +44,7 @@
 #include "../safe-arithmetic.hh"
 #include "../nonstd/expected.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace tangent_quantize {
 
@@ -460,7 +460,7 @@ inline bool QuantizeNormalsSNorm16x3(
 
 // PackToVertexAttribute helpers — only available when render-data.hh is included.
 // Guard with the VertexAttribute struct existence.
-#ifdef TINYUSDZ_TYDRA_RENDER_DATA_HH_
+#ifdef LIGHTUSD_TYDRA_RENDER_DATA_HH_
 
 /// Store packed tangents into a VertexAttribute for use in RenderMesh.
 /// Format: Uint (single uint32 per vertex) for 10_10_10_2.
@@ -529,7 +529,7 @@ inline VertexAttribute PackNormalsToVertexAttribute(
   return attr;
 }
 
-#endif // TINYUSDZ_TYDRA_RENDER_DATA_HH_
+#endif // LIGHTUSD_TYDRA_RENDER_DATA_HH_
 
 // ============================================================================
 // Quality measurement: angular error from round-trip quantization
@@ -598,4 +598,4 @@ inline QuantizeQuality MeasureQuantizeError(
 
 }  // namespace tangent_quantize
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

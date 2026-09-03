@@ -1,11 +1,11 @@
 /**
  * @file example_basic.c
- * @brief Basic example of using TinyUSDZ C API
+ * @brief Basic example of using LightUSD C API
  *
  * This example demonstrates loading a USD file and traversing its hierarchy.
  */
 
-#include "tinyusdz_c.h"
+#include "lightusd_c.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,12 +139,12 @@ int main(int argc, char* argv[]) {
     // Initialize library
     tusdz_result result = tusdz_init();
     if (result != TUSDZ_SUCCESS) {
-        fprintf(stderr, "Failed to initialize TinyUSDZ: %s\n",
+        fprintf(stderr, "Failed to initialize LightUSD: %s\n",
                 tusdz_result_to_string(result));
         return 1;
     }
 
-    printf("TinyUSDZ C API Version: %s\n", tusdz_get_version());
+    printf("LightUSD C API Version: %s\n", tusdz_get_version());
     printf("Loading USD file: %s\n", filepath);
 
     // Detect format

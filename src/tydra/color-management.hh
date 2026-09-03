@@ -9,7 +9,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 class Stage;
 
 namespace tydra {
@@ -50,4 +50,4 @@ bool ResolveRenderingColorConfig(const Stage &stage,
 
 }  // namespace color_management
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

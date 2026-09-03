@@ -1,6 +1,6 @@
 # OpenUSD schema compatibility baseline
 
-TinyUSDZ pins its schema-difference baseline to OpenUSD **26.08**, commit
+LightUSD pins its schema-difference baseline to OpenUSD **26.08**, commit
 `ee47c679abde5b467a7b6a41f3b2285564a4222e`. The checked-in manifest contains
 the schema kind, inheritance, namespace prefix, property type, variability,
 fallback, and allowed-token data for all 134 upstream schemas. OpenUSD is not a
@@ -22,7 +22,7 @@ historical legacy API inventory, while this manifest is the source for upstream
 schema-diff work.
 
 The generated
-[`tinyusdz-capabilities-openusd-26.08.json`](generated/tinyusdz-capabilities-openusd-26.08.json)
+[`lightusd-capabilities-openusd-26.08.json`](generated/lightusd-capabilities-openusd-26.08.json)
 is the product-scope contract layered on that upstream inventory. It makes the
 required supported domains and deliberate exclusions explicit and records the
 pipeline capabilities every in-scope schema must eventually satisfy. It does
@@ -38,7 +38,7 @@ The same ledger generates two regression artifacts:
 - `src/next/schema/generated/openusd-supported-schema-names.inc` is the next
   registry's recognition table.
 
-Registry recognition means TinyUSDZ knows that a schema identifier belongs to
+Registry recognition means LightUSD knows that a schema identifier belongs to
 the supported surface. It does not claim that every property has a fallback,
 validator, typed accessor, Tydra extractor, or renderer implementation. Those
 remain separate capability tiers. The next regression passes the generated
@@ -56,8 +56,8 @@ python3 scripts/generate-openusd-schema-manifest.py \
   --commit ee47c679abde5b467a7b6a41f3b2285564a4222e \
   --output doc/generated/openusd-schema-26.08.json
 python3 scripts/check-openusd-schema-manifest.py
-python3 scripts/generate-tinyusdz-capability-ledger.py
-python3 scripts/generate-tinyusdz-capability-ledger.py --check
+python3 scripts/generate-lightusd-capability-ledger.py
+python3 scripts/generate-lightusd-capability-ledger.py --check
 python3 scripts/generate-openusd-supported-schema-fixture.py
 python3 scripts/generate-openusd-supported-schema-fixture.py --check
 ```
@@ -74,7 +74,7 @@ scope; new properties on supported schemas require fallback/validation tests.
 - `UsdGeomModelAPI.model:cardVisibility`: registered, validated, and exposed
   through a lazy typed accessor with inherited `full`/`simple` face selection.
 - `UsdHydraHydraRenderPassAPI`: preserved generically and intentionally outside
-  the renderer-neutral TinyUSDZ API.
+  the renderer-neutral LightUSD API.
 - `UsdVol` ParticleField schemas: registered and validated, with lazy typed
   accessors and Gaussian conversion recognizing official float/half attributes.
 - `UsdRender` settings, products, variables, and passes: registered, validated,

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Writer Implementation
+// LightUSD Next - USDC Writer Implementation
 
 #include "usdc-writer.hh"
 #include "usda-writer.hh"
 #include <algorithm>
 #include <cctype>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -117,4 +117,4 @@ bool IsUSDCPath(const char* path) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

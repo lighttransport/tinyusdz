@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Basic tests for TinyUSDZ ABI3 binding
+Basic tests for LightUSD ABI3 binding
 
 Run with: python3 test_basic.py
 """
@@ -12,9 +12,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    import tinyusdz_abi3 as tusd
+    import lightusd_abi3 as tusd
 except ImportError as e:
-    print(f"Error: Could not import tinyusdz_abi3: {e}")
+    print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
     print("  python3 setup.py build_ext --inplace")
     sys.exit(1)
@@ -153,7 +153,7 @@ def test_module_version():
 
 def main():
     print("\n" + "=" * 60)
-    print("TinyUSDZ ABI3 Binding - Basic Tests")
+    print("LightUSD ABI3 Binding - Basic Tests")
     print("=" * 60 + "\n")
 
     runner = TestRunner()

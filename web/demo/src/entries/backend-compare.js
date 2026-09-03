@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { isNextScene, buildNextThreeNode, nextCountsFromScene } from 'tinyusdz-next-demo-utils';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { isNextScene, buildNextThreeNode, nextCountsFromScene } from 'lightusd-next-demo-utils';
 import { showLoader, hideLoader } from '../tusd-loader.js';
 
 function escapeHTML(v) { return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
@@ -81,7 +81,7 @@ function viewer(container) {
   const kl = new THREE.DirectionalLight(0xffffff, 2); kl.position.set(4, 6, 5); kl.castShadow = true; s.add(kl);
   s.add(new THREE.GridHelper(10, 20, 0x44444a, 0x26262b));
   let fpsF = 0, fpsL = performance.now(), fpsV = 0;
-  return { scene: s, camera: c, renderer: r, controls: o, world: w, statsEl: null, data: null, 
+  return { scene: s, camera: c, renderer: r, controls: o, world: w, statsEl: null, data: null,
     fps() { return fpsV; },
     tick(now) { fpsF++; if (now - fpsL >= 500) { fpsV = Math.round((fpsF * 1000) / (now - fpsL)); fpsF = 0; fpsL = now; } },
   };
@@ -109,12 +109,12 @@ let loader = null;
 
 async function loadScene(url, label) {
   showLoader('Loading WASM + USD...', $id('legacy-wrap'));
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
   try {
     await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
   } finally { hideLoader(); }
 
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
 
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -126,8 +126,8 @@ async function loadScene(url, label) {
   const legacyScene = await new Promise((resolve, reject) => {
     loader.parse(data, filename, resolve, reject, { backend: 'legacy', maxMemoryLimitMB: 512 });
   });
-  const defaultMat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  vLegacy.legacyNode = await TinyUSDZLoaderUtils.buildThreeNode(legacyScene.getDefaultRootNode(), defaultMat, legacyScene, {
+  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
+  vLegacy.legacyNode = await LightUSDLoaderUtils.buildThreeNode(legacyScene.getDefaultRootNode(), defaultMat, legacyScene, {
     preferredMaterialType: 'usdpreviewsurface', textureCache: new Map(),
   });
   vLegacy.world.clear();
@@ -150,7 +150,7 @@ async function loadScene(url, label) {
   } catch (e) {
     $id('next-stats').textContent = `Next backend unavailable: ${e.message}`;
     $id('next-loading').style.background = '#f08a8a';
-    $id('diff-panel').innerHTML = `<div style="color:var(--dim);padding:20px 0;font-size:.82rem">Next backend not available in this build. The next WASM module (tinyusdz_next.wasm) may not be present.</div>`;
+    $id('diff-panel').innerHTML = `<div style="color:var(--dim);padding:20px 0;font-size:.82rem">Next backend not available in this build. The next WASM module (lightusd_next.wasm) may not be present.</div>`;
     $id('next-stats').style.color = '#f08a8a';
     fitBoth();
     return;
@@ -250,10 +250,10 @@ ensureLoader().then(() => loadScene(SAMPLES[0].url, SAMPLES[0].label)).catch(con
 requestAnimationFrame(anim);
 
 async function ensureLoader() {
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-  showLoader('Loading TinyUSDZ WASM...', $id('legacy-wrap'));
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+  showLoader('Loading LightUSD WASM...', $id('legacy-wrap'));
   try {
     await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
   } finally { hideLoader(); }
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
 }

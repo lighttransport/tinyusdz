@@ -1,5 +1,5 @@
-import { StreamingUSDRenderer } from 'tinyusdz-js/streaming.js';
-import { renderHttpUSD } from 'tinyusdz-js/http-asset-resolver.js';
+import { StreamingUSDRenderer } from 'lightusd-js/streaming.js';
+import { renderHttpUSD } from 'lightusd-js/http-asset-resolver.js';
 
 const SAMPLES = [
   {
@@ -394,7 +394,7 @@ async function loadSample(index) {
 
 async function init() {
   renderer = new StreamingUSDRenderer($id('comp-canvas'));
-  showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+  showLoader("Loading LightUSD WASM...", document.getElementById("viewport"));
     try {
       await renderer.init()
     } finally {

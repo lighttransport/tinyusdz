@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Crate Format Definitions
+// LightUSD Next - USDC Crate Format Definitions
 // Binary format structures for USDC files
 
 #pragma once
@@ -13,7 +13,7 @@
 
 #include "../strfmt.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -502,4 +502,4 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
                                          uint64_t* dst, size_t count);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

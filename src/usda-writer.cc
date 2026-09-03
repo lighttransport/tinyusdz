@@ -7,19 +7,19 @@
 
 #include "usda-writer.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_WRITER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_WRITER)
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
 
 #include "value-pprint.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "io-util.hh"
 #include "str-util.hh"
 #include "zstd-compression.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usda {
 
 namespace {
@@ -69,7 +69,7 @@ bool SaveAsUSDA(const std::string &filename, const Stage &stage,
   bool use_compression = options.use_zstd_compression || HasZstdExtension(filename);
 
   if (use_compression) {
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
     // Compress the data
     std::vector<uint8_t> compressed;
     if (!ZstdCompression::Compress(reinterpret_cast<const uint8_t*>(s.data()), s.size(),
@@ -85,7 +85,7 @@ bool SaveAsUSDA(const std::string &filename, const Stage &stage,
               << s.size() << " -> " << compressed.size() << " bytes)\n";
 #else
     if (err) {
-      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+      (*err) = "zstd compression requested but LIGHTUSD_WITH_ZSTD_COMPRESSION is not enabled.\n";
     }
     return false;
 #endif
@@ -114,7 +114,7 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage,
   bool use_compression = options.use_zstd_compression || HasZstdExtension(filename);
 
   if (use_compression) {
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
     // Compress the data
     std::vector<uint8_t> compressed;
     if (!ZstdCompression::Compress(reinterpret_cast<const uint8_t*>(s.data()), s.size(),
@@ -130,7 +130,7 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage,
                << s.size() << L" -> " << compressed.size() << L" bytes)\n";
 #else
     if (err) {
-      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+      (*err) = "zstd compression requested but LIGHTUSD_WITH_ZSTD_COMPRESSION is not enabled.\n";
     }
     return false;
 #endif
@@ -147,12 +147,12 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage,
 #endif
 
 } // namespace usda
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 
 #else
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usda {
 
 bool ExportToUSDAString(const Stage &stage, std::string *output, std::string *warn, std::string *err) {
@@ -195,7 +195,7 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage, std::string *w
 #endif
 
 } // namespace usda
-}  // namespace tinyusdz
+}  // namespace lightusd
 #endif
 
 

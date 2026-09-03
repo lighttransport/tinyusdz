@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Path implementation
+// LightUSD Next - Path implementation
 
 #include "path.hh"
 
 #include "identifier.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool Path::is_valid() const {
@@ -176,4 +176,4 @@ const Path& Path::empty_path() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

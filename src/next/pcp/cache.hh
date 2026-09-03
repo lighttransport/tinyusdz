@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache
+// LightUSD Next - PCP Cache
 //
 // Lazy, per-prim composition cache for the `next` module, mirroring the design
-// of tinyusdz::pcp::Cache but built entirely on next types (standalone, C++14).
+// of lightusd::pcp::Cache but built entirely on next types (standalone, C++14).
 //
 // Phase 1 scope: sublayers (L) + references (R), lazy ComputePrimIndex,
 // parse-once LayerRegistry, dependency-aware Invalidate, and BuildStage
@@ -28,7 +28,7 @@
 
 #include "nonstd/expected.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -99,7 +99,7 @@ class Cache {
   /// Populated regardless of whether an `err` pointer was passed, so callers
   /// can inspect typed codes even with `err == nullptr`. Returned by value: a
   /// borrowed reference could dangle if a concurrent compose appended to the
-  /// log under TINYUSDZ_NEXT_FINE_LOCKS.
+  /// log under LIGHTUSD_NEXT_FINE_LOCKS.
   std::vector<CompositionIssue> GetCompositionIssues() const;
 
   /// Drop all accumulated composition issues.
@@ -284,4 +284,4 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

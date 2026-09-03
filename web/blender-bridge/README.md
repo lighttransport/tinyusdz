@@ -6,7 +6,7 @@ WebSocket bridge for streaming Blender scenes to a browser viewer with real-time
 
 ```
 Blender (MCP) ──WebSocket──> Node.js Server ──WebSocket──> Browser Viewer
-                (8090)                         (TinyUSDZ WASM + Three.js)
+                (8090)                         (LightUSD WASM + Three.js)
 ```
 
 ## Quick Start

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025, Light Transport Entertainment Inc.
 //
-// TinyUSDZ Crate Dump Tool
+// LightUSD Crate Dump Tool
 //
 // Dumps low-level USDC Crate file structure in YAML or JSON format
 // for efficient debugging and investigation.
@@ -14,8 +14,8 @@
 #include <string>
 #include <cstring>
 
-// TinyUSDZ reader headers
-#include "tinyusdz.hh"
+// LightUSD reader headers
+#include "lightusd.hh"
 #include "usdc-reader.hh"
 #include "stream-reader.hh"
 #include "crate-format.hh"
@@ -24,8 +24,8 @@
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::crate;
+using namespace lightusd;
+using namespace lightusd::crate;
 
 enum class OutputFormat {
   YAML,

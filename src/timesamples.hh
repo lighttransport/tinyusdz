@@ -30,7 +30,7 @@
 // (widely included via animatable.hh / primvar.hh) was a leftover from the
 // deleted header-inline TypedTimeSamples::get.
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace value {
 
@@ -987,22 +987,22 @@ struct TimeSamples {
   // Accessor methods for binary storage
   //
 
-  const std::vector<double>& get_times() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<double>& get_times() const LIGHTUSD_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _times;
   }
 
-  const Buffer<16>& get_blocked() const TINYUSDZ_LIFETIMEBOUND {
+  const Buffer<16>& get_blocked() const LIGHTUSD_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _blocked;
   }
 
-  const std::vector<uint8_t>& get_data() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<uint8_t>& get_data() const LIGHTUSD_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _data;
   }
 
-  const std::vector<size_t>& get_data_offsets() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<size_t>& get_data_offsets() const LIGHTUSD_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _data_offsets;
   }
@@ -1014,7 +1014,7 @@ struct TimeSamples {
     return _array_counts[idx];
   }
 
-  const std::vector<uint32_t>& get_array_counts() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<uint32_t>& get_array_counts() const LIGHTUSD_LIFETIMEBOUND {
     return _array_counts;
   }
 
@@ -1170,4 +1170,4 @@ DEFINE_TYPE_TRAIT(TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 }  // namespace value
 
-} // namespace tinyusdz
+} // namespace lightusd

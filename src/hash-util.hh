@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <type_traits>
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // SpookyHash: a 128-bit noncryptographic hash function
@@ -295,4 +295,4 @@ private:
   size_t _state;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

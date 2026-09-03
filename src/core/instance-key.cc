@@ -8,7 +8,7 @@
 
 #include "../hash-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 bool ComputeInstanceKeyFromPrimSpec(const PrimSpec &ps, InstanceKey *key) {
   if (!key) return false;
@@ -181,4 +181,4 @@ bool ComputeInstanceKeyFromPrimMetas(const PrimMeta &metas,
   return true;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

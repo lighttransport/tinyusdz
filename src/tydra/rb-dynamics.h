@@ -15,8 +15,8 @@
  * Memory: The C API does not allocate. Caller provides all buffers.
  * See rb-dynamics.hh for C++ helpers that build worlds from USD Stages.
  */
-#ifndef TINYUSDZ_TYDRA_RB_DYNAMICS_H_
-#define TINYUSDZ_TYDRA_RB_DYNAMICS_H_
+#ifndef LIGHTUSD_TYDRA_RB_DYNAMICS_H_
+#define LIGHTUSD_TYDRA_RB_DYNAMICS_H_
 
 #include "rb-math.h"
 #include "rb-collision.h"
@@ -238,4 +238,4 @@ void tydra_phys_body_default(TydraPhysBody *body);
 }  /* extern "C" */
 #endif
 
-#endif /* TINYUSDZ_TYDRA_RB_DYNAMICS_H_ */
+#endif /* LIGHTUSD_TYDRA_RB_DYNAMICS_H_ */

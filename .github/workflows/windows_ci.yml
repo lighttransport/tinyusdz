@@ -16,7 +16,7 @@ jobs:
 
   # Windows(x64) + Visual Studio 2026 build with the experimental `next`
   # (pcp large-scene) backend enabled. src/next/ is gated behind
-  # TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE and is not built by the default Windows
+  # LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE and is not built by the default Windows
   # job, so this variant keeps it from bit-rotting on MSVC.
   build-windows-next:
 
@@ -29,7 +29,7 @@ jobs:
       - name: Configure
         # Use the modern -S/-B form (not the legacy -H. from vcsetup.bat): this
         # `run:` step executes in PowerShell, which mis-parses `-H.`.
-        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DTINYUSDZ_WITH_OPENSUBDIV=On -DTINYUSDZ_WITH_TINYSUBDIV=Off -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On
+        run: cmake -S . -B build_next -G "Visual Studio 18 2026" -A x64 -DLIGHTUSD_WITH_OPENSUBDIV=On -DLIGHTUSD_WITH_TINYSUBDIV=Off -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=On
       - name: Build
         run: cmake --build build_next --config Release
       - name: Test
@@ -97,9 +97,9 @@ jobs:
           # Force step success regardless of usdcat --help's exit code.
           exit 0
 
-      - name: Test TinyUSDZ and OpenUSD interoperability (Windows x64)
+      - name: Test LightUSD and OpenUSD interoperability (Windows x64)
         run: |
-          Write-Host "=== Testing TinyUSDZ <-> OpenUSD interoperability on Windows x64 ==="
+          Write-Host "=== Testing LightUSD <-> OpenUSD interoperability on Windows x64 ==="
 
           # The v25.11-lte usdcat.exe on this Windows runner exits
           # non-zero even on successful reads (same quirk hit by the
@@ -123,16 +123,16 @@ jobs:
             }
           }
 
-          # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+          # Test 2: Convert with LightUSD, verify with OpenUSD
           if (Test-Path "models/suzanne.usdc") {
-            .\build\Release\tusdcat.exe models/suzanne.usdc > tinyusdz_output.usda
+            .\build\Release\tusdcat.exe models/suzanne.usdc > lightusd_output.usda
             if ($LASTEXITCODE -ne 0) {
               Write-Host "FAIL: tusdcat exit $LASTEXITCODE on conversion"
               exit 1
             }
-            & usdcat tinyusdz_output.usda > $null
+            & usdcat lightusd_output.usda > $null
             $global:LASTEXITCODE = 0
-            Write-Host "✓ OpenUSD read TinyUSDZ-generated USDA"
+            Write-Host "✓ OpenUSD read LightUSD-generated USDA"
           }
 
           Write-Host "All Windows x64 tests passed!"

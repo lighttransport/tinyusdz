@@ -8,7 +8,7 @@
 #include <functional>
 #include <memory>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 constexpr int kMaxExecutionThreads = 16;
@@ -50,4 +50,4 @@ class TaskArena {
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

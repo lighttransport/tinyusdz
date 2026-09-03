@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../..');
@@ -18,7 +18,7 @@ function readArrayBuffer(filename) {
 async function loadUSD(filename) {
   // This fixture locks the legacy native MaterialX JSON schema, which is
   // intentionally different from the next RenderStream material payload.
-  const loader = new TinyUSDZLoader(null, { backend: 'legacy' });
+  const loader = new LightUSDLoader(null, { backend: 'legacy' });
   await loader.init({ useMemory64: false, backend: 'legacy' });
   loader.setMaxMemoryLimitMB(500);
 

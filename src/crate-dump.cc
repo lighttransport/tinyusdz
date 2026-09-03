@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025, Light Transport Entertainment Inc.
 //
-// TinyUSDZ Crate Dump Library Implementation
+// LightUSD Crate Dump Library Implementation
 //
 
 #include "crate-dump.hh"
@@ -28,7 +28,7 @@
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 // Helper function to convert SpecType to string
@@ -636,7 +636,7 @@ bool DumpCrate(const std::string& filename, const DumpOptions& opts, std::string
 }
 
 }  // namespace crate
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

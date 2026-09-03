@@ -18,11 +18,11 @@
 #include "usdMedia.hh"
 #include "mjcPhysics.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
 #include "usdc-reader-prim-detail.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
@@ -405,7 +405,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 }
 
 std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
-    const std::string &typeName, // TinyUSDZ's Prim type name
+    const std::string &typeName, // LightUSD's Prim type name
     const std::string &primTypeName, // USD's Prim typeName
     const std::string &prim_name,
     const crate::CrateReader::Node &node, const Specifier spec,
@@ -538,6 +538,6 @@ std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !TINYUSDZ_DISABLE_MODULE_USDC_READER
+#endif  // !LIGHTUSD_DISABLE_MODULE_USDC_READER

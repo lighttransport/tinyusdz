@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Value class with Small Buffer Optimization
+// LightUSD Next - Value class with Small Buffer Optimization
 // Replaces linb::any with a type-aware, USD-specific value container
 
 #pragma once
@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct LazyArrayRef;  // crate/lazy-array.hh
@@ -459,4 +459,4 @@ struct Dict {
 Value LerpValue(const Value& a, const Value& b, double t);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

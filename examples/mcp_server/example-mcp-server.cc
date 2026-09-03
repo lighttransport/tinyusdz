@@ -13,7 +13,7 @@
 
 int main(int argc, char **argv) {
 
-  using namespace tinyusdz;
+  using namespace lightusd;
 
   argparser::ArgParser parser;
   parser.add_option("--port", true, "Port number for the MCP server");
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     port = int(portval);
   }
 
-  
+
   std::string hostname = "localhost";
   if (parser.is_set("--host")) {
     if (!parser.get("--host", hostname)) {
@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
   }
 
   server.stop();
-  
+
   return 0;
 
 }

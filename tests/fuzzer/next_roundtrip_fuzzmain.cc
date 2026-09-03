@@ -17,7 +17,7 @@
 #include "next/reader/usda-reader.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/reader/usdz-reader.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/usdz-writer.hh"
@@ -32,8 +32,8 @@ constexpr size_t kMaxFields = 1u << 18;
 constexpr size_t kMaxSpecs = 1u << 18;
 constexpr size_t kMaxPaths = 1u << 18;
 
-tinyusdz::next::USDCLoadOptions FuzzUSDCOptions() {
-  tinyusdz::next::USDCLoadOptions options;
+lightusd::next::USDCLoadOptions FuzzUSDCOptions() {
+  lightusd::next::USDCLoadOptions options;
   options.crate_options.max_array_elements = kMaxArrayElements;
   options.crate_options.max_tokens = kMaxTokens;
   options.crate_options.max_strings = kMaxStrings;
@@ -48,44 +48,44 @@ tinyusdz::next::USDCLoadOptions FuzzUSDCOptions() {
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   if (!data || size == 0 || size > kMaxInputSize) return 0;
 
-  tinyusdz::next::LoadOptions parse_options;
+  lightusd::next::LoadOptions parse_options;
   parse_options.parse_options.max_depth = 128;
   parse_options.parse_options.max_file_size = kMaxInputSize;
   parse_options.parse_options.enable_usda_lazy_arrays = true;
   parse_options.parse_options.max_usda_lazy_array_elements = kMaxArrayElements;
 
-  const auto parsed = tinyusdz::next::LoadUSDAFromString(
+  const auto parsed = lightusd::next::LoadUSDAFromString(
       reinterpret_cast<const char*>(data), size, parse_options);
   if (!parsed.success) return 0;
 
-  const std::string usda = tinyusdz::next::WriteUSDAToString(parsed.stage);
+  const std::string usda = lightusd::next::WriteUSDAToString(parsed.stage);
   if (usda.empty() || usda.size() > kMaxInputSize) return 0;
 
   const auto reparsed =
-      tinyusdz::next::LoadUSDAFromString(usda, parse_options);
+      lightusd::next::LoadUSDAFromString(usda, parse_options);
   if (!reparsed.success) return 0;
 
   std::vector<uint8_t> usdc;
-  const tinyusdz::next::USDCWriteResult usdc_write =
-      tinyusdz::next::WriteUSDCToMemory(usdc, reparsed.stage);
+  const lightusd::next::USDCWriteResult usdc_write =
+      lightusd::next::WriteUSDCToMemory(usdc, reparsed.stage);
   if (!usdc_write.success || usdc.empty() || usdc.size() > kMaxInputSize) {
     return 0;
   }
 
   const auto usdc_read =
-      tinyusdz::next::LoadUSDCFromMemory(usdc.data(), usdc.size(),
+      lightusd::next::LoadUSDCFromMemory(usdc.data(), usdc.size(),
                                          FuzzUSDCOptions());
   if (!usdc_read.success) return 0;
 
   std::vector<uint8_t> usdz;
-  const tinyusdz::next::USDZWriteResult usdz_write =
-      tinyusdz::next::WriteUSDZToMemory(usdz, reparsed.stage);
+  const lightusd::next::USDZWriteResult usdz_write =
+      lightusd::next::WriteUSDZToMemory(usdz, reparsed.stage);
   if (!usdz_write.success || usdz.empty() || usdz.size() > kMaxInputSize) {
     return 0;
   }
 
-  tinyusdz::next::USDZReader package;
-  tinyusdz::next::USDZReadOptions package_options;
+  lightusd::next::USDZReader package;
+  lightusd::next::USDZReadOptions package_options;
   package_options.max_archive_size = kMaxInputSize;
   package_options.max_entry_size = kMaxInputSize;
   if (!package.Open(usdz.data(), usdz.size(), package_options) ||
@@ -93,12 +93,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     return 0;
   }
 
-  tinyusdz::next::Stage loaded;
-  tinyusdz::next::LoadUSDOptions load_options;
+  lightusd::next::Stage loaded;
+  lightusd::next::LoadUSDOptions load_options;
   load_options.max_memory = kMaxInputSize;
   std::string warning;
   std::string error;
-  (void)tinyusdz::next::LoadUSDFromMemory(
+  (void)lightusd::next::LoadUSDFromMemory(
       usdz.data(), usdz.size(), &loaded, load_options, &warning, &error);
   return 0;
 }

@@ -1,4 +1,4 @@
-# TinyUSDZ ABI3 Binding - Quick Reference Card
+# LightUSD ABI3 Binding - Quick Reference Card
 
 ## Setup Commands
 
@@ -42,7 +42,7 @@ python examples/example_mesh_to_numpy.py [usd_file]
 ## Python API
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 import numpy as np
 
 # Load USD file
@@ -83,7 +83,7 @@ python setup.py bdist_wheel
 
 # Wheel is in dist/ directory
 # Install with:
-pip install dist/tinyusdz_abi3-*.whl
+pip install dist/lightusd_abi3-*.whl
 ```
 
 ## Troubleshooting
@@ -104,8 +104,8 @@ pip install dist/tinyusdz_abi3-*.whl
 | `setup.py` | Python package build |
 | `CMakeLists.txt` | CMake build |
 | `include/py_limited_api.h` | Custom Python headers |
-| `src/tinyusdz_abi3.c` | Main binding code |
-| `src/tinyusdz_mesh_api.c` | Mesh API (placeholder) |
+| `src/lightusd_abi3.c` | Main binding code |
+| `src/lightusd_mesh_api.c` | Mesh API (placeholder) |
 | `examples/example_mesh_to_numpy.py` | Mesh demo |
 | `tests/test_basic.py` | Unit tests |
 
@@ -146,7 +146,7 @@ make test
 ### Using with NumPy
 
 ```python
-import tinyusdz_abi3 as tusd
+import lightusd_abi3 as tusd
 import numpy as np
 
 # Load USD

@@ -8,7 +8,7 @@
 #include "dtoa.hh"
 #include "value-printer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // Render the internal arc spelling as canonical USDA text. Arc strings are
@@ -67,4 +67,4 @@ inline std::string FormatArcRef(const std::string& arc) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

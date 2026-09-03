@@ -1,6 +1,6 @@
 # Color management and rendering regression
 
-TinyUSDZ resolves USD color-space opinions in both the legacy Tydra converter
+LightUSD resolves USD color-space opinions in both the legacy Tydra converter
 and `core-next`/`tydra-next`. The next implementation is the reference path;
 the legacy implementation shares the same dependency-free transfer-function
 and RGB-primary math.
@@ -99,8 +99,8 @@ Build native and both WASM backends first, then run:
 
 ```bash
 # C++ conversion and schema/validation coverage
-build_ninja/unit-test-tinyusdz tydra_renderscene_rendering_colorspace_test
-build_ninja/unit-test-tinyusdz tydra_renderscene_custom_texture_colorspace_test
+build_ninja/unit-test-lightusd tydra_renderscene_rendering_colorspace_test
+build_ninja/unit-test-lightusd tydra_renderscene_custom_texture_colorspace_test
 ctest --test-dir build-next --output-on-failure
 
 # Native next/legacy render, PNG readback, expected constant pixel and texture
@@ -109,7 +109,7 @@ ctest --test-dir build-next --output-on-failure
 # and texture NodeGraph fallback versus explicit metadata in both backends)
 python3 tools/tusdrender/check_colorspace_regression.py \
   build_ninja/tools/tusdrender/tusdrender . \
-  --output /tmp/tinyusdz-colorspace-native
+  --output /tmp/lightusd-colorspace-native
 
 # Numeric AP0/Macbeth references plus legacy/next WASM parity, raw bypass,
 # channel-distinct transforms, and MaterialX graph/config metadata
@@ -130,17 +130,17 @@ ctest --test-dir ../build_ninja -R 'wasm-regression-colorspace' \
 ```
 
 The browser batch writes a PNG screenshot and JSON pixel report under
-`artifacts/colorspace` by default. Set `TINYUSDZ_COLORSPACE_URL` to use an
-already-running server, or `TINYUSDZ_COLORSPACE_PORT` to select the self-hosted
-port. `TINYUSDZ_COLORSPACE_OUTPUT` changes the output directory and
-`TINYUSDZ_COLORSPACE_SERVER_TIMEOUT_MS` controls first-build startup timeout.
+`artifacts/colorspace` by default. Set `LIGHTUSD_COLORSPACE_URL` to use an
+already-running server, or `LIGHTUSD_COLORSPACE_PORT` to select the self-hosted
+port. `LIGHTUSD_COLORSPACE_OUTPUT` changes the output directory and
+`LIGHTUSD_COLORSPACE_SERVER_TIMEOUT_MS` controls first-build startup timeout.
 Float render-target readback is preferred; RGBA8 has a quantization-aware
 tolerance. A physical Display-P3/HDR check is reported as skipped if the browser
 and hardware do not advertise it. Transform correctness is still checked at the
 pixel-value level, so wide-gamut display hardware is not required.
 
 The Three.js calibration helpers are exported from
-`web/js/src/tinyusdz/ColorCalibrationTestKit.js`:
+`web/js/src/lightusd/ColorCalibrationTestKit.js`:
 
 - `createMacbethColorChart()` creates 24 emissive/reference patches;
 - `createGrayAndChromeBalls()` creates an 18% gray ball and chrome mirror ball;

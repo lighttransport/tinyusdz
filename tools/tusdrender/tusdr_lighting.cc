@@ -138,19 +138,19 @@ bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
   if (!out || texture_id < 0 || size_t(texture_id) >= scene.images.size()) {
     return false;
   }
-  const tinyusdz::tydra::TextureImage &tex = scene.images[size_t(texture_id)];
+  const lightusd::tydra::TextureImage &tex = scene.images[size_t(texture_id)];
   if (!tex.decoded || tex.width <= 0 || tex.height <= 0 || tex.channels <= 0 ||
       tex.buffer_id < 0 || size_t(tex.buffer_id) >= scene.buffers.size()) {
     return false;
   }
-  const tinyusdz::tydra::BufferData &buf = scene.buffers[size_t(tex.buffer_id)];
+  const lightusd::tydra::BufferData &buf = scene.buffers[size_t(tex.buffer_id)];
   const size_t pixel_count = size_t(tex.width) * size_t(tex.height);
   const size_t channels = size_t(tex.channels);
   EnvImage img;
   img.width = tex.width;
   img.height = tex.height;
   img.pixels.resize(pixel_count);
-  if (buf.componentType == tinyusdz::tydra::ComponentType::UInt8) {
+  if (buf.componentType == lightusd::tydra::ComponentType::UInt8) {
     if (buf.data.size() < pixel_count * channels) return false;
     for (size_t i = 0; i < pixel_count; i++) {
       const uint8_t *p = buf.data.data() + i * channels;
@@ -158,7 +158,7 @@ bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
                            float(p[std::min<size_t>(1, channels - 1)]) / 255.0f,
                            float(p[std::min<size_t>(2, channels - 1)]) / 255.0f};
     }
-  } else if (buf.componentType == tinyusdz::tydra::ComponentType::Float) {
+  } else if (buf.componentType == lightusd::tydra::ComponentType::Float) {
     if (buf.data.size() < pixel_count * channels * sizeof(float)) return false;
     const float *src = reinterpret_cast<const float *>(buf.data.data());
     for (size_t i = 0; i < pixel_count; i++) {
@@ -420,12 +420,12 @@ bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
 // already-linear (matching DecodeTextureToEnvImage).
 bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
                           EnvImage *out) {
-  auto res = tinyusdz::image::LoadImageFromFile(path);
+  auto res = lightusd::image::LoadImageFromFile(path);
   if (!res) {
     std::cerr << "WARN: failed to load environment map: " << path << "\n";
     return false;
   }
-  const tinyusdz::Image &img = res.value().image;
+  const lightusd::Image &img = res.value().image;
   if (img.width <= 0 || img.height <= 0 || img.channels <= 0 ||
       img.data.empty()) {
     return false;
@@ -436,7 +436,7 @@ bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
   e.width = img.width;
   e.height = img.height;
   e.pixels.resize(n);
-  if (img.format == tinyusdz::Image::PixelFormat::Float && img.bpp == 32) {
+  if (img.format == lightusd::Image::PixelFormat::Float && img.bpp == 32) {
     if (img.data.size() < n * ch * sizeof(float)) return false;
     const float *src = reinterpret_cast<const float *>(img.data.data());
     for (size_t i = 0; i < n; i++) {
@@ -466,27 +466,27 @@ bool LoadBackPlateImage(const std::string &color_path,
                         const std::string &depth_path,
                         BackPlateImage *out) {
   if (!out || color_path.empty()) return false;
-  auto load = [](const std::string &path, tinyusdz::Image *image) {
+  auto load = [](const std::string &path, lightusd::Image *image) {
     if (path.empty()) return false;
-    auto result = tinyusdz::image::LoadImageFromFile(path);
+    auto result = lightusd::image::LoadImageFromFile(path);
     if (!result) return false;
     *image = std::move(result.value().image);
     return image->width > 0 && image->height > 0 && image->channels > 0;
   };
-  auto channel = [](const tinyusdz::Image &image, size_t pixel,
+  auto channel = [](const lightusd::Image &image, size_t pixel,
                     size_t component) {
     const size_t ch = size_t(image.channels);
     component = std::min(component, ch - 1);
-    if (image.format == tinyusdz::Image::PixelFormat::Float &&
+    if (image.format == lightusd::Image::PixelFormat::Float &&
         image.bpp == 32) {
       const float *data = reinterpret_cast<const float *>(image.data.data());
       return data[pixel * ch + component];
     }
     return float(image.data[pixel * ch + component]) / 255.0f;
   };
-  tinyusdz::Image color;
+  lightusd::Image color;
   if (!load(color_path, &color) ||
-      !((color.format == tinyusdz::Image::PixelFormat::Float &&
+      !((color.format == lightusd::Image::PixelFormat::Float &&
          color.bpp == 32) || color.bpp == 8)) {
     std::cerr << "WARN: failed to load BackPlate image: " << color_path << "\n";
     return false;
@@ -496,11 +496,11 @@ bool LoadBackPlateImage(const std::string &color_path,
   plate.height = color.height;
   const size_t count = size_t(plate.width) * size_t(plate.height);
   const size_t color_stride = size_t(color.channels) *
-      ((color.format == tinyusdz::Image::PixelFormat::Float &&
+      ((color.format == lightusd::Image::PixelFormat::Float &&
         color.bpp == 32) ? sizeof(float) : sizeof(uint8_t));
   if (count > color.data.size() / color_stride) return false;
   plate.color.resize(count);
-  const bool srgb = color.format != tinyusdz::Image::PixelFormat::Float;
+  const bool srgb = color.format != lightusd::Image::PixelFormat::Float;
   auto linear = [srgb](float value) {
     if (!srgb) return value;
     return value <= 0.04045f ? value / 12.92f
@@ -517,17 +517,17 @@ bool LoadBackPlateImage(const std::string &color_path,
   }
   auto load_scalar = [&](const std::string &path, std::vector<float> *dst) {
     if (path.empty()) return true;
-    tinyusdz::Image image;
+    lightusd::Image image;
     if (!load(path, &image) || image.width != plate.width ||
         image.height != plate.height ||
-        !((image.format == tinyusdz::Image::PixelFormat::Float &&
+        !((image.format == lightusd::Image::PixelFormat::Float &&
            image.bpp == 32) || image.bpp == 8)) {
       std::cerr << "WARN: BackPlate auxiliary image is invalid or has a "
                    "different resolution: " << path << "\n";
       return false;
     }
     const size_t stride = size_t(image.channels) *
-        ((image.format == tinyusdz::Image::PixelFormat::Float &&
+        ((image.format == lightusd::Image::PixelFormat::Float &&
           image.bpp == 32) ? sizeof(float) : sizeof(uint8_t));
     if (count > image.data.size() / stride) return false;
     dst->resize(count);

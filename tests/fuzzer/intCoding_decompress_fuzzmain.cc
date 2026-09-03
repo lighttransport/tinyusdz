@@ -18,19 +18,19 @@ static void parse_intCoding4(const uint8_t *data, size_t size)
 
   // TODO: Use Compress() to compute nInts.
   uint32_t n; // nInts
-  memcpy(&n, data, 4); 
+  memcpy(&n, data, 4);
 
   // HARD limit to avoid stopping fuzzer with oom. Currently set to 2GB(
   if (n > ((1024ull*1024ull*1024ull*2ull) / sizeof(uint32_t))) {
     return;
   }
 
-  using Compressor = tinyusdz::Usd_IntegerCompression;
+  using Compressor = lightusd::Usd_IntegerCompression;
   size_t compBufferSize = Compressor::GetCompressedBufferSize(n);
 
 
   uint64_t compSize;
-  memcpy(&compSize, data + 4, 8); 
+  memcpy(&compSize, data + 4, 8);
 
   if (compSize < 4) {
     // too small
@@ -45,7 +45,7 @@ static void parse_intCoding4(const uint8_t *data, size_t size)
     return;
   }
 
-  if (compBufferSize > tinyusdz::LZ4Compression::GetMaxInputSize()) {
+  if (compBufferSize > lightusd::LZ4Compression::GetMaxInputSize()) {
     return;
   }
 

@@ -2,7 +2,7 @@
 
 /**
  * Mock test for getAssetCacheDataAsMemoryView method
- * 
+ *
  * This test demonstrates the expected behavior of the new method
  * without requiring a fully built WebAssembly module.
  */
@@ -33,7 +33,7 @@ class MockEMAssetResolver {
     if (!this.cache.has(assetName)) {
       return undefined;
     }
-    
+
     const entry = this.cache.get(assetName);
     // Simulate converting string to Uint8Array (as would happen in WebAssembly)
     const encoder = new TextEncoder();
@@ -41,8 +41,8 @@ class MockEMAssetResolver {
   }
 }
 
-// Mock TinyUSDZLoaderNative
-class MockTinyUSDZLoaderNative {
+// Mock LightUSDLoaderNative
+class MockLightUSDLoaderNative {
   constructor() {
     this.em_resolver_ = new MockEMAssetResolver();
   }
@@ -74,10 +74,10 @@ class MockTinyUSDZLoaderNative {
 
 function runMockTest() {
   console.log('Running mock test...\n');
-  
+
   try {
     // Create mock loader
-    const loader = new MockTinyUSDZLoaderNative();
+    const loader = new MockLightUSDLoaderNative();
     console.log('✓ Mock loader created');
 
     // Test data
@@ -98,7 +98,7 @@ function runMockTest() {
 
     // Test getAssetCacheDataAsMemoryView
     const memoryView = loader.getAssetCacheDataAsMemoryView(testAssetName);
-    
+
     if (memoryView === undefined) {
       throw new Error('Memory view should not be undefined for existing asset');
     }
@@ -134,10 +134,10 @@ function runMockTest() {
     // Test with binary data
     const binaryAssetName = 'binary-test.bin';
     const binaryContent = 'Binary content: \x00\x01\x02\x03\xFF\xFE';
-    
+
     loader.setAsset(binaryAssetName, binaryContent);
     const binaryMemoryView = loader.getAssetCacheDataAsMemoryView(binaryAssetName);
-    
+
     const expectedBinarySize = new TextEncoder().encode(binaryContent).length;
     if (binaryMemoryView.length !== expectedBinarySize) {
       throw new Error(`Binary data size mismatch. Expected: ${expectedBinarySize}, Got: ${binaryMemoryView.length}`);
@@ -149,12 +149,12 @@ function runMockTest() {
     if (!assetObj || !assetObj.data) {
       throw new Error('getAsset should return object with data');
     }
-    
+
     // Both should have the same content
     if (assetObj.data.length !== memoryView.length) {
       throw new Error('getAsset and getAssetCacheDataAsMemoryView should return same size data');
     }
-    
+
     for (let i = 0; i < memoryView.length; i++) {
       if (assetObj.data[i] !== memoryView[i]) {
         throw new Error(`Data mismatch at index ${i} between getAsset and getAssetCacheDataAsMemoryView`);
@@ -186,17 +186,17 @@ emscripten::val getCacheDataAsMemoryView(const std::string &asset_name) const {
     return emscripten::val::undefined();
   }
   const AssetCacheEntry &entry = cache.at(asset_name);
-  return emscripten::val(emscripten::typed_memory_view(entry.binary.size(), 
+  return emscripten::val(emscripten::typed_memory_view(entry.binary.size(),
                                                        reinterpret_cast<const uint8_t*>(entry.binary.data())));
 }
 
-// In TinyUSDZLoaderNative:
+// In LightUSDLoaderNative:
 emscripten::val getAssetCacheDataAsMemoryView(const std::string &name) const {
   return em_resolver_.getCacheDataAsMemoryView(name);
 }
 
 // In EMSCRIPTEN_BINDINGS:
-.function("getAssetCacheDataAsMemoryView", &TinyUSDZLoaderNative::getAssetCacheDataAsMemoryView)
+.function("getAssetCacheDataAsMemoryView", &LightUSDLoaderNative::getAssetCacheDataAsMemoryView)
 `);
 console.log('-'.repeat(40));
 console.log();

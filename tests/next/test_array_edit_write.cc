@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - crate array-edit write performance + correctness
+// LightUSD Next - crate array-edit write performance + correctness
 //
 // Guards crate EncodeArrayEdit::lit_index against an O(N^2) regression: a
 // sparse array-edit default with N distinct literals used to cost O(N^2)
@@ -21,7 +21,7 @@
 #include "next/crate/crate-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int g_failures = 0;
 #define AE_CHECK(cond, msg)                                                  \

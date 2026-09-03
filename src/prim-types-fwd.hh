@@ -8,7 +8,7 @@
 //
 #pragma once
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Core types from prim-types.hh
 class Prim;
@@ -49,4 +49,4 @@ template<typename T> struct Animatable;
 // Extent
 struct Extent;
 
-}  // namespace tinyusdz
+}  // namespace lightusd

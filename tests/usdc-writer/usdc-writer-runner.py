@@ -3,8 +3,8 @@
 USDC writer roundtrip test runner.
 
 Pipeline per file:
-  1. tusdcat input.usda -o temp.usdc    (TinyUSDZ writes USDC)
-  2. tusdcat temp.usdc  -o temp_rt.usda (TinyUSDZ reads USDC back as USDA)
+  1. tusdcat input.usda -o temp.usdc    (LightUSD writes USDC)
+  2. tusdcat temp.usdc  -o temp_rt.usda (LightUSD reads USDC back as USDA)
   3. tusddiff input.usda temp_rt.usda   (Layer-level diff on two USDA files)
 
 tusddiff exit codes: 0 = identical, 1 = differences, 2 = error.

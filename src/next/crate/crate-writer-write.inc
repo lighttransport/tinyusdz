@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - CrateWriter::Impl top-level write orchestration.
+// LightUSD Next - CrateWriter::Impl top-level write orchestration.
 // Included inside CrateWriter::Impl public section.
 
   explicit Impl(const CrateWriteOptions& options)

@@ -11,7 +11,7 @@
 #include "unit-rb-dynamics.h"
 #include "tydra/rb-dynamics.h"
 #include "tydra/rb-dynamics.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "xform.hh"
 
@@ -303,8 +303,8 @@ void rb_stacking_sleep_test(void) {
 }
 
 void rb_phys_world_memory_limit_test(void) {
-  using namespace tinyusdz;
-  using namespace tinyusdz::tydra;
+  using namespace lightusd;
+  using namespace lightusd::tydra;
 
   Stage stage;
   TydraPhysWorld world;
@@ -336,8 +336,8 @@ void rb_phys_world_memory_limit_test(void) {
 }
 
 void rb_phys_world_transform_sync_test(void) {
-  using namespace tinyusdz;
-  using namespace tinyusdz::tydra;
+  using namespace lightusd;
+  using namespace lightusd::tydra;
   const std::string source = R"USD(#usda 1.0
 def Cube "Body" (
     prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]

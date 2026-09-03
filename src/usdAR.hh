@@ -35,7 +35,7 @@
 #include "core/property.hh"
 #include "core/variant-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Prim type name constants (typed schemas only)
 constexpr auto kPreliminary_PhysicsGravitationalForce = "Preliminary_PhysicsGravitationalForce";
@@ -84,9 +84,9 @@ struct Preliminary_PhysicsGravitationalForce {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   // physics:gravitationalForce:acceleration [m/s^2]
   TypedAttributeWithFallback<value::vector3d> acceleration{value::vector3d{0.0, -9.81, 0.0}};
@@ -97,13 +97,13 @@ struct Preliminary_PhysicsGravitationalForce {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -116,9 +116,9 @@ struct Preliminary_InfiniteColliderPlane {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttributeWithFallback<value::point3d> position{value::point3d{0.0, 0.0, 0.0}};
   TypedAttributeWithFallback<value::vector3d> normal{value::vector3d{0.0, 1.0, 0.0}};
@@ -129,13 +129,13 @@ struct Preliminary_InfiniteColliderPlane {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -148,9 +148,9 @@ struct Preliminary_ReferenceImage {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::AssetPath> image;            // uniform asset image
   TypedAttributeWithFallback<double> physicalWidth{0.0};  // uniform double physicalWidth [cm]
@@ -161,13 +161,13 @@ struct Preliminary_ReferenceImage {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -180,9 +180,9 @@ struct Preliminary_Behavior {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   RelationshipProperty triggers;  // rel triggers
   RelationshipProperty actions;   // rel actions
@@ -194,13 +194,13 @@ struct Preliminary_Behavior {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -213,9 +213,9 @@ struct Preliminary_Trigger {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::token> info_id;  // uniform token info:id
 
@@ -225,13 +225,13 @@ struct Preliminary_Trigger {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -244,9 +244,9 @@ struct Preliminary_Action {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::token> info_id;  // uniform token info:id
   // "ignore", "allow", "stop"
@@ -258,13 +258,13 @@ struct Preliminary_Action {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -277,9 +277,9 @@ struct Preliminary_Text {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const std::string &get_name() const LIGHTUSD_LIFETIMEBOUND { return name; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttributeWithFallback<std::string> content{""};
   TypedAttribute<std::vector<std::string>> font;  // string[] font
@@ -300,13 +300,13 @@ struct Preliminary_Text {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -329,4 +329,4 @@ DEFINE_TYPE_TRAIT(Preliminary_Text, kPreliminary_Text, TYPE_ID_PRELIMINARY_TEXT,
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

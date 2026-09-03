@@ -11,7 +11,7 @@
 #include <system_error>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 
 namespace tusdview {
 namespace {
@@ -191,7 +191,7 @@ PreviewCacheLookup LoadPreviewCache(const PreviewCacheOptions& options,
     }
   }
   std::string warn, err;
-  if (!tinyusdz::next::LoadUSDC(stage_path.string(), &result.stage, &warn, &err)) {
+  if (!lightusd::next::LoadUSDC(stage_path.string(), &result.stage, &warn, &err)) {
     result.reason = "preview USDC invalid: " + err; return result;
   }
   result.hit = true;
@@ -204,7 +204,7 @@ PreviewCacheLookup LoadPreviewCache(const PreviewCacheOptions& options,
 bool StorePreviewCache(const PreviewCacheOptions& options,
                        const std::string& root,
                        const std::string& fingerprint,
-                       const tinyusdz::next::Stage& preview,
+                       const lightusd::next::Stage& preview,
                        const std::vector<std::string>& dependencies,
                        std::string* reason) {
   if (options.mode == PreviewCacheMode::Off) return false;
@@ -237,7 +237,7 @@ bool StorePreviewCache(const PreviewCacheOptions& options,
     manifest["dependencies"].push_back({{"id", id}, {"size", size}, {"mtime", mtime}});
   }
   std::string write_error;
-  if (!tinyusdz::next::WriteUSDC(preview, stage_tmp.string(), &write_error)) {
+  if (!lightusd::next::WriteUSDC(preview, stage_tmp.string(), &write_error)) {
     if (reason) *reason = "preview write failed: " + write_error;
     return false;
   }

@@ -18,9 +18,9 @@
 
 // For fast int/float to ascii
 // Default disabled.
-//#define TINYUSDZ_LOCAL_USE_JEAIII_ITOA
+//#define LIGHTUSD_LOCAL_USE_JEAIII_ITOA
 
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
 #include "external/jeaiii_to_text.h"
 #endif
 
@@ -39,14 +39,14 @@
 namespace {
 
 inline void append_float_to_stream(std::ostream &os, float v) {
-  char buf[tinyusdz::DTOS_MAX_CHARS_FLOAT];
-  size_t len = tinyusdz::dtos(v, buf);
+  char buf[lightusd::DTOS_MAX_CHARS_FLOAT];
+  size_t len = lightusd::dtos(v, buf);
   os.write(buf, static_cast<std::streamsize>(len));
 }
 
 }  // namespace
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pprint {
 
 std::string format_wrapped_array(const std::vector<std::string> &elements,
@@ -148,29 +148,29 @@ void print_1d_array(std::ostream &os, const std::vector<std::string> &elems,
 }
 
 }  // namespace pprint
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half &v) {
   // Use direct half-precision dtos for shortest representation
-  os << tinyusdz::dtos(v);
+  os << lightusd::dtos(v);
   return os;
 }
 
 // Note: operator<< for StringData is defined in pprinter.cc
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half3 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::half4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
@@ -186,147 +186,147 @@ int SignedCharValue(char value) {
 }  // namespace
 
 // USD char is a signed 8-bit value regardless of the target's plain-char ABI.
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::char2 &v) {
   os << "(" << SignedCharValue(v[0]) << ", " << SignedCharValue(v[1]) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::char3 &v) {
   os << "(" << SignedCharValue(v[0]) << ", " << SignedCharValue(v[1]) << ", "
      << SignedCharValue(v[2]) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::char4 &v) {
   os << "(" << SignedCharValue(v[0]) << ", " << SignedCharValue(v[1]) << ", "
      << SignedCharValue(v[2]) << ", " << SignedCharValue(v[3]) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar2 &v) {
   os << "(" << int(v[0]) << ", " << int(v[1]) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar3 &v) {
   os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uchar4 &v) {
   os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ", "
      << int(v[3]) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::short2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::short3 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::short4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort3 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::ushort4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::int2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::int3 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::int4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint2 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uint2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint3 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uint3 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::uint4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v) {
-  char buffer[tinyusdz::PRINT_FLOAT2_MAX_CHARS];
-  size_t len = tinyusdz::print_float2(v, buffer);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::float2 &v) {
+  char buffer[lightusd::PRINT_FLOAT2_MAX_CHARS];
+  size_t len = lightusd::print_float2(v, buffer);
   os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v) {
-  char buffer[tinyusdz::PRINT_FLOAT3_MAX_CHARS];
-  size_t len = tinyusdz::print_float3(v, buffer);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::float3 &v) {
+  char buffer[lightusd::PRINT_FLOAT3_MAX_CHARS];
+  size_t len = lightusd::print_float3(v, buffer);
   os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v) {
-  char buffer[tinyusdz::PRINT_FLOAT4_MAX_CHARS];
-  size_t len = tinyusdz::print_float4(v, buffer);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::float4 &v) {
+  char buffer[lightusd::PRINT_FLOAT4_MAX_CHARS];
+  size_t len = lightusd::print_float4(v, buffer);
   os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double2 &v) {
-  char buffer[tinyusdz::PRINT_DOUBLE2_MAX_CHARS];
-  size_t len = tinyusdz::print_double2(v, buffer);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::double2 &v) {
+  char buffer[lightusd::PRINT_DOUBLE2_MAX_CHARS];
+  size_t len = lightusd::print_double2(v, buffer);
   os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double3 &v) {
-  char buffer[tinyusdz::PRINT_DOUBLE3_MAX_CHARS];
-  size_t len = tinyusdz::print_double3(v, buffer);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::double3 &v) {
+  char buffer[lightusd::PRINT_DOUBLE3_MAX_CHARS];
+  size_t len = lightusd::print_double3(v, buffer);
   os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double4 &v) {
-  char buffer[tinyusdz::PRINT_DOUBLE4_MAX_CHARS];
-  size_t len = tinyusdz::print_double4(v, buffer);
+std::ostream &operator<<(std::ostream &os, const lightusd::value::double4 &v) {
+  char buffer[lightusd::PRINT_DOUBLE4_MAX_CHARS];
+  size_t len = lightusd::print_double4(v, buffer);
   os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3f &v) {
   os << "(";
   append_float_to_stream(os, v.x);
   os << ", ";
@@ -337,18 +337,18 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::vector3d &v) {
+  os << "(" << lightusd::dtos(v.x) << ", " << lightusd::dtos(v.y) << ", "
+     << lightusd::dtos(v.z) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3h &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3f &v) {
   os << "(";
   append_float_to_stream(os, v.x);
   os << ", ";
@@ -359,18 +359,18 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3d &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::normal3d &v) {
+  os << "(" << lightusd::dtos(v.x) << ", " << lightusd::dtos(v.y) << ", "
+     << lightusd::dtos(v.z) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3h &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::point3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::point3f &v) {
   os << "(";
   append_float_to_stream(os, v.x);
   os << ", ";
@@ -381,20 +381,20 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3d &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::point3d &v) {
+  os << "(" << lightusd::dtos(v.x) << ", " << lightusd::dtos(v.y) << ", "
+     << lightusd::dtos(v.z) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v) {
-  os << "(" << tinyusdz::value::half_to_float(v.r) << ", "
-     << tinyusdz::value::half_to_float(v.g) << ", "
-     << tinyusdz::value::half_to_float(v.b) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color3h &v) {
+  os << "(" << lightusd::value::half_to_float(v.r) << ", "
+     << lightusd::value::half_to_float(v.g) << ", "
+     << lightusd::value::half_to_float(v.b) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color3f &v) {
   os << "(";
   append_float_to_stream(os, v.r);
   os << ", ";
@@ -405,21 +405,21 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v) {
-  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", "
-     << tinyusdz::dtos(v.b) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color3d &v) {
+  os << "(" << lightusd::dtos(v.r) << ", " << lightusd::dtos(v.g) << ", "
+     << lightusd::dtos(v.b) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v) {
-  os << "(" << tinyusdz::value::half_to_float(v.r) << ", "
-     << tinyusdz::value::half_to_float(v.g) << ", "
-     << tinyusdz::value::half_to_float(v.b) << ", "
-     << tinyusdz::value::half_to_float(v.a) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color4h &v) {
+  os << "(" << lightusd::value::half_to_float(v.r) << ", "
+     << lightusd::value::half_to_float(v.g) << ", "
+     << lightusd::value::half_to_float(v.b) << ", "
+     << lightusd::value::half_to_float(v.a) << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color4f &v) {
   os << "(";
   append_float_to_stream(os, v.r);
   os << ", ";
@@ -432,42 +432,42 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v) {
-  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", "
-     << tinyusdz::dtos(v.b) << ", " << tinyusdz::dtos(v.a) << ")";
+std::ostream &operator<<(std::ostream &os, const lightusd::value::color4d &v) {
+  os << "(" << lightusd::dtos(v.r) << ", " << lightusd::dtos(v.g) << ", "
+     << lightusd::dtos(v.b) << ", " << lightusd::dtos(v.a) << ")";
   return os;
 }
 
 // pxrUSD prints quateron in [w, x, y, z] order
 // https://github.com/PixarAnimationStudios/USD/blob/3abc46452b1271df7650e9948fef9f0ce602e3b2/pxr/base/gf/quatf.h#L287
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quath &v) {
+std::ostream &operator<<(std::ostream &os, const lightusd::value::quath &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatf &v) {
-  os << "(" << tinyusdz::dtos(v.real) << ", " << tinyusdz::dtos(v.imag[0])
-     << ", " << tinyusdz::dtos(v.imag[1]) << ", " << tinyusdz::dtos(v.imag[2])
+std::ostream &operator<<(std::ostream &os, const lightusd::value::quatf &v) {
+  os << "(" << lightusd::dtos(v.real) << ", " << lightusd::dtos(v.imag[0])
+     << ", " << lightusd::dtos(v.imag[1]) << ", " << lightusd::dtos(v.imag[2])
      << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatd &v) {
-  os << "(" << tinyusdz::dtos(v.real) << ", " << tinyusdz::dtos(v.imag[0])
-     << ", " << tinyusdz::dtos(v.imag[1]) << ", " << tinyusdz::dtos(v.imag[2])
+std::ostream &operator<<(std::ostream &os, const lightusd::value::quatd &v) {
+  os << "(" << lightusd::dtos(v.real) << ", " << lightusd::dtos(v.imag[0])
+     << ", " << lightusd::dtos(v.imag[1]) << ", " << lightusd::dtos(v.imag[2])
      << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord2h &v) {
+                         const lightusd::value::texcoord2h &v) {
   os << "(" << v.s << ", " << v.t << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord2f &v) {
+                         const lightusd::value::texcoord2f &v) {
   os << "(";
   append_float_to_stream(os, v.s);
   os << ", ";
@@ -477,19 +477,19 @@ std::ostream &operator<<(std::ostream &os,
 }
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord2d &v) {
-  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ")";
+                         const lightusd::value::texcoord2d &v) {
+  os << "(" << lightusd::dtos(v.s) << ", " << lightusd::dtos(v.t) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord3h &v) {
+                         const lightusd::value::texcoord3h &v) {
   os << "(" << v.s << ", " << v.t << ", " << v.r << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord3f &v) {
+                         const lightusd::value::texcoord3f &v) {
   os << "(";
   append_float_to_stream(os, v.s);
   os << ", ";
@@ -501,19 +501,19 @@ std::ostream &operator<<(std::ostream &os,
 }
 
 std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::texcoord3d &v) {
-  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ", "
-     << tinyusdz::dtos(v.r) << ")";
+                         const lightusd::value::texcoord3d &v) {
+  os << "(" << lightusd::dtos(v.s) << ", " << lightusd::dtos(v.t) << ", "
+     << lightusd::dtos(v.r) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::matrix2f &m) {
+                         const lightusd::value::matrix2f &m) {
   ofs << "( ";
 
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
+  ofs << "(" << lightusd::dtos(m.m[0][0]) << ", " << lightusd::dtos(m.m[0][1])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
+  ofs << "(" << lightusd::dtos(m.m[1][0]) << ", " << lightusd::dtos(m.m[1][1])
       << ")";
 
   ofs << " )";
@@ -522,15 +522,15 @@ std::ostream &operator<<(std::ostream &ofs,
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::matrix3f &m) {
+                         const lightusd::value::matrix3f &m) {
   ofs << "( ";
 
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ")";
+  ofs << "(" << lightusd::dtos(m.m[0][0]) << ", " << lightusd::dtos(m.m[0][1])
+      << ", " << lightusd::dtos(m.m[0][2]) << "), ";
+  ofs << "(" << lightusd::dtos(m.m[1][0]) << ", " << lightusd::dtos(m.m[1][1])
+      << ", " << lightusd::dtos(m.m[1][2]) << "), ";
+  ofs << "(" << lightusd::dtos(m.m[2][0]) << ", " << lightusd::dtos(m.m[2][1])
+      << ", " << lightusd::dtos(m.m[2][2]) << ")";
 
   ofs << " )";
 
@@ -538,20 +538,20 @@ std::ostream &operator<<(std::ostream &ofs,
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::matrix4f &m) {
+                         const lightusd::value::matrix4f &m) {
   ofs << "( ";
 
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << ", " << tinyusdz::dtos(m.m[0][3])
+  ofs << "(" << lightusd::dtos(m.m[0][0]) << ", " << lightusd::dtos(m.m[0][1])
+      << ", " << lightusd::dtos(m.m[0][2]) << ", " << lightusd::dtos(m.m[0][3])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << ", " << tinyusdz::dtos(m.m[1][3])
+  ofs << "(" << lightusd::dtos(m.m[1][0]) << ", " << lightusd::dtos(m.m[1][1])
+      << ", " << lightusd::dtos(m.m[1][2]) << ", " << lightusd::dtos(m.m[1][3])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ", " << tinyusdz::dtos(m.m[2][3])
+  ofs << "(" << lightusd::dtos(m.m[2][0]) << ", " << lightusd::dtos(m.m[2][1])
+      << ", " << lightusd::dtos(m.m[2][2]) << ", " << lightusd::dtos(m.m[2][3])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[3][0]) << ", " << tinyusdz::dtos(m.m[3][1])
-      << ", " << tinyusdz::dtos(m.m[3][2]) << ", " << tinyusdz::dtos(m.m[3][3])
+  ofs << "(" << lightusd::dtos(m.m[3][0]) << ", " << lightusd::dtos(m.m[3][1])
+      << ", " << lightusd::dtos(m.m[3][2]) << ", " << lightusd::dtos(m.m[3][3])
       << ")";
 
   ofs << " )";
@@ -560,43 +560,43 @@ std::ostream &operator<<(std::ostream &ofs,
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::matrix2d &m) {
-  char buffer[tinyusdz::PRINT_MATRIX2D_MAX_CHARS];
-  size_t len = tinyusdz::print_matrix2d(m, buffer);
+                         const lightusd::value::matrix2d &m) {
+  char buffer[lightusd::PRINT_MATRIX2D_MAX_CHARS];
+  size_t len = lightusd::print_matrix2d(m, buffer);
   ofs.write(buffer, static_cast<std::streamsize>(len));
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::matrix3d &m) {
-  char buffer[tinyusdz::PRINT_MATRIX3D_MAX_CHARS];
-  size_t len = tinyusdz::print_matrix3d(m, buffer);
+                         const lightusd::value::matrix3d &m) {
+  char buffer[lightusd::PRINT_MATRIX3D_MAX_CHARS];
+  size_t len = lightusd::print_matrix3d(m, buffer);
   ofs.write(buffer, static_cast<std::streamsize>(len));
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::matrix4d &m) {
-  char buffer[tinyusdz::PRINT_MATRIX4D_MAX_CHARS];
-  size_t len = tinyusdz::print_matrix4d(m, buffer);
+                         const lightusd::value::matrix4d &m) {
+  char buffer[lightusd::PRINT_MATRIX4D_MAX_CHARS];
+  size_t len = lightusd::print_matrix4d(m, buffer);
   ofs.write(buffer, static_cast<std::streamsize>(len));
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::frame4d &m) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::value::frame4d &m) {
   ofs << "( ";
 
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << ", " << tinyusdz::dtos(m.m[0][3])
+  ofs << "(" << lightusd::dtos(m.m[0][0]) << ", " << lightusd::dtos(m.m[0][1])
+      << ", " << lightusd::dtos(m.m[0][2]) << ", " << lightusd::dtos(m.m[0][3])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << ", " << tinyusdz::dtos(m.m[1][3])
+  ofs << "(" << lightusd::dtos(m.m[1][0]) << ", " << lightusd::dtos(m.m[1][1])
+      << ", " << lightusd::dtos(m.m[1][2]) << ", " << lightusd::dtos(m.m[1][3])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ", " << tinyusdz::dtos(m.m[2][3])
+  ofs << "(" << lightusd::dtos(m.m[2][0]) << ", " << lightusd::dtos(m.m[2][1])
+      << ", " << lightusd::dtos(m.m[2][2]) << ", " << lightusd::dtos(m.m[2][3])
       << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[3][0]) << ", " << tinyusdz::dtos(m.m[3][1])
-      << ", " << tinyusdz::dtos(m.m[3][2]) << ", " << tinyusdz::dtos(m.m[3][3])
+  ofs << "(" << lightusd::dtos(m.m[3][0]) << ", " << lightusd::dtos(m.m[3][1])
+      << ", " << lightusd::dtos(m.m[3][2]) << ", " << lightusd::dtos(m.m[3][3])
       << ")";
 
   ofs << " )";
@@ -604,22 +604,22 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::frame4d &m) {
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::timecode &tc) {
-  ofs << tinyusdz::dtos(tc.value);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::value::timecode &tc) {
+  ofs << lightusd::dtos(tc.value);
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::value::token &tok) {
   // Escape the token content so that a token containing quotation chars,
   // backslashes or control chars re-parses correctly (matches pxr behavior).
-  ofs << tinyusdz::buildEscapedAndQuotedStringForUSDA(tok.str());
+  ofs << lightusd::buildEscapedAndQuotedStringForUSDA(tok.str());
 
   return ofs;
 }
 
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::AssetPath &asset) {
+                         const lightusd::value::AssetPath &asset) {
   std::string in_s = asset.GetAssetPath();
 
   if (in_s.empty()) {
@@ -629,7 +629,7 @@ std::ostream &operator<<(std::ostream &ofs,
 
     std::string s;
 
-    if (tinyusdz::contains(in_s, '@')) {
+    if (lightusd::contains(in_s, '@')) {
       // Escape '@@@'(to '\@@@') if the input path contains '@@@'
       for (size_t i = 0; i < in_s.length(); i++) {
         if ((i + 2) < in_s.length() &&
@@ -654,24 +654,24 @@ std::ostream &operator<<(std::ostream &ofs,
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::PathExpression &expr) {
+                         const lightusd::value::PathExpression &expr) {
   // SdfPathExpression is authored in USDA as a double-quoted string holding the
   // canonical expression text (e.g. `"/World/Geom//C*"`).
-  ofs << tinyusdz::quote(tinyusdz::escapeControlSequence(expr.GetText()));
+  ofs << lightusd::quote(lightusd::escapeControlSequence(expr.GetText()));
   return ofs;
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
     for (const auto &e : v) {
-      elems.push_back(tinyusdz::dtos(e));
+      elems.push_back(lightusd::dtos(e));
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
   ofs << "[";
@@ -679,7 +679,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-    ofs << tinyusdz::dtos(v[i]);
+    ofs << lightusd::dtos(v[i]);
   }
   ofs << "]";
 
@@ -688,15 +688,15 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
     for (const auto &e : v) {
-      elems.push_back(tinyusdz::dtos(e));
+      elems.push_back(lightusd::dtos(e));
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
   ofs << "[";
@@ -704,7 +704,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-    ofs << tinyusdz::dtos(v[i]);
+    ofs << lightusd::dtos(v[i]);
   }
   ofs << "]";
 
@@ -713,7 +713,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
@@ -722,11 +722,11 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
       ess << e;
       elems.push_back(ess.str());
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
 #endif
@@ -736,8 +736,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-    tinyusdz::itoa(v[i], buf);
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
+    lightusd::itoa(v[i], buf);
     ofs << buf;
 #else
     ofs << v[i];
@@ -750,7 +750,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
@@ -759,11 +759,11 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
       ess << e;
       elems.push_back(ess.str());
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
 
@@ -772,8 +772,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-    tinyusdz::itoa(v[i], buf);
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
+    lightusd::itoa(v[i], buf);
     ofs << buf;
 #else
     ofs << v[i];
@@ -787,7 +787,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint8_t> &v) {
   // uchar[]: print each element as an integer (os << uint8_t would emit a char).
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
@@ -796,8 +796,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint8_t> &v) {
       ess << static_cast<unsigned int>(e);
       elems.push_back(ess.str());
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
   ofs << "[";
@@ -813,7 +813,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint8_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
@@ -822,11 +822,11 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
       ess << e;
       elems.push_back(ess.str());
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
 #endif
@@ -836,8 +836,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-    tinyusdz::itoa(v[i], buf);
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
+    lightusd::itoa(v[i], buf);
     ofs << buf;
 #else
     ofs << v[i];
@@ -850,7 +850,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
-  uint32_t col_limit = tinyusdz::pprint::GetColumnLimit();
+  uint32_t col_limit = lightusd::pprint::GetColumnLimit();
   if (col_limit > 0 && v.size() > 1) {
     std::vector<std::string> elems;
     elems.reserve(v.size());
@@ -859,11 +859,11 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
       ess << e;
       elems.push_back(ess.str());
     }
-    ofs << tinyusdz::pprint::format_wrapped_array(
-        elems, tinyusdz::pprint::GetPrefixColumns(), col_limit);
+    ofs << lightusd::pprint::format_wrapped_array(
+        elems, lightusd::pprint::GetPrefixColumns(), col_limit);
     return ofs;
   }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
 
@@ -872,8 +872,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-    tinyusdz::itoa(v[i], buf);
+#if defined(LIGHTUSD_LOCAL_USE_JEAIII_ITOA)
+    lightusd::itoa(v[i], buf);
     ofs << buf;
 #else
     ofs << v[i];
@@ -886,7 +886,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
 
 }  // namespace std
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::string to_string(bool v) {
   if (v) {
@@ -920,25 +920,25 @@ std::string to_string(uint64_t v) {
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half &v) {
+std::string to_string(const lightusd::value::half &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half2 &v) {
+std::string to_string(const lightusd::value::half2 &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half3 &v) {
+std::string to_string(const lightusd::value::half3 &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half4 &v) {
+std::string to_string(const lightusd::value::half4 &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
@@ -1197,4 +1197,4 @@ std::string to_string(const value::color4d &v) {
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -11,7 +11,7 @@
 #include "acutest.h"
 
 #include "unit-physics.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
@@ -40,7 +40,7 @@
 #include <string>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -2155,7 +2155,7 @@ void physics_spherical_schema_names_fixture_test(void) {
 // 15. Mesh-per-geom collider convention.
 //
 // Exercises the schema convention adopted by lightgeom `export_usdz.py`,
-// tinyusdz `urdf-to-usd`, and NVIDIA / Newton's `mujoco-usd-converter`:
+// lightusd `urdf-to-usd`, and NVIDIA / Newton's `mujoco-usd-converter`:
 //
 //   * One UsdGeom.Mesh per source geom (no `visual_*` / `collision_*`
 //     duplication).
@@ -2440,7 +2440,7 @@ void urdf_json_spherical_joint_export_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(
       robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str()); }
   TEST_CHECK(ok);
@@ -2546,7 +2546,7 @@ void urdf_json_newton_api_export_test(void) {
 
   Stage tmp;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(
       robot_json, &tmp, &warn, &err);
   if (!ok) { TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str()); }
   TEST_CHECK(ok);
@@ -2699,7 +2699,7 @@ void urdf_json_mjcf_contact_export_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(
       robot_json, &stage, &warn, &err);
   if (!ok) {
     TEST_MSG("ConvertURDFJsonToUSDStage failed: %s", err.c_str());
@@ -2813,7 +2813,7 @@ void physics_urdf_upaxis_axis_invariant_test(void) {
         "  ]\n}";
     std::string warn, err;
     bool ok =
-        tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, out, &warn, &err);
+        lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, out, &warn, &err);
     if (!ok) { TEST_MSG("convert (%s) failed: %s", up_axis, err.c_str()); }
     return ok;
   };
@@ -3517,7 +3517,7 @@ void urdf_json_mjcf_tendon_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3595,7 +3595,7 @@ void urdf_json_mjcf_tendon_full_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3665,7 +3665,7 @@ void urdf_json_mjcf_tendon_alias_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3746,7 +3746,7 @@ void urdf_json_mjc_actuator_full_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3826,7 +3826,7 @@ void urdf_json_mjcf_equality_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3884,7 +3884,7 @@ void urdf_json_fullinertia_diagonalize_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -3969,7 +3969,7 @@ void urdf_json_mjcf_muscle_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4039,7 +4039,7 @@ void urdf_json_mjc_mocap_custom_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4145,7 +4145,7 @@ void urdf_json_mjc_plugin_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4224,7 +4224,7 @@ void physics_static_world_link_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4273,7 +4273,7 @@ void physics_freejoint_floating_base_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4310,7 +4310,7 @@ void urdf_json_mjc_contact_pair_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4345,7 +4345,7 @@ void urdf_json_mjc_actuator_types_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4390,7 +4390,7 @@ void urdf_json_mjc_sensors_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4477,7 +4477,7 @@ void urdf_json_mjc_sensor_aliases_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4542,7 +4542,7 @@ void urdf_json_mjc_materials_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4588,7 +4588,7 @@ void urdf_json_mjc_lights_cameras_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4629,7 +4629,7 @@ void urdf_json_mjc_keyframe_export_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;
@@ -4681,7 +4681,7 @@ void urdf_json_mjc_scene_options_test(void) {
 })JSON";
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
+  bool ok = lightusd::tydra::ConvertURDFJsonToUSDStage(robot_json, &stage, &warn, &err);
   if (!ok) { TEST_MSG("convert failed: %s", err.c_str()); }
   TEST_CHECK(ok);
   if (!ok) return;

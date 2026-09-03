@@ -1,11 +1,11 @@
 # MMap-Based USD Loading
 
-This note describes TinyUSDZ's mmap-based file loading path and the optional
+This note describes LightUSD's mmap-based file loading path and the optional
 USDC zero-copy array mode used by Tydra.
 
 ## Summary
 
-TinyUSDZ can load USD files through OS-backed mmap when mmap support is
+LightUSD can load USD files through OS-backed mmap when mmap support is
 available. This avoids first copying the whole file into a heap buffer. For
 USDC payloads, `USDLoadOptions::mmap_zero_copy` can additionally defer selected
 large uncompressed arrays and let Tydra read them from the mapped file when it
@@ -14,14 +14,14 @@ builds render data.
 The normal file-loading APIs are:
 
 ```cpp
-tinyusdz::Stage stage;
+lightusd::Stage stage;
 std::string warn;
 std::string err;
 
-tinyusdz::USDLoadOptions options;
+lightusd::USDLoadOptions options;
 options.mmap_zero_copy = true;
 
-bool ok = tinyusdz::LoadUSDFromFile("scene.usdz", &stage, &warn, &err, options);
+bool ok = lightusd::LoadUSDFromFile("scene.usdz", &stage, &warn, &err, options);
 if (!ok) {
   // inspect err
 }
@@ -32,7 +32,7 @@ The same option works with `LoadUSDCFromFile` and `LoadUSDZFromFile`.
 
 ## Ownership And Lifetime
 
-For file-based loads, TinyUSDZ owns the backing storage after a successful load
+For file-based loads, LightUSD owns the backing storage after a successful load
 when zero-copy arrays were deferred:
 
 - mmap path: the OS mapping is adopted by `Stage` and unmapped when the `Stage`
@@ -43,16 +43,16 @@ when zero-copy arrays were deferred:
 This means Tydra can safely access deferred array bytes while converting from
 the loaded `Stage`.
 
-For memory-based loads, TinyUSDZ does not own the caller's input buffer:
+For memory-based loads, LightUSD does not own the caller's input buffer:
 
 ```cpp
 std::vector<uint8_t> bytes = read_file_somewhere();
 
-tinyusdz::Stage stage;
-tinyusdz::USDLoadOptions options;
+lightusd::Stage stage;
+lightusd::USDLoadOptions options;
 options.mmap_zero_copy = true;
 
-bool ok = tinyusdz::LoadUSDCFromMemory(
+bool ok = lightusd::LoadUSDCFromMemory(
     bytes.data(), bytes.size(), "scene.usdc", &stage, &warn, &err, options);
 
 // bytes must remain alive while stage may use zero-copy array refs.

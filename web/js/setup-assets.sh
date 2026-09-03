@@ -23,4 +23,4 @@ done
 [[ -d "$SOURCE_DIR" ]] || { echo "missing tracked demo assets: $SOURCE_DIR" >&2; exit 1; }
 mkdir -p "$DEST_DIR"
 cp -a "$SOURCE_DIR/." "$DEST_DIR/"
-echo "TinyUSDZ demo fixtures ready: $DEST_DIR"
+echo "LightUSD demo fixtures ready: $DEST_DIR"

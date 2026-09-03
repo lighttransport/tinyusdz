@@ -23,7 +23,7 @@ Tangent-space normal mapping requires per-vertex tangent and bitangent (binormal
 ### Selection
 
 ```cpp
-tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+lightusd::tydra::RenderSceneConverterEnv env(stage);
 env.mesh_config.tangent_method = MeshConverterConfig::TangentComputationMethod::FastMikkTSpace;
 env.mesh_config.compute_tangents_and_binormals = true;
 ```
@@ -109,13 +109,13 @@ std::vector<value::float3> tangents, binormals;
 std::string err;
 
 // FastMikkTSpace
-tinyusdz::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
+lightusd::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
     positions, normals, texcoords, faceVertexCounts,
     &tangents, &binormals, &err);
 
 // Hybrid (also reports working memory and weld stats)
-tinyusdz::tydra::fast_mikkt::HybridStats stats;
-tinyusdz::tydra::fast_mikkt::ComputeTangentsHybrid(
+lightusd::tydra::fast_mikkt::HybridStats stats;
+lightusd::tydra::fast_mikkt::ComputeTangentsHybrid(
     positions, normals, texcoords, faceVertexCounts,
     &tangents, &binormals, &stats, &err);
 // stats.working_memory_bytes, stats.num_weld_groups, stats.total_vertices
@@ -169,7 +169,7 @@ For a 1M-triangle mesh (3.1M face-vertices):
 
 ```cpp
 #include "tydra/tangent-quantize.hh"
-using namespace tinyusdz::tydra::tangent_quantize;
+using namespace lightusd::tydra::tangent_quantize;
 
 // Per-vertex
 float sign = compute_tangent_sign(tangent, binormal, normal);
@@ -311,7 +311,7 @@ Max quantization error is 0.34 deg, well within visual acceptability for normal 
 
 ```cpp
 #include "tydra/tangent-quantize.hh"
-using namespace tinyusdz::tydra::tangent_quantize;
+using namespace lightusd::tydra::tangent_quantize;
 
 // SNorm8
 PackedNormalSNorm8x3 p8 = pack_normal_snorm8(nx, ny, nz);
@@ -359,11 +359,11 @@ The `true` (normalized) flag tells the GPU to denormalize integer values to [-1,
 
 ## Benchmark Tool
 
-`tests/feat/tangent/bench_tangent.cc` provides a standalone benchmark comparing all methods with quality measurement and quantization analysis. It is not wired into the CMake build — compile it by hand against the built tinyusdz static lib (mikktspace is already inside it):
+`tests/feat/tangent/bench_tangent.cc` provides a standalone benchmark comparing all methods with quality measurement and quantization analysis. It is not wired into the CMake build — compile it by hand against the built lightusd static lib (mikktspace is already inside it):
 
 ```bash
 g++ -O2 -std=c++17 -Isrc -Isrc/external tests/feat/tangent/bench_tangent.cc \
-    build/libtinyusdz.a -o bench_tangent
+    build/liblightusd.a -o bench_tangent
 ./bench_tangent --quality --sizes 32,128,512 --ico-levels 3,5
 ```
 

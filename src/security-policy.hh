@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace security_policy {
 
 // Safe defaults for untrusted input. Callers handling trusted, genuinely large
@@ -183,4 +183,4 @@ inline bool IsSafeRelativeAssetPath(const std::string &path) {
 }
 
 } // namespace security_policy
-} // namespace tinyusdz
+} // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Writer
+// LightUSD Next - USDC Writer
 // High-level API for writing USDC (binary) files
 
 #pragma once
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for USDC output
@@ -58,4 +58,4 @@ bool IsUSDCPath(const std::string& path);
 bool IsUSDCPath(const char* path);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Runtime type information registry
+// LightUSD Next - Runtime type information registry
 // Provides runtime type operations without virtual functions
 
 #pragma once
 
 #include "type-id.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Function pointer types for type operations
@@ -50,4 +50,4 @@ bool RegisterTypeInfo(const TypeInfo& info);
 void InitTypeRegistry();
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

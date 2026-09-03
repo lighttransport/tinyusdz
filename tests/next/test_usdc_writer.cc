@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Writer Test
+// LightUSD Next - USDC Writer Test
 
 #include <iostream>
 #include <fstream>
@@ -21,7 +21,7 @@
 #include "next/writer/usda-writer.hh"
 #include "next/reader/usdc-reader.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 bool contains(const std::string& str, const std::string& substr) {
   return str.find(substr) != std::string::npos;
@@ -266,7 +266,7 @@ void test_usdc_stage_backend_parity() {
   assert(memory_result.success);
   assert(memory_result.bytes_written == memory.size());
 
-  const std::string path = "/tmp/tinyusdz_next_usdc_stage_backend_parity.usdc";
+  const std::string path = "/tmp/lightusd_next_usdc_stage_backend_parity.usdc";
   USDCWriteResult file_result = WriteUSDCToFile(path, stage);
   assert(file_result.success);
   assert(file_result.bytes_written == memory_result.bytes_written);
@@ -334,7 +334,7 @@ void test_usdc_layer_backend_parity() {
   assert(memory_result.success);
   assert(memory_result.bytes_written == memory.size());
 
-  const std::string path = "/tmp/tinyusdz_next_usdc_layer_backend_parity.usdc";
+  const std::string path = "/tmp/lightusd_next_usdc_layer_backend_parity.usdc";
   USDCWriteResult file_result = WriteLayerToUSDCFile(path, layer);
   assert(file_result.success);
   assert(file_result.bytes_written == memory_result.bytes_written);
@@ -382,7 +382,7 @@ void test_usdc_api_error_paths() {
   assert(!load_result.success);
   assert(!load_result.error_summary.empty() || !load_result.errors.empty());
 
-  const std::string bad_path = "/tmp/tinyusdz_next_not_usdc.txt";
+  const std::string bad_path = "/tmp/lightusd_next_not_usdc.txt";
   std::remove(bad_path.c_str());
   {
     std::ofstream ofs(bad_path, std::ios::binary);
@@ -400,7 +400,7 @@ void test_usdc_api_error_paths() {
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
   assert(write_result.success);
-  const std::string good_path = "/tmp/tinyusdz_next_is_usdc_file.usdc";
+  const std::string good_path = "/tmp/lightusd_next_is_usdc_file.usdc";
   std::remove(good_path.c_str());
   {
     std::ofstream ofs(good_path, std::ios::binary);
@@ -616,7 +616,7 @@ void test_usdc_encode_value_fallback_roundtrip() {
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next USDC Writer Tests ===\n\n";
+  std::cout << "=== LightUSD Next USDC Writer Tests ===\n\n";
 
   try {
     test_crate_writer_basic();

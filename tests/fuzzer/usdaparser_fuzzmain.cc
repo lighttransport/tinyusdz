@@ -1,6 +1,6 @@
 #include <cstdint>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usda-reader.hh"
 
 static void parse_usda(const uint8_t *data, size_t size)
@@ -18,12 +18,12 @@ static void parse_usda(const uint8_t *data, size_t size)
 
   size_t total_size = content.size() + size;
 
-  tinyusdz::StreamReader sr(buf.data(), total_size, /* endianswap */false);
+  lightusd::StreamReader sr(buf.data(), total_size, /* endianswap */false);
 
-  tinyusdz::usda::USDAReaderConfig config;
+  lightusd::usda::USDAReaderConfig config;
   config.max_memory_limit_in_mb = 1024 * 4; // 4GB for fuzzer
 
-  tinyusdz::usda::USDAReader reader(&sr);
+  lightusd::usda::USDAReader reader(&sr);
   reader.set_reader_config(config);
 
   bool ret = reader.Read();

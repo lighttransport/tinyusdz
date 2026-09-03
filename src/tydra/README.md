@@ -2,8 +2,8 @@
 
 ![Tydra](tydra.png)
 
-TinyUSDZ does not support Hydra interface in pxrUSD at the moment.
-We think Hydra(multi-purpose sceneDelegate/renderDelegate interface) is too much for TinyUSDZ usecases(AR, lightweight 3D viewer/runtime, DCC exchange, etc).
+LightUSD does not support Hydra interface in pxrUSD at the moment.
+We think Hydra(multi-purpose sceneDelegate/renderDelegate interface) is too much for LightUSD usecases(AR, lightweight 3D viewer/runtime, DCC exchange, etc).
 
 Instead, we'd like to propose Tydra(Tiny Hydra), something like a three-headed monster(Please imagine Gidorah: https://en.wikipedia.org/wiki/King_Ghidorah), which directly converts(`publishes`) USD scene graph(Stage. Prim hierarchy) to a renderer-friendly data structure or `published` data format(imagine glTF). API design of Tydra is completely different from Hydra.
 
@@ -127,5 +127,5 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
   material, texture, skeleton, and animation data.
 
 The maintained next-core and Tydra-next API documentation is in
-[`doc/tinyusdz-next.md`](../../doc/tinyusdz-next.md). This README describes
+[`doc/lightusd-next.md`](../../doc/lightusd-next.md). This README describes
 the established legacy RenderScene API; it is not a release checklist.

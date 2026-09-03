@@ -22,7 +22,7 @@
 #include "core/prim-spec.hh"
 #include "mtlx-dom.hh"
 #include "value-clip-utils.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "image-types.hh"
 #include "image-writer.hh"
 #include "tydra/attribute-eval.hh"
@@ -33,7 +33,7 @@
 #include "usdGeom.hh"
 #include "usdMtlx.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -48,8 +48,8 @@ std::string ToPosixPath(std::string path) {
 
 std::string MakeTempUSDFilePath(const std::string &prefix) {
   static int counter = 0;
-  return tinyusdz::io::JoinPath(
-      tinyusdz::io::GetTempDir(),
+  return lightusd::io::JoinPath(
+      lightusd::io::GetTempDir(),
       prefix + "_" + std::to_string(counter++) + ".usda");
 }
 
@@ -67,7 +67,7 @@ void CleanupTempFiles(const std::vector<std::string> &paths) {
     if (path.empty()) {
       continue;
     }
-    (void)tinyusdz::io::RemoveFile(path);
+    (void)lightusd::io::RemoveFile(path);
   }
 }
 
@@ -2866,8 +2866,8 @@ void tydra_udim_texture_test(void) {
   // Tiles: 1001 -> (u0,v0), 1002 -> (u1,v0), 1011 -> (u0,v1).
   // Grid bounds => cols=2, rows=2.
   const std::string tmpdir =
-      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tinyusdz_udim_test");
-  tinyusdz::io::CreateDirectories(tmpdir);
+      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "lightusd_udim_test");
+  lightusd::io::CreateDirectories(tmpdir);
 
   auto make_tile = [](uint8_t r, uint8_t g, uint8_t b) {
     Image img;
@@ -2895,7 +2895,7 @@ void tydra_udim_texture_test(void) {
   for (const auto &ts : tile_specs) {
     Image img = make_tile(ts.r, ts.g, ts.b);
     const std::string path =
-        tinyusdz::io::JoinPath(tmpdir, "tile." + std::to_string(ts.id) + ".png");
+        lightusd::io::JoinPath(tmpdir, "tile." + std::to_string(ts.id) + ".png");
     auto wret = image::WriteImageToFile(path, img);
     if (!wret) {
       wrote_all = false;
@@ -3051,7 +3051,7 @@ void tydra_udim_texture_test(void) {
   }
 
   CleanupTempFiles(tile_files);
-  tinyusdz::io::RemoveAll(tmpdir);
+  lightusd::io::RemoveAll(tmpdir);
 }
 
 void tydra_envmap_loader_policy_test(void) {
@@ -3825,7 +3825,7 @@ def Xform "Root" {
         TEST_CHECK(merged.nodeType == tydra::NodeType::Mesh);
         TEST_CHECK(merged.id == 0);
         TEST_CHECK(merged.abs_path == "/merged/merged_material_3");
-        TEST_CHECK(tinyusdz::is_identity(merged.local_matrix));
+        TEST_CHECK(lightusd::is_identity(merged.local_matrix));
       }
     }
     auto merged_it = converter.meshMap.find("/merged/merged_material_3");
@@ -3944,7 +3944,7 @@ def Xform "Root" {
       const tydra::Node &merged_node = root_after.children[1];
       TEST_CHECK(merged_node.nodeType == tydra::NodeType::Mesh);
       TEST_CHECK(merged_node.abs_path == "/merged/merged_material_5");
-      TEST_CHECK(tinyusdz::is_identity(merged_node.local_matrix));
+      TEST_CHECK(lightusd::is_identity(merged_node.local_matrix));
     }
   }
 

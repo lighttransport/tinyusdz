@@ -1,7 +1,7 @@
-# TinyUSDZ Verification Plan against AOUSD Core Spec v1.0.1
+# LightUSD Verification Plan against AOUSD Core Spec v1.0.1
 
 **Spec**: USD Core Specification v1.0.1 (b7bc21a), AOUSD Core Spec Working Group, 2025-12-12
-**Target**: TinyUSDZ (this repository, branch `spec-2026-mar`)
+**Target**: LightUSD (this repository, branch `spec-2026-mar`)
 **Date**: 2026-03-21
 
 ---
@@ -19,7 +19,7 @@ A compliant implementation must pass conformance tests in three areas:
 ## Phase 1: Foundational Data Types (Spec Ch 6)
 
 ### 1.1 Scalar Types (6.2)
-| Spec Type | TinyUSDZ Type | Verify |
+| Spec Type | LightUSD Type | Verify |
 |-----------|---------------|--------|
 | `bool` | `value::bool` | roundtrip usda/usdc |
 | `uchar` | `value::uchar` | roundtrip |
@@ -153,7 +153,7 @@ Verify presence and correct types for all core fields on each spec form:
 
 ## Phase 5: Composition (Spec Ch 10)
 
-This is the most complex area. TinyUSDZ has composition support in `src/composition.{hh,cc}`.
+This is the most complex area. LightUSD has composition support in `src/composition.{hh,cc}`.
 
 ### 5.1 Composition Algorithm (10.2)
 - Input: root layer, prim path, payload flag
@@ -303,7 +303,7 @@ This is the most complex area. TinyUSDZ has composition support in `src/composit
 - Schema inheritance
 
 ### 8.2 Core Schema Types (13.4)
-- Verify TinyUSDZ built-in schema types match spec-defined core schemas
+- Verify LightUSD built-in schema types match spec-defined core schemas
 
 **Test**: parse prims with `apiSchemas` applied; verify schema-defined fallback values.
 

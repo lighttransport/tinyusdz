@@ -7,7 +7,7 @@
 
 #include "usdz-convert.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 class Layer;
 
@@ -29,4 +29,4 @@ bool OptimizeGeometryInLayer(const UsdzConvertOptions &options, Layer *layer,
                              std::string *warn, std::string *err);
 
 }  // namespace usdz
-}  // namespace tinyusdz
+}  // namespace lightusd

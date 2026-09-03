@@ -3,20 +3,20 @@ import path from 'path'
 import { compression } from 'vite-plugin-compression2'
 
 // Do not minify(we want to make demo website simple)
-// base: "./" => make asset path relative(required for static hosting of tinyusdz demo page at github pages)
+// base: "./" => make asset path relative(required for static hosting of lightusd demo page at github pages)
 export default defineConfig(({ command, mode }) => {
-  const useLocalTinyUSDZ = command === 'serve' && mode === 'development';
-  const tinyusdzRoot = useLocalTinyUSDZ
-    ? path.resolve(__dirname, '../js/src/tinyusdz')
-    : path.resolve(__dirname, 'node_modules/tinyusdz');
-  const nextUtils = useLocalTinyUSDZ
-    ? path.resolve(__dirname, '../js/src/tinyusdz/NextRenderSceneUtils.js')
+  const useLocalLightUSD = command === 'serve' && mode === 'development';
+  const lightusdRoot = useLocalLightUSD
+    ? path.resolve(__dirname, '../js/src/lightusd')
+    : path.resolve(__dirname, 'node_modules/lightusd');
+  const nextUtils = useLocalLightUSD
+    ? path.resolve(__dirname, '../js/src/lightusd/NextRenderSceneUtils.js')
     : path.resolve(__dirname, 'src/next-backend-production-shim.js');
 
   return {
     base: "./",
     define: {
-        __TINYUSDZ_LOCAL_DEV__: JSON.stringify(useLocalTinyUSDZ),
+        __LIGHTUSD_LOCAL_DEV__: JSON.stringify(useLocalLightUSD),
     },
     server: {
         fs: {
@@ -29,11 +29,11 @@ export default defineConfig(({ command, mode }) => {
     },
     resolve: {
         alias: [
-            { find: 'tinyusdz-next-demo-utils', replacement: nextUtils },
-            { find: 'tinyusdz', replacement: tinyusdzRoot },
+            { find: 'lightusd-next-demo-utils', replacement: nextUtils },
+            { find: 'lightusd', replacement: lightusdRoot },
             { find: 'fzstd', replacement: path.resolve(__dirname, 'node_modules/fzstd') },
             { find: 'three', replacement: path.resolve(__dirname, 'node_modules/three') },
-            { find: 'tinyusdz-js', replacement: path.resolve(__dirname, '../js') },
+            { find: 'lightusd-js', replacement: path.resolve(__dirname, '../js') },
         ],
     },
     build: {
@@ -71,7 +71,7 @@ export default defineConfig(({ command, mode }) => {
         cssMinify: true,
     },
     optimizeDeps: {
-        exclude: ['tinyusdz', '@lighttransport/mujoco-wasm'],
+        exclude: ['lightusd', '@lighttransport/mujoco-wasm'],
     },
     // Use only gzip here. Vite will emit the WASM referenced by the npm package.
     plugins: [

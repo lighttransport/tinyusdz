@@ -1,6 +1,6 @@
 # MaterialX Parser
 
-A secure, dependency-free, C++14 XML parser specifically designed for MaterialX documents. This parser replaces pugixml in TinyUSDZ's usdMtlx implementation.
+A secure, dependency-free, C++14 XML parser specifically designed for MaterialX documents. This parser replaces pugixml in LightUSD's usdMtlx implementation.
 
 ## Features
 
@@ -26,7 +26,7 @@ The parser consists of several layers:
 ```cpp
 #include "mtlx-simple-parser.hh"
 
-tinyusdz::mtlx::SimpleXMLParser parser;
+lightusd::mtlx::SimpleXMLParser parser;
 if (parser.Parse(xml_string)) {
     auto root = parser.GetRoot();
     // Process the document...
@@ -39,11 +39,11 @@ if (parser.Parse(xml_string)) {
 #include "mtlx-usd-adapter.hh"
 
 // Use like pugixml
-tinyusdz::mtlx::pugi::xml_document doc;
-tinyusdz::mtlx::pugi::xml_parse_result result = doc.load_string(xml);
+lightusd::mtlx::pugi::xml_document doc;
+lightusd::mtlx::pugi::xml_parse_result result = doc.load_string(xml);
 
 if (result) {
-    tinyusdz::mtlx::pugi::xml_node root = doc.child("materialx");
+    lightusd::mtlx::pugi::xml_node root = doc.child("materialx");
     // Process nodes...
 }
 ```
@@ -53,7 +53,7 @@ if (result) {
 ```cpp
 #include "mtlx-dom.hh"
 
-tinyusdz::mtlx::MtlxDocument doc;
+lightusd::mtlx::MtlxDocument doc;
 if (doc.ParseFromFile("material.mtlx")) {
     for (const auto& shader : doc.GetNodes()) {
         std::cout << "Shader: " << shader->GetName() << std::endl;
@@ -107,8 +107,8 @@ pugi::xml_parse_result result = doc.load_string(xml);
 
 // After (with mtlx-parser)
 #include "mtlx-usd-adapter.hh"
-tinyusdz::mtlx::pugi::xml_document doc;
-tinyusdz::mtlx::pugi::xml_parse_result result = doc.load_string(xml);
+lightusd::mtlx::pugi::xml_document doc;
+lightusd::mtlx::pugi::xml_parse_result result = doc.load_string(xml);
 ```
 
 ## Limitations

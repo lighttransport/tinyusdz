@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 constexpr int kLightRtOpenPBRVec4s = 20;
@@ -177,4 +177,4 @@ inline void PackLightRtOpenPBRParams(const LightRtOpenPBRParams& p,
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

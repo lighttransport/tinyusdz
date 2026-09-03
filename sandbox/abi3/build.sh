@@ -1,12 +1,12 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache 2.0
 #
-# Build script for TinyUSDZ Python ABI3 binding
+# Build script for LightUSD Python ABI3 binding
 
 set -e  # Exit on error
 
 echo "========================================"
-echo "TinyUSDZ ABI3 Binding Build Script"
+echo "LightUSD ABI3 Binding Build Script"
 echo "========================================"
 echo
 
@@ -34,7 +34,7 @@ case "$BUILD_METHOD" in
         echo
         echo "Build complete!"
         echo
-        echo "The module is now available as: tinyusdz_abi3.so (or .pyd on Windows)"
+        echo "The module is now available as: lightusd_abi3.so (or .pyd on Windows)"
         echo
         echo "Try it out:"
         echo "  python3 examples/example_basic.py"
@@ -51,7 +51,7 @@ case "$BUILD_METHOD" in
         ls -lh dist/*.whl
         echo
         echo "Install with:"
-        echo "  pip install dist/tinyusdz_abi3-*.whl"
+        echo "  pip install dist/lightusd_abi3-*.whl"
         ;;
 
     cmake)
@@ -65,10 +65,10 @@ case "$BUILD_METHOD" in
         cd ..
         echo
         echo "Build complete!"
-        echo "The module is in: build/tinyusdz_abi3.so"
+        echo "The module is in: build/lightusd_abi3.so"
         echo
         echo "Copy it to the current directory to use:"
-        echo "  cp build/tinyusdz_abi3.so ."
+        echo "  cp build/lightusd_abi3.so ."
         ;;
 
     clean)
@@ -76,8 +76,8 @@ case "$BUILD_METHOD" in
         echo "Cleaning build artifacts..."
         echo "----------------------------------------"
         rm -rf build dist *.egg-info
-        rm -f tinyusdz_abi3.so tinyusdz_abi3.*.so
-        rm -f tinyusdz_abi3.pyd tinyusdz_abi3.*.pyd
+        rm -f lightusd_abi3.so lightusd_abi3.*.so
+        rm -f lightusd_abi3.pyd lightusd_abi3.*.pyd
         find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
         echo "Clean complete!"
         ;;

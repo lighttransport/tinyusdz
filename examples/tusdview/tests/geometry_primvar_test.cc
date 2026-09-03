@@ -6,12 +6,12 @@
 #include <cstdio>
 #include <cstring>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 
 namespace {
 
-namespace tydra = tinyusdz::tydra;
+namespace tydra = lightusd::tydra;
 
 bool Near(float a, float b, float eps = 1.0e-6f) {
   return std::fabs(a - b) <= eps;
@@ -62,10 +62,10 @@ def Xform "Root" {
 }
 )";
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
   std::string err;
-  if (!tinyusdz::LoadUSDAFromMemory(
+  if (!lightusd::LoadUSDAFromMemory(
           reinterpret_cast<const uint8_t*>(kUSDA), std::strlen(kUSDA), "",
           &stage, &warn, &err)) {
     std::fprintf(stderr, "LoadUSDAFromMemory failed: %s\n", err.c_str());
@@ -117,7 +117,7 @@ bool TestInstanceOpacityPacking() {
     tydra::RenderInstance inst;
     inst.mesh_id = 0;
     inst.visible = true;
-    inst.global_matrix = tinyusdz::value::matrix4d::identity();
+    inst.global_matrix = lightusd::value::matrix4d::identity();
     inst.global_matrix.m[3][0] = static_cast<double>(i) * 2.0;
     if (i == 1) {
       inst.has_display_color = true;
@@ -195,13 +195,13 @@ int main() {
       tydra::vec3{0.0f, 1.0f, 0.0f}, tydra::vec3{0.0f, 1.0f, 0.0f},
       tydra::vec3{0.0f, 1.0f, 0.0f}, tydra::vec3{-1.0f, 0.0f, 0.0f},
       tydra::vec3{-1.0f, 0.0f, 0.0f}, tydra::vec3{-1.0f, 0.0f, 0.0f}};
-  const std::array<tinyusdz::value::texcoord2f, 6> uv1 = {
-      tinyusdz::value::texcoord2f{0.1f, 0.2f},
-      tinyusdz::value::texcoord2f{0.8f, 0.2f},
-      tinyusdz::value::texcoord2f{0.8f, 0.9f},
-      tinyusdz::value::texcoord2f{0.1f, 0.2f},
-      tinyusdz::value::texcoord2f{0.8f, 0.9f},
-      tinyusdz::value::texcoord2f{0.1f, 0.9f}};
+  const std::array<lightusd::value::texcoord2f, 6> uv1 = {
+      lightusd::value::texcoord2f{0.1f, 0.2f},
+      lightusd::value::texcoord2f{0.8f, 0.2f},
+      lightusd::value::texcoord2f{0.8f, 0.9f},
+      lightusd::value::texcoord2f{0.1f, 0.2f},
+      lightusd::value::texcoord2f{0.8f, 0.9f},
+      lightusd::value::texcoord2f{0.1f, 0.9f}};
   const std::array<tydra::vec3, 6> display = {
       tydra::vec3{1.0f, 0.0f, 0.0f}, tydra::vec3{0.0f, 1.0f, 0.0f},
       tydra::vec3{0.0f, 0.0f, 1.0f}, tydra::vec3{1.0f, 1.0f, 0.0f},

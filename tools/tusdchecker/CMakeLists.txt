@@ -2,13 +2,13 @@ cmake_minimum_required(VERSION 3.16)
 
 # tusdchecker uses only the dependency-free next core. Build that target on
 # demand when the top-level project has not enabled another next consumer.
-if(NOT TARGET tinyusdz_next)
+if(NOT TARGET lightusd_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
                    ${CMAKE_BINARY_DIR}/tusdchecker_next_build)
 endif()
 
 add_executable(tusdchecker tusdchecker.cc)
-target_link_libraries(tusdchecker PRIVATE tinyusdz_next)
+target_link_libraries(tusdchecker PRIVATE lightusd_next)
 target_compile_features(tusdchecker PRIVATE cxx_std_17)
 target_include_directories(tusdchecker PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
@@ -19,7 +19,7 @@ endif()
 set_target_properties(tusdchecker PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
-if(TINYUSDZ_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS)
   add_test(NAME tusdchecker_valid
     COMMAND tusdchecker --groups core
             ${PROJECT_SOURCE_DIR}/tests/usda/cube.usda)

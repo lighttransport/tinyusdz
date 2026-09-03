@@ -2,7 +2,7 @@
 
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -I../../../ -I../../../src
-LDFLAGS = ../../../build/libtinyusdz_static.a \
+LDFLAGS = ../../../build/liblightusd_static.a \
 	  -ldl
 
 # Source files

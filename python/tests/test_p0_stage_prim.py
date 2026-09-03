@@ -2,13 +2,13 @@
 """P0: Stage / Prim / Attribute / Relationship / Variant full API coverage."""
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
 
 def test_stage_full_metadata():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     # initial defaults
     assert st.up_axis in ("Y", "Z", "X", None)
     st.up_axis = "Z"
@@ -22,7 +22,7 @@ def test_stage_full_metadata():
     assert st.get_metadata("comment") == "cmt"
     assert st.get_metadata("no_such_key") is None
     # invalid upAxis should raise
-    with pytest.raises((ValueError, tinyusdz.UsdError)):
+    with pytest.raises((ValueError, lightusd.UsdError)):
         st.set_metadata("upAxis", "Q")
     st.add_sublayer("./a.usda")
     st.add_sublayer("./b.usda")
@@ -46,14 +46,14 @@ def test_stage_full_metadata():
     assert st.get_prim_at("/Nope") is None
     assert st.get_prim_at("/World") is not None
     # roundtrip
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     assert st2.up_axis == "Z"
     assert st2.doc == "hello world"
     assert st2.sublayers == ("./a.usda", "./b.usda")
 
 
 def test_stage_specifiers_and_file_roundtrip(tmp_path):
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/DefPrim", "Xform", specifier="def")
     st.define_prim("/OverPrim", "Xform", specifier="over")
     st.define_prim("/ClassPrim", "Xform", specifier="class")
@@ -67,7 +67,7 @@ def test_stage_specifiers_and_file_roundtrip(tmp_path):
     for ext in ("usda", "usdc"):
         fn = tmp_path / f"s.{ext}"
         st.save(str(fn))
-        st2 = tinyusdz.load(str(fn))
+        st2 = lightusd.load(str(fn))
         assert "/DefPrim" in st2
     # flattened
     flat = st.flattened()
@@ -80,7 +80,7 @@ def test_stage_specifiers_and_file_roundtrip(tmp_path):
 
 
 def test_prim_full_api():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/R", "Xform").set_metadata("kind", "assembly")
     c = st.define_prim("/R/C", "Mesh")
     c.set_metadata("comment", "leaf")
@@ -119,7 +119,7 @@ def test_prim_full_api():
     c.remove_property("tmp")
     assert "tmp" not in c
     # transforms
-    st2 = tinyusdz.loads(st.export_usda())
+    st2 = lightusd.loads(st.export_usda())
     # need xformOpOrder for transform to apply
     r = st2.prim_at("/R")
     r.set("xformOp:translate", (5, 0, 0), type="double3")
@@ -131,7 +131,7 @@ def test_prim_full_api():
 
 
 def test_attribute_full_api():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     p.set("myAttr", 1.0, type="float")
     attr = p.attribute("myAttr")
@@ -175,11 +175,11 @@ def test_attribute_full_api():
     attr.set(2.0)
     assert p["myAttr"] == pytest.approx(2.0)
     attr.block()
-    assert p["myAttr"] is tinyusdz.ValueBlock
+    assert p["myAttr"] is lightusd.ValueBlock
 
 
 def test_relationship_and_variants_full():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     p = st.define_prim("/P", "Xform")
     # relationships via Prim API
     p.add_relationship("rel", ["/A", "/B"])
@@ -230,7 +230,7 @@ def test_load_options_and_is_usd(tmp_path):
     base.write_text('#usda 1.0\ndef Xform "Base" { float v = 1 }\n')
     root = tmp_path / "root.usda"
     root.write_text('#usda 1.0\n(\n subLayers = [@./base.usda@]\n)\n')
-    st = tinyusdz.load(str(root))
+    st = lightusd.load(str(root))
     assert st.prim_at("/Base")["v"] == pytest.approx(1.0)
     # variants override
     vroot = tmp_path / "v.usda"
@@ -239,24 +239,24 @@ def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"])
   variantSet "lod" = { "high" { float a = 1 } "low" { float a = 2 } }
 }
 ''')
-    assert tinyusdz.load(str(vroot), variants={"lod": "low"}).prim_at("/R")["a"] == pytest.approx(2.0)
+    assert lightusd.load(str(vroot), variants={"lod": "low"}).prim_at("/R")["a"] == pytest.approx(2.0)
     # max_memory
-    tinyusdz.load(str(root), max_memory=100*1024*1024)
+    lightusd.load(str(root), max_memory=100*1024*1024)
     # is_usd / load_bytes with format
-    st2 = tinyusdz.Stage.create()
+    st2 = lightusd.Stage.create()
     st2.define_prim("/X", "Xform")
     data_usda = st2.export_usda().encode()
-    assert tinyusdz.load_bytes(data_usda, format="usda").prim_at("/X") is not None
+    assert lightusd.load_bytes(data_usda, format="usda").prim_at("/X") is not None
     data_usdc = st2.export_usdc()
-    assert tinyusdz.load_bytes(data_usdc, format="usdc").prim_at("/X") is not None
+    assert lightusd.load_bytes(data_usdc, format="usdc").prim_at("/X") is not None
     fn = tmp_path / "x.usda"
     st2.save(str(fn))
-    assert tinyusdz.is_usd(str(fn))
-    assert tinyusdz.is_usd(str(fn),) is True
+    assert lightusd.is_usd(str(fn))
+    assert lightusd.is_usd(str(fn),) is True
     bad = tmp_path / "bad.usda"
     bad.write_text("not usd")
-    assert not tinyusdz.is_usd(str(bad))
+    assert not lightusd.is_usd(str(bad))
     # composed flag: composed=False skips composition arcs (subLayers not expanded),
     # so /Base may not be present; just verify load succeeds
-    st_nc = tinyusdz.load(str(root), composed=False)
+    st_nc = lightusd.load(str(root), composed=False)
     assert st_nc is not None

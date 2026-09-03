@@ -13,11 +13,11 @@
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usd-validation.hh"
 #include "usdc-writer.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

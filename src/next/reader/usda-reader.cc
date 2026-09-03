@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA Reader implementation
+// LightUSD Next - USDA Reader implementation
 
 #include "usda-reader.hh"
 #include "../strfmt.hh"
@@ -10,7 +10,7 @@
 #include <cstring>
 #include <utility>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -141,4 +141,4 @@ bool IsUSDAFile(const char* filename) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

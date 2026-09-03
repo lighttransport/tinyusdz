@@ -30,7 +30,7 @@
   }                               \
   return false
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -492,4 +492,4 @@ bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInte
 }
 
 
-}  // namespace tinyusdz
+}  // namespace lightusd

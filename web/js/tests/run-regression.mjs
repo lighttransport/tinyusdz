@@ -41,7 +41,7 @@ const OPTIONAL_NODE_TESTS = [
 
 function usage() {
   console.log(`
-TinyUSDZ web regression gate
+LightUSD web regression gate
 
 Usage:
   node tests/run-regression.mjs [options]
@@ -62,7 +62,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     profile: 'full',
     menagerie: process.env.MENAGERIE_DIR || process.env.MUJOCO_MENAGERIE ||
       path.join(WEB_JS_DIR, '.cache', 'mujoco_menagerie'),
-    out: process.env.TINYUSDZ_REGRESSION_OUT ||
+    out: process.env.LIGHTUSD_REGRESSION_OUT ||
       path.join(WEB_JS_DIR, '.regression', `run-${process.pid}`),
     browserMode: 'auto',
     keepOutput: false,
@@ -190,7 +190,7 @@ async function runPhysics(results, opts) {
   const physicsEnv = {
     MENAGERIE_DIR: opts.menagerie,
     MUJOCO_MENAGERIE: opts.menagerie,
-    TINYUSDZ_REGRESSION_OUT: opts.out,
+    LIGHTUSD_REGRESSION_OUT: opts.out,
   };
   results.push(await run(
     'MuJoCo physics-only binding smoke test',
@@ -230,7 +230,7 @@ async function runBrowserTests(results, opts) {
   const browserEnv = {
     MENAGERIE_DIR: opts.menagerie,
     MUJOCO_MENAGERIE: opts.menagerie,
-    TINYUSDZ_REGRESSION_OUT: opts.out,
+    LIGHTUSD_REGRESSION_OUT: opts.out,
   };
   const roundtripSummary = path.join(roundtripOut, 'summary.json');
   if (!roundtripSummaryIsComplete(roundtripSummary)) {

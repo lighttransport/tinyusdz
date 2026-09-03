@@ -15,7 +15,7 @@
 
 #include "ascii-parser.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-types.hh"
 
 namespace {
@@ -403,9 +403,9 @@ template <typename T>
 bool RunArrayCase(const std::string &name, const std::string &data,
                   size_t expected_count, int iterations) {
   return Benchmark(name, data.size(), iterations, [&]() {
-    tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(data.data()),
+    lightusd::StreamReader sr(reinterpret_cast<const uint8_t *>(data.data()),
                               data.size(), false);
-    tinyusdz::ascii::AsciiParser parser(&sr);
+    lightusd::ascii::AsciiParser parser(&sr);
     std::vector<T> result;
     if (!parser.ParseBasicTypeArray(&result)) {
       std::cerr << "Parse error for " << name << ": " << parser.GetError()
@@ -479,57 +479,57 @@ bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
                               config.scalar_count, config.iterations);
   ok &= RunArrayCase<uint32_t>("uint[]", MakeUIntArray(config.scalar_count),
                                config.scalar_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::token>(
+  ok &= RunArrayCase<lightusd::value::token>(
       "token[]", MakeTokenArray(config.scalar_count), config.scalar_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::StringData>(
+  ok &= RunArrayCase<lightusd::value::StringData>(
       "string[]", MakeStringArray(config.scalar_count), config.scalar_count,
       config.iterations);
   ok &= RunArrayCase<int64_t>("int64[]", MakeInt64Array(config.scalar_count),
                               config.scalar_count, config.iterations);
   ok &= RunArrayCase<uint64_t>("uint64[]", MakeUInt64Array(config.scalar_count),
                                config.scalar_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::half>(
+  ok &= RunArrayCase<lightusd::value::half>(
       "half[]", MakeHalfArray(config.scalar_count), config.scalar_count,
       config.iterations);
   ok &= RunArrayCase<float>("float[]", MakeFloatArray(config.scalar_count),
                             config.scalar_count, config.iterations);
   ok &= RunArrayCase<double>("double[]", MakeDoubleArray(config.scalar_count),
                              config.scalar_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::half3>(
+  ok &= RunArrayCase<lightusd::value::half3>(
       "half3[]", MakeHalf3Array(config.tuple_count), config.tuple_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::float3>(
+  ok &= RunArrayCase<lightusd::value::float3>(
       "float3[]", MakeFloat3Array(config.tuple_count), config.tuple_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::double3>(
+  ok &= RunArrayCase<lightusd::value::double3>(
       "double3[]", MakeDouble3Array(config.tuple_count), config.tuple_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::quath>(
+  ok &= RunArrayCase<lightusd::value::quath>(
       "quath[]", MakeQuatHalfArray(config.quat_count), config.quat_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::quatf>(
+  ok &= RunArrayCase<lightusd::value::quatf>(
       "quatf[]", MakeQuatFloatArray(config.quat_count), config.quat_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::quatd>(
+  ok &= RunArrayCase<lightusd::value::quatd>(
       "quatd[]", MakeQuatDoubleArray(config.quat_count), config.quat_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::matrix2f>(
+  ok &= RunArrayCase<lightusd::value::matrix2f>(
       "matrix2f[]", MakeMatrix2fArray(config.matrix_count),
       config.matrix_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::matrix3f>(
+  ok &= RunArrayCase<lightusd::value::matrix3f>(
       "matrix3f[]", MakeMatrix3fArray(config.matrix_count),
       config.matrix_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::matrix4f>(
+  ok &= RunArrayCase<lightusd::value::matrix4f>(
       "matrix4f[]", MakeMatrix4fArray(config.matrix_count),
       config.matrix_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::matrix2d>(
+  ok &= RunArrayCase<lightusd::value::matrix2d>(
       "matrix2d[]", MakeMatrix2dArray(config.matrix_count),
       config.matrix_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::matrix3d>(
+  ok &= RunArrayCase<lightusd::value::matrix3d>(
       "matrix3d[]", MakeMatrix3dArray(config.matrix_count),
       config.matrix_count, config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::matrix4d>(
+  ok &= RunArrayCase<lightusd::value::matrix4d>(
       "matrix4d[]", MakeMatrix4dArray(config.matrix_count),
       config.matrix_count, config.iterations);
   return ok;
@@ -538,10 +538,10 @@ bool RunDirectArrayBenchmarks(const BenchmarkConfig &config) {
 bool RunTextArrayBenchmarks(const BenchmarkConfig &config) {
   std::cout << "\n=== Direct Text Array Literal Parsing ===\n";
   bool ok = true;
-  ok &= RunArrayCase<tinyusdz::value::token>(
+  ok &= RunArrayCase<lightusd::value::token>(
       "token[]", MakeTokenArray(config.scalar_count), config.scalar_count,
       config.iterations);
-  ok &= RunArrayCase<tinyusdz::value::StringData>(
+  ok &= RunArrayCase<lightusd::value::StringData>(
       "string[]", MakeStringArray(config.scalar_count), config.scalar_count,
       config.iterations);
   return ok;
@@ -555,10 +555,10 @@ bool RunUsdaBenchmark(const BenchmarkConfig &config) {
             << " bytes=" << usda.size() << "\n";
 
   return Benchmark("LoadUSDA", usda.size(), config.iterations, [&]() {
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     std::string warn;
     std::string err;
-    const bool ret = tinyusdz::LoadUSDFromMemory(
+    const bool ret = lightusd::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
         "synthetic-numeric.usda", &stage, &warn, &err);
     if (!ret) {
@@ -576,7 +576,7 @@ int main(int argc, char **argv) {
   const BenchmarkConfig config = ConfigFor(opts.profile);
 
   std::cout << "========================================\n";
-  std::cout << "TinyUSDZ Synthetic USDA Parser Benchmark\n";
+  std::cout << "LightUSD Synthetic USDA Parser Benchmark\n";
   std::cout << "Profile: "
             << ((opts.profile == BenchmarkProfile::Quick) ? "quick" : "full")
             << "\n";

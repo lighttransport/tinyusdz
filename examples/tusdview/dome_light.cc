@@ -76,12 +76,12 @@ bool Bake(std::vector<float> rgb, int width, int height,
 
 bool DecodeFile(const std::string& path, std::vector<float>* rgb, int* width,
                 int* height, std::string* err) {
-  auto loaded = tinyusdz::image::LoadImageFromFile(path);
+  auto loaded = lightusd::image::LoadImageFromFile(path);
   if (!loaded) {
     if (err) *err = loaded.error();
     return false;
   }
-  tinyusdz::Image& image = loaded.value().image;
+  lightusd::Image& image = loaded.value().image;
   if (image.width <= 0 || image.height <= 0 || image.channels <= 0) {
     if (err) *err = "decoded image is empty";
     return false;

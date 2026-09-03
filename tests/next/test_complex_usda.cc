@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Complex USDA parsing test
+// LightUSD Next - Complex USDA parsing test
 
 #include <iostream>
 #include <cassert>
@@ -11,7 +11,7 @@
 #include "next/reader/usda-reader.hh"
 #include "next/writer/usda-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 void test_cube_with_material() {
   std::cout << "Testing complex cube with material..." << std::endl;
@@ -986,7 +986,7 @@ def Xform "W" (
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next Complex USDA Tests ===" << std::endl;
+  std::cout << "=== LightUSD Next Complex USDA Tests ===" << std::endl;
   std::cout << std::endl;
 
   try {

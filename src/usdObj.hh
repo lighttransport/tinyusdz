@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-// 
+//
 // Built-in .obj import plugIn.
 // Import only. Writing scene data as .obj is not supported.
 //
-// example usage 
+// example usage
 //
 // def "mesh" (
 //   prepend references = @bunny.obj@
@@ -18,7 +18,7 @@
 
 class GPrim;
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace usdObj {
 
@@ -27,4 +27,4 @@ bool ReadObjFromFile(const std::string &filepath, GPrim *prim, std::string *err 
 
 } // namespace usdObj
 
-} // namespace tinyusdz
+} // namespace lightusd

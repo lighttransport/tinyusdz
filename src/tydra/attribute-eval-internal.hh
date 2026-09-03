@@ -13,7 +13,7 @@
 #include "tiny-format.hh"
 #include "value-pprint.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace detail {
 
@@ -25,7 +25,7 @@ namespace detail {
 // typed evaluation files.
 // --------------------------------------------------------------------------
 template <typename T>
-bool FollowConnection(const tinyusdz::Stage &stage,
+bool FollowConnection(const lightusd::Stage &stage,
                       const Attribute &conn_attr,
                       const std::string &attr_name,
                       T *value_out, std::string *err,
@@ -52,7 +52,7 @@ bool FollowConnection(const tinyusdz::Stage &stage,
 }
 
 // std::string specialization: also accepts token-typed values.
-inline bool FollowConnection(const tinyusdz::Stage &stage,
+inline bool FollowConnection(const lightusd::Stage &stage,
                              const Attribute &conn_attr,
                              const std::string &attr_name,
                              std::string *value_out, std::string *err,
@@ -130,4 +130,4 @@ Attribute ToAttributeConnection(const AttrT &input,
 
 }  // namespace detail
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

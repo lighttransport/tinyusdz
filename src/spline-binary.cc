@@ -25,7 +25,7 @@
 #include <cstring>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -316,4 +316,4 @@ bool DecodeSplineFromBinary(const uint8_t *data, size_t size, SplineData *out,
   return true;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -19,7 +19,7 @@
 #include "value-pprint.hh"
 #include "safe-arithmetic.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 #include "usdGeom-primvar-impl.inc"
 
@@ -39,4 +39,4 @@ APPLY_GEOMPRIVAR_TYPE_VEC_A(INSTANCIATE_GET_VALUE)
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 #undef INSTANCIATE_GET_VALUE
 
-}  // namespace tinyusdz
+}  // namespace lightusd

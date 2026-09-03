@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0
- * tinyusdz._core — Stage type and depth-first stage iterator.
+ * lightusd._core — Stage type and depth-first stage iterator.
  */
 
 #include "py-internal.h"
@@ -83,7 +83,7 @@ static PyType_Slot StageIter_slots[] = {
 };
 
 static PyType_Spec StageIter_spec = {
-    .name = "tinyusdz._core._StageIterator",
+    .name = "lightusd._core._StageIterator",
     .basicsize = sizeof(TusdStageIter),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -728,7 +728,7 @@ static PyType_Slot Stage_slots[] = {
 };
 
 static PyType_Spec Stage_spec = {
-    .name = "tinyusdz._core.Stage",
+    .name = "lightusd._core.Stage",
     .basicsize = sizeof(TusdStage),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE

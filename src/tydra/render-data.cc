@@ -42,7 +42,7 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdVol.hh"  // OpenVDB (.vdb) loader
 #include "usdShade.hh"
@@ -72,9 +72,9 @@
 #include "tydra/shader-network.hh"
 #include "tydra/task-arena.hh"
 #include "value-types.hh"  // value::Mult
-#include "xform.hh"        // tinyusdz::inverse
+#include "xform.hh"        // lightusd::inverse
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -236,64 +236,64 @@ static std::string MaterialSignature(
   if (mat.openPBRShader.has_value()) {
     const OpenPBRSurfaceShader &s = *mat.openPBRShader;
     ss << "openpbr{";
-#define TINYUSDZ_APPEND_OPENPBR_PARAM(name) \
+#define LIGHTUSD_APPEND_OPENPBR_PARAM(name) \
     AppendShaderParam(ss, #name, s.name, textures)
-    TINYUSDZ_APPEND_OPENPBR_PARAM(base_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(base_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(base_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(base_metalness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(base_diffuse_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_ior);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_ior_level);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_rotation);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(specular_roughness_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_depth);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_scatter);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_scatter_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion_abbe_number);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(transmission_dispersion_scale);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_radius);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_radius_scale);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_scale);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(subsurface_scatter_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(sheen_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(fuzz_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_thickness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(thin_film_ior);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_weight);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_rotation);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_ior);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_affect_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_affect_roughness);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_roughness_anisotropy);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_darkening);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(emission_luminance);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(emission_color);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(opacity);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(normal);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(tangent);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_normal);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(coat_tangent);
-    TINYUSDZ_APPEND_OPENPBR_PARAM(displacement);
-#undef TINYUSDZ_APPEND_OPENPBR_PARAM
+    LIGHTUSD_APPEND_OPENPBR_PARAM(base_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(base_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(base_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(base_metalness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(base_diffuse_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_ior);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_ior_level);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_rotation);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(specular_roughness_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_depth);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_scatter);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_scatter_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_dispersion);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_dispersion_abbe_number);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(transmission_dispersion_scale);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_radius);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_radius_scale);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_scale);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(subsurface_scatter_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(sheen_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(sheen_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(sheen_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(fuzz_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(fuzz_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(fuzz_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(thin_film_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(thin_film_thickness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(thin_film_ior);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_weight);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_rotation);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_ior);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_affect_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_affect_roughness);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_roughness_anisotropy);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_darkening);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(emission_luminance);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(emission_color);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(opacity);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(normal);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(tangent);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_normal);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(coat_tangent);
+    LIGHTUSD_APPEND_OPENPBR_PARAM(displacement);
+#undef LIGHTUSD_APPEND_OPENPBR_PARAM
     ss << "tangentRotation=";
     AppendFloat(ss, s.tangent_rotation);
     ss << ";normalMapScale=";
@@ -349,63 +349,63 @@ static void RemapMaterialTextureIds(RenderMaterial &mat,
 
   if (mat.openPBRShader.has_value()) {
     OpenPBRSurfaceShader &s = *mat.openPBRShader;
-#define TINYUSDZ_REMAP_OPENPBR_PARAM(name) RemapShaderParamTexture(s.name, remap)
-    TINYUSDZ_REMAP_OPENPBR_PARAM(base_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(base_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(base_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(base_metalness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(base_diffuse_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_ior);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_ior_level);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_rotation);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(specular_roughness_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_depth);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_scatter);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_scatter_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion_abbe_number);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(transmission_dispersion_scale);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_radius);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_radius_scale);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_scale);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(subsurface_scatter_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(sheen_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(fuzz_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_thickness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(thin_film_ior);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_weight);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_rotation);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_ior);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_affect_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_affect_roughness);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_roughness_anisotropy);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_darkening);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(emission_luminance);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(emission_color);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(opacity);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(normal);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(tangent);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_normal);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(coat_tangent);
-    TINYUSDZ_REMAP_OPENPBR_PARAM(displacement);
-#undef TINYUSDZ_REMAP_OPENPBR_PARAM
+#define LIGHTUSD_REMAP_OPENPBR_PARAM(name) RemapShaderParamTexture(s.name, remap)
+    LIGHTUSD_REMAP_OPENPBR_PARAM(base_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(base_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(base_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(base_metalness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(base_diffuse_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_ior);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_ior_level);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_rotation);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(specular_roughness_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_depth);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_scatter);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_scatter_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_dispersion);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_dispersion_abbe_number);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(transmission_dispersion_scale);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_radius);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_radius_scale);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_scale);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(subsurface_scatter_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(sheen_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(sheen_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(sheen_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(fuzz_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(fuzz_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(fuzz_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(thin_film_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(thin_film_thickness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(thin_film_ior);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_weight);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_rotation);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_ior);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_affect_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_affect_roughness);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_roughness_anisotropy);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_darkening);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(emission_luminance);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(emission_color);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(opacity);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(normal);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(tangent);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_normal);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(coat_tangent);
+    LIGHTUSD_REMAP_OPENPBR_PARAM(displacement);
+#undef LIGHTUSD_REMAP_OPENPBR_PARAM
   }
 }
 
@@ -431,8 +431,8 @@ bool RenderSceneConverter::ConvertCube(
     const GeomCube &cube, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   // Extract cube size
@@ -504,8 +504,8 @@ bool RenderSceneConverter::ConvertSphere(
     const GeomSphere &sphere, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   // Extract sphere radius
@@ -583,8 +583,8 @@ bool RenderSceneConverter::ConvertCylinder(
     const GeomCylinder &cylinder, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double radius = 1.0;
@@ -649,8 +649,8 @@ bool RenderSceneConverter::ConvertCone(
     const GeomCone &cone, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double radius = 1.0;
@@ -714,8 +714,8 @@ bool RenderSceneConverter::ConvertCapsule(
     const GeomCapsule &capsule, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double radius = 0.5;
@@ -780,8 +780,8 @@ bool RenderSceneConverter::ConvertPlane(
     const GeomPlane &plane, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    const std::vector<const lightusd::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const lightusd::BlendShape *>> &blendshapes,
     RenderMesh *dstMesh) {
 
   double width = 1.0;
@@ -866,7 +866,7 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
 // Extract the common FieldAsset attributes (filePath / fieldName) from a
 // field-asset prim (OpenVDBAsset / Field3DAsset / FieldAsset). Returns false if
 // the prim is not a field-asset type.
-static bool GetFieldAssetInfo(const tinyusdz::Prim &prim,
+static bool GetFieldAssetInfo(const lightusd::Prim &prim,
                               value::AssetPath *filePath,
                               std::string *fieldName) {
   const FieldAsset *fa = nullptr;
@@ -1185,7 +1185,7 @@ bool RenderSceneConverter::BuildSingleNode(
     const XformNode &node, Node &out_rnode) {
   Node rnode;
 
-  const tinyusdz::Prim *prim = node.prim;
+  const lightusd::Prim *prim = node.prim;
   if (prim) {
     rnode.prim_name = prim->element_name();
     rnode.abs_path = primPath;
@@ -1866,7 +1866,7 @@ std::string DeferredFailureMessage(const MeshWorkItem &item,
 // Resolve the effective worker count for parallel per-mesh geometry
 // conversion from the config knob (0 = auto, 1 = serial, N = cap).
 size_t ResolveGeometryWorkerCount(int config_threads) {
-#if !defined(TINYUSDZ_ENABLE_THREAD)
+#if !defined(LIGHTUSD_ENABLE_THREAD)
   // Threads are compiled out (default; required for WASM without pthreads).
   (void)config_threads;
   return 1;
@@ -3009,7 +3009,7 @@ bool DefaultTextureImageLoaderFunction(
 
   DCOUT("Resolved asset path = " << resolvedPath);
 
-  auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(),
+  auto result = lightusd::image::LoadImageFromMemory(asset.data(), asset.size(),
                                                      resolvedPath);
   if (!result) {
     if (err) {
@@ -3037,7 +3037,7 @@ bool DefaultTextureImageLoaderFunction(
       texImage.assetTexelComponentType = ComponentType::Half;
     } else {
       if (err) {
-        (*err) += "Invalid image.pixelformat: " + tinyusdz::to_string(imgret.image.format) + "\n";
+        (*err) += "Invalid image.pixelformat: " + lightusd::to_string(imgret.image.format) + "\n";
       }
       return false;
     }
@@ -3051,7 +3051,7 @@ bool DefaultTextureImageLoaderFunction(
       texImage.assetTexelComponentType = ComponentType::Float;
     } else {
       if (err) {
-        (*err) += "Invalid image.pixelformat: " + tinyusdz::to_string(imgret.image.format) + "\n";
+        (*err) += "Invalid image.pixelformat: " + lightusd::to_string(imgret.image.format) + "\n";
       }
       return false;
     }
@@ -3149,7 +3149,7 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
       if (err) (*err) += fmt::format("Failed to read asset: {}\n", assetPath);
       return false;
     }
-    auto result = tinyusdz::image::LoadImageFromMemory(direct_data.data(),
+    auto result = lightusd::image::LoadImageFromMemory(direct_data.data(),
                                                        direct_data.size(),
                                                        assetPath);
     if (!result) {
@@ -3189,7 +3189,7 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
   }
 
   auto result =
-      tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(), resolved);
+      lightusd::image::LoadImageFromMemory(asset.data(), asset.size(), resolved);
   if (!result) {
     if (err) (*err) += "Failed to load image file: " + result.error() + "\n";
     return false;
@@ -3949,8 +3949,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     }
   };
 
-  // Check if transform is identity using tinyusdz::is_identity function
-  bool transform_is_identity = tinyusdz::is_identity(src_transform);
+  // Check if transform is identity using lightusd::is_identity function
+  bool transform_is_identity = lightusd::is_identity(src_transform);
   value::matrix4d src_transform_inverse = value::matrix4d::identity();
   const bool needs_direction_bake =
       !transform_is_identity &&
@@ -3965,7 +3965,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       return false;
     }
     if (needs_direction_bake &&
-        !tinyusdz::inverse(src_transform, src_transform_inverse)) {
+        !lightusd::inverse(src_transform, src_transform_inverse)) {
       set_merge_error(
           "Cannot bake direction attributes with a non-invertible transform.");
       return false;
@@ -4571,7 +4571,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       for (size_t idx : mesh_indices) {
         const auto &src_mesh = meshes[idx];
         const auto &node_info = mesh_node_infos[idx];
-        if (tinyusdz::is_identity(node_info.global_matrix)) {
+        if (lightusd::is_identity(node_info.global_matrix)) {
           continue;
         }
         drop_normals = drop_normals ||
@@ -4688,7 +4688,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
   value::matrix4d default_root_local = value::matrix4d::identity();
   if (env.scene_config.merge_meshes_bake_transform && !root_nodes.empty()) {
     value::matrix4d inv_root;
-    if (tinyusdz::inverse(root_nodes[default_root_index].global_matrix,
+    if (lightusd::inverse(root_nodes[default_root_index].global_matrix,
                           inv_root)) {
       default_root_local = inv_root;
     }
@@ -4858,4 +4858,4 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

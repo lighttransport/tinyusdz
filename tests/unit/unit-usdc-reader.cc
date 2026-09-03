@@ -10,7 +10,7 @@
 #include "acutest.h"
 
 #include "unit-usdc-reader.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "core/prim.hh"
 #include "value-types.hh"
 #include "usdc-writer.hh"
@@ -24,7 +24,7 @@
 
 #include <cstring>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // ---------------------------------------------------------------------------
 // Helper: parse USDA, write USDC in-memory, read back to Stage
@@ -506,51 +506,51 @@ def Material "mat" {
     std::string warn2;
     std::string err2;
     auto stream =
-        std::make_unique<tinyusdz::experimental::MemoryOutputStream>();
+        std::make_unique<lightusd::experimental::MemoryOutputStream>();
     auto *stream_ptr = stream.get();
-    tinyusdz::experimental::CrateWriter writer(std::move(stream));
+    lightusd::experimental::CrateWriter writer(std::move(stream));
 
     TEST_CHECK(writer.Open(&build_err));
     if (!build_err.empty()) {
       TEST_MSG("failed to open writer: %s", build_err.c_str());
     }
 
-    tinyusdz::crate::FieldValuePairVector pseudo_fields;
+    lightusd::crate::FieldValuePairVector pseudo_fields;
     TEST_CHECK(writer.AddSpec(Path("/", ""), SpecType::PseudoRoot, pseudo_fields,
                             &build_err));
 
-    tinyusdz::crate::FieldValuePairVector mat_fields;
-    tinyusdz::crate::CrateValue spec_value;
+    lightusd::crate::FieldValuePairVector mat_fields;
+    lightusd::crate::CrateValue spec_value;
     spec_value.Set(Specifier::Def);
     mat_fields.push_back({"specifier", spec_value});
-    tinyusdz::crate::CrateValue type_name_value;
+    lightusd::crate::CrateValue type_name_value;
     type_name_value.Set(value::token("Material"));
     mat_fields.push_back({"typeName", type_name_value});
     TEST_CHECK(writer.AddSpec(Path("/mat", ""), SpecType::Prim, mat_fields,
                             &build_err));
 
-    tinyusdz::crate::FieldValuePairVector mat_empty_fields = mat_fields;
+    lightusd::crate::FieldValuePairVector mat_empty_fields = mat_fields;
     TEST_CHECK(writer.AddSpec(Path("/mat_empty", ""), SpecType::Prim,
                             mat_empty_fields, &build_err));
 
-    tinyusdz::crate::FieldValuePairVector conn_fields;
-    tinyusdz::crate::CrateValue target_paths;
+    lightusd::crate::FieldValuePairVector conn_fields;
+    lightusd::crate::CrateValue target_paths;
     std::vector<Path> conn_targets;
     conn_targets.push_back(Path("/surf", "outputs:surface"));
     target_paths.Set(conn_targets);
     conn_fields.push_back({"targetPaths", target_paths});
-    tinyusdz::crate::CrateValue conn_type_name;
+    lightusd::crate::CrateValue conn_type_name;
     conn_type_name.Set(value::token("token"));
     conn_fields.push_back({"typeName", conn_type_name});
     TEST_CHECK(writer.AddSpec(Path("/mat", "outputs:surface.connect"),
                              SpecType::Connection, conn_fields, &build_err));
 
-    tinyusdz::crate::FieldValuePairVector empty_conn_fields;
-    tinyusdz::crate::CrateValue empty_target_paths;
+    lightusd::crate::FieldValuePairVector empty_conn_fields;
+    lightusd::crate::CrateValue empty_target_paths;
     std::vector<Path> empty_conn_targets;
     empty_target_paths.Set(empty_conn_targets);
     empty_conn_fields.push_back({"targetPaths", empty_target_paths});
-    tinyusdz::crate::CrateValue empty_conn_type_name;
+    lightusd::crate::CrateValue empty_conn_type_name;
     empty_conn_type_name.Set(value::token("token"));
     empty_conn_fields.push_back({"typeName", empty_conn_type_name});
     TEST_CHECK(writer.AddSpec(Path("/mat_empty", "outputs:surface.connect"),

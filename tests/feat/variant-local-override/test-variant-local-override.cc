@@ -25,9 +25,9 @@
 #include <string>
 
 #include "composition.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

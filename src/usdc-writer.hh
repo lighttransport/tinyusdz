@@ -4,16 +4,16 @@
 
 ///
 /// @file usdc-writer.hh
-/// @brief USDC (USD binary/Crate) writer interface  
+/// @brief USDC (USD binary/Crate) writer interface
 ///
 /// Work-in-progress writer for exporting USD scenes to binary Crate format.
 /// Provides more compact file sizes compared to ASCII format.
 ///
 #pragma once
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 ///
@@ -62,4 +62,4 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
                         bool compress_float_arrays = false);
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

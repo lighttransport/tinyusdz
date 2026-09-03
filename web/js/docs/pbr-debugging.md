@@ -1,6 +1,6 @@
 # PBR Debugging Tools
 
-Material inspection and validation tools in the TinyUSDZ MaterialX web demos (`materialx.js`, `openpbr-nodegraph-demo.js`, `mtlx-debug.js`).
+Material inspection and validation tools in the LightUSD MaterialX web demos (`materialx.js`, `openpbr-nodegraph-demo.js`, `mtlx-debug.js`).
 
 ## Tools Overview
 

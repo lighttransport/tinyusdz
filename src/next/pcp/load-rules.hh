@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Payload load rules
+// LightUSD Next - Payload load rules
 //
 // An exception-free port of pxr UsdStageLoadRules: per-subtree rules that
 // govern whether payloads are included, resolved with ancestor/descendant
@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -76,4 +76,4 @@ class LoadRules {
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

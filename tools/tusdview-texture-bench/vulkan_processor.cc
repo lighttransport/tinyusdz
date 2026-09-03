@@ -28,7 +28,7 @@ VulkanProcessor::VulkanProcessor(bool allowSoftware, const std::string& selector
   app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   app.pApplicationName = "tusdview texture benchmark";
   app.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-  app.pEngineName = "tinyusdz";
+  app.pEngineName = "lightusd";
   app.engineVersion = VK_MAKE_VERSION(1, 0, 0);
   app.apiVersion = VK_API_VERSION_1_2;
   VkInstanceCreateInfo ci{};

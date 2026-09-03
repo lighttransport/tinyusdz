@@ -91,9 +91,9 @@ Landed so far:
   re-entrantly-called methods (ComputePrimIndex, Invalidate) split into a public
   entry (locks once) + a lock-free `*_locked` worker; internal callers use the
   worker, so `api_mu_` is now a plain `std::mutex`.
-  `TINYUSDZ_NEXT_RECURSIVE_LOCK` restores the recursive mutex as an escape
+  `LIGHTUSD_NEXT_RECURSIVE_LOCK` restores the recursive mutex as an escape
   hatch. TSAN-clean with threads on.
-- **Phase 9 (F4, opt-in)** — `TINYUSDZ_NEXT_FINE_LOCKS` makes `api_mu_` a
+- **Phase 9 (F4, opt-in)** — `LIGHTUSD_NEXT_FINE_LOCKS` makes `api_mu_` a
   `std::shared_timed_mutex`: read-only queries + the ComputePrimIndex cache-hit
   fast path take a shared lock (concurrent), builds/writers take the exclusive
   lock; the write-lock double-check in `ComputePrimIndex_locked` keeps a
@@ -102,14 +102,14 @@ Landed so far:
   (incl. 8-thread×1000-iter concurrent queries on one shared cache).
   **Follow-up (post-roadmap review):** the READ_LOCK/WRITE_LOCK call sites and
   the `PcpMutex` policy selection (`pcp/cache-lock.hh`) had been written but
-  `TINYUSDZ_NEXT_FINE_LOCKS` was never exposed as a CMake `option()` — every
+  `LIGHTUSD_NEXT_FINE_LOCKS` was never exposed as a CMake `option()` — every
   build silently fell back to the default single-exclusive-mutex policy no
   matter what a caller intended, i.e. T1 was still live in every actual build.
   Added the option to `src/next/CMakeLists.txt` (requires
-  `TINYUSDZ_NEXT_ENABLE_THREAD`). Turning it on for the first time also
+  `LIGHTUSD_NEXT_ENABLE_THREAD`). Turning it on for the first time also
   surfaced two bugs the option's absence had kept latent: (1)
   `PropNameTable::is_frozen()` had no definition at all under
-  `TINYUSDZ_ENABLE_THREAD` (only the non-threaded stub existed), so any
+  `LIGHTUSD_ENABLE_THREAD` (only the non-threaded stub existed), so any
   threaded build referencing it failed to link -- fixed with an atomic-load
   read of the published snapshot pointer; (2) `test_tydra_next.cc`'s
   `TestNameTableFreezeStability` asserted that interning a new name while
@@ -119,8 +119,8 @@ Landed so far:
   path instead, specifically so a concurrent lock-free reader is never
   disturbed. The test predates that redesign and was never caught because
   `is_frozen()` was a dead stub always returning `false`. Verified with a
-  TSan build (clang, `TINYUSDZ_NEXT_ENABLE_THREAD=ON` +
-  `TINYUSDZ_NEXT_FINE_LOCKS=ON`): 9 test binaries × 3 runs, 0 races; default
+  TSan build (clang, `LIGHTUSD_NEXT_ENABLE_THREAD=ON` +
+  `LIGHTUSD_NEXT_FINE_LOCKS=ON`): 9 test binaries × 3 runs, 0 races; default
   (non-threaded) ctest suite still 35/35.
 - **Phase 9 (F3)** — `layer_stacks`/`path_table` are `std::deque` (stable
   element addresses): a PrimIndex borrows raw pointers into these tables and
@@ -273,7 +273,7 @@ Goals, in priority order:
 4. **Instancing** — complete the instance-key model and add consumer APIs.
 5. **Lazy loading** — a real load-rules model for payloads (OpenUSD `UsdStageLoadRules`).
 6. **Multithread-ready** — replace the single big lock with minimal, provably-safe
-   locking; zero overhead when `TINYUSDZ_ENABLE_THREAD` is OFF.
+   locking; zero overhead when `LIGHTUSD_ENABLE_THREAD` is OFF.
 
 Reference implementation for hardening/verification: `../OpenUSD/pxr/`
 (Pcp prim indexing, `UsdStageLoadRules`, `Usd_InstanceCache`, `VtArray` CoW,
@@ -322,7 +322,7 @@ already fixed — check "Landed so far" first, always.
 
 | # | Problem | Evidence |
 |---|---------|----------|
-| T1 | ~~One `std::recursive_mutex api_mu_` serializes every public cache entry point when `TINYUSDZ_ENABLE_THREAD` is ON.~~ **CLOSED** — Phase 9 F6 dropped the recursive engine mutex (plain `std::mutex` + lock-free `*_locked` internals); Phase 9 F4 added the `TINYUSDZ_NEXT_FINE_LOCKS` shared/exclusive policy on top, and the CMake option to actually turn it on landed in the post-roadmap follow-up (see the F4 bullet above) — until then the option existed in code but was unreachable, so every real build still paid the T1 cost regardless of intent. | `pcp/cache.cc:24,79` (historical) |
+| T1 | ~~One `std::recursive_mutex api_mu_` serializes every public cache entry point when `LIGHTUSD_ENABLE_THREAD` is ON.~~ **CLOSED** — Phase 9 F6 dropped the recursive engine mutex (plain `std::mutex` + lock-free `*_locked` internals); Phase 9 F4 added the `LIGHTUSD_NEXT_FINE_LOCKS` shared/exclusive policy on top, and the CMake option to actually turn it on landed in the post-roadmap follow-up (see the F4 bullet above) — until then the option existed in code but was unreachable, so every real build still paid the T1 cost regardless of intent. | `pcp/cache.cc:24,79` (historical) |
 | T2 | `LayerRegistry` holds its mutex **across file parse**, so the "parallel" layer prefetch in `PrewarmPrimIndices` parses one file at a time. | `pcp/layer-registry.cc:69-92`; `cache.cc:936-951` — **STATUS UNCLEAR**: Phase 9 F2 ("LayerRegistry parses outside the lock") claims this closed; not re-verified line-by-line in the post-roadmap review, worth a fresh read before relying on it. |
 | T3 | Race inventory if the big lock were removed: `path_table`/interning, `layer_stacks` vector reallocation under readers, `index_cache`/`sources_cache`, `site_to_indices`, deferred-payload set mutation mid-expansion (S7), instance maps, registry counters. | `pcp/cache.cc:92-121, 556-559` — covered by Phase 9 F3 (deque-stable addressing) and F5 (deterministic prototype assignment); TSan-clean per the F4 bullet, but see the F4 follow-up note: that TSan pass predates the CMake-wiring fix, so it never actually ran the fine-locks code path either. Re-verified in the post-roadmap review (9 binaries × 3 runs, 0 races) — see F4 bullet. |
 
@@ -354,7 +354,7 @@ concurrency last (after mid-query mutations are gone).
   times `Cache::BuildStage`).
 - Capture baselines into `doc/memory-and-performance.md`:
   `bench_lazy_mem` (`gen`/`eager`/`lazy`/`genmany`), `benchmark_next`,
-  WASM flatten memlog (`-DTINYUSDZ_FLATTEN_MEMLOG`, `pipeline/flatten.cc:29-35`),
+  WASM flatten memlog (`-DLIGHTUSD_FLATTEN_MEMLOG`, `pipeline/flatten.cc:29-35`),
   massif on a large `.usdc`.
 
 ### Phase 1 — Security: recursion & cycle hardening (S1–S3 + quick wins)
@@ -394,7 +394,7 @@ its host, 1000-deep authored hierarchy, reference chain at exactly `max_depth`.
 - `tests/fuzzer/next_compose_fuzzmain.cc` — split input into length-prefixed
   pseudo-layers, register via `Cache::PreloadLayer` + stub resolver,
   `ComposeStageFromLayer` with `max_depth=64`. The only harness exercising Phase 1.
-- New `TINYUSDZ_NEXT_BUILD_FUZZERS` option in `src/next/CMakeLists.txt`
+- New `LIGHTUSD_NEXT_BUILD_FUZZERS` option in `src/next/CMakeLists.txt`
   (clang-only, `-fsanitize=fuzzer,address`).
 - `next_usdcat` CLI (~100 LOC: load + compose + print) and a `corpus-parse-next`
   CTest entry mirroring `corpus-parse-native` (commit `88412f30`), gated on
@@ -538,9 +538,9 @@ rules with ancestor/descendant resolution) + `PcpCache::_includedPayloads`.
 
 ### Phase 9 — Multithread-readiness: minimal locking (T1–T3; land last)
 
-No TBB; C++14 only; everything behind `TINYUSDZ_ENABLE_THREAD` macros that compile
+No TBB; C++14 only; everything behind `LIGHTUSD_ENABLE_THREAD` macros that compile
 to nothing when OFF. Sub-steps independently landable with the big lock as fallback
-(`TINYUSDZ_NEXT_FINE_LOCKS` escape hatch during bring-up).
+(`LIGHTUSD_NEXT_FINE_LOCKS` escape hatch during bring-up).
 
 1. **LayerRegistry parallel parse (T2; biggest practical win, independent):**
    per-key `map<string, shared_future<shared_ptr<Layer>>>` under a small mutex;
@@ -602,7 +602,7 @@ invalidation coupling, thread-safety) — only after Phases 3, 4, and 9.
 - Speed: new pcp compose bench + `benchmark_next`.
 - Robustness: ASAN build for Phase-1 crash tests; each fuzzer ≥1h locally after
   Phase 2; `corpus-parse-next` with `USD_WG_ASSETS_DIR` set.
-- Threading: `build/next-tsan` with `TINYUSDZ_NEXT_ENABLE_THREAD=ON`; stress tests opt-in.
+- Threading: `build/next-tsan` with `LIGHTUSD_NEXT_ENABLE_THREAD=ON`; stress tests opt-in.
 - Determinism: `next_test_usdcat_roundtrip` + serial/parallel grouping parity guard
   Phases 4/5/9.
 
@@ -623,7 +623,7 @@ invalidation coupling, thread-safety) — only after Phases 3, 4, and 9.
 
 ## Phase 2 results (fuzzers + corpus gate)
 
-Three libFuzzer harnesses (`TINYUSDZ_NEXT_BUILD_FUZZERS=ON`, clang) +
+Three libFuzzer harnesses (`LIGHTUSD_NEXT_BUILD_FUZZERS=ON`, clang) +
 `next_usdcat` CLI + `next_corpus_parse` CTest gate. The fuzzers found **7
 crashes** in the first minutes, all now fixed and pinned by
 `tests/next/test_crash_regressions.cc` (replayed under ASAN/UBSAN):

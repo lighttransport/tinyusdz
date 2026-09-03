@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <array>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace spatial {
 
 inline uint32_t expandBits(uint32_t v) {
@@ -28,11 +28,11 @@ inline uint32_t morton3D(uint32_t x, uint32_t y, uint32_t z) {
     x = std::min(x, uint32_t(0x3FF));
     y = std::min(y, uint32_t(0x3FF));
     z = std::min(z, uint32_t(0x3FF));
-    
+
     uint32_t xx = expandBits(x);
     uint32_t yy = expandBits(y);
     uint32_t zz = expandBits(z);
-    
+
     return (xx << 2) | (yy << 1) | zz;
 }
 
@@ -66,11 +66,11 @@ inline uint64_t morton3D64(uint32_t x, uint32_t y, uint32_t z) {
     x = std::min(x, uint32_t(0x1FFFFF));
     y = std::min(y, uint32_t(0x1FFFFF));
     z = std::min(z, uint32_t(0x1FFFFF));
-    
+
     uint64_t xx = expandBits64(x);
     uint64_t yy = expandBits64(y);
     uint64_t zz = expandBits64(z);
-    
+
     return (xx << 2) | (yy << 1) | zz;
 }
 
@@ -81,12 +81,12 @@ inline void decodeMorton3D64(uint64_t code, uint32_t& x, uint32_t& y, uint32_t& 
 }
 
 template <typename T>
-inline void computeGridCoords(const T pos[3], const T origin[3], T cellSize, 
+inline void computeGridCoords(const T pos[3], const T origin[3], T cellSize,
                               uint32_t& gx, uint32_t& gy, uint32_t& gz) {
     T dx = pos[0] - origin[0];
     T dy = pos[1] - origin[1];
     T dz = pos[2] - origin[2];
-    
+
     gx = static_cast<uint32_t>(std::max(T(0), dx / cellSize));
     gy = static_cast<uint32_t>(std::max(T(0), dy / cellSize));
     gz = static_cast<uint32_t>(std::max(T(0), dz / cellSize));
@@ -106,4 +106,4 @@ inline std::array<std::array<int, 3>, 27> getNeighborOffsets() {
 }
 
 } // namespace spatial
-} // namespace tinyusdz
+} // namespace lightusd

@@ -18,13 +18,13 @@
 #include "core/prim-spec.hh"  // PrimSpec, Property, composition-types (transitively: prim-enums, prim-metas, variant-types)
 #include "stream-reader.hh"
 #include "string-similarity.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "typed-array-core.hh"
 
 // Configuration flag for enabling fix suggestions in parse errors
 // When enabled, parser will suggest similar keywords/identifiers for unrecognized tokens
-#ifndef TINYUSDZ_ENABLE_SUGGEST_FIX
-#define TINYUSDZ_ENABLE_SUGGEST_FIX 1
+#ifndef LIGHTUSD_ENABLE_SUGGEST_FIX
+#define LIGHTUSD_ENABLE_SUGGEST_FIX 1
 #endif
 
 //
@@ -41,7 +41,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace ascii {
 
@@ -72,7 +72,7 @@ using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 ///
 /// Parser configuration options.
-/// For strict configurations (e.g. reading USDZ on mobile devices), 
+/// For strict configurations (e.g. reading USDZ on mobile devices),
 /// should disallow unknown items for security and performance.
 ///
 struct AsciiParserOption {
@@ -97,9 +97,9 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 ///
 /// Usage:
 /// ```cpp
-/// tinyusdz::StreamReader reader(filename);
-/// tinyusdz::ascii::AsciiParser parser(&reader);
-/// tinyusdz::Layer layer;
+/// lightusd::StreamReader reader(filename);
+/// lightusd::ascii::AsciiParser parser(&reader);
+/// lightusd::Layer layer;
 /// if (parser.Parse(&layer)) {
 ///   // Success - use the layer
 /// } else {
@@ -172,10 +172,10 @@ class AsciiParser {
   };
 
   struct CursorStore {
-    tinyusdz::HashMap<std::string, StoredCursor> layer_metas;
-    tinyusdz::HashMap<std::string, StoredCursor> prims;
-    tinyusdz::HashMap<std::string, StoredCursor> prim_attrs;
-    tinyusdz::HashMap<std::string, StoredCursor> properties;
+    lightusd::HashMap<std::string, StoredCursor> layer_metas;
+    lightusd::HashMap<std::string, StoredCursor> prims;
+    lightusd::HashMap<std::string, StoredCursor> prim_attrs;
+    lightusd::HashMap<std::string, StoredCursor> properties;
 
     static std::string MakePropertyKey(const std::string &prim_path,
                                        const std::string &property_name) {
@@ -406,7 +406,7 @@ class AsciiParser {
   //    "key0" : { ... }
   //    "key1" : { ... }
   // }
-  // 
+  //
   struct VariantSetContent {
     int64_t variantPrimIdx{-1}; // Pseudo Prim Idx for `variantSet`. -1 = no variantSet node
     std::map<std::string, VariantContent> variantSets;
@@ -418,18 +418,18 @@ class AsciiParser {
     std::map<std::string, Property> props;
     std::vector<value::token> properties;
 
-    // for nested `variantSet` 
+    // for nested `variantSet`
     std::map<std::string, VariantSetContent> variantSets;
   };
 
-  
+
 
   // TODO: Use std::vector instead of std::map?
   using VariantSetList =
       std::map<std::string, VariantSetContent>;
 
   AsciiParser();
-  AsciiParser(tinyusdz::StreamReader *sr);
+  AsciiParser(lightusd::StreamReader *sr);
 
   AsciiParser(const AsciiParser &rhs) = delete;
   AsciiParser(AsciiParser &&rhs) = delete;
@@ -528,7 +528,7 @@ class AsciiParser {
   ///
   /// Set ASCII data stream
   ///
-  void SetStream(tinyusdz::StreamReader *sr);
+  void SetStream(lightusd::StreamReader *sr);
 
   const CursorStore &GetCursorStore() const { return _cursor_store; }
   std::string FormatLayerMetaSourceDiagnostic(const std::string &meta_name,
@@ -977,8 +977,8 @@ class AsciiParser {
   bool ParseVariantsElement(std::string *out_key, std::string *out_var);
   bool ParseVariants(VariantSelectionMap *out_map);
 
-  bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
-  bool MaybeVariability(tinyusdz::Variability *variability,
+  bool MaybeListEditQual(lightusd::ListEditQual *qual);
+  bool MaybeVariability(lightusd::Variability *variability,
                         bool *varying_authored);
 
   ///
@@ -1253,7 +1253,7 @@ class AsciiParser {
     }
   }
 
-  const tinyusdz::StreamReader *_sr = nullptr;
+  const lightusd::StreamReader *_sr = nullptr;
 
   // "class" defs
   // std::map<std::string, Klass> _klasses;
@@ -1270,13 +1270,13 @@ class AsciiParser {
   std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  tinyusdz::HashMap<std::string, VariableDef> _supported_stage_metas;
+  lightusd::HashMap<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  tinyusdz::HashMap<std::string, VariableDef> _supported_prim_metas;
+  lightusd::HashMap<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  tinyusdz::HashMap<std::string, VariableDef> _supported_prop_metas;
+  lightusd::HashMap<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -1310,8 +1310,8 @@ class AsciiParser {
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  tinyusdz::HashMap<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  tinyusdz::HashMap<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  lightusd::HashMap<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  lightusd::HashMap<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 
@@ -1343,4 +1343,4 @@ bool ParseUnregistredValue(const std::string &typeName, const std::string &str,
 
 }  // namespace ascii
 
-}  // namespace tinyusdz
+}  // namespace lightusd

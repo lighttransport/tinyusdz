@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USD Attribute definition
+// LightUSD Next - USD Attribute definition
 // Represents a typed attribute with optional time samples
 
 #pragma once
@@ -10,7 +10,7 @@
 #include <map>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Interpolation type for attributes
@@ -124,4 +124,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

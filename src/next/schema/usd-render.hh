@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct RenderSettingsBaseData {
@@ -70,4 +70,4 @@ bool GetRenderPassData(const Stage& stage, const UsdPrim& prim,
                        RenderPassData* out, double time = 0.0);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

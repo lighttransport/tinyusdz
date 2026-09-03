@@ -1,7 +1,7 @@
 # vchar
 
-`vchar` is TinyUSDZ's native virtual-human rendering profile. It is emitted
-beside `tusdview` when `TINYUSDZ_BUILD_GUI_VIEWER=ON` and deliberately uses the
+`vchar` is LightUSD's native virtual-human rendering profile. It is emitted
+beside `tusdview` when `LIGHTUSD_BUILD_GUI_VIEWER=ON` and deliberately uses the
 same executable image: renderer, UsdSkel evaluation, blendshape deformation,
 MaterialX/OpenPBR materials, texture cache, and BasisCurves hair stay identical.
 
@@ -52,7 +52,7 @@ and zero. The dedicated Facial Rig panel uses the authored labels, limits, and
 defaults directly; hovering a control shows its mapped USD blendshape. UsdSkel
 joint animation and blendshapes execute in realtime.
 
-`vchar_physics` initializes and steps TinyUSDZ's bounded rigid-body solver from
+`vchar_physics` initializes and steps LightUSD's bounded rigid-body solver from
 authored UsdPhysics APIs. Animated or deformed kinematic prim transforms are
 copied into their solver proxies before every step; dynamic solver transforms
 are then written back to the matching prims and renderer mesh-world buffers.

@@ -12,7 +12,7 @@
 
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
@@ -49,7 +49,7 @@ struct Extent {
     return ret;
   }
 
-  const Extent &union_with(const value::float3 &p) TINYUSDZ_LIFETIMEBOUND {
+  const Extent &union_with(const value::float3 &p) LIGHTUSD_LIFETIMEBOUND {
     lower[0] = (std::min)(lower[0], p[0]);
     lower[1] = (std::min)(lower[1], p[1]);
     lower[2] = (std::min)(lower[2], p[2]);
@@ -61,13 +61,13 @@ struct Extent {
     return *this;
   }
 
-  const Extent &union_with(const value::point3f &p) TINYUSDZ_LIFETIMEBOUND {
+  const Extent &union_with(const value::point3f &p) LIGHTUSD_LIFETIMEBOUND {
     union_with(value::float3{p.x, p.y, p.z});
 
     return *this;
   }
 
-  const Extent &union_with(const Extent &box) TINYUSDZ_LIFETIMEBOUND {
+  const Extent &union_with(const Extent &box) LIGHTUSD_LIFETIMEBOUND {
     lower[0] = (std::min)(lower[0], box.lower[0]);
     lower[1] = (std::min)(lower[1], box.lower[1]);
     lower[2] = (std::min)(lower[2], box.lower[2]);
@@ -91,4 +91,4 @@ DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2);  // float3[2]
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,4 +1,4 @@
-// Zero-copy upload of TinyUSDZ mesh heap buffers to WebGL, OpenGL-name style.
+// Zero-copy upload of LightUSD mesh heap buffers to WebGL, OpenGL-name style.
 //
 // getMeshPtr(i) returns per-attribute {ptr, length, comps, dtype} descriptors
 // that point into the WASM heap. We build a transient TypedArray on the *live*

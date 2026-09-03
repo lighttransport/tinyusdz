@@ -8,7 +8,7 @@ add_executable(tusdzconvert
 )
 
 target_link_libraries(tusdzconvert
-  ${TINYUSDZ_TARGET_STATIC}
+  ${LIGHTUSD_TARGET_STATIC}
 )
 
 target_include_directories(tusdzconvert PRIVATE

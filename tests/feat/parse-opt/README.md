@@ -30,7 +30,7 @@ are visible in both manual runs and `ctest`.
 ## Building
 
 ```bash
-cmake -S . -B build -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cmake -S . -B build -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build -j16 --target bench-parse-opt
 ```
 
@@ -69,7 +69,7 @@ Only direct `token[]` and `string[]` literals:
 Allocation profiling for the optimized direct parser paths:
 
 ```bash
-heaptrack -o /tmp/tinyusdz-parse-direct.heaptrack ./build/bench-parse-opt --direct-only
+heaptrack -o /tmp/lightusd-parse-direct.heaptrack ./build/bench-parse-opt --direct-only
 ```
 
 The `ctest` target uses the quick profile:

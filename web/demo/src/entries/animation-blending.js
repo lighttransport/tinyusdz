@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { showLoader, hideLoader } from '../tusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
-import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
-import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
-import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
-import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
-import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
+import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
+import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from 'lightusd/USDSceneSkinningPipeline.js';
+import { extractUSDSceneAnimations } from 'lightusd/USDSceneAnimationPipeline.js';
+import { buildNodeIndexMap } from 'lightusd/USDAnimationConverter.js';
 
 const SAMPLES = [
   { label: 'Multi-clip skeleton', url: './assets/multi-clip-skeleton.usda' },
@@ -329,12 +329,12 @@ function applyWeights() {
 
 async function ensureLoader() {
   if (loader) return loader;
-  setStatus('Initializing TinyUSDZ WASM...');
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    showLoader('Loading TinyUSDZ WASM...', document.getElementById('viewport'));
+  setStatus('Initializing LightUSD WASM...');
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+    showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
   await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
     hideLoader();
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
 }
 
@@ -360,8 +360,8 @@ async function loadURL(url, label) {
 
   const metadata = getUSDSceneMetadata(usd);
   const fps = metadata.timeCodesPerSecond || 24;
-  const mat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), mat, usd, {
+  const mat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), mat, usd, {
     preferredMaterialType: 'usdpreviewsurface', textureCache: new Map(),
   });
   world.add(threeNode);
@@ -439,8 +439,8 @@ async function loadLocalFile(file) {
   world.clear();
   const metadata = getUSDSceneMetadata(usd);
   const fps = metadata.timeCodesPerSecond || 24;
-  const mat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), mat, usd, {
+  const mat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), mat, usd, {
     preferredMaterialType: 'usdpreviewsurface', textureCache: new Map(),
   });
   world.add(threeNode);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Reader
+// LightUSD Next - USDC Reader
 // High-level interface for reading USDC binary files
 
 #pragma once
@@ -10,7 +10,7 @@
 #include "../stage/stage.hh"
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for loading USDC files
@@ -55,4 +55,4 @@ bool IsUSDCFile(const char* filename);
 bool IsUSDCData(const uint8_t* data, size_t size);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

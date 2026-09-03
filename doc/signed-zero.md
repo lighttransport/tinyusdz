@@ -2,12 +2,12 @@
 
 This note records how IEEE-754 signed zero is handled by the OpenUSD reference
 implementation and by AOUSD Core Specification 1.0.1. It is intended to guide
-TinyUSDZ readers, writers, and converters that require bit-exact floating-point
+LightUSD readers, writers, and converters that require bit-exact floating-point
 round trips.
 
 The source review used OpenUSD revision
 `2095fafafd033fa23386d7ec6d58c7cc33974518`. Paths below are relative to the
-TinyUSDZ workspace root.
+LightUSD workspace root.
 
 ## Summary
 
@@ -87,7 +87,7 @@ use special floating-point compression:
 See the floating-point array writer near
 [`_WritePossiblyCompressedArray`](../../OpenUSD/pxr/usd/sdf/crateFile.cpp).
 Thus OpenUSD itself does **not** guarantee bit-exact signed-zero retention for
-scalar floating-point arrays. A bit-exact TinyUSDZ writer must reject those
+scalar floating-point arrays. A bit-exact LightUSD writer must reject those
 compression choices when the zero sign would change.
 
 ### Equality and hashing intentionally collapse the distinction
@@ -173,7 +173,7 @@ The specification's discussion of positive and negative zero in the Crate path
 index section concerns integer/index portability and is unrelated to
 floating-point signed-zero preservation.
 
-## TinyUSDZ implementation guidance
+## LightUSD implementation guidance
 
 For ordinary USD processing, treating positive and negative zero as equal is
 consistent with OpenUSD numerical comparison and hashing. For an explicitly
@@ -200,7 +200,7 @@ itself does not preserve zero signs across such operations.
 
 ### Current writer policy
 
-TinyUSDZ applies this distinction in its authored-value writers:
+LightUSD applies this distinction in its authored-value writers:
 
 - USDA emits `-0` for negative-zero `half`, `float`, and `double` values.
 - USDC value deduplication compares authored floating-point payloads by their

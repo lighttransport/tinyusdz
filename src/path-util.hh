@@ -6,7 +6,7 @@
 
 #include "core/path.hh"  // Path
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pathutil {
 
 ///
@@ -69,10 +69,10 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path,
 /// Currently ToUnixishPath converts backslash character to forward slash
 /// character.
 ///
-/// /home/tinyusdz => C:/Users/tinyusdz
-/// C:\\Users\\tinyusdz => C:/Users/tinyusdz
+/// /home/lightusd => C:/Users/lightusd
+/// C:\\Users\\lightusd => C:/Users/lightusd
 ///
 Path ToUnixishPath(const Path &path);
 
 }  // namespace pathutil
-}  // namespace tinyusdz
+}  // namespace lightusd

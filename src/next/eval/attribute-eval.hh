@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Attribute Evaluation
+// LightUSD Next - Attribute Evaluation
 //
 // Provides unified attribute value resolution with:
 // - Time sample interpolation
@@ -20,7 +20,7 @@
 #include <functional>
 #include <memory>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace pcp { class Cache; }  // lazy (cache-backed) evaluation entry point
@@ -266,4 +266,4 @@ T AttributeEval::EvalOr(const UsdPrim& prim, const std::string& attr_name, T fal
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

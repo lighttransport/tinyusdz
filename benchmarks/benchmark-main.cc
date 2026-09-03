@@ -6,7 +6,7 @@
 #include "timesamples.hh"
 #include "usdGeom.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -99,7 +99,7 @@ UBENCH(perf, any_value_100M)
 {
   constexpr size_t niter = 100 * 10000;
   for (size_t i = 0; i < niter; i++) {
-    tinyusdz::value::Value a;
+    lightusd::value::Value a;
     a = i;
   }
 }
@@ -108,7 +108,7 @@ UBENCH(perf, timesamples_double_10M)
 {
   constexpr size_t ns = 10 * 10000;
 
-  tinyusdz::TypedTimeSamples<double> ts;
+  lightusd::TypedTimeSamples<double> ts;
 
   for (size_t i = 0; i < ns; i++) {
     ts.add_sample(double(i), double(i));
@@ -149,7 +149,7 @@ UBENCH(perf, gprim_10M)
   constexpr size_t niter = 10 * 10000;
   std::vector<value::Value> prims;
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   for (size_t i = 0; i < niter; i++) {
     prims.emplace_back(xform);
   }

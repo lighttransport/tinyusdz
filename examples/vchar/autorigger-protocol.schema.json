@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tinyusdz.github.io/schemas/vchar-autorigger-1.json",
+  "$id": "https://lightusd.github.io/schemas/vchar-autorigger-1.json",
   "title": "vchar external auto-rigger JSON-RPC payloads",
   "type": "object",
   "required": ["jsonrpc", "method"],

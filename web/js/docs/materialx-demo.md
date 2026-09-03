@@ -1,6 +1,6 @@
 # MaterialX / OpenPBR Web Demos
 
-Web-based MaterialX/OpenPBR material viewers built on TinyUSDZ WASM + Three.js.
+Web-based MaterialX/OpenPBR material viewers built on LightUSD WASM + Three.js.
 
 ## Demo Entry Points
 
@@ -10,7 +10,7 @@ Web-based MaterialX/OpenPBR material viewers built on TinyUSDZ WASM + Three.js.
 
 Simple OpenPBR demo with Three.js `MeshPhysicalMaterial`. Features:
 
-- USD file loading (USDA/USDC/USDZ) via TinyUSDZ WASM
+- USD file loading (USDA/USDC/USDZ) via LightUSD WASM
 - OpenPBR parameter editing (base, specular, transmission, coat, emission, geometry, subsurface, thin film)
 - Texture loading from USD with colorspace handling (sRGB, Linear, Rec.709, ACES AP0/AP1)
 - MaterialX XML import/export, JSON export
@@ -19,7 +19,7 @@ Simple OpenPBR demo with Three.js `MeshPhysicalMaterial`. Features:
 - Display-P3 wide gamut support
 - PBR debugging tools: color picker, material property picker, material JSON viewer, split-view comparison, material validator, texture inspector
 
-**Key modules**: `TinyUSDZMaterialX.js`, `OpenPBRMaterial.js`, `OpenPBRValidation.js`, `color-picker.js`, `material-property-picker.js`, `material-json-viewer.js`, `material-override.js`, `split-view-comparison.js`, `texture-inspector.js`
+**Key modules**: `LightUSDMaterialX.js`, `OpenPBRMaterial.js`, `OpenPBRValidation.js`, `color-picker.js`, `material-property-picker.js`, `material-json-viewer.js`, `material-override.js`, `split-view-comparison.js`, `texture-inspector.js`
 
 ### openpbr-nodegraph-demo.js (NodeGraph Demo)
 
@@ -30,7 +30,7 @@ Advanced OpenPBR demo with LiteGraph.js node graph visualization and WebGL2 Mate
 - Everything in the basic demo, plus:
 - LiteGraph-based visual node graph editor for MaterialX shader networks
 - MaterialX node graph optimization (dead code elimination, constant folding)
-- Blender MaterialX export support via `TinyUSDZOpenPBR_WebGL.js`
+- Blender MaterialX export support via `LightUSDOpenPBR_WebGL.js`
 - Custom GLSL shader injection via `onBeforeCompile`
 - Per-material node graph selector
 - Blender-style material shading panels
@@ -39,7 +39,7 @@ Advanced OpenPBR demo with LiteGraph.js node graph visualization and WebGL2 Mate
 - Normal map support, colorspace conversion nodes
 - Bridge client integration (Blender-bridge)
 
-**Key modules**: `TinyUSDZOpenPBR_WebGL.js` (WebGL2 MaterialX node eval), `materialx-node-graph.js` (LiteGraph integration)
+**Key modules**: `LightUSDOpenPBR_WebGL.js` (WebGL2 MaterialX node eval), `materialx-node-graph.js` (LiteGraph integration)
 
 ### Other MaterialX Demos
 
@@ -82,7 +82,7 @@ Technique references:
 Materials can be rendered via two paths:
 
 ```
-TinyUSDZ OpenPBR Data
+LightUSD OpenPBR Data
        ↓
   [Toggle Check]
        ↓
@@ -95,7 +95,7 @@ Material       (MaterialX)
 ```
 
 - **MeshPhysicalMaterial** (default): Direct OpenPBR → Three.js property mapping, works with WebGL
-- **NodeMaterial**: Via `MaterialXLoader` or custom `TinyUSDZOpenPBR_TSL.js`, uses TSL for WebGPU
+- **NodeMaterial**: Via `MaterialXLoader` or custom `LightUSDOpenPBR_TSL.js`, uses TSL for WebGPU
 
 ## Node Graph Visualization (LiteGraph.js)
 
@@ -150,7 +150,7 @@ npm run verify-materialx clean   # Remove results
 **Files**:
 - `verify-materialx.js` — main CLI tool
 - `tests/colorspace-test.js` — sRGB ↔ Linear, Rec.709 → XYZ tests
-- `tests/render-tinyusdz.html` / `tests/render-reference.html` — test renderers
+- `tests/render-lightusd.html` / `tests/render-reference.html` — test renderers
 
 ## OpenPBR → Three.js Parameter Mapping
 

@@ -4,24 +4,24 @@
 CXX = g++
 CXXFLAGS = -std=c++14 -O2 -g -Wall -Wextra
 
-# TinyUSDZ source directory
-TINYUSDZ_DIR = ../../..
-SRC_DIR = $(TINYUSDZ_DIR)/src
+# LightUSD source directory
+LIGHTUSD_DIR = ../../..
+SRC_DIR = $(LIGHTUSD_DIR)/src
 EXT_DIR = $(SRC_DIR)/external
 
 # Include paths
 INCLUDES = -I$(SRC_DIR) -I$(EXT_DIR)
 
 # Define to enable zstd compression
-DEFINES = -DTINYUSDZ_WITH_ZSTD_COMPRESSION -DZSTD_DISABLE_ASM=1
+DEFINES = -DLIGHTUSD_WITH_ZSTD_COMPRESSION -DZSTD_DISABLE_ASM=1
 
 # Zstd source (amalgamated single file)
 ZSTD_SRC = $(EXT_DIR)/zstd.c
 
-# TinyUSDZ sources needed for this test
-TINYUSDZ_SRCS = \
+# LightUSD sources needed for this test
+LIGHTUSD_SRCS = \
 	$(SRC_DIR)/zstd-compression.cc \
-	$(SRC_DIR)/tinyusdz.cc \
+	$(SRC_DIR)/lightusd.cc \
 	$(SRC_DIR)/usda-writer.cc \
 	$(SRC_DIR)/usda-reader.cc \
 	$(SRC_DIR)/usdc-reader.cc \
@@ -66,8 +66,8 @@ TARGET = test_zstd_usd
 
 all: $(TARGET)
 
-$(TARGET): $(TEST_SRC) $(TINYUSDZ_SRCS) $(ZSTD_SRC)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -o $@ $(TEST_SRC) $(TINYUSDZ_SRCS) $(ZSTD_SRC) -lpthread
+$(TARGET): $(TEST_SRC) $(LIGHTUSD_SRCS) $(ZSTD_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -o $@ $(TEST_SRC) $(LIGHTUSD_SRCS) $(ZSTD_SRC) -lpthread
 
 test: $(TARGET)
 	./$(TARGET)

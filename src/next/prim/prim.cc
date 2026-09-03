@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Prim implementation
+// LightUSD Next - Prim implementation
 
 #include "prim.hh"
 #include <algorithm>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 Prim::Prim(const std::string& name, const std::string& type_name)
@@ -144,4 +144,4 @@ bool Prim::has_api_schema(const std::string& schema_name) const {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

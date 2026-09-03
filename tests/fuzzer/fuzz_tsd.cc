@@ -72,7 +72,7 @@ struct StreamCtx {
   volatile double sink_acc = 0.0;  // forces ASAN to read advertised bytes
 };
 
-bool StreamFuzzSink(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool StreamFuzzSink(void *user, const lightusd::tsd::StreamBatch *b) {
   StreamCtx *c = static_cast<StreamCtx *>(user);
   Require(b->positions != nullptr);
   Require(b->vertex_source != nullptr);
@@ -140,7 +140,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   }
   Reader r{data, size};
 
-  namespace tsd = tinyusdz::tsd;
+  namespace tsd = lightusd::tsd;
 
   tsd::Options opts;
   opts.scheme = tsd::Scheme(r.U8() % 4);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import initTinyUSDZ from './tinyusdz.js';
+import initLightUSD from './lightusd.js';
 
 const USDZ_FILEPATH = './sneaker_airforce.usdz';
 //const USDZ_FILEPATH = './sneaker_pegasustrail.usdz';
@@ -18,9 +18,9 @@ const usd_data = await usd_res.arrayBuffer();
 
 const usd_binary = new Uint8Array(usd_data);
 
-initTinyUSDZ().then(function(TinyUSDZLoader) {
+initLightUSD().then(function(LightUSDLoader) {
 
-  const usd = new TinyUSDZLoader.TinyUSDZLoader(usd_binary);
+  const usd = new LightUSDLoader.LightUSDLoader(usd_binary);
   console.log(usd.numMeshes());
 
   const scene = new THREE.Scene();
@@ -66,14 +66,14 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
     const texture = new THREE.DataTexture( imgData, img.width, img.height );
     texture.flipY = true;
     texture.needsUpdate = true;
-    
+
     material = new THREE.MeshBasicMaterial({
       map: texture
     });
   } else {
     material = new THREE.MeshNormalMaterial();
   }
-   
+
 
   // Assume triangulated indices.
   geometry.setIndex( new THREE.Uint32BufferAttribute(mesh.faceVertexIndices, 1) );

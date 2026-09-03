@@ -17,7 +17,7 @@
 #include "value-pprint.hh"
 #include "pprint-enum.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -393,4 +393,4 @@ std::string InspectStage(const Stage &stage, const InspectOptions &opts) {
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

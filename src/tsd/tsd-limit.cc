@@ -23,7 +23,7 @@
 
 #include "tsd-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 namespace {
@@ -638,4 +638,4 @@ Result ComputeLimitNormals(const MeshView &base_mesh, const Options &options,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

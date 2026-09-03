@@ -16,7 +16,7 @@
 #include <cmath>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // AOUSD Core Spec 7.4.2.4.1
 enum class SplineCurveType {
@@ -427,4 +427,4 @@ bool EvaluateSpline(const Spline<T> &spline, double time, T *result) {
   return false;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

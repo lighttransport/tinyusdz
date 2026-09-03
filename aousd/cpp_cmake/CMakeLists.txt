@@ -14,10 +14,10 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Paths to OpenUSD and TinyUSDZ
+# Paths to OpenUSD and LightUSD
 set(OPENUSD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../dist" CACHE PATH "Path to OpenUSD installation")
-set(TINYUSDZ_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "Path to TinyUSDZ source")
-set(TINYUSDZ_BUILD "${TINYUSDZ_ROOT}/build" CACHE PATH "Path to TinyUSDZ build directory")
+set(LIGHTUSD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "Path to LightUSD source")
+set(LIGHTUSD_BUILD "${LIGHTUSD_ROOT}/build" CACHE PATH "Path to LightUSD build directory")
 
 # Find TBB (required by OpenUSD)
 find_package(TBB REQUIRED)
@@ -28,16 +28,16 @@ include_directories(
     ${OPENUSD_ROOT}/include/boost-1_82
 )
 
-# Add TinyUSDZ include directories
+# Add LightUSD include directories
 include_directories(
-    ${TINYUSDZ_ROOT}/src
-    ${TINYUSDZ_ROOT}/src/external
+    ${LIGHTUSD_ROOT}/src
+    ${LIGHTUSD_ROOT}/src/external
 )
 
 # Link directories
 link_directories(
     ${OPENUSD_ROOT}/lib
-    ${TINYUSDZ_BUILD}
+    ${LIGHTUSD_BUILD}
 )
 
 # Create executable
@@ -88,7 +88,7 @@ set(USD_LIBS
 # Link libraries
 target_link_libraries(usd_comparison
     ${USD_LIBS}
-    tinyusdz_static  # TinyUSDZ static library
+    lightusd_static  # LightUSD static library
     TBB::tbb
     pthread
     dl
@@ -121,6 +121,6 @@ message(STATUS "  C++ Compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "  C++ Standard: C++${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  OpenUSD Root: ${OPENUSD_ROOT}")
-message(STATUS "  TinyUSDZ Root: ${TINYUSDZ_ROOT}")
-message(STATUS "  TinyUSDZ Build: ${TINYUSDZ_BUILD}")
+message(STATUS "  LightUSD Root: ${LIGHTUSD_ROOT}")
+message(STATUS "  LightUSD Build: ${LIGHTUSD_BUILD}")
 message(STATUS "")

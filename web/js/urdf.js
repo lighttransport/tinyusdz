@@ -5,20 +5,20 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import URDFLoader from 'urdf-loader';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import {
   basenameFromUri,
-  createConfiguredTinyUSDZLoader,
+  createConfiguredLightUSDLoader,
   getAssetUriFromURL,
   getBackendFromURL,
   makeStaticNextParseOptions,
   parseUSDSceneFromArrayBuffer
-} from 'tinyusdz/LoaderConfigUtils.js';
+} from 'lightusd/LoaderConfigUtils.js';
 import {
   buildNextThreeNode,
   isNextScene,
   nextCountsFromScene
-} from 'tinyusdz/NextRenderSceneUtils.js';
+} from 'lightusd/NextRenderSceneUtils.js';
 
 const state = {
   robot: null,
@@ -222,7 +222,7 @@ const exportButtons = [
 const DEFAULT_USDC_EXPORT_LIMIT_MB = 2048;
 const DEFAULT_MEM_EXPORT_LIMIT_MB = 4096;
 const DEFAULT_SAMPLE_URDF = `<?xml version="1.0"?>
-<robot name="tinyusdz_sample">
+<robot name="lightusd_sample">
   <link name="base">
     <visual>
       <geometry><box size="1 1 0.3"/></geometry>
@@ -252,10 +252,10 @@ function resolveUSDCExportCapsFromRuntime() {
   const queryUsdc = parsePositiveInt(params.get('maxUsdcMb'));
   const queryMem = parsePositiveInt(params.get('maxMemMb'));
   const globalUsdc = parsePositiveInt(
-    typeof window !== 'undefined' ? window.__TINYUSDZ_MAX_USDC_MB : undefined
+    typeof window !== 'undefined' ? window.__LIGHTUSD_MAX_USDC_MB : undefined
   );
   const globalMem = parsePositiveInt(
-    typeof window !== 'undefined' ? window.__TINYUSDZ_MAX_MEM_MB : undefined
+    typeof window !== 'undefined' ? window.__LIGHTUSD_MAX_MEM_MB : undefined
   );
 
   return {
@@ -556,15 +556,15 @@ function extension(path) {
 
 async function ensureTinyLoader() {
   if (!state.tinyLoader) {
-    setStatus('Loading TinyUSDZ WASM...');
-    state.tinyLoader = await createConfiguredTinyUSDZLoader({
+    setStatus('Loading LightUSD WASM...');
+    state.tinyLoader = await createConfiguredLightUSDLoader({
       initOptions: {
         useZstdCompressedWasm: false,
         useMemory64: false,
         backend: state.settings.backend
       }
     });
-    TinyUSDZLoaderUtils.setTinyUSDZ(state.tinyLoader.native_);
+    LightUSDLoaderUtils.setLightUSD(state.tinyLoader.native_);
   }
   return state.tinyLoader;
 }
@@ -573,8 +573,8 @@ async function loadUSDMeshFromFile(file) {
   const loader = await ensureTinyLoader();
   const sceneData = await parseUSDSceneFromArrayBuffer(loader, await file.arrayBuffer(), file.name);
   const rootNode = sceneData.getDefaultRootNode();
-  const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
-  return TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
+  const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
+  return LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
 }
 
 async function loadUSDObjectFromBytes(bytes, filename) {
@@ -611,8 +611,8 @@ async function loadUSDObjectFromBytes(bytes, filename) {
     return object;
   }
   const rootNode = sceneData.getDefaultRootNode();
-  const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const object = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
+  const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
+  const object = await LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
   object.name = filename.replace(/\.[^.]+$/, '') || 'usd_scene';
   return object;
 }
@@ -4835,7 +4835,7 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   //   - baked into the link Xform (link world == restWorld): equivalent to the
   //     old loaded-Xform math, and
   //   - baked into the geoms with the link Xform left at identity (the current
-  //     tinyusdz URDF/MJCF converter, MuJoCo-style): the old code used the
+  //     lightusd URDF/MJCF converter, MuJoCo-style): the old code used the
   //     identity link Xform, so meshLocal == full kinematic world, which the
   //     joint-positioned link node then double-applied, exploding the rig.
   // Falls back to the loaded link world, then identity, when a link has no
@@ -4901,10 +4901,10 @@ function buildGeneratedSourceFromUSD(model) {
 async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
-    const Exporter = loader.native_.TinyUSDZLoaderNative ||
+    const Exporter = loader.native_.LightUSDLoaderNative ||
       loader.native_.NextUSDZConverterNative;
     if (typeof Exporter !== 'function') {
-      throw new Error('The selected TinyUSDZ backend does not provide the URDF/MJCF exporter.');
+      throw new Error('The selected LightUSD backend does not provide the URDF/MJCF exporter.');
     }
     state.nativeExporter = new Exporter();
     const { maxUsdcMb, maxMemMb } = resolveUSDCExportCapsFromRuntime();
@@ -5071,7 +5071,7 @@ function registerNativeMeshBuffer(native, item, collision) {
   if (!buffer) throw new Error(`Missing native mesh buffer for ${item.meshRef}`);
   const fn = collision ? native.setCollisionMesh : native.setVisualMesh;
   if (typeof fn !== 'function') {
-    throw new Error('TinyUSDZ WASM does not expose setVisualMesh/setCollisionMesh.');
+    throw new Error('LightUSD WASM does not expose setVisualMesh/setCollisionMesh.');
   }
   const ok = fn.call(native, item.meshRef, buffer.positions, buffer.normals, buffer.uvs, buffer.indices);
   if (!ok) throw new Error(native.error() || `Failed to register mesh buffer ${item.meshRef}`);

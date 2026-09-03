@@ -3,7 +3,7 @@
 // tir resize, texcomp block compression, texpipe mip pipeline, envmap IBL).
 //
 // This is the only tusdview header/TU pair that touches the textools C API, so
-// the rest of the app stays independent of TINYUSDZ_WITH_TEXTOOLS. Every entry
+// the rest of the app stays independent of LIGHTUSD_WITH_TEXTOOLS. Every entry
 // point returns false (leaving outputs untouched) when tusdview is built
 // without TUSDVIEW_WITH_TEXTOOLS; callers fall back to the legacy paths.
 #pragma once

@@ -15,7 +15,7 @@
 #include "nonstd/optional.hpp"
 #include "../tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Forward declaration for nested variants
@@ -43,7 +43,7 @@ struct VariantOption {
   std::map<std::string, std::string> property_overrides;
 
   // Nested variant sets - supports USD's nested variant hierarchy
-  // Fully qualified to avoid namespace collision with tinyusdz::VariantSet
+  // Fully qualified to avoid namespace collision with lightusd::VariantSet
   std::vector<std::shared_ptr<VariantSet>> nested_variant_sets;
 
   bool operator==(const VariantOption& other) const {
@@ -271,7 +271,7 @@ class DefaultVariantManager : public VariantManager {
  private:
   std::vector<VariantGroup> _variant_groups;
   std::vector<VariantSelection> _current_selections;
-  tinyusdz::HashMap<std::string, int32_t> _variant_group_map;  // prim_path -> index
+  lightusd::HashMap<std::string, int32_t> _variant_group_map;  // prim_path -> index
 };
 
 ///
@@ -296,4 +296,4 @@ std::string GetVariantHierarchyPath(const VariantGroup& group,
                                    const VariantSet& variant_set);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

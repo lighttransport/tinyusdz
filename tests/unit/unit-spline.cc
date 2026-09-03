@@ -6,7 +6,7 @@
 #include "acutest.h"
 
 #include "unit-spline.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/attribute-eval.hh"
 #include "spline-binary.hh"
 #include "primvar.hh"
@@ -20,11 +20,11 @@
 #include <string>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 static bool LoadStage(const std::string &usda, Stage *stage) {
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(usda.data()), usda.size(), "mem.usda",
       stage, &warn, &err);
   if (!ok) {
@@ -227,7 +227,7 @@ void spline_crate_roundtrip_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w, e;
-  bool sret = tinyusdz::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
   if (!sret) return;
   TEST_CHECK(!usdc.empty());
@@ -239,7 +239,7 @@ void spline_crate_roundtrip_test(void) {
 
   Stage stage2;
   std::string w2, e2;
-  bool lret = tinyusdz::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w2, &e2);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
   if (!lret) return;
@@ -279,7 +279,7 @@ void spline_usda_roundtrip_test(void) {
   // Re-parse and check the value still interpolates (linear: t=2 -> 4).
   Stage stage2;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDFromMemory(
+  bool ok = lightusd::LoadUSDFromMemory(
       reinterpret_cast<const uint8_t *>(exported.data()), exported.size(),
       "mem2.usda", &stage2, &warn, &err);
   TEST_CHECK_(ok, "re-parse of exported spline failed: %s\n%s", err.c_str(),
@@ -473,7 +473,7 @@ void spline_binary_types_test(void) {
 // ---------------------------------------------------------------------------
 namespace {
 std::string SplineFixture(const std::string &rel) {
-  if (const char *root = std::getenv("TINYUSDZ_TEST_FIXTURE_DIR")) {
+  if (const char *root = std::getenv("LIGHTUSD_TEST_FIXTURE_DIR")) {
     if (*root != '\0') {
       const std::string candidate = std::string(root) + "/" + rel;
       std::ifstream f(candidate, std::ios::binary);
@@ -502,7 +502,7 @@ void spline_openusd_crate_read_test(void) {
 
   Stage stage;
   std::string warn, err;
-  bool ok = tinyusdz::LoadUSDCFromFile(path, &stage, &warn, &err);
+  bool ok = lightusd::LoadUSDCFromFile(path, &stage, &warn, &err);
   TEST_CHECK_(ok, "LoadUSDCFromFile(%s) failed: %s", path.c_str(), err.c_str());
   if (!ok) return;
 
@@ -596,7 +596,7 @@ void spline_tangent_algorithm_crate_013_test(void) {
 
   std::vector<uint8_t> usdc;
   std::string w, e;
-  bool sret = tinyusdz::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
+  bool sret = lightusd::usdc::SaveAsUSDCToMemory(stage, &usdc, &w, &e);
   TEST_CHECK_(sret, "SaveAsUSDCToMemory failed: %s", e.c_str());
   if (!sret) return;
 
@@ -607,7 +607,7 @@ void spline_tangent_algorithm_crate_013_test(void) {
 
   Stage stage2;
   std::string w2, e2;
-  bool lret = tinyusdz::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
+  bool lret = lightusd::LoadUSDCFromMemory(usdc.data(), usdc.size(), "mem.usdc",
                                            &stage2, &w2, &e2);
   TEST_CHECK_(lret, "LoadUSDCFromMemory failed: %s", e2.c_str());
   if (!lret) return;

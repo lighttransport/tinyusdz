@@ -12,7 +12,7 @@
 #include "prim-metas.hh"
 #include "property.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 class Prim;
@@ -32,30 +32,30 @@ struct Variant {
   // const std::string &name() const { return _name; }
   // std::string &name() { return _name; }
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
-  std::map<std::string, Property> &properties() TINYUSDZ_LIFETIMEBOUND {
+  std::map<std::string, Property> &properties() LIGHTUSD_LIFETIMEBOUND {
     return _props;
   }
   const std::map<std::string, Property> &properties() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _props;
   }
 
-  const std::vector<Prim> &primChildren() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Prim> &primChildren() const LIGHTUSD_LIFETIMEBOUND {
     return _primChildren;
   }
-  std::vector<Prim> &primChildren() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<Prim> &primChildren() LIGHTUSD_LIFETIMEBOUND {
     return _primChildren;
   }
 
   // For nested variantSet
   const std::map<std::string, VariantSet> &variantSets() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _variantSets;
   }
-  std::map<std::string, VariantSet> &variantSets() TINYUSDZ_LIFETIMEBOUND {
+  std::map<std::string, VariantSet> &variantSets() LIGHTUSD_LIFETIMEBOUND {
     return _variantSets;
   }
 
@@ -102,4 +102,4 @@ struct VariantSetSpec
   std::map<std::string, PrimSpec> variantSet;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

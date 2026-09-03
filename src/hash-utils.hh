@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// FNV-1a string hash function for use with std::unordered_map.
@@ -28,4 +28,4 @@ struct FNV1StringHash {
   }
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

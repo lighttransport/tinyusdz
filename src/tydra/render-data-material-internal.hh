@@ -14,7 +14,7 @@
 #include "nonstd/expected.hpp"
 #include "core/prim.hh"     // Prim, Stage, Path
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 struct MtlxNodeGraphInfo {
@@ -63,4 +63,4 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
     const std::vector<Path> &connections, std::string *err);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

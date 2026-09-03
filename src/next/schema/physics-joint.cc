@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdPhysics Joint Schema Implementation
+// LightUSD Next - UsdPhysics Joint Schema Implementation
 
 #include "physics-joint.hh"
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -476,4 +476,4 @@ bool GetPhysicsBallJointData(const Stage& stage, const UsdPrim& prim,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

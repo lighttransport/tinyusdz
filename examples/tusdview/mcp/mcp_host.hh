@@ -51,7 +51,7 @@ class McpHost {
                                          const nlohmann::json& args,
                                          std::string& err) = 0;
 
-  // Forward an unrecognized tool name to the tinyusdz library tool dispatcher
+  // Forward an unrecognized tool name to the lightusd library tool dispatcher
   // (tydra::mcp::CallTool), run against a snapshot of the loaded Stage.
   virtual nlohmann::json mcpCallLibraryTool(const std::string& name,
                                             const nlohmann::json& args,

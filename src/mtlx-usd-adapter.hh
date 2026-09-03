@@ -7,7 +7,7 @@
 #include <string>
 #include <functional>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 // Adapter to replace pugixml with our parser
@@ -17,10 +17,10 @@ class XMLAttribute {
 public:
   XMLAttribute() : valid_(false) {}
   XMLAttribute(const std::string& value) : value_(value), valid_(true) {}
-  
+
   operator bool() const { return valid_; }
   const char* as_string() const { return value_.c_str(); }
-  
+
 private:
   std::string value_;
   bool valid_;
@@ -30,22 +30,22 @@ class XMLNode {
 public:
   XMLNode() : node_(nullptr) {}
   explicit XMLNode(SimpleXMLNodePtr n) : node_(n) {}
-  
+
   operator bool() const { return node_ != nullptr; }
-  
+
   XMLAttribute attribute(const char* name) const {
     if (!node_) return XMLAttribute();
-    
+
     auto it = node_->attributes.find(name);
     if (it != node_->attributes.end()) {
       return XMLAttribute(it->second);
     }
     return XMLAttribute();
   }
-  
+
   XMLNode child(const char* name) const {
     if (!node_) return XMLNode();
-    
+
     for (const auto& c : node_->children) {
       if (c && c->name == name) {
         return XMLNode(c);
@@ -53,15 +53,15 @@ public:
     }
     return XMLNode();
   }
-  
+
   const char* name() const {
     return node_ ? node_->name.c_str() : "";
   }
-  
+
   const char* child_value() const {
     return node_ ? node_->text.c_str() : "";
   }
-  
+
   // Iterator support
   class iterator {
   public:
@@ -97,7 +97,7 @@ public:
   iterator end() const {
     return node_ ? iterator(&node_->children, node_->children.size()) : iterator();
   }
-  
+
   // Get children with specific name
   std::vector<XMLNode> children(const char* name) const {
     std::vector<XMLNode> result;
@@ -110,7 +110,7 @@ public:
     }
     return result;
   }
-  
+
 private:
   SimpleXMLNodePtr node_;
 };
@@ -123,11 +123,11 @@ public:
     operator bool() const { return success; }
     std::string error_;
   };
-  
+
   ParseResult load_string(const char* xml) {
     ParseResult result;
     SimpleXMLParser parser;
-    
+
     if (parser.Parse(xml)) {
       root_ = XMLNode(parser.GetRoot());
       result.success = true;
@@ -135,10 +135,10 @@ public:
       result.success = false;
       result.error_ = parser.GetError();
     }
-    
+
     return result;
   }
-  
+
   XMLNode child(const char* name) const {
     if (root_) {
       if (std::string(root_.name()) == name) {
@@ -148,7 +148,7 @@ public:
     }
     return XMLNode();
   }
-  
+
 private:
   XMLNode root_;
 };
@@ -161,4 +161,4 @@ using xml_attribute = XMLAttribute;
 using xml_parse_result = XMLDocument::ParseResult;
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

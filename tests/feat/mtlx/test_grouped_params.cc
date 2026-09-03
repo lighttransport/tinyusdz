@@ -5,8 +5,8 @@
 #include "tydra/render-data.hh"
 #include "tydra/threejs-exporter.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 int main() {
   // Create a simple OpenPBR material

@@ -6,7 +6,7 @@
 //  - legacy module: nextFlattenAsync* session accepting USDA dependency bytes
 //    (previously hard-rejected with "not a USDC crate").
 //
-// Runs on wasm32 by default; set TINYUSDZ_WASM64=1 for the 64-bit glue.
+// Runs on wasm32 by default; set LIGHTUSD_WASM64=1 for the 64-bit glue.
 
 import assert from 'node:assert/strict';
 
@@ -44,8 +44,8 @@ async function testAsync(name, fn) {
   catch (err) { console.error(`not ok - ${name}`); console.error(err); process.exitCode = 1; }
 }
 
-const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
-const wasmDir = new URL('../src/tinyusdz/', import.meta.url);
+const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
+const wasmDir = new URL('../src/lightusd/', import.meta.url);
 
 function encode(text) {
   return new TextEncoder().encode(text);
@@ -79,8 +79,8 @@ function driveSession(handle, layerMap) {
 }
 
 await testAsync('next-only module composes USDA root + USDA dependency', async () => {
-  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
-                      : '../src/tinyusdz/tinyusdz_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
+                      : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).pathname,
   });
@@ -147,8 +147,8 @@ def Xform "Root" (
 `;
 
 await testAsync('next-only RenderStream applies variant selections', async () => {
-  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
-                      : '../src/tinyusdz/tinyusdz_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
+                      : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).pathname,
   });
@@ -181,9 +181,9 @@ await testAsync('next-only RenderStream applies variant selections', async () =>
 });
 
 await testAsync('legacy module next session accepts USDA dependency layers', async () => {
-  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   try {
     // Root goes in via the zero-copy buffer protocol used by the legacy module.
     const rootBytes = encode(ROOT_USDA);
@@ -210,8 +210,8 @@ await testAsync('legacy module next session accepts USDA dependency layers', asy
 });
 
 await testAsync('next-only module usddiff diffs USDA layers', async () => {
-  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
-                      : '../src/tinyusdz/tinyusdz_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
+                      : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).pathname,
   });
@@ -239,8 +239,8 @@ await testAsync('next-only module usddiff diffs USDA layers', async () => {
 });
 
 await testAsync('next-only module validates USD from binary', async () => {
-  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
-                      : '../src/tinyusdz/tinyusdz_next.js';
+  const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
+                      : '../src/lightusd/lightusd_next.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
     locateFile: (file) => new URL(file, wasmDir).pathname,
   });

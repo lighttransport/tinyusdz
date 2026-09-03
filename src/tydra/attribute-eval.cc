@@ -8,7 +8,7 @@
 #include "layer.hh"
 #include "pprint-enum.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-clip-utils.hh"
 #include "value-pprint.hh"
 #include "spline-eval.hh"
@@ -16,7 +16,7 @@
 #include <memory>
 #include <mutex>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // For PUSH_ERROR_AND_RETURN
@@ -602,10 +602,10 @@ static bool ResolveAttrFromClipSet(
 // visited_paths : To prevent circular referencing of attribute connection.
 //
 bool EvaluateAttributeImpl(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const lightusd::Stage &stage, const lightusd::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::value::TimeSampleInterpolationType tinterp) {
 
   // Iterative connection-following loop (replaces tail recursion)
   const Prim *current_prim = &prim;
@@ -698,10 +698,10 @@ bool EvaluateAttributeImpl(
 }
 
 bool EvaluateAttributeImpl(
-    const tinyusdz::Stage &stage, const tinyusdz::Attribute &attr,
+    const lightusd::Stage &stage, const lightusd::Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::value::TimeSampleInterpolationType tinterp) {
 
   if (attr.has_connections()) {
     // A connection overrides the authored value (USD). Follow it; fall back to
@@ -774,10 +774,10 @@ bool EvaluateAttributeImpl(
 }  // namespace
 
 bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const lightusd::Stage &stage, const lightusd::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
@@ -795,10 +795,10 @@ bool EvaluateAttributeFromClips(
 }
 
 bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const Attribute &attr,
+    const lightusd::Stage &stage, const Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, attr, attr_name, value, err,
@@ -807,12 +807,12 @@ bool EvaluateAttribute(
 
 // Layer/PrimSpec version
 bool EvaluateAttribute(
-    const tinyusdz::Layer &layer, const tinyusdz::PrimSpec &ps,
+    const lightusd::Layer &layer, const lightusd::PrimSpec &ps,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const lightusd::value::TimeSampleInterpolationType tinterp) {
   (void)layer;
-  
+
   if (!value) {
     PUSH_ERROR_AND_RETURN("[InternalError] nullptr value is not allowed.");
   }
@@ -830,10 +830,10 @@ bool EvaluateAttribute(
 
   // Handle different property types
   if (prop.is_attribute_connection()) {
-    // For Layer/PrimSpec version, we cannot follow connections 
+    // For Layer/PrimSpec version, we cannot follow connections
     // since we don't have the full Stage context for path resolution
     PUSH_ERROR_AND_RETURN(fmt::format("Attribute `{}` is a connection. Connection following is not supported in Layer/PrimSpec version of EvaluateAttribute. Use Stage version instead.", attr_name));
-    
+
   } else if (prop.is_attribute()) {
     DCOUT("IsAttrib");
 
@@ -865,7 +865,7 @@ bool EvaluateAttribute(
   } else if (prop.is_empty()) {
     // "empty" attribute - set as empty with type info
     std::string type_name = "unknown"; // Default fallback
-    
+
     // Try to get type information from the attribute if available
     if (prop.is_attribute()) {
       const Attribute &attr = prop.get_attribute();
@@ -874,10 +874,10 @@ bool EvaluateAttribute(
         type_name = var.type_name();
       }
     }
-    
+
     value->set_empty_attribute(type_name);
     DCOUT("Empty attribute with type: " << type_name);
-    
+
   } else {
     // ???
     PUSH_ERROR_AND_RETURN(
@@ -888,4 +888,4 @@ bool EvaluateAttribute(
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

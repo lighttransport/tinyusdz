@@ -14,7 +14,7 @@
 #include <memory>
 #include <string>
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int g_fail = 0;
 #define CHECK(cond, msg)                                                    \

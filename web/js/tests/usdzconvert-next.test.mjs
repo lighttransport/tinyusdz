@@ -6,7 +6,7 @@
 // top-level USDC root. This test exercises that path end-to-end and asserts it
 // actually engaged (not the legacy fallback) and produced a reloadable .usdz.
 //
-// Runs on the default wasm32 glue; set TINYUSDZ_WASM64=1 to use the 64-bit glue.
+// Runs on the default wasm32 glue; set LIGHTUSD_WASM64=1 to use the 64-bit glue.
 
 import assert from 'node:assert/strict';
 
@@ -49,8 +49,8 @@ def Xform "World"
 }
 `;
 
-const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
-const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
+const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
+const glue = wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
 const glueUrl = new URL(glue, import.meta.url).href;
 const native = await loadWasm(() => import(glueUrl));
 
@@ -86,7 +86,7 @@ function assertReloadableUsdz(usdz, label) {
   // ZIP local-file-header magic: "PK\x03\x04".
   assert.deepEqual(Array.from(usdz.slice(0, 4)), [0x50, 0x4b, 0x03, 0x04],
     `${label}: USDZ should start with the ZIP magic`);
-  const usd = new native.TinyUSDZLoaderNative();
+  const usd = new native.LightUSDLoaderNative();
   try {
     assert.ok(usd.loadFromBinary(usdz, 'out.usdz'),
       `${label}: produced USDZ should reload: ${usd.error()}`);

@@ -1,9 +1,9 @@
-# tinyusdz-local build for the vendored lightui subset.
+# lightusd-local build for the vendored lightui subset.
 #
 # This is NOT upstream lightui's CMakeLists.txt. Upstream unconditionally builds
 # ~25 example executables and does find_package(Python3 REQUIRED) for font
 # embedding; we want exactly one static library and no Python at build time.
-# See README.tinyusdz.md.
+# See README.lightusd.md.
 #
 # Produces a single target `lightui` that folds in lightvg + lighttype.
 

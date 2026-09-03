@@ -7,7 +7,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 enum class ParticleKernel {
@@ -44,4 +44,4 @@ bool GetParticleFieldData(const Stage& stage, const UsdPrim& prim,
                           std::string* warning = nullptr);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

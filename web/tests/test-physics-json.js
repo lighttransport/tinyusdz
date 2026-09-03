@@ -2,10 +2,10 @@
 
 const assert = require('assert');
 
-function loadTinyUSDZModule() {
-  const candidates = process.env.TINYUSDZ_WASM64 === '1'
-      ? ['../js/src/tinyusdz/tinyusdz_64.js']
-      : ['../js/src/tinyusdz/tinyusdz.js'];
+function loadLightUSDModule() {
+  const candidates = process.env.LIGHTUSD_WASM64 === '1'
+      ? ['../js/src/lightusd/lightusd_64.js']
+      : ['../js/src/lightusd/lightusd.js'];
 
   for (const candidate of candidates) {
     try {
@@ -16,10 +16,10 @@ function loadTinyUSDZModule() {
     }
   }
 
-  throw new Error('Failed to load any TinyUSDZ JS module candidate');
+  throw new Error('Failed to load any LightUSD JS module candidate');
 }
 
-const TinyUSDZInit = loadTinyUSDZModule();
+const LightUSDInit = loadLightUSDModule();
 
 const PHYSICS_USDA = `#usda 1.0
 
@@ -70,8 +70,8 @@ function findPrim(payload, path) {
 }
 
 async function runTest() {
-  const tinyusdz = await TinyUSDZInit();
-  const loader = new tinyusdz.TinyUSDZLoaderNative();
+  const lightusd = await LightUSDInit();
+  const loader = new lightusd.LightUSDLoaderNative();
 
   try {
     const bytes = new TextEncoder().encode(PHYSICS_USDA);

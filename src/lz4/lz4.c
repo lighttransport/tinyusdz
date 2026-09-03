@@ -43,7 +43,7 @@
  * in memory stack (0:default, fastest), or in memory heap (1:requires malloc()).
  */
 #ifndef LZ4_HEAPMODE
-/* TinyUSDZ modification for security */
+/* LightUSD modification for security */
 #  define LZ4_HEAPMODE 1
 #endif
 
@@ -80,11 +80,11 @@
 #  if defined(__GNUC__) && \
   ( defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_6J__) || defined(__ARM_ARCH_6K__) \
   || defined(__ARM_ARCH_6Z__) || defined(__ARM_ARCH_6ZK__) || defined(__ARM_ARCH_6T2__) )
-/* TinyUSDZ modification for security */
+/* LightUSD modification for security */
 /*#    define LZ4_FORCE_MEMORY_ACCESS 2 */
 #    define LZ4_FORCE_MEMORY_ACCESS 0
 #  elif (defined(__INTEL_COMPILER) && !defined(_WIN32)) || defined(__GNUC__)
-/* TinyUSDZ modification for security */
+/* LightUSD modification for security */
 /*#    define LZ4_FORCE_MEMORY_ACCESS 1 */
 #    define LZ4_FORCE_MEMORY_ACCESS 0
 #  endif
@@ -270,7 +270,7 @@ static const int LZ4_minLength = (MFLIMIT+1);
 
 /*-************************************
 *  Error detection
-*  TinyUSDZ modification: assertions are hardened to return errors instead of aborting.
+*  LightUSD modification: assertions are hardened to return errors instead of aborting.
 **************************************/
 #ifndef assert
 #  define assert(condition) ((void)0)
@@ -458,7 +458,7 @@ static const unsigned inc32table[8] = {0, 1, 2,  1,  0,  4, 4, 4};
 static const int      dec64table[8] = {0, 0, 0, -1, -4,  1, 2, 3};
 
 
-/* TinyUSDZ modification for security */
+/* LightUSD modification for security */
 #ifndef LZ4_FAST_DEC_LOOP
 #if 0
 #  if defined __i386__ || defined _M_IX86 || defined __x86_64__ || defined _M_X64

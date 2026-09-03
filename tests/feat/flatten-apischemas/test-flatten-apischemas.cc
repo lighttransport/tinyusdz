@@ -5,12 +5,12 @@
 // list-op must be baked to EXPLICIT form -- pxrUSD's `usdcat --flatten` emits
 // `apiSchemas = [...]`, never the authored `prepend`/`append` qualifier (which
 // would wrongly re-prepend if the flattened layer were itself re-referenced).
-// tinyusdz previously carried the authored `prepend` straight through flatten,
+// lightusd previously carried the authored `prepend` straight through flatten,
 // so the whole-scene diff against usdcat showed ~2800 spurious `meta:apiSchemas`
 // modifications on UE-exported scenes (every referenced mesh authors
 // `prepend apiSchemas = ["MaterialBindingAPI"]`).
 //
-// tinyusdz::FlattenAppliedSchemas(Layer&) performs this finalize. This test
+// lightusd::FlattenAppliedSchemas(Layer&) performs this finalize. This test
 // drives it directly on a parsed Layer and checks the resolved form; it also
 // confirms that WITHOUT the call the authored `prepend` is preserved (the
 // finalize must be flatten-only, so a plain load+write round-trip is lossless).
@@ -19,9 +19,9 @@
 #include <string>
 
 #include "composition.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

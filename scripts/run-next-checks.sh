@@ -12,7 +12,7 @@ Environment overrides:
   BUILD_DIR            Build directory (default: $ROOT_DIR/build-next)
   JOBS                 Build parallelism (default: 16)
   BUILD_TYPE           CMake build type (default: Debug)
-  THREADS              TINYUSDZ_NEXT_ENABLE_THREAD value (default: OFF)
+  THREADS              LIGHTUSD_NEXT_ENABLE_THREAD value (default: OFF)
   ALSO_THREADS         Also build+test a THREADS=ON pass (default: 1; 0 skips)
   RUN_FUZZ             Build the libFuzzer harnesses and replay the seed
                        corpus through each when nonzero (needs clang)
@@ -50,8 +50,8 @@ trap cleanup_bench_file EXIT
 cd "$ROOT_DIR"
 
 cmake -S "$ROOT_DIR/src/next" -B "$BUILD_DIR" \
-  -DTINYUSDZ_NEXT_BUILD_TESTS=ON \
-  -DTINYUSDZ_NEXT_ENABLE_THREAD="$THREADS" \
+  -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+  -DLIGHTUSD_NEXT_ENABLE_THREAD="$THREADS" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 cmake --build "$BUILD_DIR" -j"$JOBS"
@@ -68,7 +68,7 @@ if [ "$RUN_BENCH" != "0" ]; then
   "$BUILD_DIR/bench_pcp_compose" deep
 
   if [ -z "${BENCH_LAZY_FILE:-}" ]; then
-    BENCH_LAZY_FILE="${TMPDIR:-/tmp}/tinyusdz-next-lazy-bench-$$.usdc"
+    BENCH_LAZY_FILE="${TMPDIR:-/tmp}/lightusd-next-lazy-bench-$$.usdc"
     BENCH_LAZY_FILE_GENERATED=1
   fi
   BENCH_LAZY_VERTS="${BENCH_LAZY_VERTS:-100000}"
@@ -86,17 +86,17 @@ fi
 # SharedArrayBuffer. The consequence is that a normal run of this script never
 # COMPILES the std::thread paths -- the PropNameTable freeze/intern
 # synchronisation and the parallel PCP prewarm live entirely behind
-# TINYUSDZ_ENABLE_THREAD, so a change that breaks them passes every default
+# LIGHTUSD_ENABLE_THREAD, so a change that breaks them passes every default
 # check and only fails for the tools/examples that force it ON
 # (tusdrender/tusdview/tusdquicklook).
 #
 # Set ALSO_THREADS=0 to skip (e.g. a machine without a thread library).
 if [ "$ALSO_THREADS" != "0" ] && [ "$THREADS" != "ON" ]; then
   echo
-  echo "=== second pass: TINYUSDZ_NEXT_ENABLE_THREAD=ON ==="
+  echo "=== second pass: LIGHTUSD_NEXT_ENABLE_THREAD=ON ==="
   cmake -S "$ROOT_DIR/src/next" -B "$THREADS_BUILD_DIR" \
-    -DTINYUSDZ_NEXT_BUILD_TESTS=ON \
-    -DTINYUSDZ_NEXT_ENABLE_THREAD=ON \
+    -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+    -DLIGHTUSD_NEXT_ENABLE_THREAD=ON \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
   cmake --build "$THREADS_BUILD_DIR" -j"$JOBS"
   ctest --test-dir "$THREADS_BUILD_DIR" --output-on-failure -L next \
@@ -113,7 +113,7 @@ if [ "${RUN_FUZZ:-0}" != "0" ]; then
   echo "=== fuzzer harnesses: build + seed-corpus replay ==="
   FUZZ_BUILD_DIR="${FUZZ_BUILD_DIR:-$BUILD_DIR-fuzz}"
   cmake -S "$ROOT_DIR/src/next" -B "$FUZZ_BUILD_DIR" \
-    -DTINYUSDZ_NEXT_BUILD_FUZZERS=ON \
+    -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
   cmake --build "$FUZZ_BUILD_DIR" -j"$JOBS"

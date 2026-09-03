@@ -3,18 +3,18 @@
  * MaterialX NodeGraph Optimizer CLI Tool
  *
  * Analyzes and optimizes MaterialX node graphs from USD files.
- * Uses the optimizer from TinyUSDZMaterialX.js module.
+ * Uses the optimizer from LightUSDMaterialX.js module.
  *
  * Usage: npx vite-node optimize-mtlx-node.js -- <usd-file> [options]
  */
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import {
     optimizeNodeGraph,
     analyzeNodeGraph,
     getOptimizationSummary,
     NodeGraphOptimizationLevel
-} from 'tinyusdz/TinyUSDZMaterialX.js';
+} from 'lightusd/LightUSDMaterialX.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -155,7 +155,7 @@ async function optimizeNodeGraphs(options) {
         process.exit(1);
     }
 
-    const loader = new TinyUSDZLoader();
+    const loader = new LightUSDLoader();
     await loader.init({ useMemory64: false });
     loader.setMaxMemoryLimitMB(500);
 

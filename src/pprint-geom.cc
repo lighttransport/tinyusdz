@@ -9,21 +9,21 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
-std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
+std::string to_string(lightusd::GeomMesh::InterpolateBoundary v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: {
+    case lightusd::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: {
       s = "none";
       break;
     }
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {
+    case lightusd::GeomMesh::InterpolateBoundary::EdgeAndCorner: {
       s = "edgeAndCorner";
       break;
     }
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: {
+    case lightusd::GeomMesh::InterpolateBoundary::EdgeOnly: {
       s = "edgeOnly";
       break;
     }
@@ -32,23 +32,23 @@ std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
+std::string to_string(lightusd::GeomMesh::SubdivisionScheme v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: {
+    case lightusd::GeomMesh::SubdivisionScheme::CatmullClark: {
       s = "catmullClark";
       break;
     }
-    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: {
+    case lightusd::GeomMesh::SubdivisionScheme::Loop: {
       s = "loop";
       break;
     }
-    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: {
+    case lightusd::GeomMesh::SubdivisionScheme::Bilinear: {
       s = "bilinear";
       break;
     }
-    case tinyusdz::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: {
+    case lightusd::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: {
       s = "none";
       break;
     }
@@ -57,42 +57,42 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomMesh::TriangleSubdivisionRule v) {
+std::string to_string(lightusd::GeomMesh::TriangleSubdivisionRule v) {
   switch (v) {
-    case tinyusdz::GeomMesh::TriangleSubdivisionRule::CatmullClark:
+    case lightusd::GeomMesh::TriangleSubdivisionRule::CatmullClark:
       return "catmullClark";
-    case tinyusdz::GeomMesh::TriangleSubdivisionRule::Smooth:
+    case lightusd::GeomMesh::TriangleSubdivisionRule::Smooth:
       return "smooth";
   }
   return "catmullClark";
 }
 
-std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
+std::string to_string(lightusd::GeomMesh::FaceVaryingLinearInterpolation v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: {
+    case lightusd::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: {
       s = "cornersPlus1";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: {
+    case lightusd::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: {
       s = "cornersPlus2";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: {
+    case lightusd::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: {
       s = "cornersOnly";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: {
+    case lightusd::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: {
       s = "boundaries";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::
+    case lightusd::GeomMesh::FaceVaryingLinearInterpolation::
         FaceVaryingLinearInterpolationNone: {
       s = "none";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: {
+    case lightusd::GeomMesh::FaceVaryingLinearInterpolation::All: {
       s = "all";
       break;
     }
@@ -101,23 +101,23 @@ std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomSubset::ElementType v) {
+std::string to_string(lightusd::GeomSubset::ElementType v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomSubset::ElementType::Face: {
+    case lightusd::GeomSubset::ElementType::Face: {
       s = "face";
       break;
     }
-    case tinyusdz::GeomSubset::ElementType::Point: {
+    case lightusd::GeomSubset::ElementType::Point: {
       s = "point";
       break;
     }
-    case tinyusdz::GeomSubset::ElementType::Edge: {
+    case lightusd::GeomSubset::ElementType::Edge: {
       s = "edge";
       break;
     }
-    case tinyusdz::GeomSubset::ElementType::Tetrahedron: {
+    case lightusd::GeomSubset::ElementType::Tetrahedron: {
       s = "tetrahedron";
       break;
     }
@@ -126,19 +126,19 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomSubset::FamilyType v) {
+std::string to_string(lightusd::GeomSubset::FamilyType v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomSubset::FamilyType::Partition: {
+    case lightusd::GeomSubset::FamilyType::Partition: {
       s = "partition";
       break;
     }
-    case tinyusdz::GeomSubset::FamilyType::NonOverlapping: {
+    case lightusd::GeomSubset::FamilyType::NonOverlapping: {
       s = "nonOverlapping";
       break;
     }
-    case tinyusdz::GeomSubset::FamilyType::Unrestricted: {
+    case lightusd::GeomSubset::FamilyType::Unrestricted: {
       s = "unrestricted";
       break;
     }
@@ -1023,4 +1023,4 @@ std::string to_string(const GeomHermiteCurves &geom, const uint32_t indent,
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

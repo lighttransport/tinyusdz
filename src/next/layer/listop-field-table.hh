@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - registry of PrimSpec string list-op metadata fields.
+// LightUSD Next - registry of PrimSpec string list-op metadata fields.
 //
 // The AOUSD elective prim fields composed with SdfStringListOp semantics
 // (apiSchemas, variantSetNames, clipSets) share one merge rule: a STRONGER
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct StringListOpFieldDef {
@@ -202,4 +202,4 @@ inline void MergeWeakerStringListOpField(const StringListOpFieldDef& def,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,5 +1,5 @@
 ///
-/// @file usda-writer.hh  
+/// @file usda-writer.hh
 /// @brief USDA (USD ASCII) writer interface
 ///
 /// Production-ready writer for exporting USD scenes to ASCII format.
@@ -7,9 +7,9 @@
 ///
 #pragma once
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usda {
 
 ///
@@ -46,4 +46,4 @@ bool SaveAsUSDA(const std::wstring &filename, const Stage &stage, std::string *w
 bool ExportToUSDAString(const Stage &stage, std::string *output, std::string *warn, std::string *err);
 
 } // namespace usda
-} // namespace tinyusdz
+} // namespace lightusd

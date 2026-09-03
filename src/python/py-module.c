@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0
- * tinyusdz._core — module definition, state, exceptions, loaders.
+ * lightusd._core — module definition, state, exceptions, loaders.
  */
 
 #include "py-internal.h"
@@ -84,7 +84,7 @@ static PyType_Slot ValueBlock_slots[] = {
 };
 
 static PyType_Spec ValueBlock_spec = {
-    .name = "tinyusdz._core._ValueBlockType",
+    .name = "lightusd._core._ValueBlockType",
     .basicsize = sizeof(PyObject),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
@@ -365,8 +365,8 @@ static int module_exec(PyObject* module) {
   if (!st) return -1;
 
   st->UsdError =
-      PyErr_NewExceptionWithDoc("tinyusdz._core.UsdError",
-                                "Base error for tinyusdz.", NULL, NULL);
+      PyErr_NewExceptionWithDoc("lightusd._core.UsdError",
+                                "Base error for lightusd.", NULL, NULL);
   if (!st->UsdError) return -1;
   if (PyModule_AddObjectRef(module, "UsdError", st->UsdError) < 0) return -1;
 
@@ -374,7 +374,7 @@ static int module_exec(PyObject* module) {
     PyObject* bases = PyTuple_Pack(2, st->UsdError, PyExc_ValueError);
     if (!bases) return -1;
     st->UsdParseError = PyErr_NewExceptionWithDoc(
-        "tinyusdz._core.UsdParseError", "USD parsing failed.", bases, NULL);
+        "lightusd._core.UsdParseError", "USD parsing failed.", bases, NULL);
     Py_DECREF(bases);
     if (!st->UsdParseError) return -1;
     if (PyModule_AddObjectRef(module, "UsdParseError", st->UsdParseError) <
@@ -386,7 +386,7 @@ static int module_exec(PyObject* module) {
     PyObject* bases = PyTuple_Pack(2, st->UsdError, PyExc_OSError);
     if (!bases) return -1;
     st->UsdIoError = PyErr_NewExceptionWithDoc(
-        "tinyusdz._core.UsdIoError", "USD file I/O failed.", bases, NULL);
+        "lightusd._core.UsdIoError", "USD file I/O failed.", bases, NULL);
     Py_DECREF(bases);
     if (!st->UsdIoError) return -1;
     if (PyModule_AddObjectRef(module, "UsdIoError", st->UsdIoError) < 0) {
@@ -394,7 +394,7 @@ static int module_exec(PyObject* module) {
     }
   }
   st->StaleHandleError = PyErr_NewExceptionWithDoc(
-      "tinyusdz._core.StaleHandleError",
+      "lightusd._core.StaleHandleError",
       "A Prim handle outlived a structural stage edit.", st->UsdError, NULL);
   if (!st->StaleHandleError) return -1;
   if (PyModule_AddObjectRef(module, "StaleHandleError",
@@ -502,8 +502,8 @@ static PyModuleDef_Slot module_slots[] = {
 
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
-    .m_name = "tinyusdz._core",
-    .m_doc = "TinyUSDZ core binding (next-core + tydra-next).",
+    .m_name = "lightusd._core",
+    .m_doc = "LightUSD core binding (next-core + tydra-next).",
     .m_size = sizeof(tusd_state),
     .m_methods = module_methods,
     .m_slots = module_slots,

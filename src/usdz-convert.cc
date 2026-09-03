@@ -6,7 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <condition_variable>
 #endif
@@ -15,12 +15,12 @@
 #include <fstream>
 #include <map>
 #include <set>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
 #include <utility>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "composition.hh"
 #include "asset-resolution.hh"
 #include "usda-writer.hh"
@@ -48,7 +48,7 @@
 # undef stdout
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdz {
 
 namespace {
@@ -181,7 +181,7 @@ std::string ToRelativePath(const std::string &base_dir,
 bool IsAllowedTextureExt(const std::string &ext_lower) {
   return ext_lower == "png" || ext_lower == "jpg" || ext_lower == "jpeg" ||
          ext_lower == "exr"
-#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
          // KTX2 is a valid *input* texture (the core loader decodes uni/BC7/ASTC
          // to RGBA8). A direct `inputs:file = @tex.ktx2@` reference is thus
          // collected and, when a legacy/ARKit target is requested, transcoded to
@@ -207,14 +207,14 @@ bool IsAllowedARKitPrimType(const std::string &type_name) {
       "Points", "SkelRoot", "Skeleton", "SkelAnimation", "BlendShape",
       "SpatialAudio", "PhysicsScene", "Preliminary_ReferenceImage",
       "Preliminary_Text", "Preliminary_Trigger"};
-  return allowed.count(type_name) || tinyusdz::startsWith(type_name, "RealityKit");
+  return allowed.count(type_name) || lightusd::startsWith(type_name, "RealityKit");
 }
 
 bool IsAllowedARKitShaderId(const std::string &shader_id) {
   return shader_id == "UsdPreviewSurface" || shader_id == "UsdUVTexture" ||
          shader_id == "UsdTransform2d" ||
-         tinyusdz::startsWith(shader_id, "UsdPrimvarReader") ||
-         tinyusdz::startsWith(shader_id, "ND_");
+         lightusd::startsWith(shader_id, "UsdPrimvarReader") ||
+         lightusd::startsWith(shader_id, "ND_");
 }
 
 // Turn an arbitrary asset path into a safe, relative USDZ archive name.
@@ -226,9 +226,9 @@ bool IsUnsafeUnresolvedTexturePath(const std::string &assetPath) {
   // Reject null bytes (could corrupt ZIP entry names).
   if (p.find('\0') != std::string::npos) return true;
   return p.empty() || (p[0] == '/') || (p.find(':') != std::string::npos) ||
-         (p == "..") || tinyusdz::startsWith(p, "../") ||
+         (p == "..") || lightusd::startsWith(p, "../") ||
          (p.find("/../") != std::string::npos) ||
-         tinyusdz::endsWith(p, "/..");
+         lightusd::endsWith(p, "/..");
 }
 
 std::string RelativeToSearchPath(const std::string &asset_path,
@@ -256,7 +256,7 @@ std::string RelativeToSearchPath(const std::string &asset_path,
     if (p == base) {
       return io::GetBaseFilename(p);
     }
-    if (tinyusdz::startsWith(p, base + "/")) {
+    if (lightusd::startsWith(p, base + "/")) {
       return p.substr(base.size() + 1);
     }
   }
@@ -309,7 +309,7 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
   std::replace(p.begin(), p.end(), '\\', '/');
 
   const bool needs_sanitize = IsUnsafeUnresolvedTexturePath(p) ||
-                              tinyusdz::startsWith(p, "./");
+                              lightusd::startsWith(p, "./");
 
   std::string name = p;
   if (needs_sanitize) {
@@ -327,10 +327,10 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
                          (name.find('\\') != std::string::npos) ||
                          (name.find(':') != std::string::npos) ||
                          (name.find("//") != std::string::npos) ||
-                         tinyusdz::startsWith(name, "/") ||
-                         tinyusdz::startsWith(name, "./") ||
-                         tinyusdz::startsWith(name, "../") ||
-                         tinyusdz::endsWith(name, "/");
+                         lightusd::startsWith(name, "/") ||
+                         lightusd::startsWith(name, "./") ||
+                         lightusd::startsWith(name, "../") ||
+                         lightusd::endsWith(name, "/");
     if (!has_traversal) {
       // Also check for ".." as a standalone path segment.
       size_t pos = 0;
@@ -359,7 +359,7 @@ std::string SanitizeLayerArchiveName(const std::string &assetPath) {
   std::replace(p.begin(), p.end(), '\\', '/');
 
   const bool needs_sanitize = IsUnsafeUnresolvedTexturePath(p) ||
-                              tinyusdz::startsWith(p, "./");
+                              lightusd::startsWith(p, "./");
 
   std::string name = p;
   if (needs_sanitize) {
@@ -375,10 +375,10 @@ std::string SanitizeLayerArchiveName(const std::string &assetPath) {
       name.find(':') != std::string::npos ||
       name.find("..") != std::string::npos ||
       name.find("//") != std::string::npos ||
-      tinyusdz::startsWith(name, "/") ||
-      tinyusdz::startsWith(name, "./") ||
-      tinyusdz::startsWith(name, "../") ||
-      tinyusdz::endsWith(name, "/")) {
+      lightusd::startsWith(name, "/") ||
+      lightusd::startsWith(name, "./") ||
+      lightusd::startsWith(name, "../") ||
+      lightusd::endsWith(name, "/")) {
     name = "layers/layer";
   }
   if (name.size() > kMaxArchiveNameLen) {
@@ -401,7 +401,7 @@ std::string MakeCollisionArchiveName(const std::string &archive_name,
       return "textures/texture";
     }
     base.resize(kMaxArchiveNameLen - suffix_part.size());
-    if (base.empty() || tinyusdz::endsWith(base, "/")) {
+    if (base.empty() || lightusd::endsWith(base, "/")) {
       base += "texture";
       if (base.size() + suffix_part.size() > kMaxArchiveNameLen) {
         base.resize(kMaxArchiveNameLen - suffix_part.size());
@@ -778,11 +778,11 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
   // parent-relative references (`@../common/foo.usd@`) are legitimate; the
   // resolver suffix-fallback additionally rebases paths authored against
   // another machine's layout (e.g. UE exports).
-  tinyusdz::SublayersCompositionOptions sublayer_options;
+  lightusd::SublayersCompositionOptions sublayer_options;
   sublayer_options.allow_parent_relative_paths = true;
-  tinyusdz::ReferencesCompositionOptions references_options;
+  lightusd::ReferencesCompositionOptions references_options;
   references_options.allow_parent_relative_paths = true;
-  tinyusdz::PayloadCompositionOptions payload_options;
+  lightusd::PayloadCompositionOptions payload_options;
   payload_options.allow_parent_relative_paths = true;
 
   // Parse each referenced file once across the whole fixed-point loop; all
@@ -793,7 +793,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
   if (!src_layer.metas().subLayers.empty()) {
     Layer tmp;
-    if (!tinyusdz::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
+    if (!lightusd::CompositeSublayers(resolver, src_layer, &tmp, warn, err,
                                       sublayer_options)) {
       return false;
     }
@@ -816,7 +816,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
       Layer tmp;
       // InPlace: consumes src_layer (no internal arcs) instead of holding
       // input + output copies — halves the peak of the pass.
-      if (!tinyusdz::CompositeReferencesInPlace(
+      if (!lightusd::CompositeReferencesInPlace(
               resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
               warn, err, references_options)) {
         return false;
@@ -827,7 +827,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_payload()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositePayloadInPlace(
+      if (!lightusd::CompositePayloadInPlace(
               resolver, std::make_unique<Layer>(std::move(src_layer)), &tmp,
               warn, err, payload_options)) {
         return false;
@@ -838,7 +838,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     if (src_layer.check_unresolved_inherits()) {
       has_unresolved = true;
       Layer tmp;
-      if (!tinyusdz::CompositeInherits(src_layer, &tmp, warn, err)) {
+      if (!lightusd::CompositeInherits(src_layer, &tmp, warn, err)) {
         return false;
       }
       src_layer = std::move(tmp);
@@ -850,9 +850,9 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
       // payloads are resolved (this loop always resolves both), so a strong
       // local variant selection is not consumed against an empty/placeholder
       // variantSet from a weaker layer reached via reference/payload.
-      if (!tinyusdz::ShouldDeferVariantComposition(src_layer)) {
+      if (!lightusd::ShouldDeferVariantComposition(src_layer)) {
         Layer tmp;
-        if (!tinyusdz::CompositeVariant(src_layer, &tmp, warn, err)) {
+        if (!lightusd::CompositeVariant(src_layer, &tmp, warn, err)) {
           return false;
         }
         src_layer = std::move(tmp);
@@ -944,7 +944,7 @@ template <typename Job, typename ProduceFn, typename RunFn>
 bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
                            size_t memory_budget_bytes,
                            const ProduceFn &produce, const RunFn &run) {
-#if !defined(TINYUSDZ_ENABLE_THREAD)
+#if !defined(LIGHTUSD_ENABLE_THREAD)
   (void)num_threads_option;
   (void)memory_budget_bytes;
   for (Job &job : jobs) {
@@ -1370,17 +1370,17 @@ bool LoadLayerForPackaging(AssetResolutionResolver &resolver,
                            Layer *layer, std::string *warn,
                            std::string *err) {
   if (io::FileExists(source_path)) {
-    return tinyusdz::LoadLayerFromFile(source_path, layer, warn, err);
+    return lightusd::LoadLayerFromFile(source_path, layer, warn, err);
   }
 
   const std::string resolved = resolver.resolve(source_path);
   if (!resolved.empty()) {
-    return tinyusdz::LoadLayerFromAsset(resolver, resolved, layer, warn, err);
+    return lightusd::LoadLayerFromAsset(resolver, resolved, layer, warn, err);
   }
 
   const std::string authored_resolved = resolver.resolve(authored_path);
   if (!authored_resolved.empty()) {
-    return tinyusdz::LoadLayerFromAsset(resolver, authored_resolved, layer, warn,
+    return lightusd::LoadLayerFromAsset(resolver, authored_resolved, layer, warn,
                                         err);
   }
 
@@ -1410,7 +1410,7 @@ bool SerializeLayerForUSDZ(const Layer &layer, USDZRootLayerFormat format,
                            std::vector<uint8_t> *out, std::string *warn,
                            std::string *err) {
   if (format == USDZRootLayerFormat::USDA) {
-    const std::string text = tinyusdz::print_layer(layer, 0);
+    const std::string text = lightusd::print_layer(layer, 0);
     if (text.empty()) {
       if (err) *err = "USDA serialization produced empty data.";
       return false;
@@ -1419,7 +1419,7 @@ bool SerializeLayerForUSDZ(const Layer &layer, USDZRootLayerFormat format,
     return true;
   }
 
-  return tinyusdz::usdc::SaveAsUSDCToMemory(layer, out, warn, err);
+  return lightusd::usdc::SaveAsUSDCToMemory(layer, out, warn, err);
 }
 
 bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
@@ -1433,7 +1433,7 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   std::vector<NonFlattenLayerPackage> packages;
   packages.push_back(NonFlattenLayerPackage{});
   std::string lwarn, lerr;
-  if (!tinyusdz::LoadLayerFromFile(root_input, &packages[0].layer, &lwarn,
+  if (!lightusd::LoadLayerFromFile(root_input, &packages[0].layer, &lwarn,
                                    &lerr)) {
     if (err) *err = "Failed to load root layer: " + lerr;
     return false;
@@ -1776,15 +1776,15 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     assets[packages[i].archive_name] = std::move(layer_bytes);
   }
 
-  tinyusdz::USDZWriteOptions write_options;
-  write_options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+  lightusd::USDZWriteOptions write_options;
+  write_options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
   if (options.usdz_root_layer_format == USDZRootLayerFormat::USDC && warn) {
     *warn += "Non-flatten USDZ uses a USDA root layer to preserve composition "
              "arcs for downstream loaders.\n";
   }
 
   std::string swarn, serr;
-  if (!tinyusdz::SaveAsUSDZToFile(options.output, packages[0].layer, assets,
+  if (!lightusd::SaveAsUSDZToFile(options.output, packages[0].layer, assets,
                                   write_options, &swarn, &serr)) {
     if (err) *err = "Failed to write USDZ: " + serr;
     return false;
@@ -1796,7 +1796,7 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
                         /*max*/ 512 * 1024 * 1024)) {
     std::string vwarn, verr;
-    if (!tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+    if (!lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
                                 &verr)) {
       if (warn) *warn += "USDZ validation reported issues: " + verr + "\n";
     } else {
@@ -1856,7 +1856,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   bool root_is_usdz = false;
   {
     std::string fmt;
-    if (tinyusdz::IsUSD(root_input, &fmt) && fmt == "usdz") {
+    if (lightusd::IsUSD(root_input, &fmt) && fmt == "usdz") {
       root_is_usdz = true;
     }
   }
@@ -1875,12 +1875,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   if (root_is_usdz) {
     std::string w;
-    if (!tinyusdz::ReadUSDZAssetInfoFromFile(root_input, &usdz_asset, &w, err)) {
+    if (!lightusd::ReadUSDZAssetInfoFromFile(root_input, &usdz_asset, &w, err)) {
       if (err) (*err) = "Failed to read USDZ asset info: " + (err ? *err : std::string());
       return false;
     }
     if (warn) (*warn) += w;
-    if (!tinyusdz::SetupUSDZAssetResolution(resolver, &usdz_asset)) {
+    if (!lightusd::SetupUSDZAssetResolution(resolver, &usdz_asset)) {
       if (err) (*err) = "Failed to set up USDZ asset resolution for: " + root_input;
       return false;
     }
@@ -1923,7 +1923,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     Log(options.verbose, "Loading + compositing (flatten): " + root_input);
     timer.begin("load-layer");
     Layer root_layer;
-    if (!tinyusdz::LoadLayerFromFile(root_input, &root_layer, &lwarn, &lerr)) {
+    if (!lightusd::LoadLayerFromFile(root_input, &root_layer, &lwarn, &lerr)) {
       if (err) (*err) = "Failed to load layer: " + lerr;
       return false;
     }
@@ -1944,7 +1944,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     layer_for_write = std::move(composited);
     has_layer_for_write = true;
     timer.begin("layer-to-stage");
-    if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &lwarn, &lerr)) {
+    if (!lightusd::LayerToStage(Layer(layer_for_write), &stage, &lwarn, &lerr)) {
       if (err) (*err) = "LayerToStage failed: " + lerr;
       return false;
     }
@@ -1958,7 +1958,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     // the typed schema (e.g. skel:animationSource), and loses `uniform`
     // variability. (USDZ -noFlatten is handled earlier by ConvertNonFlattenUSDZ;
     // all downstream `stage` uses below are guarded by !has_layer_for_write.)
-    if (!tinyusdz::LoadLayerFromFile(root_input, &layer_for_write, &lwarn,
+    if (!lightusd::LoadLayerFromFile(root_input, &layer_for_write, &lwarn,
                                      &lerr)) {
       if (err) (*err) = "Failed to load layer: " + lerr;
       return false;
@@ -2047,7 +2047,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
               std::to_string(opt_stats.num_materials_deduped) + ".");
       if (options.arkit_compatible) {
         std::string rwarn, rerr;
-        if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
+        if (!lightusd::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
                                     &rerr)) {
           if (err) {
             *err = "LayerToStage after material optimization failed: " + rerr;
@@ -2427,7 +2427,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     RemapLayerAssetPaths(layer_for_write, path_to_archive);
     if (options.arkit_compatible) {
       std::string rwarn, rerr;
-      if (!tinyusdz::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
+      if (!lightusd::LayerToStage(Layer(layer_for_write), &stage, &rwarn,
                                   &rerr)) {
         if (err) *err = "LayerToStage after ARKit remap failed: " + rerr;
         return false;
@@ -2481,13 +2481,13 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
   switch (options.output_format) {
     case OutputFormat::USDZ: {
       Log(options.verbose, "Writing USDZ: " + options.output);
-      tinyusdz::USDZWriteOptions write_options;
+      lightusd::USDZWriteOptions write_options;
       write_options.root_layer_format =
           (options.arkit_compatible)
-              ? tinyusdz::USDZRootLayerFormat::USDC
+              ? lightusd::USDZRootLayerFormat::USDC
           : (options.usdz_root_layer_format == USDZRootLayerFormat::USDA)
-              ? tinyusdz::USDZRootLayerFormat::USDA
-              : tinyusdz::USDZRootLayerFormat::USDC;
+              ? lightusd::USDZRootLayerFormat::USDA
+              : lightusd::USDZRootLayerFormat::USDC;
       if (options.arkit_compatible &&
           options.usdz_root_layer_format != USDZRootLayerFormat::USDC &&
           warn) {
@@ -2496,12 +2496,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       }
       write_ok = has_layer_for_write
           ? (options.arkit_compatible
-                 ? tinyusdz::SaveAsUSDZToFile(options.output, stage, assets,
+                 ? lightusd::SaveAsUSDZToFile(options.output, stage, assets,
                                               write_options, &swarn, &serr)
-                 : tinyusdz::SaveAsUSDZToFile(options.output, layer_for_write,
+                 : lightusd::SaveAsUSDZToFile(options.output, layer_for_write,
                                               assets, write_options, &swarn,
                                               &serr))
-          : tinyusdz::SaveAsUSDZToFile(options.output, stage, assets,
+          : lightusd::SaveAsUSDZToFile(options.output, stage, assets,
                                        write_options, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDZ: " + serr;
       break;
@@ -2509,9 +2509,9 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     case OutputFormat::USDC: {
       Log(options.verbose, "Writing USDC: " + options.output);
       write_ok = has_layer_for_write
-          ? tinyusdz::usdc::SaveAsUSDCToFile(options.output, layer_for_write,
+          ? lightusd::usdc::SaveAsUSDCToFile(options.output, layer_for_write,
                                              &swarn, &serr)
-          : tinyusdz::usdc::SaveAsUSDCToFile(options.output, stage, &swarn, &serr);
+          : lightusd::usdc::SaveAsUSDCToFile(options.output, stage, &swarn, &serr);
       if (!write_ok && err) (*err) = "Failed to write USDC: " + serr;
       break;
     }
@@ -2520,14 +2520,14 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       if (has_layer_for_write) {
         std::ofstream ofs(options.output);
         if (ofs) {
-          ofs << tinyusdz::print_layer(layer_for_write, 0);
+          ofs << lightusd::print_layer(layer_for_write, 0);
           write_ok = bool(ofs);
         } else {
           serr = "Failed to open output file.";
           write_ok = false;
         }
       } else {
-        write_ok = tinyusdz::usda::SaveAsUSDA(options.output, stage, &swarn, &serr);
+        write_ok = lightusd::usda::SaveAsUSDA(options.output, stage, &swarn, &serr);
       }
       if (!write_ok && err) (*err) = "Failed to write USDA: " + serr;
       break;
@@ -2546,7 +2546,7 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
     if (io::ReadWholeFile(&usdz_bytes, &ioerr, options.output,
                           /*max*/ 512 * 1024 * 1024)) {
       std::string vwarn, verr;
-      if (!tinyusdz::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
+      if (!lightusd::ValidateUSDZ(usdz_bytes.data(), usdz_bytes.size(), &vwarn,
                                   &verr)) {
         if (warn) {
           (*warn) += "USDZ validation reported issues: " + verr + "\n";
@@ -2636,4 +2636,4 @@ size_t RemapLayerTextureAssetPaths(
 }
 
 }  // namespace usdz
-}  // namespace tinyusdz
+}  // namespace lightusd

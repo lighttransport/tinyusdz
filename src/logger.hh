@@ -17,7 +17,7 @@
 #include "tsa-mutex.hh"
 
 // Simple logging management class
-namespace tinyusdz {
+namespace lightusd {
 namespace logging {
 
 enum class LogLevel {
@@ -33,39 +33,39 @@ class Logger {
  private:
   LogLevel _level = LogLevel::Warn;  // Default to Warn level
   std::ostream* _stream = &std::cout;  // Default to std::cout
-  
+
   // Private constructor for singleton
   Logger() = default;
-  
+
  public:
   // Singleton instance
   static Logger& getInstance() {
     static Logger instance;
     return instance;
   }
-  
+
   // Delete copy constructor and assignment operator
   Logger(const Logger&) = delete;
   Logger& operator=(const Logger&) = delete;
-  
+
   void setLogLevel(LogLevel level) {
     _level = level;
   }
-  
+
   LogLevel getLogLevel() const {
     return _level;
   }
-  
+
   void setStream(std::ostream* stream) {
     if (stream) {
       _stream = stream;
     }
   }
-  
+
   std::ostream* getStream() const {
     return _stream;
   }
-  
+
   bool shouldLog(LogLevel msgLevel) const {
     return static_cast<int>(msgLevel) >= static_cast<int>(_level);
   }
@@ -162,9 +162,9 @@ class TraceManager {
   TraceReportFormat report_format_ = TraceReportFormat::PlainText;  // Default to plain text
   TraceEventLogging event_logging_ = TraceEventLogging::None;  // Default to no event logging
   LogLevel event_log_level_ = LogLevel::Debug;  // Log level for trace events
-  
+
   TraceManager() = default;
-  
+
  public:
   static TraceManager& getInstance() {
 #if defined(__clang__)
@@ -177,19 +177,19 @@ class TraceManager {
 #endif
     return instance;
   }
-  
+
   TraceManager(const TraceManager&) = delete;
   TraceManager& operator=(const TraceManager&) = delete;
-  
+
   void setEnabled(bool enabled) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     enabled_ = enabled;
   }
-  
+
   bool isEnabled() const {
     return enabled_;
   }
-  
+
   // Enable/disable tracing for specific tag (and optionally subtag)
   void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
@@ -199,13 +199,13 @@ class TraceManager {
     }
     tag_enabled_map_[key] = enabled;
   }
-  
+
   // Check if a specific tag (and optionally subtag) is enabled
   bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const TUSDZ_REQUIRES_NOT(mutex_) {
     if (!enabled_) return false;  // Global disable overrides everything
-    
+
     MutexLockGuard lock(mutex_);
-    
+
     // Check for exact match with subtag
     std::string key = tag;
     if (!subtag.empty()) {
@@ -215,73 +215,73 @@ class TraceManager {
         return it->second;
       }
     }
-    
+
     // Check for tag-level setting
     auto it = tag_enabled_map_.find(tag);
     if (it != tag_enabled_map_.end()) {
       return it->second;
     }
-    
+
     // Default to enabled if not explicitly set
     return true;
   }
-  
+
   // Clear all per-tag settings
   void clearTagSettings() TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     tag_enabled_map_.clear();
   }
-  
+
   // Get all tag settings
   std::unordered_map<std::string, bool> getTagSettings() const TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return tag_enabled_map_;
   }
-  
+
   // Set report format
   void setReportFormat(TraceReportFormat format) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     report_format_ = format;
   }
-  
+
   // Get report format
   TraceReportFormat getReportFormat() const TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return report_format_;
   }
-  
+
   // Set event logging mode
   void setEventLogging(TraceEventLogging mode) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     event_logging_ = mode;
   }
-  
+
   // Get event logging mode
   TraceEventLogging getEventLogging() const TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return event_logging_;
   }
-  
+
   // Set log level for trace events
   void setEventLogLevel(LogLevel level) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     event_log_level_ = level;
   }
-  
+
   // Get log level for trace events
   LogLevel getEventLogLevel() const TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return event_log_level_;
   }
-  
+
   // Log trace begin event
-  void logTraceBegin(const std::string& tag, const std::string& subtag, 
+  void logTraceBegin(const std::string& tag, const std::string& subtag,
                      const std::string& function, const std::string& file, int line) {
     if (event_logging_ == TraceEventLogging::None) return;
     if (!Logger::getInstance().shouldLog(event_log_level_)) return;
-    
+
     auto& stream = *Logger::getInstance().getStream();
-    
+
     if (event_logging_ == TraceEventLogging::JSON) {
       stream << "{\"event\":\"trace_begin\",\"tag\":\"" << escapeJSON(tag) << "\"";
       if (!subtag.empty()) {
@@ -301,15 +301,15 @@ class TraceManager {
       stream << " in " << function << " at " << file << ":" << line << "\n";
     }
   }
-  
+
   // Log trace end event
   void logTraceEnd(const std::string& tag, const std::string& subtag,
                    const std::string& function, double duration_ms) {
     if (event_logging_ == TraceEventLogging::None) return;
     if (!Logger::getInstance().shouldLog(event_log_level_)) return;
-    
+
     auto& stream = *Logger::getInstance().getStream();
-    
+
     if (event_logging_ == TraceEventLogging::JSON) {
       stream << "{\"event\":\"trace_end\",\"tag\":\"" << escapeJSON(tag) << "\"";
       if (!subtag.empty()) {
@@ -325,14 +325,14 @@ class TraceManager {
       if (!subtag.empty()) {
         stream << "::" << subtag;
       }
-      stream << " in " << function << " took " 
+      stream << " in " << function << " took "
              << std::fixed << std::setprecision(3) << duration_ms << " ms\n";
     }
   }
-  
+
   void addRecord(const TraceRecord& record) TUSDZ_REQUIRES_NOT(mutex_) {
     if (!isTagEnabled(record.tag, record.subtag)) return;
-    
+
     MutexLockGuard lock(mutex_);
     std::string key = record.tag;
     if (!record.subtag.empty()) {
@@ -340,12 +340,12 @@ class TraceManager {
     }
     records_by_tag_[key].push_back(record);
   }
-  
+
   void clearRecords() TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     records_by_tag_.clear();
   }
-  
+
   void printSummary(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
     if (report_format_ == TraceReportFormat::JSON) {
       printSummaryJSON(out);
@@ -353,27 +353,27 @@ class TraceManager {
       printSummaryPlainText(out);
     }
   }
-  
+
   void printSummaryPlainText(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
-    
+
     out << "\n=== Trace Summary ===\n";
     for (const auto& kv : records_by_tag_) {
       const std::string& key = kv.first;
       const std::vector<TraceRecord>& records = kv.second;
-      
+
       double total_ms = 0.0;
       double min_ms = (std::numeric_limits<double>::max)();
       double max_ms = 0.0;
-      
+
       for (const auto& record : records) {
         total_ms += record.duration_ms;
         min_ms = (std::min)(min_ms, record.duration_ms);
         max_ms = (std::max)(max_ms, record.duration_ms);
       }
-      
+
       double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
-      
+
       out << std::fixed << std::setprecision(3);
       out << "Tag: " << key << "\n";
       out << "  Count: " << records.size() << "\n";
@@ -384,35 +384,35 @@ class TraceManager {
     }
     out << "====================\n";
   }
-  
+
   void printSummaryJSON(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
-    
+
     out << "{\n";
     out << "  \"trace_summary\": {\n";
-    
+
     bool first_tag = true;
     for (const auto& kv : records_by_tag_) {
       const std::string& key = kv.first;
       const std::vector<TraceRecord>& records = kv.second;
-      
+
       double total_ms = 0.0;
       double min_ms = (std::numeric_limits<double>::max)();
       double max_ms = 0.0;
-      
+
       for (const auto& record : records) {
         total_ms += record.duration_ms;
         min_ms = (std::min)(min_ms, record.duration_ms);
         max_ms = (std::max)(max_ms, record.duration_ms);
       }
-      
+
       double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
-      
+
       if (!first_tag) {
         out << ",\n";
       }
       first_tag = false;
-      
+
       out << std::fixed << std::setprecision(3);
       out << "    \"" << escapeJSON(key) << "\": {\n";
       out << "      \"count\": " << records.size() << ",\n";
@@ -422,28 +422,28 @@ class TraceManager {
       out << "      \"max_ms\": " << max_ms << "\n";
       out << "    }";
     }
-    
+
     out << "\n  }\n";
     out << "}\n";
   }
-  
+
   // Get detailed records in JSON format
   void printDetailedJSON(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
-    
+
     out << "{\n";
     out << "  \"trace_records\": [\n";
-    
+
     bool first_record = true;
     for (const auto& kv : records_by_tag_) {
       const std::vector<TraceRecord>& records = kv.second;
-      
+
       for (const auto& record : records) {
         if (!first_record) {
           out << ",\n";
         }
         first_record = false;
-        
+
         out << std::fixed << std::setprecision(3);
         out << "    {\n";
         out << "      \"tag\": \"" << escapeJSON(record.tag) << "\",\n";
@@ -477,11 +477,11 @@ class TraceManager {
         out << "    }";
       }
     }
-    
+
     out << "\n  ]\n";
     out << "}\n";
   }
-  
+
  private:
   // Helper function to escape special characters in JSON strings
   static std::string escapeJSON(const std::string& str) {
@@ -501,25 +501,25 @@ class TraceManager {
             ss << c;
           } else {
             // Control characters and non-ASCII
-            ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') 
+            ss << "\\u" << std::hex << std::setw(4) << std::setfill('0')
                << static_cast<int>(c);
           }
       }
     }
     return ss.str();
   }
-  
+
  public:
-  
-  std::vector<TraceRecord> getRecords(const std::string& tag, 
+
+  std::vector<TraceRecord> getRecords(const std::string& tag,
                                       const std::string& subtag = "") const TUSDZ_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
-    
+
     std::string key = tag;
     if (!subtag.empty()) {
       key += "::" + subtag;
     }
-    
+
     auto it = records_by_tag_.find(key);
     if (it != records_by_tag_.end()) {
       return it->second;
@@ -533,42 +533,42 @@ class Trace {
  private:
   TraceRecord record_;
   bool enabled_;
-  
+
  public:
-  Trace(const std::string& tag, 
+  Trace(const std::string& tag,
         const std::string& subtag = "",
         const char* function = "",
         const char* file = "",
         int line = 0)
       : enabled_(TraceManager::getInstance().isTagEnabled(tag, subtag)) {
     if (!enabled_) return;
-    
+
     record_.tag = tag;
     record_.subtag = subtag;
     record_.function_name = function;
     record_.file_name = file;
     record_.line_number = line;
     record_.start_time = std::chrono::high_resolution_clock::now();
-    
+
     // Log trace begin event
     TraceManager::getInstance().logTraceBegin(tag, subtag, function, file, line);
   }
-  
+
   ~Trace() {
     if (!enabled_) return;
-    
+
     record_.end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
         record_.end_time - record_.start_time);
     record_.duration_ms = static_cast<double>(duration.count()) / 1000.0;
-    
+
     // Log trace end event
-    TraceManager::getInstance().logTraceEnd(record_.tag, record_.subtag, 
+    TraceManager::getInstance().logTraceEnd(record_.tag, record_.subtag,
                                             record_.function_name, record_.duration_ms);
-    
+
     TraceManager::getInstance().addRecord(record_);
   }
-  
+
   // Disable copy/move to ensure proper RAII behavior
   Trace(const Trace&) = delete;
   Trace& operator=(const Trace&) = delete;
@@ -577,7 +577,7 @@ class Trace {
 };
 
 } // namespace logging
-} // namespace tinyusdz
+} // namespace lightusd
 
 // TUSDZ_LOG_I: Log at INFO level (unless building with WASI)
 #if defined(__wasi__)
@@ -585,11 +585,11 @@ class Trace {
 #else
 #define TUSDZ_LOG_I(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Info)) {           \
+    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Info)) {           \
       std::ostringstream _tusdz_oss;                                            \
       _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Info, __FILE__,           \
+      _tusdz_logger.emit(lightusd::logging::LogLevel::Info, __FILE__,           \
                          __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
@@ -604,44 +604,44 @@ class Trace {
 #else
 #define TUSDZ_LOG_D(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Debug)) {          \
+    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Debug)) {          \
       std::ostringstream _tusdz_oss;                                            \
       _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Debug, __FILE__,          \
+      _tusdz_logger.emit(lightusd::logging::LogLevel::Debug, __FILE__,          \
                          __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 
 #define TUSDZ_LOG_W(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Warn)) {           \
+    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Warn)) {           \
       std::ostringstream _tusdz_oss;                                            \
       _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Warn, __FILE__,           \
+      _tusdz_logger.emit(lightusd::logging::LogLevel::Warn, __FILE__,           \
                          __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 
 #define TUSDZ_LOG_E(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Error)) {          \
+    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Error)) {          \
       std::ostringstream _tusdz_oss;                                            \
       _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Error, __FILE__,          \
+      _tusdz_logger.emit(lightusd::logging::LogLevel::Error, __FILE__,          \
                          __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 
 #define TUSDZ_LOG_C(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Critical)) {       \
+    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Critical)) {       \
       std::ostringstream _tusdz_oss;                                            \
       _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Critical, __FILE__,       \
+      _tusdz_logger.emit(lightusd::logging::LogLevel::Critical, __FILE__,       \
                          __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
@@ -654,101 +654,101 @@ class Trace {
 #else
 // Basic trace macro with just tag
 #define TUSDZ_TRACE(tag) \
-  tinyusdz::logging::Trace _trace_##__LINE__(tag, "", __func__, __FILE__, __LINE__)
+  lightusd::logging::Trace _trace_##__LINE__(tag, "", __func__, __FILE__, __LINE__)
 
 // Trace macro with tag and subtag for nested tracing
 #define TUSDZ_TRACE_TAG(tag, subtag) \
-  tinyusdz::logging::Trace _trace_##__LINE__(tag, subtag, __func__, __FILE__, __LINE__)
+  lightusd::logging::Trace _trace_##__LINE__(tag, subtag, __func__, __FILE__, __LINE__)
 #endif
 
 // Helper macros for common trace operations
 #define TUSDZ_TRACE_ENABLE() \
-  tinyusdz::logging::TraceManager::getInstance().setEnabled(true)
+  lightusd::logging::TraceManager::getInstance().setEnabled(true)
 
 #define TUSDZ_TRACE_DISABLE() \
-  tinyusdz::logging::TraceManager::getInstance().setEnabled(false)
+  lightusd::logging::TraceManager::getInstance().setEnabled(false)
 
 #define TUSDZ_TRACE_CLEAR() \
-  tinyusdz::logging::TraceManager::getInstance().clearRecords()
+  lightusd::logging::TraceManager::getInstance().clearRecords()
 
 #define TUSDZ_TRACE_SUMMARY() \
-  tinyusdz::logging::TraceManager::getInstance().printSummary()
+  lightusd::logging::TraceManager::getInstance().printSummary()
 
 #define TUSDZ_TRACE_SUMMARY_TO(stream) \
-  tinyusdz::logging::TraceManager::getInstance().printSummary(stream)
+  lightusd::logging::TraceManager::getInstance().printSummary(stream)
 
 // Per-tag enable/disable macros
 #define TUSDZ_TRACE_ENABLE_TAG(tag) \
-  tinyusdz::logging::TraceManager::getInstance().setTagEnabled(tag, true)
+  lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, true)
 
 #define TUSDZ_TRACE_DISABLE_TAG(tag) \
-  tinyusdz::logging::TraceManager::getInstance().setTagEnabled(tag, false)
+  lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, false)
 
 #define TUSDZ_TRACE_ENABLE_TAG_SUBTAG(tag, subtag) \
-  tinyusdz::logging::TraceManager::getInstance().setTagEnabled(tag, true, subtag)
+  lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, true, subtag)
 
 #define TUSDZ_TRACE_DISABLE_TAG_SUBTAG(tag, subtag) \
-  tinyusdz::logging::TraceManager::getInstance().setTagEnabled(tag, false, subtag)
+  lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, false, subtag)
 
 #define TUSDZ_TRACE_CLEAR_TAG_SETTINGS() \
-  tinyusdz::logging::TraceManager::getInstance().clearTagSettings()
+  lightusd::logging::TraceManager::getInstance().clearTagSettings()
 
 // Report format macros
 #define TUSDZ_TRACE_SET_FORMAT_JSON() \
-  tinyusdz::logging::TraceManager::getInstance().setReportFormat(tinyusdz::logging::TraceReportFormat::JSON)
+  lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::JSON)
 
 #define TUSDZ_TRACE_SET_FORMAT_TEXT() \
-  tinyusdz::logging::TraceManager::getInstance().setReportFormat(tinyusdz::logging::TraceReportFormat::PlainText)
+  lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::PlainText)
 
 #define TUSDZ_TRACE_SUMMARY_JSON() \
   do { \
-    tinyusdz::logging::TraceManager::getInstance().setReportFormat(tinyusdz::logging::TraceReportFormat::JSON); \
-    tinyusdz::logging::TraceManager::getInstance().printSummary(); \
+    lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::JSON); \
+    lightusd::logging::TraceManager::getInstance().printSummary(); \
   } while(false)
 
 #define TUSDZ_TRACE_SUMMARY_JSON_TO(stream) \
   do { \
-    tinyusdz::logging::TraceManager::getInstance().setReportFormat(tinyusdz::logging::TraceReportFormat::JSON); \
-    tinyusdz::logging::TraceManager::getInstance().printSummary(stream); \
+    lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::JSON); \
+    lightusd::logging::TraceManager::getInstance().printSummary(stream); \
   } while(false)
 
 #define TUSDZ_TRACE_DETAILED_JSON() \
-  tinyusdz::logging::TraceManager::getInstance().printDetailedJSON()
+  lightusd::logging::TraceManager::getInstance().printDetailedJSON()
 
 #define TUSDZ_TRACE_DETAILED_JSON_TO(stream) \
-  tinyusdz::logging::TraceManager::getInstance().printDetailedJSON(stream)
+  lightusd::logging::TraceManager::getInstance().printDetailedJSON(stream)
 
 // Event logging macros
 #define TUSDZ_TRACE_SET_EVENT_LOGGING_NONE() \
-  tinyusdz::logging::TraceManager::getInstance().setEventLogging(tinyusdz::logging::TraceEventLogging::None)
+  lightusd::logging::TraceManager::getInstance().setEventLogging(lightusd::logging::TraceEventLogging::None)
 
 #define TUSDZ_TRACE_SET_EVENT_LOGGING_TEXT() \
-  tinyusdz::logging::TraceManager::getInstance().setEventLogging(tinyusdz::logging::TraceEventLogging::PlainText)
+  lightusd::logging::TraceManager::getInstance().setEventLogging(lightusd::logging::TraceEventLogging::PlainText)
 
 #define TUSDZ_TRACE_SET_EVENT_LOGGING_JSON() \
-  tinyusdz::logging::TraceManager::getInstance().setEventLogging(tinyusdz::logging::TraceEventLogging::JSON)
+  lightusd::logging::TraceManager::getInstance().setEventLogging(lightusd::logging::TraceEventLogging::JSON)
 
 #define TUSDZ_TRACE_SET_EVENT_LOG_LEVEL(level) \
-  tinyusdz::logging::TraceManager::getInstance().setEventLogLevel(tinyusdz::logging::LogLevel::level)
+  lightusd::logging::TraceManager::getInstance().setEventLogLevel(lightusd::logging::LogLevel::level)
 
-// Global flag to control DCOUT output. Set via TINYUSDZ_ENABLE_DCOUT environment variable.
-namespace tinyusdz {
+// Global flag to control DCOUT output. Set via LIGHTUSD_ENABLE_DCOUT environment variable.
+namespace lightusd {
 extern bool g_enable_dcout_output;
 }
 
-// DCOUT macro for debug output (requires TINYUSDZ_DEBUG_PRINT to be defined during compilation)
-#if !defined(TINYUSDZ_PRODUCTION_BUILD) && !defined(TINYUSDZ_FUZZER_BUILD)
-#if defined(TINYUSDZ_DEBUG_PRINT)
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
+// DCOUT macro for debug output (requires LIGHTUSD_DEBUG_PRINT to be defined during compilation)
+#if !defined(LIGHTUSD_PRODUCTION_BUILD) && !defined(LIGHTUSD_FUZZER_BUILD)
+#if defined(LIGHTUSD_DEBUG_PRINT)
+#define LIGHTUSD_LOCAL_DEBUG_PRINT
 #endif
 #endif
 
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#if defined(LIGHTUSD_LOCAL_DEBUG_PRINT)
 // DCOUT macro - accepts iostream expressions with << operator
 // Example usage: DCOUT("ptr = " << std::hex << ptr)
 #define DCOUT(x)                                               \
   do {                                                         \
-    if (tinyusdz::g_enable_dcout_output) {                     \
+    if (lightusd::g_enable_dcout_output) {                     \
       std::ostringstream dcout_ss;                             \
       dcout_ss << x;                                           \
       std::cout << __FILE__ << ":" << __func__ << ":"          \
@@ -760,4 +760,4 @@ extern bool g_enable_dcout_output;
 #define DCOUT(x)
 #endif
 
-#undef TINYUSDZ_LOCAL_DEBUG_PRINT
+#undef LIGHTUSD_LOCAL_DEBUG_PRINT

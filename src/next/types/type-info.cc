@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Runtime type information implementation
+// LightUSD Next - Runtime type information implementation
 
 #include "type-info.hh"
 
 #include <cstring>
 #include <array>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -533,4 +533,4 @@ size_t GetComponentCount(TypeId id) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

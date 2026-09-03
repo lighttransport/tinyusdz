@@ -1,6 +1,6 @@
-# OpenUSD Environment for TinyUSDZ Comparison
+# OpenUSD Environment for LightUSD Comparison
 
-This directory contains scripts and tools for setting up OpenUSD to compare its behavior and output with TinyUSDZ.
+This directory contains scripts and tools for setting up OpenUSD to compare its behavior and output with LightUSD.
 
 ## Quick Start
 
@@ -197,10 +197,10 @@ for prim in stage.Traverse():
 
 ### 1. Compare File Parsing
 
-**TinyUSDZ:**
+**LightUSD:**
 ```bash
-# From tinyusdz root
-./build/tusdcat models/suzanne.usda > tinyusdz_output.txt
+# From lightusd root
+./build/tusdcat models/suzanne.usda > lightusd_output.txt
 ```
 
 **OpenUSD:**
@@ -211,7 +211,7 @@ usdcat ../models/suzanne.usda > openusd_output.txt
 
 **Compare outputs:**
 ```bash
-diff tinyusdz_output.txt openusd_output.txt
+diff lightusd_output.txt openusd_output.txt
 ```
 
 ### 2. Validate USD Files
@@ -223,7 +223,7 @@ usdchecker ../models/suzanne.usda
 
 ### 3. Compare Scene Hierarchy
 
-**TinyUSDZ:**
+**LightUSD:**
 ```bash
 # Use tusdview or custom tool to display hierarchy
 ./build/tusdview models/suzanne.usda
@@ -269,10 +269,10 @@ except ImportError:
 
 ### 5. Compare USDZ Creation
 
-**TinyUSDZ:**
+**LightUSD:**
 ```bash
-# Use TinyUSDZ's USDZ creation functionality
-# (implementation depends on TinyUSDZ API)
+# Use LightUSD's USDZ creation functionality
+# (implementation depends on LightUSD API)
 ```
 
 **OpenUSD:**
@@ -387,9 +387,9 @@ usdcat "$USD_FILE" > openusd_cat.txt
 usdtree "$USD_FILE" > openusd_tree.txt
 usdchecker "$USD_FILE" > openusd_check.txt 2>&1
 
-# TinyUSDZ outputs (adjust paths as needed)
-echo "Generating TinyUSDZ outputs..."
-../../build/tusdcat "$USD_FILE" > tinyusdz_cat.txt
+# LightUSD outputs (adjust paths as needed)
+echo "Generating LightUSD outputs..."
+../../build/tusdcat "$USD_FILE" > lightusd_cat.txt
 
 echo "Outputs saved in comparisons/"
 echo "Use 'diff' or 'vimdiff' to compare files"

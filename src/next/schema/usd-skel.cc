@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdSkel Schema Implementation
+// LightUSD Next - UsdSkel Schema Implementation
 
 #include "usd-skel.hh"
 #include "../strfmt.hh"
@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -552,4 +552,4 @@ bool SkelSortInfluences(std::vector<int>& indices,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

@@ -13,12 +13,12 @@
 #include <cmath>
 #include <limits>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void strutil_test(void) {
   {
     std::string s = "HelloA WorlZ";
-    std::string ls = tinyusdz::to_lower(s);
+    std::string ls = lightusd::to_lower(s);
     TEST_CHECK(ls.compare("helloa worlz") == 0);
   }
 
@@ -33,7 +33,7 @@ void strutil_test(void) {
     s = "customLayerData";
     TEST_CHECK(isValidIdentifier(s));
 
-    // Now TinyUSDZ allow UTF-8 string as identifier by default.
+    // Now LightUSD allow UTF-8 string as identifier by default.
     s = u8"響";
     TEST_CHECK(isValidIdentifier(s));
 
@@ -91,7 +91,7 @@ void strutil_test(void) {
 }
 
 void tinystring_test(void) {
-  
+
   tstring s("hello");
   tstring s2("bora");
   tstring s3("ll");
@@ -118,129 +118,129 @@ void tinystring_test(void) {
 }
 
 void parse_int_test(void) {
-  using namespace tinyusdz::str;
-  
+  using namespace lightusd::str;
+
   int32_t result;
-  
+
   // Basic positive numbers
   {
     tstring_view sv("123");
     TEST_CHECK(parse_int(sv, &result));
     TEST_CHECK(result == 123);
   }
-  
+
   // Basic negative numbers
   {
     tstring_view sv("-456");
     TEST_CHECK(parse_int(sv, &result));
     TEST_CHECK(result == -456);
   }
-  
+
   // Zero
   {
     tstring_view sv("0");
     TEST_CHECK(parse_int(sv, &result));
     TEST_CHECK(result == 0);
   }
-  
+
   // Positive sign
   {
     tstring_view sv("+789");
     TEST_CHECK(parse_int(sv, &result));
     TEST_CHECK(result == 789);
   }
-  
+
   // Maximum int32_t value
   {
     tstring_view sv("2147483647");
     TEST_CHECK(parse_int(sv, &result));
     TEST_CHECK(result == 2147483647);
   }
-  
+
   // Minimum int32_t value
   {
     tstring_view sv("-2147483648");
     TEST_CHECK(parse_int(sv, &result));
     TEST_CHECK(result == -2147483648);
   }
-  
+
   // Empty string
   {
     tstring_view sv("");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   // Just a sign
   {
     tstring_view sv("-");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("+");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   // Non-numeric characters
   {
     tstring_view sv("123a");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("a123");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("12.3");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   // Overflow cases
   {
     tstring_view sv("2147483648");  // INT32_MAX + 1
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("-2147483649");  // INT32_MIN - 1
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   // Very large numbers
   {
     tstring_view sv("999999999999999999");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("-999999999999999999");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   // Leading/trailing spaces (should fail since parse_int doesn't handle whitespace)
   {
     tstring_view sv(" 123");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("123 ");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   // Multiple signs
   {
     tstring_view sv("++123");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("--123");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
   {
     tstring_view sv("+-123");
     TEST_CHECK(!parse_int(sv, &result));
@@ -250,71 +250,71 @@ void parse_int_test(void) {
 
 void strutil_parse_helpers_test(void) {
   {
-    nonstd::optional<int> v = tinyusdz::atoi("2147483647");
+    nonstd::optional<int> v = lightusd::atoi("2147483647");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == 2147483647);
   }
   {
-    nonstd::optional<int> v = tinyusdz::atoi("-2147483648");
+    nonstd::optional<int> v = lightusd::atoi("-2147483648");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == (std::numeric_limits<int>::min)());
   }
-  TEST_CHECK(!tinyusdz::atoi("2147483648").has_value());
-  TEST_CHECK(!tinyusdz::atoi("-2147483649").has_value());
-  TEST_CHECK(!tinyusdz::atoi("123abc").has_value());
-  TEST_CHECK(!tinyusdz::atoi(static_cast<const char *>(nullptr)).has_value());
+  TEST_CHECK(!lightusd::atoi("2147483648").has_value());
+  TEST_CHECK(!lightusd::atoi("-2147483649").has_value());
+  TEST_CHECK(!lightusd::atoi("123abc").has_value());
+  TEST_CHECK(!lightusd::atoi(static_cast<const char *>(nullptr)).has_value());
 
   {
-    nonstd::optional<uint32_t> v = tinyusdz::atou("4294967295");
+    nonstd::optional<uint32_t> v = lightusd::atou("4294967295");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == (std::numeric_limits<uint32_t>::max)());
   }
-  TEST_CHECK(!tinyusdz::atou("4294967296").has_value());
-  TEST_CHECK(!tinyusdz::atou("-1").has_value());
-  TEST_CHECK(!tinyusdz::atou("1x").has_value());
+  TEST_CHECK(!lightusd::atou("4294967296").has_value());
+  TEST_CHECK(!lightusd::atou("-1").has_value());
+  TEST_CHECK(!lightusd::atou("1x").has_value());
 
   {
-    nonstd::optional<int64_t> v = tinyusdz::atoll("9223372036854775807");
+    nonstd::optional<int64_t> v = lightusd::atoll("9223372036854775807");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == (std::numeric_limits<int64_t>::max)());
   }
   {
-    nonstd::optional<int64_t> v = tinyusdz::atoll("-9223372036854775808");
+    nonstd::optional<int64_t> v = lightusd::atoll("-9223372036854775808");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == (std::numeric_limits<int64_t>::min)());
   }
-  TEST_CHECK(!tinyusdz::atoll("9223372036854775808").has_value());
-  TEST_CHECK(!tinyusdz::atoll("-9223372036854775809").has_value());
-  TEST_CHECK(!tinyusdz::atoll(static_cast<const char *>(nullptr)).has_value());
+  TEST_CHECK(!lightusd::atoll("9223372036854775808").has_value());
+  TEST_CHECK(!lightusd::atoll("-9223372036854775809").has_value());
+  TEST_CHECK(!lightusd::atoll(static_cast<const char *>(nullptr)).has_value());
 
   {
-    nonstd::optional<uint64_t> v = tinyusdz::atoull("18446744073709551615");
+    nonstd::optional<uint64_t> v = lightusd::atoull("18446744073709551615");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == (std::numeric_limits<uint64_t>::max)());
   }
-  TEST_CHECK(!tinyusdz::atoull("18446744073709551616").has_value());
-  TEST_CHECK(!tinyusdz::atoull("-1").has_value());
-  TEST_CHECK(!tinyusdz::atoull(static_cast<const char *>(nullptr)).has_value());
+  TEST_CHECK(!lightusd::atoull("18446744073709551616").has_value());
+  TEST_CHECK(!lightusd::atoull("-1").has_value());
+  TEST_CHECK(!lightusd::atoull(static_cast<const char *>(nullptr)).has_value());
 
   {
-    nonstd::optional<double> v = tinyusdz::atod(" 3.5 ");
+    nonstd::optional<double> v = lightusd::atod(" 3.5 ");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == 3.5);
   }
-  TEST_CHECK(!tinyusdz::atod("3.5x").has_value());
-  TEST_CHECK(!tinyusdz::atod("nan").has_value());
-  TEST_CHECK(!tinyusdz::atod("inf").has_value());
-  TEST_CHECK(!tinyusdz::atod(static_cast<const char *>(nullptr)).has_value());
+  TEST_CHECK(!lightusd::atod("3.5x").has_value());
+  TEST_CHECK(!lightusd::atod("nan").has_value());
+  TEST_CHECK(!lightusd::atod("inf").has_value());
+  TEST_CHECK(!lightusd::atod(static_cast<const char *>(nullptr)).has_value());
 
   {
-    nonstd::optional<float> v = tinyusdz::atof_float("-2.25");
+    nonstd::optional<float> v = lightusd::atof_float("-2.25");
     TEST_CHECK(v.has_value());
     TEST_CHECK(v.value() == -2.25f);
   }
-  TEST_CHECK(!tinyusdz::atof_float("1.0x").has_value());
-  TEST_CHECK(!tinyusdz::atof_float("nan").has_value());
-  TEST_CHECK(!tinyusdz::atof_float("inf").has_value());
-  TEST_CHECK(!tinyusdz::atof_float(static_cast<const char *>(nullptr)).has_value());
+  TEST_CHECK(!lightusd::atof_float("1.0x").has_value());
+  TEST_CHECK(!lightusd::atof_float("nan").has_value());
+  TEST_CHECK(!lightusd::atof_float("inf").has_value());
+  TEST_CHECK(!lightusd::atof_float(static_cast<const char *>(nullptr)).has_value());
 }
 
 void dtoa_test(void) {
@@ -448,8 +448,8 @@ void dtoa_test(void) {
 }
 
 void parse_array_test(void) {
-  using namespace tinyusdz::str;
-  using namespace tinyusdz::value;
+  using namespace lightusd::str;
+  using namespace lightusd::value;
 
   // ===== float2 =====
   {
@@ -1222,7 +1222,7 @@ void fp_string_conversion_test(void) {
 
   auto roundtrip_double = [&](double v, double eps) {
     std::string s = dtos(v);
-    double parsed = tinyusdz::atof(s);
+    double parsed = lightusd::atof(s);
     TEST_CHECK_(nearly_equal(parsed, v, eps), "double roundtrip failed: v=%g, s=%s, parsed=%g", v, s.c_str(), parsed);
 
     char buf[DTOS_MAX_CHARS_DOUBLE + 2];
@@ -1235,7 +1235,7 @@ void fp_string_conversion_test(void) {
 
   auto roundtrip_float = [&](float v, float eps) {
     std::string s = dtos(v);
-    double parsed = tinyusdz::atof(s);
+    double parsed = lightusd::atof(s);
     TEST_CHECK_(nearly_equal(parsed, static_cast<double>(v), eps), "float roundtrip failed: v=%g, s=%s, parsed=%g", v, s.c_str(), parsed);
 
     char buf[DTOS_MAX_CHARS_FLOAT + 2];

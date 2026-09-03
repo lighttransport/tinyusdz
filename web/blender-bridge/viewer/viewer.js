@@ -1,11 +1,11 @@
 // Blender Bridge Viewer
-// Three.js viewer with TinyUSDZ WASM integration and WebSocket bridge
+// Three.js viewer with LightUSD WASM integration and WebSocket bridge
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
-import { TinyUSDZLoader } from './tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from './tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from './lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from './lightusd/LightUSDLoaderUtils.js';
 import { BridgeClient } from './client/bridge-client.js';
 import { ParameterSync } from './client/parameter-sync.js';
 
@@ -29,7 +29,7 @@ class BlenderBridgeViewer {
     this.controls = null;
     this.pmremGenerator = null;
 
-    // TinyUSDZ loader
+    // LightUSD loader
     this.loader = null;
     this.loaderReady = false;
 
@@ -77,7 +77,7 @@ class BlenderBridgeViewer {
     // Initialize Three.js
     this.initThreeJS();
 
-    // Initialize TinyUSDZ loader
+    // Initialize LightUSD loader
     await this.initLoader();
 
     // Initialize bridge components
@@ -154,16 +154,16 @@ class BlenderBridgeViewer {
   }
 
   /**
-   * Initialize TinyUSDZ loader
+   * Initialize LightUSD loader
    */
   async initLoader() {
-    this.showLoading('Initializing TinyUSDZ WASM...');
+    this.showLoading('Initializing LightUSD WASM...');
 
     try {
-      this.loader = new TinyUSDZLoader();
+      this.loader = new LightUSDLoader();
       await this.loader.init({ useMemory64: false });
       this.loaderReady = true;
-      this.log('TinyUSDZ loader ready', 'success');
+      this.log('LightUSD loader ready', 'success');
     } catch (err) {
       this.log(`Failed to initialize loader: ${err.message}`, 'error');
       throw err;
@@ -334,7 +334,7 @@ class BlenderBridgeViewer {
         preferredMaterialType: 'auto'
       };
 
-      const root = await TinyUSDZLoaderUtils.buildThreeNode(
+      const root = await LightUSDLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMaterial,
         nativeLoader,

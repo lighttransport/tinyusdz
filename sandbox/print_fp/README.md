@@ -21,7 +21,7 @@ make test_sanity
 ✅ **100% Correct** - All 2^32 float patterns tested, 100% pass rate
 ✅ **High Performance** - Competitive with fastest algorithms
 ✅ **Well Documented** - Comprehensive documentation and examples
-✅ **Production Ready** - Used in TinyUSDZ fast-string implementation
+✅ **Production Ready** - Used in LightUSD fast-string implementation
 
 ## Buffer Size Constants ✨ NEW
 
@@ -247,7 +247,7 @@ Based on:
 
 - **Dragonbox Algorithm**: Junekey Jeon
 - **fmtlib**: Victor Zverovich and contributors
-- **TinyUSDZ Integration**: Light Transport Entertainment
+- **LightUSD Integration**: Light Transport Entertainment
 - **Testing & Documentation**: This implementation
 
 ## Changelog

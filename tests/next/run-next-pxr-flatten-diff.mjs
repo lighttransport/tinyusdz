@@ -24,7 +24,7 @@
 //   node tests/next/run-next-pxr-flatten-diff.mjs \
 //     --next-usdcat build-next/next_usdcat \
 //     [--usdcat ref/dist/bin/usdcat] \
-//     [--suite-root ~/.cache/tinyusdz/.../releases/1.0.1] \
+//     [--suite-root ~/.cache/lightusd/.../releases/1.0.1] \
 //     [--xfail tests/next/next-pxr-flatten-xfail.txt] \
 //     [--report-only] [--jobs N] [--float-tolerance 1e-5] [--verbose]
 
@@ -228,7 +228,7 @@ async function main() {
   fs.rmSync(tmpdir, { recursive: true, force: true });
 
   const counts = { pass: 0, diff: 0, 'next-error': 0, 'pxr-error': 0, skip: 0, xfail: 0, xpass: 0, intentional: 0 };
-  // Entries whose reason is tagged INTENTIONAL: (deliberate tinyusdz behavior,
+  // Entries whose reason is tagged INTENTIONAL: (deliberate lightusd behavior,
   // e.g. lossless unknown-metadata preservation, portable relative asset
   // paths) or ORACLE- (a pxr bug/nondeterminism/limitation) are PERMANENT:
   // counted separately and never expected to prune. Burn-down completion =

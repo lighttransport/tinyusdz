@@ -5,7 +5,7 @@
 #include <string>
 
 #include "usdMtlx.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 
 // Simple test MaterialX XML
@@ -33,12 +33,12 @@ const char* test_openpbr_mtlx = R"(<?xml version="1.0"?>
 int main(int argc, char** argv) {
   std::string warn, err;
 
-  std::cout << "=== TinyUSDZ MaterialX Import Test ===\n\n";
+  std::cout << "=== LightUSD MaterialX Import Test ===\n\n";
 
   // Test 1: Parse MaterialX from string
   std::cout << "Test 1: Parsing MaterialX XML from string...\n";
-  tinyusdz::MtlxModel mtlx;
-  bool ret = tinyusdz::ReadMaterialXFromString(
+  lightusd::MtlxModel mtlx;
+  bool ret = lightusd::ReadMaterialXFromString(
       test_openpbr_mtlx, "test.mtlx", &mtlx, &warn, &err);
 
   if (!ret) {
@@ -65,8 +65,8 @@ int main(int argc, char** argv) {
 
   // Test 2: Convert to PrimSpec
   std::cout << "Test 2: Converting MaterialX to USD PrimSpec...\n";
-  tinyusdz::PrimSpec ps;
-  ret = tinyusdz::ToPrimSpec(mtlx, ps, &err);
+  lightusd::PrimSpec ps;
+  ret = lightusd::ToPrimSpec(mtlx, ps, &err);
 
   if (!ret) {
     std::cerr << "ERROR: Failed to convert MaterialX to PrimSpec\n";
@@ -84,12 +84,12 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     std::cout << "Test 3: Loading MaterialX from file: " << argv[1] << "\n";
 
-    tinyusdz::AssetResolutionResolver resolver;
-    tinyusdz::MtlxModel mtlx_file;
+    lightusd::AssetResolutionResolver resolver;
+    lightusd::MtlxModel mtlx_file;
     warn.clear();
     err.clear();
 
-    ret = tinyusdz::ReadMaterialXFromFile(
+    ret = lightusd::ReadMaterialXFromFile(
         resolver, argv[1], &mtlx_file, &warn, &err);
 
     if (!ret) {

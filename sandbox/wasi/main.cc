@@ -7,7 +7,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of(".") != std::string::npos)
@@ -26,13 +26,13 @@ static std::string str_tolower(std::string s) {
 }
 
 bool LoadModelFromString(const std::vector<uint8_t> &content,
-                         const std::string &filename, tinyusdz::Stage *stage) {
+                         const std::string &filename, lightusd::Stage *stage) {
   std::string ext = str_tolower(GetFileExtension(filename));
 
   std::string warn;
   std::string err;
 
-  bool ret = tinyusdz::LoadUSDFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN : " << warn << "\n";
   }
@@ -87,11 +87,11 @@ int main(int argc, char **argv) {
   if (argc > 1) {
     std::string filename = argv[1];
 #if 1
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     {
       std::string warn;
       std::string err;
-      bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
+      bool ret = lightusd::LoadUSDFromFile(filename, &stage, &warn, &err);
 
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
     //  std::cerr << "File is empty or failed to read: " << filename << "\n";
     //}
 
-    //tinyusdz::Stage stage;
+    //lightusd::Stage stage;
     //bool ret = LoadModelFromString(content, filename, &stage);
     //if (!ret) {
     //  std::cerr << "Load failed.\n";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-// 
+//
 #pragma once
 
 #include <cstddef>
@@ -12,11 +12,11 @@
 #include <map>
 #include <cstdint>
 
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+#ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
 #include <android/asset_manager.h>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace io {
 
 // Open standard streams from a UTF-8 path.  libc++'s MinGW implementation
@@ -98,7 +98,7 @@ struct UDIMAssetTiles
 
 };
 
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+#ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
 extern AAssetManager *asset_manager;
 #endif
 
@@ -172,9 +172,9 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
 
 
 ///
-/// @return true when the system supports mmap. 
+/// @return true when the system supports mmap.
 ///
-bool IsMMapSupported(); 
+bool IsMMapSupported();
 
 // Simple mmap file handle struct
 struct MMapFileHandle
@@ -216,9 +216,9 @@ bool MMapFile(const std::wstring &filepath, MMapFileHandle *handle, bool writabl
 bool UnmapFile(const MMapFileHandle &handle, std::string *err);
 
 
-/// 
+///
 /// Write data to file(UTF8 filepath)
-/// 
+///
 bool WriteWholeFile(const std::string &filepath,
                     const unsigned char *contents, size_t content_bytes, std::string *err);
 
@@ -321,4 +321,4 @@ inline bool ParsePackagedResourcePath(const std::string &path,
 }
 
 }  // namespace io
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Crate Writer Implementation
+// LightUSD Next - Crate Writer Implementation
 // Writes spec-compliant USDC with: tokens, strings, paths, fields,
 // fieldsets, specs, VALUE data section, time samples, metadata.
 
@@ -28,14 +28,14 @@
 #include <algorithm>
 #include <cstring>
 #include <string_view>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
 
 // LZ4 for compression
 #include "lz4/lz4.h"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -154,4 +154,4 @@ CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

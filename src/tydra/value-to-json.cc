@@ -16,7 +16,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -1757,4 +1757,4 @@ nlohmann::json PrimSpecToJSON(const PrimSpec &ps, uint32_t max_depth,
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

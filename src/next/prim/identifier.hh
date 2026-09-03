@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // AOUSD Unicode identifier and path validation for the standalone next core.
-// Reuses TinyUSDZ's generated Unicode XID tables (`src/unicode-xid.hh`).
+// Reuses LightUSD's generated Unicode XID tables (`src/unicode-xid.hh`).
 
 #pragma once
 
@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace identifier_detail {
@@ -227,4 +227,4 @@ inline bool IsValidPathString(const std::string& text) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

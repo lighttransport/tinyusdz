@@ -123,7 +123,7 @@ prim-stack dump listing the exact ordered `(layer, path)` sources pxr composes.
 
 ## Orientation
 
-- **Repo / branch:** `/mnt/nvme02/work/tinyusdz-repo/dev`, branch `dev`.
+- **Repo / branch:** `/mnt/nvme02/work/lightusd-repo/dev`, branch `dev`.
 - **Module:** `src/next/pcp/` — the composition cache. Hot files:
   `cache-arc-expansion.inc` (arc expansion, `SourcesForRelocateSource`,
   `AddRelocatedSources`, `DeriveChildSources`, `WithStackRelocates`, the
@@ -138,8 +138,8 @@ prim-stack dump listing the exact ordered `(layer, path)` sources pxr composes.
 ```sh
 cmake --build build-next -j16                       # NOT the top-level build/
 # Oracle: pinned OpenUSD 26.05
-OR=/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat
-SUITE=~/.cache/tinyusdz/core-spec-supplemental-release_dec2025/releases/1.0.1
+OR=/mnt/nvme02/work/lightusd-repo/OpenUSD/dist/bin/usdcat
+SUITE=~/.cache/lightusd/core-spec-supplemental-release_dec2025/releases/1.0.1
 
 # Full flatten gate (run 2-3x: pxr instancing numbering is nondeterministic)
 node tests/next/run-next-pxr-flatten-diff.mjs --next-usdcat build-next/next_usdcat \

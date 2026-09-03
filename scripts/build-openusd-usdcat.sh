@@ -6,14 +6,14 @@ usage() {
 Usage: scripts/build-openusd-usdcat.sh [--dry-run] [--prepare-only] [--full]
 
 Clone/update a local OpenUSD checkout and build a minimal usdcat install for
-TinyUSDZ comparison tests.
+LightUSD comparison tests.
 
 Environment overrides:
   ROOT_DIR             Repository root (default: git top-level)
   OPENUSD_REMOTE       Fork remote (default: https://github.com/lighttransport/openusd.git)
   OPENUSD_UPSTREAM     Upstream remote (default: https://github.com/PixarAnimationStudios/OpenUSD.git)
   OPENUSD_REF          Release tag/ref to build (default: v26.05)
-  OPENUSD_BRANCH       Local branch to checkout (default: tinyusdz-openusd-v26.05)
+  OPENUSD_BRANCH       Local branch to checkout (default: lightusd-openusd-v26.05)
   OPENUSD_SRC_DIR      Source checkout (default: $ROOT_DIR/ref/openusd)
   OPENUSD_BUILD_DIR    build_usd.py build dir (default: $ROOT_DIR/ref/openusd-build)
   OPENUSD_INSTALL_DIR  Install prefix (default: $ROOT_DIR/ref/dist)
@@ -68,7 +68,7 @@ ROOT_DIR="${ROOT_DIR:-$(git rev-parse --show-toplevel)}"
 OPENUSD_REMOTE="${OPENUSD_REMOTE:-https://github.com/lighttransport/openusd.git}"
 OPENUSD_UPSTREAM="${OPENUSD_UPSTREAM:-https://github.com/PixarAnimationStudios/OpenUSD.git}"
 OPENUSD_REF="${OPENUSD_REF:-v26.05}"
-OPENUSD_BRANCH="${OPENUSD_BRANCH:-tinyusdz-openusd-${OPENUSD_REF#v}}"
+OPENUSD_BRANCH="${OPENUSD_BRANCH:-lightusd-openusd-${OPENUSD_REF#v}}"
 OPENUSD_SRC_DIR="${OPENUSD_SRC_DIR:-$ROOT_DIR/ref/openusd}"
 OPENUSD_BUILD_DIR="${OPENUSD_BUILD_DIR:-$ROOT_DIR/ref/openusd-build}"
 OPENUSD_INSTALL_DIR="${OPENUSD_INSTALL_DIR:-$ROOT_DIR/ref/dist}"

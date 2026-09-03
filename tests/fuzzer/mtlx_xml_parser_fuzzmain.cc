@@ -8,7 +8,7 @@ static void parse_mtlx_xml(const uint8_t *data, size_t size) {
     return;
   }
 
-  tinyusdz::mtlx::XMLDocument doc;
+  lightusd::mtlx::XMLDocument doc;
   doc.ParseMemory(reinterpret_cast<const char *>(data), size);
   (void)doc.GetRoot();  // exercise root access
 }

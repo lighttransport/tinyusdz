@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// USD Physics -> URDF JS-only roundtrip tester for TinyUSDZ WASM.
+// USD Physics -> URDF JS-only roundtrip tester for LightUSD WASM.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
+import LightUSDFactory from '../src/lightusd/lightusd.js';
 
 const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;
@@ -114,7 +114,7 @@ function scaleMatrix(x, y, z) {
 
 function sampleRobotPayload() {
   return {
-    name: 'TinyUSDZRoundtripBot',
+    name: 'LightUSDRoundtripBot',
     upAxis: 'Z',
     gravity: [0, -1, 0],
     timestep: 0.002,
@@ -544,15 +544,15 @@ function exportSampleBytes(native, format) {
   return { bytes: new Uint8Array(usdc), filename: 'roundtrip.usdc' };
 }
 
-async function extractFromSample(tinyusdz, format) {
+async function extractFromSample(lightusd, format) {
   const expected = sampleRobotPayload();
-  const writer = new tinyusdz.TinyUSDZLoaderNative();
+  const writer = new lightusd.LightUSDLoaderNative();
   try {
     if (!writer.createURDFPhysicsScene(JSON.stringify(expected))) {
       throw new Error(writer.error() || 'createURDFPhysicsScene failed');
     }
     const exported = exportSampleBytes(writer, format);
-    const reader = new tinyusdz.TinyUSDZLoaderNative();
+    const reader = new lightusd.LightUSDLoaderNative();
     try {
       if (!reader.loadFromBinary(exported.bytes, exported.filename)) {
         throw new Error(reader.error() || `Failed to reload ${exported.filename}`);
@@ -570,13 +570,13 @@ async function extractFromSample(tinyusdz, format) {
 
 async function main() {
   const opts = parseArgs();
-  const tinyusdz = await TinyUSDZFactory();
-  const native = new tinyusdz.TinyUSDZLoaderNative();
+  const lightusd = await LightUSDFactory();
+  const native = new lightusd.LightUSDLoaderNative();
   let extracted;
   let expected = null;
   try {
     if (opts.sample) {
-      const result = await extractFromSample(tinyusdz, opts.format);
+      const result = await extractFromSample(lightusd, opts.format);
       extracted = result.extracted;
       expected = result.expected;
     } else {

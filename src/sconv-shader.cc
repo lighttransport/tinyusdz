@@ -14,7 +14,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 // ============================================================================
@@ -970,7 +970,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     }
   }
 
-  // inputs:uv_set (int) - UV set index (tinyusdz extension; mirrors the reader
+  // inputs:uv_set (int) - UV set index (lightusd extension; mirrors the reader
   // in prim-reconstruct-shader3.cc and the USDA printer in pprint-shader.cc).
   if (uv_texture->uv_set.authored()) {
     const std::vector<Path>* conns = uv_texture->uv_set.has_connections()
@@ -987,7 +987,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     }
   }
 
-  // inputs:uv_set_name (token) - UV set name (tinyusdz extension).
+  // inputs:uv_set_name (token) - UV set name (lightusd extension).
   if (uv_texture->uv_set_name.authored()) {
     const std::vector<Path>* conns = uv_texture->uv_set_name.has_connections()
         ? &uv_texture->uv_set_name.connections() : nullptr;
@@ -1450,7 +1450,7 @@ bool CrateWriter::ExtractNodeGraphProperties(
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

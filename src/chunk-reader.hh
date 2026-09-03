@@ -17,7 +17,7 @@
 #include "nonstd/expected.hpp"
 #include "tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Chunked data reader for efficient streaming and parsing of large USD files.
@@ -44,16 +44,16 @@ public:
     size_t size;                          ///< Actual data size (may be less than chunk_size for last chunk)
     std::vector<uint8_t> data;           ///< Chunk data buffer
     bool is_loaded;                      ///< Whether the chunk is currently loaded
-    
+
     Chunk() : chunk_id(0), offset(0), size(0), is_loaded(false) {}
-    Chunk(size_t id, size_t off, size_t sz) 
+    Chunk(size_t id, size_t off, size_t sz)
       : chunk_id(id), offset(off), size(sz), data(sz), is_loaded(false) {}
   };
 
   ///
   /// Callback function type for chunk requests.
   /// Called when a chunk needs to be loaded that is not in the cache.
-  /// 
+  ///
   /// @param[in] chunk_id The ID of the requested chunk
   /// @param[in] offset The byte offset in the stream
   /// @param[in] size The size of data to read
@@ -71,12 +71,12 @@ public:
     size_t max_buffer_size;   ///< Maximum total buffer size in bytes (default: 16MB)
     bool enable_prefetch;     ///< Enable prefetching of adjacent chunks
     size_t prefetch_distance; ///< Number of chunks to prefetch ahead
-    
+
     // Allocation ratios for hybrid caching (should sum to 100)
     float sliding_window_ratio;  ///< Percentage for sliding window cache (default: 70%)
     float random_cache_ratio;    ///< Percentage for 2Q/SLRU/TinyLFU cache (default: 25%)
     float preload_ratio;         ///< Percentage for preload buffer (default: 5%)
-    
+
     // Cache algorithm selection
     enum CacheAlgorithm {
       ALGORITHM_2Q,      ///< 2Q algorithm for random access
@@ -84,8 +84,8 @@ public:
       ALGORITHM_TINYLFU  ///< TinyLFU with W-TinyLFU
     };
     CacheAlgorithm cache_algorithm; ///< Algorithm to use for random access cache
-    
-    Config() 
+
+    Config()
       : chunk_size(1024 * 1024)
       , max_chunks(16)
       , max_buffer_size(16 * 1024 * 1024)
@@ -107,15 +107,15 @@ public:
     size_t chunks_loaded;        ///< Total chunks loaded
     size_t chunks_evicted;       ///< Total chunks evicted from cache
     size_t bytes_read;           ///< Total bytes read
-    
-    Stats() 
+
+    Stats()
       : total_reads(0)
       , cache_hits(0)
       , cache_misses(0)
       , chunks_loaded(0)
       , chunks_evicted(0)
       , bytes_read(0) {}
-    
+
     double hit_rate() const {
       if (total_reads == 0) return 0.0;
       return static_cast<double>(cache_hits) / double(total_reads);
@@ -129,7 +129,7 @@ public:
   /// @param[in] config Configuration parameters
   ///
   ChunkReader(size_t total_size, const Config& config = Config());
-  
+
   ///
   /// Destructor
   ///
@@ -323,17 +323,17 @@ private:
     CacheType cache_type;
     uint64_t access_time;
     uint32_t access_count;
-    
+
     // For 2Q algorithm
     bool in_a1;  ///< In A1 queue (first-time access)
-    
+
     // For TinyLFU
     uint32_t frequency;
-    
+
     // For linked list management
     std::list<size_t>::iterator list_iterator;
-    
-    CacheEntry() : cache_type(CACHE_SLIDING_WINDOW), access_time(0), 
+
+    CacheEntry() : cache_type(CACHE_SLIDING_WINDOW), access_time(0),
                    access_count(0), in_a1(true), frequency(0) {}
   };
 
@@ -347,15 +347,15 @@ private:
     size_t capacity;     ///< Maximum number of chunks
     size_t size;         ///< Current number of chunks
     size_t base_chunk_id; ///< ID of chunk at tail position
-    
+
     RingBuffer(size_t cap) : head(0), tail(0), capacity(cap), size(0), base_chunk_id(0) {
       chunks.resize(cap);
     }
-    
+
     bool is_empty() const { return size == 0; }
     bool is_full() const { return size == capacity; }
     bool contains(size_t chunk_id) const {
-      return !is_empty() && chunk_id >= base_chunk_id && 
+      return !is_empty() && chunk_id >= base_chunk_id &&
              chunk_id < base_chunk_id + size;
     }
     size_t get_index(size_t chunk_id) const {
@@ -371,7 +371,7 @@ private:
     std::list<size_t> am_lru;     ///< Am queue (LRU for frequent access)
     size_t a1_max_size;
     size_t am_max_size;
-    
+
     TwoQCache(size_t total_size) {
       // Standard 2Q ratios: A1=25%, Am=75%
       a1_max_size = total_size / 4;
@@ -388,11 +388,11 @@ private:
     std::vector<uint8_t> sketch;
     size_t size;
     uint64_t total_count;
-    
+
     TinyLFUSketch(size_t sz) : size(sz), total_count(0) {
       sketch.resize(sz, 0);
     }
-    
+
     void increment(size_t item) {
       size_t hash_val = std::hash<size_t>{}(item);
       size_t index = hash_val % size;
@@ -400,7 +400,7 @@ private:
         sketch[index]++;
       }
       total_count++;
-      
+
       // Reset periodically to handle aging
       if (total_count > size * 10) {
         for (auto& val : sketch) {
@@ -409,7 +409,7 @@ private:
         total_count /= 2;
       }
     }
-    
+
     uint8_t estimate(size_t item) const {
       size_t hash_val = std::hash<size_t>{}(item);
       size_t index = hash_val % size;
@@ -558,35 +558,35 @@ private:
 
   // Hybrid cache management
   mutable Mutex cache_mutex_;
-  
+
   // Cache size allocations
   size_t sliding_window_size_;
   size_t random_cache_size_;
   size_t preload_size_;
-  
+
   // Sliding window cache (ring buffer)
   std::unique_ptr<RingBuffer> sliding_window_;
-  
+
   // Random access cache
-  tinyusdz::HashMap<size_t, CacheEntry> random_cache_;
+  lightusd::HashMap<size_t, CacheEntry> random_cache_;
   std::unique_ptr<TwoQCache> two_q_cache_;
   std::unique_ptr<TinyLFUSketch> tiny_lfu_sketch_;
   std::list<size_t> random_cache_lru_;  ///< For SLRU algorithm
-  
+
   // Preload cache
-  tinyusdz::HashMap<size_t, std::shared_ptr<Chunk>> preload_cache_;
+  lightusd::HashMap<size_t, std::shared_ptr<Chunk>> preload_cache_;
   std::list<size_t> preload_lru_;
-  
+
   // Current cache sizes
   size_t current_sliding_window_size_;
   size_t current_random_cache_size_;
   size_t current_preload_size_;
-  
+
   // Access pattern detection
   size_t last_accessed_chunk_;
   size_t sequential_access_count_;
   bool in_sequential_mode_;
-  
+
   // Global timestamp for access ordering
   uint64_t global_timestamp_;
 
@@ -601,4 +601,4 @@ private:
   ChunkReader& operator=(const ChunkReader&) = delete;
 };
 
-} // namespace tinyusdz
+} // namespace lightusd

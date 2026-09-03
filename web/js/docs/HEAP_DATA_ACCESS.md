@@ -1,6 +1,6 @@
 # Heap Data Access: zero-copy `*Ptr` / explicit `*Copy` accessors
 
-How to get mesh and image data out of the TinyUSDZ WASM module and onto the GPU
+How to get mesh and image data out of the LightUSD WASM module and onto the GPU
 **without an extra copy across the JS/WASM boundary**, and how to do it safely
 given Emscripten's growable heap.
 
@@ -73,7 +73,7 @@ Per-attribute descriptor fields:
   ptr, byteLength }              // ptr/byteLength absent if the image has no buffer
 ```
 
-Normal formats: TinyUSDZ may store normals packed. `getMeshPtr` exposes
+Normal formats: LightUSD may store normals packed. `getMeshPtr` exposes
 `snorm8` / `snorm16` directly (upload with `normalized = true`); packed
 `1010102` normals are unpacked once into a stable cache and exposed as `f32`.
 

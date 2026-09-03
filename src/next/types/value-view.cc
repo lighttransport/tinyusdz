@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace {
 
@@ -253,4 +253,4 @@ bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

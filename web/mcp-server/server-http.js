@@ -6,11 +6,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpError, ErrorCode, ListResourceTemplatesRequestSchema, ReadResourceRequestSchema, ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema, CompleteRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import initTinyUSDZNative from "tinyusdz/tinyusdz.js";
+import initLightUSDNative from "lightusd/lightusd.js";
 
 import cors from 'cors';
 
-//import { TinyUSDZMCPServer } from "tinyusdz/TinyUSDMCPServer.js";
+//import { LightUSDMCPServer } from "lightusd/LightUSDMCPServer.js";
 
 const portno = 8085;
 
@@ -94,9 +94,9 @@ const transports = {};
 
 const session = new Map();
 
-initTinyUSDZNative().then(function (TinyUSDZ) {
+initLightUSDNative().then(function (LightUSD) {
 
-  const tusd = new TinyUSDZ.TinyUSDZLoaderNative();
+  const tusd = new LightUSD.LightUSDLoaderNative();
   // Handle POST requests for client-to-server communication
   app.post('/mcp', async (req, res) => {
     // NOTE: do not log req.headers — the Authorization header carries the
@@ -133,7 +133,7 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
         }
       };
       const server = new McpServer({
-        name: "tinyusdz-mcp-server",
+        name: "lightusd-mcp-server",
         version: "0.9.5"
       });
 
@@ -214,8 +214,8 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
       /*
       server.registerTool("get_version",
         {
-          title: "Get TinyUSDZ version",
-          description: "Get TinyUSDZ version",
+          title: "Get LightUSD version",
+          description: "Get LightUSD version",
           inputSchema: {}
         },
         async ({ }) => {
@@ -285,5 +285,5 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
   app.listen(portno, host);
 
 }).catch((error) => {
-  console.error("Failed to initialize TinyUSDZLoader:", error);
+  console.error("Failed to initialize LightUSDLoader:", error);
 });

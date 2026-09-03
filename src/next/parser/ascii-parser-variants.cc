@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII parser variant-set support.
+// LightUSD Next - USDA ASCII parser variant-set support.
 
 #include "ascii-parser-internal.hh"
 #include <algorithm>
 #include <unordered_set>
 #include "value-parser.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name) {
@@ -554,4 +554,4 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -4,28 +4,28 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { GUI } from 'lil-gui';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { TinyUSDZComposer } from 'tinyusdz/TinyUSDZComposer.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { LightUSDComposer } from 'lightusd/LightUSDComposer.js';
 import {
   NodeGraphOptimizationLevel,
   analyzeNodeGraph,
   optimizeNodeGraph,
-  setTinyUSDZ as setMaterialXTinyUSDZ
-} from 'tinyusdz/TinyUSDZMaterialX.js';
-import { MtlxMaterialConverter } from 'tinyusdz/TinyUSDZOpenPBR_WebGL.js';
-import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
-import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
-import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
-import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
-import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
-import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
+  setLightUSD as setMaterialXLightUSD
+} from 'lightusd/LightUSDMaterialX.js';
+import { MtlxMaterialConverter } from 'lightusd/LightUSDOpenPBR_WebGL.js';
+import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
+import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from 'lightusd/USDSceneSkinningPipeline.js';
+import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
+import { buildNodeIndexMap } from 'lightusd/USDAnimationConverter.js';
+import { extractUSDSceneAnimations } from 'lightusd/USDSceneAnimationPipeline.js';
 import {
   buildNextThreeNode,
   isNextScene,
   nextCountsFromScene,
   readNextSceneMeta
-} from 'tinyusdz-next-demo-utils';
+} from 'lightusd-next-demo-utils';
 import { Report } from './app-report.js';
 
 RectAreaLightUniformsLib.init();
@@ -59,7 +59,7 @@ function escapeHTML(value) {
 const BACKEND_CHOICES = ['next', 'legacy', 'auto'];
 
 function selectedBackend() {
-  if (!__TINYUSDZ_LOCAL_DEV__) return 'legacy';
+  if (!__LIGHTUSD_LOCAL_DEV__) return 'legacy';
   const value = new URLSearchParams(window.location.search).get('backend');
   return BACKEND_CHOICES.includes(value) ? value : 'next';
 }
@@ -77,7 +77,7 @@ function normalizedAssetKey(value) {
 export async function initDemo(config) {
   const root = document.getElementById('demo-root') || document.body;
   const app = new DemoApp(config, root);
-  window.__tinyusdzDemoApp = app;
+  window.__lightusdDemoApp = app;
   await app.start();
   return app;
 }
@@ -119,7 +119,7 @@ class DemoApp {
   }
 
   async start() {
-    document.title = `${this.config.title} - TinyUSDZ Demo`;
+    document.title = `${this.config.title} - LightUSD Demo`;
     this.createShell();
     this.setupThree();
     this.setupEvents();
@@ -151,7 +151,7 @@ class DemoApp {
               <div id="status" class="status">Initializing...</div>
               <div id="tusd-loader" class="tusd-loader hidden">
                 <div class="loader-progress"><div class="loader-bar" style="width:10%"></div></div>
-                <div class="loader-text">Loading TinyUSDZ WASM…</div>
+                <div class="loader-text">Loading LightUSD WASM…</div>
               </div>
             </section>
           <aside class="info-panel">
@@ -192,7 +192,7 @@ class DemoApp {
     this.scene.background = new THREE.Color(0x0e0e10);
 
     this.world = new THREE.Group();
-    this.world.name = 'TinyUSDZDemoWorld';
+    this.world.name = 'LightUSDDemoWorld';
     this.scene.add(this.world);
 
     this.lightGroup = new THREE.Group();
@@ -274,7 +274,7 @@ class DemoApp {
     this.gui.add({ open: () => this.fileInput.click() }, 'open').name('Open USD');
     this.gui.add({ sample: () => this.loadDefaultAsset() }, 'sample').name('Load sample');
     this.gui.add({ fit: () => this.fitScene() }, 'fit').name('Fit scene (F)');
-    if (__TINYUSDZ_LOCAL_DEV__) {
+    if (__LIGHTUSD_LOCAL_DEV__) {
       this.gui.add(this.params, 'backend', BACKEND_CHOICES).name('Backend').onChange(setBackendAndReload);
     }
     this.gui.add(this.params, 'grid').name('Grid').onChange((value) => {
@@ -316,9 +316,9 @@ class DemoApp {
   async ensureLoader() {
     if (this.loader) return this.loader;
 
-    this.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+    this.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     try {
-      await Report.steps('Initializing TinyUSDZ', [
+      await Report.steps('Initializing LightUSD', [
         { label: 'Loading WASM module', run: () => this.loader.init({
           useZstdCompressedWasm: false,
           useMemory64: false,
@@ -329,8 +329,8 @@ class DemoApp {
       Report.err(e, 'WASM initialization failed').action('Retry', () => this.ensureLoader());
       throw e;
     }
-    TinyUSDZLoaderUtils.setTinyUSDZ(this.loader.native_);
-    setMaterialXTinyUSDZ(this.loader.native_);
+    LightUSDLoaderUtils.setLightUSD(this.loader.native_);
+    setMaterialXLightUSD(this.loader.native_);
     this.loader.setMaxMemoryLimitMB(512);
     if (this.config.enableSkinning) {
       this.loader.setRoundBoneCount(true);
@@ -483,7 +483,7 @@ class DemoApp {
 
   async loadComposedLayer(url) {
     const layer = await this.loader.loadAsLayerAsync(url);
-    const composer = new TinyUSDZComposer();
+    const composer = new LightUSDComposer();
     composer.setLayer(layer);
     composer.setUSDLoader(this.loader);
     composer.setBaseWorkingPath('./assets');
@@ -588,7 +588,7 @@ class DemoApp {
   }
 
   parseLayerForExport(data, filename) {
-    const layer = new this.loader.native_.TinyUSDZLoaderNative();
+    const layer = new this.loader.native_.LightUSDLoaderNative();
     layer.setMaxMemoryLimitMB(512);
     this.loader._applySkinningLoadOptions?.(layer);
     const ok = layer.loadAsLayerFromBinary(data, filename);
@@ -664,7 +664,7 @@ class DemoApp {
       });
       if (built.textureManager) {
         await built.textureManager.startLoading({
-          concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+          concurrency: LightUSDLoaderUtils.defaultTextureConcurrency(),
           yieldInterval: 16,
           onProgress: (info) => this.setStatus(
             `Loading textures ${info.loaded + info.failed}/${info.total}`)
@@ -674,7 +674,7 @@ class DemoApp {
     }
     const root = new THREE.Group();
     root.name = 'USD Scene';
-    const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
+    const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
     defaultMaterial.envMap = this.scene.environment || this.envMap;
     const options = {
       overrideMaterial: false,
@@ -688,7 +688,7 @@ class DemoApp {
     const rootCount = usd.numRootNodes ? Math.max(usd.numRootNodes(), 1) : 1;
     for (let i = 0; i < rootCount; i++) {
       const usdNode = rootCount > 1 && usd.getRootNode ? usd.getRootNode(i) : usd.getDefaultRootNode();
-      const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdNode, defaultMaterial, usd, options);
+      const threeNode = await LightUSDLoaderUtils.buildThreeNode(usdNode, defaultMaterial, usd, options);
       root.add(threeNode);
     }
     return { node: root, nodeIndexMap: null };
@@ -891,7 +891,7 @@ class DemoApp {
 
   async applyDomeLight(usd) {
     try {
-      const dome = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usd, this.pmremGenerator);
+      const dome = await LightUSDLoaderUtils.loadDomeLightFromUSD(usd, this.pmremGenerator);
       if (dome?.texture) {
         this.scene.environment = dome.texture;
         this.scene.background = dome.texture;
@@ -1020,21 +1020,21 @@ class DemoApp {
           ? this.currentUsd.exportAsUSDA()
           : this.currentUsd.layerToString?.();
         if (!data) throw new Error(this.currentUsd.error?.() || 'USDA export returned empty data.');
-        downloadBlob(new Blob([data], { type: 'text/plain' }), 'tinyusdz-export.usda');
+        downloadBlob(new Blob([data], { type: 'text/plain' }), 'lightusd-export.usda');
       } else if (kind === 'usdc') {
         if (typeof this.currentUsd.exportAsUSDC !== 'function') {
           this.setStatus('USDC export is not available in this WASM build.');
           return;
         }
         const bytes = new Uint8Array(this.currentUsd.exportAsUSDC());
-        downloadBlob(new Blob([bytes], { type: 'application/octet-stream' }), 'tinyusdz-export.usdc');
+        downloadBlob(new Blob([bytes], { type: 'application/octet-stream' }), 'lightusd-export.usdc');
       } else if (kind === 'usdz') {
         if (typeof this.currentUsd.exportAsUSDZ !== 'function') {
           this.setStatus('USDZ export is not available in this WASM build.');
           return;
         }
         const bytes = new Uint8Array(this.currentUsd.exportAsUSDZ());
-        downloadBlob(new Blob([bytes], { type: 'model/vnd.usdz+zip' }), 'tinyusdz-export.usdz');
+        downloadBlob(new Blob([bytes], { type: 'model/vnd.usdz+zip' }), 'lightusd-export.usdz');
       }
       this.setStatus(`Exported ${kind.toUpperCase()}.`);
     } catch (error) {
@@ -1056,13 +1056,13 @@ class DemoApp {
       if (kind === 'usda') {
         const data = exporter.exportAsUSDA();
         if (!data) throw new Error(exporter.error?.() || 'USDA export failed.');
-        downloadBlob(new Blob([data], { type: 'text/plain' }), 'tinyusdz-export.usda');
+        downloadBlob(new Blob([data], { type: 'text/plain' }), 'lightusd-export.usda');
       } else {
         const method = kind === 'usdc' ? 'exportAsUSDC' : 'exportAsUSDZ';
         const bytes = new Uint8Array(exporter[method]());
         if (!bytes.length) throw new Error(exporter.error?.() || `${kind.toUpperCase()} export failed.`);
         const type = kind === 'usdz' ? 'model/vnd.usdz+zip' : 'application/octet-stream';
-        downloadBlob(new Blob([bytes], { type }), `tinyusdz-export.${kind}`);
+        downloadBlob(new Blob([bytes], { type }), `lightusd-export.${kind}`);
       }
       this.setStatus(`Exported ${kind.toUpperCase()}.`);
     } finally {

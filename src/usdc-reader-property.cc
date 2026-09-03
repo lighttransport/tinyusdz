@@ -15,9 +15,9 @@
 #include "usdc-reader-impl.hh"
 #include "ascii-parser.hh"  // AsciiParser (no longer pulled transitively via usdc-reader-impl.hh)
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
@@ -815,6 +815,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 }
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !TINYUSDZ_DISABLE_MODULE_USDC_READER
+#endif  // !LIGHTUSD_DISABLE_MODULE_USDC_READER

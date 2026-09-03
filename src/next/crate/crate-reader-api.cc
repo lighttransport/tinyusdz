@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC CrateReader public API wrappers
+// LightUSD Next - USDC CrateReader public API wrappers
 
 #include "crate-reader-internal.hh"
 #include "../safe-file-size.hh"
@@ -11,7 +11,7 @@
 #include <cstring>
 #include <fstream>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
@@ -228,4 +228,4 @@ bool IsUSDCFile(const char* filename) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

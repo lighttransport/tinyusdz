@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII Parser
+// LightUSD Next - USDA ASCII Parser
 // High-level parser for USD ASCII format files
 
 #pragma once
@@ -11,7 +11,7 @@
 #include <vector>
 #include <memory>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for parsing USDA files
@@ -42,8 +42,8 @@ struct ParseOptions {
   size_t max_depth = 256;
 
   /// Worker-thread hint for the parallel large-array parse path (when built with
-  /// TINYUSDZ_ENABLE_THREAD). 0 = auto (min(hardware_concurrency, 8)); 1 =
-  /// serial; >1 = that many workers. Replaces the former TINYUSDZ_NEXT_NUM_THREADS
+  /// LIGHTUSD_ENABLE_THREAD). 0 = auto (min(hardware_concurrency, 8)); 1 =
+  /// serial; >1 = that many workers. Replaces the former LIGHTUSD_NEXT_NUM_THREADS
   /// env read so the library takes no implicit process-environment input.
   int num_threads = 0;
 };
@@ -110,4 +110,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

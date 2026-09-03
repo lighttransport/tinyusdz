@@ -1,2 +1,2 @@
-/* TinyUSDZ vendored-build wrapper for the TinyEXR Ptex reader. */
+/* LightUSD vendored-build wrapper for the TinyEXR Ptex reader. */
 #include "../../../miniz.h"

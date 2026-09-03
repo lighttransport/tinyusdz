@@ -28,7 +28,7 @@
 #include "io-util.hh"
 #include "usdz-convert.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -501,7 +501,7 @@ int RunRepack(const argparser::ArgParser &parser, image::PngEncoder enc) {
 }  // namespace
 
 int main(int argc, char **argv) {
-  using namespace tinyusdz::argparser;
+  using namespace lightusd::argparser;
 
   ArgParser parser;
   parser.add_option("-h", false, "Show help");

@@ -1,6 +1,6 @@
 # tusdview
 
-An interactive USD viewer example for tinyusdz, rendering with **OpenGL 3.3** and
+An interactive USD viewer example for lightusd, rendering with **OpenGL 3.3** and
 **Vulkan** behind a common backend interface. It loads a USD file
 (`.usd/.usda/.usdc/.usdz`), converts it with the Tydra `RenderScene` API and
 displays it with an ImGui docking UI.
@@ -339,8 +339,8 @@ unaffected:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DTINYUSDZ_BUILD_EXAMPLES=ON -DTINYUSDZ_WITH_TYDRA=ON \
-  -DTINYUSDZ_BUILD_GUI_VIEWER=ON
+  -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build -j16 --target tusdview
 ```
 
@@ -580,7 +580,7 @@ curl -s -XPOST localhost:8080/mcp -H 'Content-Type: application/json' \
        "params":{"name":"pick","arguments":{"x":320,"y":240}}}'
 ```
 
-In addition to the viewer tools above, the server also exposes the **tinyusdz
+In addition to the viewer tools above, the server also exposes the **lightusd
 library's own USD tools** (`stage_info`, `prim_list`, `prim_get`, `attr_get`,
 `query_prims_by_type`, `search`, `run_script`, composition tools, …) — any tool
 name that isn't a viewer tool is forwarded to `tydra::mcp::CallTool` and run

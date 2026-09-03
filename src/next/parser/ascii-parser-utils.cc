@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII parser utility helpers.
+// LightUSD Next - USDA ASCII parser utility helpers.
 
 #include "ascii-parser-internal.hh"
 #include "value-parser.hh"
 #include "../strfmt.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) {
@@ -305,4 +305,4 @@ bool AsciiParser::Impl::AtEnd() {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

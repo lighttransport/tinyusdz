@@ -1,6 +1,6 @@
 /**
- * Zero-Copy Utility Functions for TinyUSDZ WebAssembly
- * 
+ * Zero-Copy Utility Functions for LightUSD WebAssembly
+ *
  * This module provides helper functions to easily use the zero-copy
  * setAssetFromRawPointer functionality with Uint8Arrays.
  */
@@ -15,21 +15,21 @@ function getPointerFromUint8Array(Module, uint8Array) {
   if (!(uint8Array instanceof Uint8Array)) {
     throw new Error('Input must be a Uint8Array');
   }
-  
+
   // Get the data pointer from the heap
   // This assumes the Uint8Array is backed by the same heap as Module.HEAPU8
   const dataPtr = Module.HEAPU8.subarray(
     uint8Array.byteOffset,
     uint8Array.byteOffset + uint8Array.byteLength
   ).byteOffset;
-  
+
   return dataPtr;
 }
 
 /**
  * High-level helper to set an asset using zero-copy method
  * @param {Object} Module - The Emscripten module instance
- * @param {Object} loader - TinyUSDZLoaderNative instance
+ * @param {Object} loader - LightUSDLoaderNative instance
  * @param {string} assetName - Name of the asset
  * @param {Uint8Array} uint8Array - Binary data
  * @returns {boolean} True if asset was overwritten, false if newly created
@@ -49,15 +49,15 @@ function setAssetZeroCopy(Module, loader, assetName, uint8Array) {
 
 /**
  * Load a file and set it as an asset using zero-copy method
- * @param {Object} Module - The Emscripten module instance  
- * @param {Object} loader - TinyUSDZLoaderNative instance
+ * @param {Object} Module - The Emscripten module instance
+ * @param {Object} loader - LightUSDLoaderNative instance
  * @param {string} assetName - Name of the asset
  * @param {string} filePath - Path to file (for Node.js) or URL (for browser)
  * @returns {Promise<boolean>} Promise that resolves to success status
  */
 async function loadFileAsAssetZeroCopy(Module, loader, assetName, filePath) {
   let arrayBuffer;
-  
+
   if (typeof window !== 'undefined') {
     // Browser environment
     const response = await fetch(filePath);
@@ -71,7 +71,7 @@ async function loadFileAsAssetZeroCopy(Module, loader, assetName, filePath) {
     const buffer = await fs.readFile(filePath);
     arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   }
-  
+
   const uint8Array = new Uint8Array(arrayBuffer);
   return setAssetZeroCopy(Module, loader, assetName, uint8Array);
 }
@@ -79,7 +79,7 @@ async function loadFileAsAssetZeroCopy(Module, loader, assetName, filePath) {
 /**
  * Performance comparison between traditional and zero-copy methods
  * @param {Object} Module - The Emscripten module instance
- * @param {Object} loader - TinyUSDZLoaderNative instance
+ * @param {Object} loader - LightUSDLoaderNative instance
  * @param {Uint8Array} testData - Data to use for comparison
  * @returns {Object} Performance comparison results
  */
@@ -89,23 +89,23 @@ function comparePerformance(Module, loader, testData) {
     traditional: {},
     zeroCopy: {}
   };
-  
+
   // Traditional method
   console.time('traditional');
   const binaryString = String.fromCharCode(...testData);
   loader.setAsset('perf-test-traditional', binaryString);
   console.timeEnd('traditional');
-  
+
   // Zero-copy method
   console.time('zeroCopy');
   const dataPtr = getPointerFromUint8Array(Module, testData);
   loader.setAssetFromRawPointer('perf-test-zerocopy', dataPtr, testData.length);
   console.timeEnd('zeroCopy');
-  
+
   // Verify both methods worked
   results.traditional.success = loader.hasAsset('perf-test-traditional');
   results.zeroCopy.success = loader.hasAsset('perf-test-zerocopy');
-  
+
   return results;
 }
 
@@ -125,19 +125,19 @@ function validateUint8Array(Module, uint8Array) {
     isCompatible: false,
     warnings: []
   };
-  
+
   if (!validation.isUint8Array) {
     validation.warnings.push('Input is not a Uint8Array');
   }
-  
+
   if (validation.size === 0) {
     validation.warnings.push('Array is empty');
   }
-  
+
   if (validation.size > 1024 * 1024 * 100) { // 100MB
     validation.warnings.push('Array is very large (>100MB), consider streaming');
   }
-  
+
   // Check if the array is backed by the same heap as Module.HEAPU8
   try {
     getPointerFromUint8Array(Module, uint8Array);
@@ -145,7 +145,7 @@ function validateUint8Array(Module, uint8Array) {
   } catch (error) {
     validation.warnings.push(`Not compatible with zero-copy: ${error.message}`);
   }
-  
+
   return validation;
 }
 
@@ -161,7 +161,7 @@ if (typeof module !== 'undefined' && module.exports) {
   };
 } else {
   // Browser
-  window.TinyUSDZZeroCopyUtils = {
+  window.LightUSDZeroCopyUtils = {
     getPointerFromUint8Array,
     setAssetZeroCopy,
     loadFileAsAssetZeroCopy,

@@ -18,7 +18,7 @@ glTF's variant approach is optimized for:
 - Material assignments
 - Efficient runtime switching
 
-TinyUSDZ's Tydra RenderScene needs variant support to:
+LightUSD's Tydra RenderScene needs variant support to:
 1. Preserve variant information from USD files
 2. Enable efficient variant switching at runtime
 3. Support rendering different variants without reloading

@@ -8,7 +8,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 #define PRINT_PRIM_HEADER(prim, type_name)                                       \
   do {                                                                            \
@@ -45,4 +45,4 @@ std::string to_string(const SpatialAudio &prim,
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

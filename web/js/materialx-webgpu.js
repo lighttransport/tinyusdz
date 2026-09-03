@@ -1,4 +1,4 @@
-// TinyUSDZ MaterialX/OpenPBR Demo with Three.js WebGPU + NodeMaterial (TSL)
+// LightUSD MaterialX/OpenPBR Demo with Three.js WebGPU + NodeMaterial (TSL)
 // Simple viewer for USD files with MaterialX/OpenPBR and UsdPreviewSurface material support
 // Uses WebGPU renderer and Three Shading Language (TSL) for material nodes
 
@@ -6,7 +6,7 @@
 import * as THREE from 'three/webgpu';
 
 // Import custom OpenPBR TSL material
-import { createOpenPBRMaterial, MtlxNodes, MtlxNodeGraphProcessor } from 'tinyusdz/TinyUSDZOpenPBR_TSL.js';
+import { createOpenPBRMaterial, MtlxNodes, MtlxNodeGraphProcessor } from 'lightusd/LightUSDOpenPBR_TSL.js';
 import {
     createColor,
     extractValue,
@@ -14,13 +14,13 @@ import {
     getTextureId,
     applyOpenPBRNormalMapFromGetter,
     loadTextureFromUSD
-} from 'tinyusdz/TinyUSDZMaterialX.js';
+} from 'lightusd/LightUSDMaterialX.js';
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
 // ============================================================================
 // Constants
@@ -297,10 +297,10 @@ function initControls() {
 }
 
 async function initLoader() {
-    updateStatus('Initializing TinyUSDZ WASM...');
-    loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+    updateStatus('Initializing LightUSD WASM...');
+    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     await loaderState.loader.init({ useMemory64: false });
-    updateStatus('TinyUSDZ initialized');
+    updateStatus('LightUSD initialized');
 }
 
 function setupGUI() {
@@ -1376,7 +1376,7 @@ async function loadUSDFromFile(file) {
 async function loadUSDFromData(data, filename) {
     clearScene();
 
-    loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
+    loaderState.nativeLoader = new loaderState.loader.native_.LightUSDLoaderNative();
 
     const success = loaderState.nativeLoader.loadFromBinary(data, filename);
     if (!success) {

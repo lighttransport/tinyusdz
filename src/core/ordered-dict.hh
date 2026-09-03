@@ -12,7 +12,7 @@
 
 #include "compiler-features.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Simple Python-like OrderedDict implementation.
@@ -67,7 +67,7 @@ class ordered_dict {
     _m[key] = value;
   }
 
-  T &get_or_add(const std::string &key) TINYUSDZ_LIFETIMEBOUND {
+  T &get_or_add(const std::string &key) LIGHTUSD_LIFETIMEBOUND {
     if (!_m.count(key)) {
       _keys.push_back(key);
     }
@@ -147,7 +147,7 @@ class ordered_dict {
     return true;
   }
 
-  const std::vector<std::string> &keys() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<std::string> &keys() const LIGHTUSD_LIFETIMEBOUND {
     return _keys;
   }
 
@@ -160,4 +160,4 @@ class ordered_dict {
   std::map<std::string, T> _m;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

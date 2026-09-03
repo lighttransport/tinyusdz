@@ -129,10 +129,10 @@ async function runTest(testName, usdData, filename = 'test.usda') {
   resetProgressState();
 
   // Dynamic import to allow callbacks to be set
-  const createTinyUSDZ = (await import('../src/tinyusdz/tinyusdz.js')).default;
+  const createLightUSD = (await import('../src/lightusd/lightusd.js')).default;
 
   // Initialize WASM module with EM_JS callbacks
-  const tinyusdz = await createTinyUSDZ({
+  const lightusd = await createLightUSD({
     onTydraProgress: (info) => {
       progressState.callbackCount++;
       progressState.lastMeshCurrent = info.meshCurrent;
@@ -163,7 +163,7 @@ async function runTest(testName, usdData, filename = 'test.usda') {
   });
 
   // Create native loader
-  const loader = new tinyusdz.TinyUSDZLoaderNative();
+  const loader = new lightusd.LightUSDLoaderNative();
 
   // Convert string to binary
   const encoder = new TextEncoder();
@@ -214,9 +214,9 @@ async function runFileTest(filePath) {
 
   resetProgressState();
 
-  const createTinyUSDZ = (await import('../src/tinyusdz/tinyusdz.js')).default;
+  const createLightUSD = (await import('../src/lightusd/lightusd.js')).default;
 
-  const tinyusdz = await createTinyUSDZ({
+  const lightusd = await createLightUSD({
     onTydraProgress: (info) => {
       progressState.callbackCount++;
       progressState.lastMeshCurrent = info.meshCurrent;
@@ -242,7 +242,7 @@ async function runFileTest(filePath) {
     }
   });
 
-  const loader = new tinyusdz.TinyUSDZLoaderNative();
+  const loader = new lightusd.LightUSDLoaderNative();
 
   console.log(`\nLoading ${filename} (${data.length} bytes)...`);
   console.log('-'.repeat(40));

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - private CrateReader implementation details.
+// LightUSD Next - private CrateReader implementation details.
 
 #pragma once
 
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Ceiling on recursive value nesting (dictionaries, and UnregisteredValue
@@ -201,4 +201,4 @@ class CrateReader::Impl {
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

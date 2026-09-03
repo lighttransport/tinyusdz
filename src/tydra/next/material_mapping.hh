@@ -3,7 +3,7 @@
 
 #include "openpbr-params-converter.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -20,4 +20,4 @@ inline bool MapRenderMaterialToLightRtOpenPBR(
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

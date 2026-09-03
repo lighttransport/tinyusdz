@@ -28,26 +28,26 @@ static std::string JoinPath(const std::string &base_dir, const std::string &rel)
 static std::string ResolveAssetPath(const std::string &source_file,
                                      const std::string &asset_path) {
   if (asset_path.empty()) return asset_path;
-  if (tinyusdz::io::IsAbsPath(asset_path) || asset_path[0] == '~') return asset_path;
-  std::string base = tinyusdz::io::GetBaseDir(source_file);
+  if (lightusd::io::IsAbsPath(asset_path) || asset_path[0] == '~') return asset_path;
+  std::string base = lightusd::io::GetBaseDir(source_file);
   return JoinPath(base, asset_path);
 }
 
-static const char *ListEditQualStr(tinyusdz::ListEditQual q) {
+static const char *ListEditQualStr(lightusd::ListEditQual q) {
   switch (q) {
-    case tinyusdz::ListEditQual::ResetToExplicit: return "explicit";
-    case tinyusdz::ListEditQual::Append: return "append";
-    case tinyusdz::ListEditQual::Add: return "add";
-    case tinyusdz::ListEditQual::Delete: return "delete";
-    case tinyusdz::ListEditQual::Prepend: return "prepend";
-    case tinyusdz::ListEditQual::Order: return "order";
-    case tinyusdz::ListEditQual::Invalid: return "invalid";
+    case lightusd::ListEditQual::ResetToExplicit: return "explicit";
+    case lightusd::ListEditQual::Append: return "append";
+    case lightusd::ListEditQual::Add: return "add";
+    case lightusd::ListEditQual::Delete: return "delete";
+    case lightusd::ListEditQual::Prepend: return "prepend";
+    case lightusd::ListEditQual::Order: return "order";
+    case lightusd::ListEditQual::Invalid: return "invalid";
   }
   return "unknown";
 }
 
 static std::string DetectFormatByExt(const std::string &filepath) {
-  std::string ext = tinyusdz::io::GetFileExtension(filepath);
+  std::string ext = lightusd::io::GetFileExtension(filepath);
   std::transform(ext.begin(), ext.end(), ext.begin(),
                  [](unsigned char c) { return std::tolower(c); });
   if (ext == "usda") return "usda";
@@ -58,9 +58,9 @@ static std::string DetectFormatByExt(const std::string &filepath) {
 }
 
 static std::string DetectUSDType(const std::string &filepath) {
-  if (tinyusdz::IsUSDZ(filepath)) return "usdz";
-  if (tinyusdz::IsUSDC(filepath)) return "crate";
-  if (tinyusdz::IsUSDA(filepath)) return "ascii";
+  if (lightusd::IsUSDZ(filepath)) return "usdz";
+  if (lightusd::IsUSDC(filepath)) return "crate";
+  if (lightusd::IsUSDA(filepath)) return "ascii";
   return "unknown";
 }
 
@@ -84,11 +84,11 @@ static void PopulateFileInfo(CompGraphNode &node) {
 // Stack-based DFS over PrimSpec tree to collect all composition arcs.
 static void CollectArcsFromPrimSpecs(
     const std::string &parent_path,
-    const std::vector<tinyusdz::PrimSpec> &children,
+    const std::vector<lightusd::PrimSpec> &children,
     std::vector<CompArc> &arcs) {
 
   struct StackEntry {
-    const tinyusdz::PrimSpec *ps;
+    const lightusd::PrimSpec *ps;
     std::string path;
   };
 
@@ -106,7 +106,7 @@ static void CollectArcsFromPrimSpecs(
     auto entry = stack.back();
     stack.pop_back();
 
-    const tinyusdz::PrimSpec *ps = entry.ps;
+    const lightusd::PrimSpec *ps = entry.ps;
     const std::string &prim_path = entry.path;
 
     if (ps->metas().references.has_value()) {
@@ -202,7 +202,7 @@ static void CollectArcsFromPrimSpecs(
   }
 }
 
-bool ExtractCompGraph(const tinyusdz::Layer &layer,
+bool ExtractCompGraph(const lightusd::Layer &layer,
                       const std::string &file_path,
                       CompGraphDump *out, std::string *err) {
   if (!out) {
@@ -231,7 +231,7 @@ bool ExtractCompGraph(const tinyusdz::Layer &layer,
   // Traverse all root PrimSpecs
   const auto &primspecs = layer.primspecs();
   for (const auto &kv : primspecs) {
-    std::vector<tinyusdz::PrimSpec> root_vec = {kv.second};
+    std::vector<lightusd::PrimSpec> root_vec = {kv.second};
     CollectArcsFromPrimSpecs("", root_vec, node.arcs);
   }
 
@@ -270,9 +270,9 @@ bool ExtractCompGraphRecursive(const std::string &root_path,
     PopulateFileInfo(node);
     node.parse_attempted = true;
 
-    tinyusdz::Layer layer;
+    lightusd::Layer layer;
     std::string local_warn, local_err;
-    bool loaded = tinyusdz::LoadLayerFromFile(entry.file_path, &layer,
+    bool loaded = lightusd::LoadLayerFromFile(entry.file_path, &layer,
                                                &local_warn, &local_err);
 
     if (!loaded) {
@@ -306,7 +306,7 @@ bool ExtractCompGraphRecursive(const std::string &root_path,
       // Extract arcs: primspecs
       const auto &primspecs = layer.primspecs();
       for (const auto &kv : primspecs) {
-        std::vector<tinyusdz::PrimSpec> root_vec = {kv.second};
+        std::vector<lightusd::PrimSpec> root_vec = {kv.second};
         CollectArcsFromPrimSpecs("", root_vec, node.arcs);
       }
     } else {
@@ -325,7 +325,7 @@ bool ExtractCompGraphRecursive(const std::string &root_path,
 
       const auto &primspecs = layer.primspecs();
       for (const auto &kv : primspecs) {
-        std::vector<tinyusdz::PrimSpec> root_vec = {kv.second};
+        std::vector<lightusd::PrimSpec> root_vec = {kv.second};
         CollectArcsFromPrimSpecs("", root_vec, temp_arcs);
       }
 
@@ -740,7 +740,7 @@ std::string CompGraphToDOT(const CompGraphDump &graph) {
   }
 
   for (const auto &f : file_nodes) {
-    std::string label = tinyusdz::io::GetBaseFilename(f);
+    std::string label = lightusd::io::GetBaseFilename(f);
     auto it = node_map.find(f);
     if (it != node_map.end()) {
       const auto *n = it->second;

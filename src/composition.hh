@@ -40,7 +40,7 @@
 // - [ ] Multi-level implied inherits/specializes propagation (currently single-level)
 // - [ ] `order` ListEditQual for references/payloads (implemented for inherits/specializes)
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward decl.
 class Stage;
@@ -67,8 +67,8 @@ struct SublayersCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  tinyusdz::HashMap<std::string, FileFormatHandler> fileformats;
-  
+  lightusd::HashMap<std::string, FileFormatHandler> fileformats;
+
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
@@ -92,8 +92,8 @@ struct ReferencesCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  tinyusdz::HashMap<std::string, FileFormatHandler> fileformats;
-  
+  lightusd::HashMap<std::string, FileFormatHandler> fileformats;
+
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
@@ -145,7 +145,7 @@ struct PayloadCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  tinyusdz::HashMap<std::string, FileFormatHandler> fileformats;
+  lightusd::HashMap<std::string, FileFormatHandler> fileformats;
 
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -278,7 +278,7 @@ void FlattenAppliedSchemas(Layer &layer);
 /// Opt-in: when making an authored RELATIVE asset path absolute on flatten,
 /// lexically NORMALIZE the result (collapse `.`/`..`), matching OpenUSD usdcat
 /// (`.../Meshes/Foo/../../../Materials/x.png` -> `.../Materials/x.png`). Default
-/// false keeps tinyusdz's existing behavior (the joined path retains `..`).
+/// false keeps lightusd's existing behavior (the joined path retains `..`).
 ///
 /// MUST be set BEFORE composition/flatten (it is consumed while resolving asset
 /// attributes, not at print time).
@@ -476,7 +476,7 @@ bool LayerToStage(Layer &&layer, Stage *stage, std::string *warn,
 /// @param[out] err Error messages
 /// @return true upon success
 ///
-bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage, 
+bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage,
                          std::string *warn, std::string *err);
 
 ///
@@ -573,7 +573,7 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
 /// Extract Variant information from Layer.
 ///
 /// Example:
-/// 
+///
 /// { "/cube0" : { "variantSets" : ["colorVariant"], "variants" : { "colorVariant" : "green" } } }
 ///
 bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err);
@@ -584,4 +584,4 @@ bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err);
 bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err);
 
 
-}  // namespace tinyusdz
+}  // namespace lightusd

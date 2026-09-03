@@ -1,5 +1,5 @@
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
-import { isNextScene } from './src/tinyusdz/NextRenderSceneUtils.js';
+import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
+import { isNextScene } from './src/lightusd/NextRenderSceneUtils.js';
 
 let loader = null;
 let activeBytes = null;
@@ -7,7 +7,7 @@ let activeName = '';
 
 async function ensureLoader() {
 	if (loader) return loader;
-	loader = new TinyUSDZLoader(null, {
+	loader = new LightUSDLoader(null, {
 		suppressNativeInfoLogs: true
 	});
 	// Workers do not inherit the page's location query parameters, so
@@ -97,7 +97,7 @@ async function convert(id, msg) {
 			// point-instancer draws, lights and cameras merely to discard them.
 			meshOnly: true,
 			onProgress: report,
-			onTinyUSDZDebug: report,
+			onLightUSDDebug: report,
 			onTydraProgress: report,
 			progressBase,
 			progressRange

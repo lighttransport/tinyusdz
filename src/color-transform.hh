@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026-Present Light Transport Entertainment Inc.
 //
-// Dependency-free RGB color transforms shared by tinyusdz legacy and next.
+// Dependency-free RGB color transforms shared by lightusd legacy and next.
 // The transfer-function and chromaticity math follows OpenUSD NanoColor.
 
 #pragma once
@@ -9,7 +9,7 @@
 #include <cstddef>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace color {
 
 enum class ColorSpaceKind {
@@ -66,4 +66,4 @@ bool IsLinear(const ColorSpaceDesc &space);
 bool IsData(const ColorSpaceDesc &space);
 
 }  // namespace color
-}  // namespace tinyusdz
+}  // namespace lightusd

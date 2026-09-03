@@ -2,49 +2,49 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import {
-	createConfiguredTinyUSDZLoader,
+	createConfiguredLightUSDLoader,
 	getAssetUriFromURL,
 	getBackendFromURL,
 	LOADER_BACKEND_CHOICES,
 	makeStaticNextParseOptions,
 	parseUSDSceneFromArrayBuffer,
 	setBackendAndReload
-} from 'tinyusdz/LoaderConfigUtils.js';
+} from 'lightusd/LoaderConfigUtils.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
 	readNextSceneMeta
-} from 'tinyusdz/NextRenderSceneUtils.js';
-import { buildJointHierarchyHTML } from 'tinyusdz/JointHierarchyUtils.js';
-import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
-import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
-import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
-import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
+} from 'lightusd/NextRenderSceneUtils.js';
+import { buildJointHierarchyHTML } from 'lightusd/JointHierarchyUtils.js';
+import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
+import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
+import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from 'lightusd/USDSceneSkinningPipeline.js';
 // USD Skeletal Animation Helper - skeleton building with bind-transform logic
 import {
 	resetSkeletonToRestPose
-} from 'tinyusdz/USDSkeletalHelper.js';
+} from 'lightusd/USDSkeletalHelper.js';
 // USD Animation Converter - skeletal and node animation extraction
-import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
+import { buildNodeIndexMap } from 'lightusd/USDAnimationConverter.js';
 import {
 	extractUSDSceneAnimations,
 	computeUSDSceneTimelineDuration,
 	createUSDSceneAnimationPlayback
-} from 'tinyusdz/USDSceneAnimationPipeline.js';
+} from 'lightusd/USDSceneAnimationPipeline.js';
 // Skinned Mesh Utilities - bbox, raycasting, hierarchy helpers
 import {
 	computeSceneBoundingBox,
 	expandBoxByMeshBones,
 	expandBoxBySkeletonBones,
 	raycastSkinnedMeshes
-} from 'tinyusdz/SkinnedMeshUtils.js';
+} from 'lightusd/SkinnedMeshUtils.js';
 // Extended Skinning Support - supports 4, 8, 16, 32, 64+ bones per vertex
 import {
 	SkinningMode,
 	createExtendedWeightVisualizationMaterial
-} from 'tinyusdz/ExtendedSkinning.js';
+} from 'lightusd/ExtendedSkinning.js';
 
 // ===========================================
 // Configuration
@@ -945,7 +945,7 @@ async function createConfiguredLoader() {
 		? animationParams.targetBoneCount
 		: 4;
 
-	const loader = await createConfiguredTinyUSDZLoader({
+	const loader = await createConfiguredLightUSDLoader({
 		initOptions: { useZstdCompressedWasm: false, useMemory64: false },
 		skinningOptions: {
 			enableBoneReduction,
@@ -954,8 +954,8 @@ async function createConfiguredLoader() {
 			logger: console
 		}
 	});
-	window._tinyusdz_module = loader.native_;
-	window._tinyusdz_wasm_memory = {
+	window._lightusd_module = loader.native_;
+	window._lightusd_wasm_memory = {
 		get buffer() {
 			return loader.native_?.HEAPU8?.buffer ?? null;
 		}
@@ -1089,8 +1089,8 @@ function formatBytes(bytes) {
 function captureMemorySnapshot() {
 	const jsHeap = performance.memory?.usedJSHeapSize;
 	const wasmHeap =
-		window._tinyusdz_wasm_memory?.buffer?.byteLength ??
-		window._tinyusdz_module?.HEAPU8?.buffer?.byteLength;
+		window._lightusd_wasm_memory?.buffer?.byteLength ??
+		window._lightusd_module?.HEAPU8?.buffer?.byteLength;
 	return {
 		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
 		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
@@ -1463,7 +1463,7 @@ async function processUSDScene(usd_scene, filename) {
 		nextTextureManager = built.textureManager || null;
 		if (nextTextureManager) {
 			nextTextureLoadPromise = nextTextureManager.startLoading({
-				concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+				concurrency: LightUSDLoaderUtils.defaultTextureConcurrency(),
 				yieldInterval: 16,
 				onTextureLoaded: (material) => { material.needsUpdate = true; }
 			}).catch((err) => {
@@ -1552,7 +1552,7 @@ async function processUSDScene(usd_scene, filename) {
 	}
 
 	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	const defaultMtl = LightUSDLoaderUtils.createDefaultMaterial();
 
 	const options = {
 		overrideMaterial: false,
@@ -1564,18 +1564,18 @@ async function processUSDScene(usd_scene, filename) {
 	// Monitor WASM heap for growth during scene building.
 	// If memory.grow() is called, ALL typed_memory_view ArrayBuffers are detached.
 	const wasmHeapBefore = typeof WebAssembly !== 'undefined' && WebAssembly.Memory ?
-		(window._tinyusdz_wasm_memory ? window._tinyusdz_wasm_memory.buffer.byteLength : null) : null;
+		(window._lightusd_wasm_memory ? window._lightusd_wasm_memory.buffer.byteLength : null) : null;
 
 	// Build Three.js node from USD. Next scenes are already materialized from
 	// RenderScene data; legacy scenes are built from the USD node tree.
 	let threeNode = nextBuiltNode;
 	if (!threeNode) {
 		const usdRootNode = usd_scene.getDefaultRootNode();
-		threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+		threeNode = await LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 	}
 
-	if (wasmHeapBefore !== null && window._tinyusdz_wasm_memory) {
-		const wasmHeapAfter = window._tinyusdz_wasm_memory.buffer.byteLength;
+	if (wasmHeapBefore !== null && window._lightusd_wasm_memory) {
+		const wasmHeapAfter = window._lightusd_wasm_memory.buffer.byteLength;
 		if (wasmHeapAfter !== wasmHeapBefore) {
 			console.warn(`[WASM HEAP GREW] ${wasmHeapBefore} -> ${wasmHeapAfter} bytes during buildThreeNode. Retained raw heap views would detach; getMeshCopy/getMeshPtr copies are expected to remain safe.`);
 		}

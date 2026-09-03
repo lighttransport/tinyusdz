@@ -4,7 +4,7 @@
 #pragma once
 
 #if defined(__clang__)
-#define TINYUSDZ_LIFETIMEBOUND [[clang::lifetimebound]]
+#define LIGHTUSD_LIFETIMEBOUND [[clang::lifetimebound]]
 #else
-#define TINYUSDZ_LIFETIMEBOUND
+#define LIGHTUSD_LIFETIMEBOUND
 #endif

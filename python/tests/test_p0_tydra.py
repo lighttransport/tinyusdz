@@ -2,14 +2,14 @@
 """P0: Tydra-next full render-scene fields and option matrix."""
 import pytest
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 
 np = pytest.importorskip("numpy")
 
 
 def _mesh_stage():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.up_axis = "Y"
     st.define_prim("/World", "Xform")
     m = st.define_prim("/World/M", "Mesh")
@@ -58,7 +58,7 @@ def test_tydra_mesh_buffers_and_zero_copy():
     assert m.subsets == []
     assert m.material_id >= 0
     # scene keeps alive after stage closed
-    st2 = tinyusdz.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }')
+    st2 = lightusd.loads('#usda 1.0\ndef Xform "W" { def Mesh "A" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] } }')
     sc = tydra.to_render_scene(st2)
     st2.close()
     assert np.asarray(sc.meshes[0].points).shape[1] == 3
@@ -90,7 +90,7 @@ def test_tydra_material_and_lookup():
 
 
 def test_tydra_nodes_lights_cameras():
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/World", "Xform")
     st.define_prim("/World/L", "SphereLight").set("intensity", 100.0, type="float")
     st.define_prim("/World/Cam", "Camera").set("focalLength", 50.0, type="float")

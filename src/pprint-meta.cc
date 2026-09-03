@@ -17,7 +17,7 @@
 //
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 // Forward declaration — defined in pprinter.cc
 std::string to_string(const Layer &layer, const uint32_t indent, bool closing_brace);
 }
@@ -25,20 +25,20 @@ std::string to_string(const Layer &layer, const uint32_t indent, bool closing_br
 namespace std {
 
 #define DEFINE_OSTREAM_OP(TYPE) \
-  std::ostream &operator<<(std::ostream &ofs, const tinyusdz::TYPE v) { \
+  std::ostream &operator<<(std::ostream &ofs, const lightusd::TYPE v) { \
     ofs << to_string(v); return ofs; }
 DEFINE_OSTREAM_OP(Visibility)
 DEFINE_OSTREAM_OP(Extent)
 DEFINE_OSTREAM_OP(Interpolation)
 #undef DEFINE_OSTREAM_OP
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
-  ofs << tinyusdz::pquote(v.full_path_name());
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Path &v) {
+  ofs << lightusd::pquote(v.full_path_name());
 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::LayerOffset &v) {
   bool print_offset{true};
   bool print_scale{true};
 
@@ -59,19 +59,19 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
   // (space before paren, `;` separator).
   ofs << " (";
   if (print_offset && print_scale) {
-    ofs << "offset = " << tinyusdz::dtos(v._offset)
-        << "; scale = " << tinyusdz::dtos(v._scale);
+    ofs << "offset = " << lightusd::dtos(v._offset)
+        << "; scale = " << lightusd::dtos(v._scale);
   } else if (print_offset) {
-    ofs << "offset = " << tinyusdz::dtos(v._offset);
+    ofs << "offset = " << lightusd::dtos(v._offset);
   } else {  // print_scale
-    ofs << "scale = " << tinyusdz::dtos(v._scale);
+    ofs << "scale = " << lightusd::dtos(v._scale);
   }
   ofs << ")";
 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Reference &v) {
   // For internal references (no asset path, just prim path), don't output "@@"
   if (!v.asset_path.GetAssetPath().empty()) {
     ofs << v.asset_path;
@@ -91,12 +91,12 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
         std::numeric_limits<double>::epsilon();
     ofs << " (\n";
     if (has_offset) {
-      ofs << "    offset = " << tinyusdz::dtos(v.layerOffset._offset) << "\n";
+      ofs << "    offset = " << lightusd::dtos(v.layerOffset._offset) << "\n";
     }
     if (has_scale) {
-      ofs << "    scale = " << tinyusdz::dtos(v.layerOffset._scale) << "\n";
+      ofs << "    scale = " << lightusd::dtos(v.layerOffset._scale) << "\n";
     }
-    ofs << tinyusdz::print_customData(v.customData, "customData",
+    ofs << lightusd::print_customData(v.customData, "customData",
                                       /* indent */ 1);
     ofs << ")";
   } else {
@@ -106,7 +106,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Payload &v) {
   if (v.is_none()) {
     ofs << "None";
   } else {
@@ -123,26 +123,26 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::SubLayer &v) {
+std::ostream &operator<<(std::ostream &ofs, const lightusd::SubLayer &v) {
   ofs << v.assetPath << v.layerOffset;
 
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::StringData &v) {
-   ofs << tinyusdz::buildEscapedAndQuotedStringForUSDA(v.value);
+                         const lightusd::value::StringData &v) {
+   ofs << lightusd::buildEscapedAndQuotedStringForUSDA(v.value);
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer) {
-  ofs << tinyusdz::to_string(layer, 0, true);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Layer &layer) {
+  ofs << lightusd::to_string(layer, 0, true);
   return ofs;
 }
 
 }  // namespace std
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace pprint {
 
@@ -288,7 +288,7 @@ static std::string print_payload(const prim::PayloadList &payload,
 // Emit the `apiSchemas` metadatum (handles `= None`, authored list-ops, and the
 // resolved name view). Factored out so the USD-text-format path can emit it
 // FIRST in the metadata block (where usdcat places it) while the default keeps
-// it in tinyusdz's historical position.
+// it in lightusd's historical position.
 static void print_apiSchemas_block(std::stringstream &ss,
                                    const APISchemas &schemas, uint32_t indent) {
   if (schemas.explicitlyEmpty) {
@@ -374,7 +374,7 @@ static void print_apiSchemas_block(std::stringstream &ss,
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  // usdcat places `apiSchemas` FIRST in the prim-metadata block; tinyusdz's
+  // usdcat places `apiSchemas` FIRST in the prim-metadata block; lightusd's
   // default emits it later. Under the USD-text-format opt-in, emit it up front.
   const bool usd_text_meta = pprint::GetUSDTextFormat();
   if (usd_text_meta && meta.has_apiSchemas()) {
@@ -1107,7 +1107,7 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
       case 0: return "none";
       case 1: return "held";
       case 2: return "linear";
-      case 3: return "sloped(" + tinyusdz::dtos(slope) + ")";
+      case 3: return "sloped(" + lightusd::dtos(slope) + ")";
       case 4: return "loop repeat";
       case 5: return "loop reset";
       case 6: return "loop oscillate";
@@ -1131,10 +1131,10 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
        << extrapStr(sd.postExtrapolation, sd.postExtrapolationSlope) << ",\n";
   }
   if (sd.hasLoop) {
-    ss << pprint::Indent(ki) << "loop: (" << tinyusdz::dtos(sd.loopProtoStart)
-       << ", " << tinyusdz::dtos(sd.loopProtoEnd) << ", " << sd.loopNumPreLoops
+    ss << pprint::Indent(ki) << "loop: (" << lightusd::dtos(sd.loopProtoStart)
+       << ", " << lightusd::dtos(sd.loopProtoEnd) << ", " << sd.loopNumPreLoops
        << ", " << sd.loopNumPostLoops << ", "
-       << tinyusdz::dtos(sd.loopValueOffset) << "),\n";
+       << lightusd::dtos(sd.loopValueOffset) << "),\n";
   }
 
   // A non-None tangent algorithm is emitted as a trailing keyword inside the
@@ -1149,18 +1149,18 @@ std::string print_spline(const primvar::PrimVar::SplineData &sd,
 
   auto tangent = [&](double width, double slope, int algo) -> std::string {
     if (hermite) {
-      return "(" + tinyusdz::dtos(slope) + algoSuffix(algo) + ")";
+      return "(" + lightusd::dtos(slope) + algoSuffix(algo) + ")";
     }
-    return "(" + tinyusdz::dtos(width) + ", " + tinyusdz::dtos(slope) +
+    return "(" + lightusd::dtos(width) + ", " + lightusd::dtos(slope) +
            algoSuffix(algo) + ")";
   };
 
   for (const auto &k : sd.knots) {
-    ss << pprint::Indent(ki) << tinyusdz::dtos(k.time) << ": ";
+    ss << pprint::Indent(ki) << lightusd::dtos(k.time) << ": ";
     if (k.hasDualValue) {
-      ss << tinyusdz::dtos(num(k.preValue)) << " & " << tinyusdz::dtos(num(k.val));
+      ss << lightusd::dtos(num(k.preValue)) << " & " << lightusd::dtos(num(k.val));
     } else {
-      ss << tinyusdz::dtos(num(k.val));
+      ss << lightusd::dtos(num(k.val));
     }
     // pre-tangent (only when authored, including a non-None algorithm)
     if (k.preTangentWidth != 0.0 || k.preTangentSlope != 0.0 ||
@@ -1518,7 +1518,7 @@ std::string print_references(const ReferenceList &references,
 
 std::string print_payload(const PayloadList &payload, const uint32_t indent) {
   // Delegate to file-scope implementation
-  return tinyusdz::print_payload(payload, indent);
+  return lightusd::print_payload(payload, indent);
 }
 
 std::string print_layeroffset(const LayerOffset &layeroffset,
@@ -1558,4 +1558,4 @@ std::string print_layeroffset(const LayerOffset &layeroffset,
 
 }  // namespace prim
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -16,7 +16,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace detail {
 
@@ -66,4 +66,4 @@ struct URDFPayload {
 
 }  // namespace detail
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

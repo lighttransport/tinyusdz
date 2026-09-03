@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2024-Present Light Transport Entertainment Inc.
  *
- * tinyusdz._core — shared internals.
+ * lightusd._core — shared internals.
  *
  * Single source, two build configurations:
  *   - abi3 wheel:  compiled with Py_LIMITED_API=0x030A0000 (Python 3.10+)
@@ -26,7 +26,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "tinyusdz-c.h"
+#include "lightusd-c.h"
 
 /* PyBUF_READ/WRITE live behind the 3.11 limited-API guard in pybuffer.h, but
  * PyMemoryView_FromMemory (limited API since 3.3) needs them. Values are

@@ -298,4 +298,4 @@ value = (-1)^sign × 2^(-14) × (0.mantissa)
 
 ## License
 
-Same as TinyUSDZ (Apache 2.0)
+Same as LightUSD (Apache 2.0)

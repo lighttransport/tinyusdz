@@ -11,7 +11,7 @@
 
 #include "external/jsonhpp/nlohmann/json.hpp"
 
-#include "../tinyusdz.hh"
+#include "../lightusd.hh"
 #include "../usdz-convert.hh"
 #include "../image-loader.hh"
 #include "../image-writer.hh"
@@ -20,7 +20,7 @@
 #include "texture-util.hh"
 #include "mcp-context.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -34,9 +34,9 @@ image::PngEncoder ParsePngEncoder(const nlohmann::json &args) {
 }
 
 // Encode an Image to base64 in the requested format ("png" default, or "jpeg").
-// NOTE: this namespace (tinyusdz::tydra::mcp) has its own `Image` type, so the
-// pixel-image type must be spelled `tinyusdz::Image`.
-bool EncodeImageBase64(const tinyusdz::Image &img, const std::string &format,
+// NOTE: this namespace (lightusd::tydra::mcp) has its own `Image` type, so the
+// pixel-image type must be spelled `lightusd::Image`.
+bool EncodeImageBase64(const lightusd::Image &img, const std::string &format,
                        image::PngEncoder enc, int jpeg_quality,
                        std::string *b64, std::string *mime, std::string &err) {
   image::WriteOption wopt;
@@ -67,7 +67,7 @@ bool EncodeImageBase64(const tinyusdz::Image &img, const std::string &format,
 }
 
 // Decode a base64 string into an Image.
-bool DecodeImageBase64(const std::string &b64, tinyusdz::Image *img, std::string &err) {
+bool DecodeImageBase64(const std::string &b64, lightusd::Image *img, std::string &err) {
   // Cap input size to avoid unbounded allocation.
   constexpr size_t kMaxBase64Input = size_t(64) * 1024 * 1024;  // 64 MiB base64
   if (b64.size() > kMaxBase64Input) {
@@ -218,7 +218,7 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
       err = "Path contains unsafe characters or traversal sequences.";
       return false;
     }
-    if (!tinyusdz::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
+    if (!lightusd::SaveAsUSDZToFile(uri, *ctx.stage, assets, &warn, &err)) {
       return false;
     }
     result["success"] = true;
@@ -227,7 +227,7 @@ bool USDZPack(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   }
 
   std::vector<uint8_t> out;
-  if (!tinyusdz::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
+  if (!lightusd::SaveAsUSDZToMemory(*ctx.stage, assets, &out, &warn, &err)) {
     return false;
   }
   // Cap in-memory archive size before base64 encoding.
@@ -257,7 +257,7 @@ bool TextureResize(Context &ctx, const nlohmann::json &args,
     return false;
   }
 
-  tinyusdz::Image img;
+  lightusd::Image img;
   if (!DecodeImageBase64(args["data"].get<std::string>(), &img, err)) {
     return false;
   }
@@ -294,7 +294,7 @@ bool TextureResize(Context &ctx, const nlohmann::json &args,
     }
   }
 
-  tinyusdz::Image resized;
+  lightusd::Image resized;
   if ((target_w == img.width) && (target_h == img.height)) {
     resized = img;
   } else if (!tydra::ResizeImage(img, target_w, target_h, &resized,
@@ -323,7 +323,7 @@ bool TextureRepack(Context &ctx, const nlohmann::json &args,
 
   const char *slot_names[4] = {"r", "g", "b", "a"};
 
-  std::vector<tinyusdz::Image> images;
+  std::vector<lightusd::Image> images;
   // Map a base64 payload string -> image index (dedupe identical inputs).
   std::map<std::string, int> data_to_index;
 
@@ -351,7 +351,7 @@ bool TextureRepack(Context &ctx, const nlohmann::json &args,
       if (it != data_to_index.end()) {
         idx = it->second;
       } else {
-        tinyusdz::Image im;
+        lightusd::Image im;
         if (!DecodeImageBase64(b64, &im, err)) {
           return false;
         }
@@ -371,7 +371,7 @@ bool TextureRepack(Context &ctx, const nlohmann::json &args,
     spec.out_channels = inferred_channels > 0 ? inferred_channels : 4;
   }
 
-  tinyusdz::Image packed;
+  lightusd::Image packed;
   if (!tydra::PackChannels(images, spec, &packed, &err)) {
     return false;
   }
@@ -394,4 +394,4 @@ bool TextureRepack(Context &ctx, const nlohmann::json &args,
 
 }  // namespace mcp
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

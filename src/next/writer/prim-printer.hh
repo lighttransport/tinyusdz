@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Prim Printer
+// LightUSD Next - Prim Printer
 // Pretty-print Stage and UsdPrim for debugging
 
 #pragma once
@@ -10,7 +10,7 @@
 #include "stream-writer.hh"
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for prim printing
@@ -58,4 +58,4 @@ std::string PrintLayer(const Layer& layer, const PrimPrintOptions& opts = {});
 void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& opts = {});
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

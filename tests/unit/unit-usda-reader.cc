@@ -10,7 +10,7 @@
 #include "acutest.h"
 
 #include "unit-usda-reader.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "core/prim.hh"
 #include "value-types.hh"
 #include "usdGeom.hh"
@@ -25,7 +25,7 @@
 #include <cstring>
 #include <sstream>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // ---------------------------------------------------------------------------
 // Helper: parse a USDA string into a Stage
@@ -720,7 +720,7 @@ def Scope "test" (
     doc = "A test scope"
     kind = "component"
     customData = {
-        string author = "tinyusdz"
+        string author = "lightusd"
         int version = 1
     }
 ) {

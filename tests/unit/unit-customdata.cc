@@ -10,7 +10,7 @@
 #include "core/prim.hh"
 #include "core/meta-variable.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void customdata_test(void) {
 
@@ -25,15 +25,15 @@ void customdata_test(void) {
   //    dictionary hello = {
   //      double myval = 3.0
   //    }
-  // } 
+  // }
 
   // Namespace ':' to create nested dictionary data.
-  TEST_CHECK(tinyusdz::SetCustomDataByKey("hello:myval", doubleVal, customData));
+  TEST_CHECK(lightusd::SetCustomDataByKey("hello:myval", doubleVal, customData));
 
-  TEST_CHECK(tinyusdz::HasCustomDataKey(customData, "hello:myval"));
+  TEST_CHECK(lightusd::HasCustomDataKey(customData, "hello:myval"));
 
   MetaVariable metavar;
-  bool ret = tinyusdz::GetCustomDataByKey(customData, "hello:myval", &metavar);
+  bool ret = lightusd::GetCustomDataByKey(customData, "hello:myval", &metavar);
 
   TEST_CHECK(ret == true);
 
@@ -43,13 +43,13 @@ void customdata_test(void) {
   TEST_CHECK(retval == 3.0);
 
   // Add another key
-  TEST_CHECK(tinyusdz::SetCustomDataByKey("hello:myval2", stringVal, customData));
+  TEST_CHECK(lightusd::SetCustomDataByKey("hello:myval2", stringVal, customData));
 
-  TEST_CHECK(tinyusdz::HasCustomDataKey(customData, "hello:myval"));
-  TEST_CHECK(tinyusdz::HasCustomDataKey(customData, "hello:myval2"));
+  TEST_CHECK(lightusd::HasCustomDataKey(customData, "hello:myval"));
+  TEST_CHECK(lightusd::HasCustomDataKey(customData, "hello:myval2"));
 
   MetaVariable metavar2;
-  ret = tinyusdz::GetCustomDataByKey(customData, "hello:myval2", &metavar2);
+  ret = lightusd::GetCustomDataByKey(customData, "hello:myval2", &metavar2);
 
   TEST_CHECK(ret == true);
 
@@ -60,8 +60,8 @@ void customdata_test(void) {
 
   // override
   {
-    TEST_CHECK(tinyusdz::SetCustomDataByKey("hello:myval", intVal, customData));
-    ret = tinyusdz::GetCustomDataByKey(customData, "hello:myval", &metavar);
+    TEST_CHECK(lightusd::SetCustomDataByKey("hello:myval", intVal, customData));
+    ret = lightusd::GetCustomDataByKey(customData, "hello:myval", &metavar);
     TEST_CHECK(ret == true);
 
     int ival{0};

@@ -1,12 +1,12 @@
 # Thread-Safety & Data-Race Notes
 
-Scope: concurrency in the `tinyusdz::pcp::Cache` engine (`src/pcp/`) and the
+Scope: concurrency in the `lightusd::pcp::Cache` engine (`src/pcp/`) and the
 shared code its optional multithreaded build path touches. This is the working
 record of what was audited, what was fixed, what remains, and how to verify.
 
 Context: `pcp::Cache::PrewarmPrimIndices()` / `BuildStage()` can build
 independent prim indices on worker threads when `CacheOptions::num_threads != 1`
-and `TINYUSDZ_ENABLE_THREAD` is compiled in (never on wasm). Each worker runs
+and `LIGHTUSD_ENABLE_THREAD` is compiled in (never on wasm). Each worker runs
 `Cache::Impl::BuildEntry() -> composition_graph::PrimIndexBuilder::Build()`
 against the **shared** composited root layer and the registry-shared referenced
 layers. That sharing is where data races live.
@@ -29,7 +29,7 @@ reported 16 races at `src/layer.cc` before the fix, 0 after.
 Fix: a gated `std::shared_ptr<std::mutex> LayerImpl::_cache_mu` (`src/layer.cc`
 ~L246) guards only the cache read/write in `find_primspec_at()` (`cache_lock`
 at ~L476, released for the lock-free `_prim_specs` tree walk at ~L494, re-taken
-for the insert at ~L505). Gated on `TINYUSDZ_ENABLE_THREAD`, so non-threaded /
+for the insert at ~L505). Gated on `LIGHTUSD_ENABLE_THREAD`, so non-threaded /
 wasm builds are byte-for-byte unaffected. `shared_ptr` keeps `Layer`
 copyable/movable. Covered by `pcp_singlethread_vs_multithread_identical_test`
 and `pcp_mt_shared_reference_test`.
@@ -68,7 +68,7 @@ The six `const` compute-and-cache methods (`check_unresolved_references` … and
 `check_over_primspec`) and their `has_unresolved_*()` getters touched
 `mutable bool _has_*` flags without synchronization. Now each write and each
 getter read is wrapped in a `std::lock_guard` on the gated `LayerImpl::_cache_mu`
-(`#if defined(TINYUSDZ_ENABLE_THREAD)`), reusing the same mutex as the lookup
+(`#if defined(LIGHTUSD_ENABLE_THREAD)`), reusing the same mutex as the lookup
 cache. Zero overhead when threads are off. (`_has_class_primspec` is fixed at
 construction — there is no `check_class_primspec()` that recomputes it — so its
 getter is intentionally left unguarded.)
@@ -90,7 +90,7 @@ on worker threads and must be thread-safe. No code change.
 
 ---
 
-## Fixed — Round 2 (repo-wide audit of tinyusdz + tydra)
+## Fixed — Round 2 (repo-wide audit of lightusd + tydra)
 
 A second, broader audit swept every concurrency entry point and shared-mutable
 candidate across `src/` (including `src/tydra/`). The findings below were fixed;
@@ -99,7 +99,7 @@ everything else is recorded under *Confirmed safe* / *Latent — by design*.
 ### Stage::GetPrimAtPath / find_prim_by_prim_id lazy caches + copy — **FIXED**
 `Stage::GetPrimAtPath()` and `find_prim_by_prim_id()` are `const` but clear+populate
 lazy caches `mutable HashMap _prim_path_cache` / `_prim_id_cache` and the
-`_dirty` / `_prim_id_dirty` flags (`src/stage.cc`). `tinyusdz::HashMap`
+`_dirty` / `_prim_id_dirty` flags (`src/stage.cc`). `lightusd::HashMap`
 (`src/tiny-hashmap.hh`) has no internal locking, so concurrent reads on a shared
 `Stage` race exactly like the `Layer::find_primspec_at` case. `Stage` is also
 **copyable** and the cached `const Prim*` point into the source's `_root_nodes`,
@@ -159,7 +159,7 @@ Reads are now genuinely pure once built. Verified with the standalone TSan
 harness below (race before, clean after).
 
 ### ParserProfiler global singleton — **FIXED**
-`TINYUSDZ_PROFILE_FUNCTION`/`_SCOPE` (`src/parser-timing.hh`) unconditionally called
+`LIGHTUSD_PROFILE_FUNCTION`/`_SCOPE` (`src/parser-timing.hh`) unconditionally called
 `ParserProfiler::GetInstance().GetTimer(name)` → `timers_[name]` (mutating a shared
 `std::map`) at the top of *every* parse, regardless of the default-off
 `enable_profiling`. Two threads each calling `LoadUSDFromFile` raced on that map
@@ -173,7 +173,7 @@ approximate under concurrent profiling; set config before spawning threads.
 Covered by `stage_concurrent_parse_test`.
 
 ### CRC32 / base122 double-checked table init — **FIXED**
-`usdz_crc32_table` (`src/tinyusdz.cc`), the identical table in
+`usdz_crc32_table` (`src/lightusd.cc`), the identical table in
 `src/next/writer/usdz-writer.cc`, and `base122_decode_map` (`src/base122.cc`) used
 a hand-rolled `static bool …_ready` flag with no atomics → racy on concurrent USDZ
 write/decode. Replaced each with a function-local `static const std::array<…>`
@@ -229,7 +229,7 @@ Round-2 audit, confirmed safe with no change:
   `Impl::process_request()` holds a single global `std::mutex mu_` over the
   *entire* handler, so all tool execution is serialized — `mcp_ctx_` (Stage,
   layers, js_engine) and the `g_js_stage` global are never touched concurrently.
-  The module is `OFF` by default (`TINYUSDZ_WITH_MCP_SERVER`) and example-only.
+  The module is `OFF` by default (`LIGHTUSD_WITH_MCP_SERVER`) and example-only.
   Note: that safety rests entirely on the coarse lock; removing/narrowing it would
   expose races on `mcp_ctx_` / `g_js_stage`.
 - **`MapExpr::GetComposed()`** (`src/composition-graph.hh`): mutates a `mutable
@@ -275,7 +275,7 @@ Round-3 audit, confirmed safe / contract (no change):
 
 > **IMPORTANT — the acutest unit-test binary is NOT a reliable TSan race
 > detector.** A deliberately-injected data race inside a `unit-*.cc` test goes
-> *unreported* by `./build-tsan/unit-test-tinyusdz` (both the in-process
+> *unreported* by `./build-tsan/unit-test-lightusd` (both the in-process
 > single-test path and the forked full-suite path), even though the binary is
 > TSan-instrumented and prints the "Running under ThreadSanitizer" banner. The
 > same race compiled as a small standalone IS caught. Root cause undetermined
@@ -290,32 +290,32 @@ Round-3 audit, confirmed safe / contract (no change):
 > clean with the fix):
 >
 > ```bash
-> cmake --build build-tsan --target tinyusdz_static -j16
+> cmake --build build-tsan --target lightusd_static -j16
 > # write a small main() that builds the shared object and reads it from N threads
 > g++ -std=c++17 -fsanitize=thread -O1 -g -Isrc -Isrc/external repro.cc \
->     build-tsan/libtinyusdz_static.a -lpthread -ldl -o repro
+>     build-tsan/liblightusd_static.a -lpthread -ldl -o repro
 > setarch -R ./repro        # exit 66 + "WARNING: ThreadSanitizer" on a real race
 > ```
 
 ```bash
 # Build a TSan unit-test binary (threads on).
-cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DTINYUSDZ_BUILD_TESTS=ON \
-  -DTINYUSDZ_ENABLE_THREAD=ON \
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_ENABLE_THREAD=ON \
   -DCMAKE_CXX_FLAGS="-fsanitize=thread -O1 -g" \
   -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
-cmake --build build-tsan --target unit-test-tinyusdz -j16
+cmake --build build-tsan --target unit-test-lightusd -j16
 
 # NOTE: modern Linux kernels make TSan abort at startup with
 #   "FATAL: ThreadSanitizer: unexpected memory mapping"
 # due to high ASLR entropy. Run under `setarch -R` (disable randomization),
 # or lower vm.mmap_rnd_bits (needs root).
-setarch -R ./build-tsan/unit-test-tinyusdz pcp_mt_shared_reference_test \
+setarch -R ./build-tsan/unit-test-lightusd pcp_mt_shared_reference_test \
                                             pcp_singlethread_vs_multithread_identical_test \
                                             stage_concurrent_find_prim_test \
                                             stage_concurrent_parse_test \
                                             stage_concurrent_timesamples_read_test
 # Full suite:
-setarch -R ./build-tsan/unit-test-tinyusdz
+setarch -R ./build-tsan/unit-test-lightusd
 ```
 
 The **entire** suite must report **0 data races** — including
@@ -326,16 +326,16 @@ regression in this work.
 
 After any change, also run the normal builds:
 ```bash
-cd build && cmake --build . --target unit-test-tinyusdz -j16 && ./unit-test-tinyusdz   # threads off (canonical)
-# threads on: configure a separate build dir with -DTINYUSDZ_ENABLE_THREAD=ON
+cd build && cmake --build . --target unit-test-lightusd -j16 && ./unit-test-lightusd   # threads off (canonical)
+# threads on: configure a separate build dir with -DLIGHTUSD_ENABLE_THREAD=ON
 cd web && cmake --build build -j16                                                     # wasm (single-threaded path)
 ```
 
 Constraint for all fixes: keep non-threaded and wasm builds zero-overhead — gate
-synchronization on `TINYUSDZ_ENABLE_THREAD` and never add a mutex member that
+synchronization on `LIGHTUSD_ENABLE_THREAD` and never add a mutex member that
 breaks `Layer` copy/move.
 
-ODR gotcha (learned the hard way): `TINYUSDZ_ENABLE_THREAD` is **PRIVATE** to the
+ODR gotcha (learned the hard way): `LIGHTUSD_ENABLE_THREAD` is **PRIVATE** to the
 library target (`CMakeLists.txt`), so it is **not** defined when a consumer TU
 (e.g. the unit tests) compiles a public header. Never `#if`-gate a *data member*
 of a public-header class (e.g. `Stage`, which is held by value across the
@@ -351,7 +351,7 @@ member unconditional. (`LayerImpl::_cache_mu` is safe to gate only because
 All audited items are resolved; the full unit suite is TSan-clean. Rules to keep
 in mind when touching this code in the future:
 
-- Gate all synchronization on `TINYUSDZ_ENABLE_THREAD`; keep non-threaded and
+- Gate all synchronization on `LIGHTUSD_ENABLE_THREAD`; keep non-threaded and
   wasm builds zero-overhead.
 - Never add a mutex member that breaks `Layer` copy/move — use
   `shared_ptr<mutex>` (and reset it in `Layer`'s copy paths so copies don't share

@@ -16,23 +16,23 @@
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "io-util.hh"
 #include "usdGeom.hh"
 #include "stage.hh"
 
 namespace {
 
-tinyusdz::Stage MakeSimpleUSDZWriterStage() {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+lightusd::Stage MakeSimpleUSDZWriterStage() {
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
+  xform.spec = lightusd::Specifier::Def;
 
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
   return stage;
@@ -122,15 +122,15 @@ std::vector<uint8_t> MakeUnalignedStoredZipWithUSDARoot() {
 // Test 1: Basic USDZ write -> read roundtrip
 void usdz_writer_basic_roundtrip_test(void) {
   // Build a simple stage with one Xform
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
+  xform.spec = lightusd::Specifier::Def;
 
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -139,7 +139,7 @@ void usdz_writer_basic_roundtrip_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("SaveAsUSDZToMemory failed: %s", err.c_str());
@@ -149,7 +149,7 @@ void usdz_writer_basic_roundtrip_test(void) {
 
   // Validate the USDZ
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("ValidateUSDZ failed: %s", err.c_str());
@@ -162,9 +162,9 @@ void usdz_writer_basic_roundtrip_test(void) {
   TEST_CHECK(usdz_data[3] == 0x04);
 
   // Read back the USDZ
-  tinyusdz::Stage loaded_stage;
+  lightusd::Stage loaded_stage;
   warn.clear(); err.clear();
-  ret = tinyusdz::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
+  ret = lightusd::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
                                       "test.usdz", &loaded_stage, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
@@ -184,11 +184,11 @@ void usdz_writer_basic_roundtrip_test(void) {
 // mode (assets == nullptr) now accepts a valid first local header without
 // requiring every entry's data to be present.
 void usdz_writer_is_usdz_prefix_detection_test(void) {
-  tinyusdz::Stage stage = MakeSimpleUSDZWriterStage();
+  lightusd::Stage stage = MakeSimpleUSDZWriterStage();
   std::map<std::string, std::vector<uint8_t>> assets;
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("SaveAsUSDZToMemory failed: %s", err.c_str());
@@ -201,14 +201,14 @@ void usdz_writer_is_usdz_prefix_detection_test(void) {
   TEST_CHECK(usdz_data.size() > prefix);
 
   // Full-buffer detection (always worked).
-  TEST_CHECK(tinyusdz::IsUSDZ(usdz_data.data(), usdz_data.size()));
+  TEST_CHECK(lightusd::IsUSDZ(usdz_data.data(), usdz_data.size()));
 
   // Prefix-only detection (the regression).
-  TEST_CHECK(tinyusdz::IsUSDZ(usdz_data.data(), prefix));
+  TEST_CHECK(lightusd::IsUSDZ(usdz_data.data(), prefix));
 
   // IsUSD() must also classify it as usdz from the prefix alone.
   std::string fmt;
-  TEST_CHECK(tinyusdz::IsUSD(usdz_data.data(), prefix, &fmt));
+  TEST_CHECK(lightusd::IsUSD(usdz_data.data(), prefix, &fmt));
   TEST_CHECK(fmt == "usdz");
 }
 
@@ -216,18 +216,18 @@ void usdz_reader_loads_unaligned_stored_zip_test(void) {
   std::vector<uint8_t> usdz_data = MakeUnalignedStoredZipWithUSDARoot();
 
   std::string warn, err;
-  TEST_CHECK(tinyusdz::IsUSDZ(usdz_data.data(), usdz_data.size()));
+  TEST_CHECK(lightusd::IsUSDZ(usdz_data.data(), usdz_data.size()));
 
-  bool valid = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn,
+  bool valid = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn,
                                       &err);
   TEST_CHECK(!valid);
   TEST_CHECK(err.find("not 64-byte aligned") != std::string::npos ||
              err.find("Missing end of central directory") != std::string::npos);
 
-  tinyusdz::Stage loaded_stage;
+  lightusd::Stage loaded_stage;
   warn.clear();
   err.clear();
-  bool ret = tinyusdz::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
+  bool ret = lightusd::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
                                           "unaligned.usdz", &loaded_stage,
                                           &warn, &err);
   TEST_CHECK(ret);
@@ -247,9 +247,9 @@ void usdz_reader_first_entry_root_test(void) {
   std::vector<uint8_t> invalid;
   AppendUnalignedStoredZipEntry(&invalid, "textures/first.bin", "not usd");
   AppendUnalignedStoredZipEntry(&invalid, "late.usda", usda);
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn, err;
-  bool ret = tinyusdz::LoadUSDZFromMemory(
+  bool ret = lightusd::LoadUSDZFromMemory(
       invalid.data(), invalid.size(), "invalid-root.usdz", &stage, &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("first entry") != std::string::npos);
@@ -260,18 +260,18 @@ void usdz_reader_first_entry_root_test(void) {
   std::vector<uint8_t> valid;
   AppendUnalignedStoredZipEntry(&valid, "z-root.usd", usda);
   AppendUnalignedStoredZipEntry(&valid, "a.png", "image");
-  tinyusdz::USDZAsset asset;
+  lightusd::USDZAsset asset;
   warn.clear();
   err.clear();
-  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(
+  ret = lightusd::ReadUSDZAssetInfoFromMemory(
       valid.data(), valid.size(), true, &asset, &warn, &err);
   TEST_CHECK(ret);
   TEST_CHECK(asset.root_asset_name == "z-root.usd");
   TEST_CHECK(!asset.asset_map.empty());
   TEST_CHECK(asset.asset_map.begin()->first == "a.png");
 
-  tinyusdz::AssetResolutionResolver resolver;
-  TEST_CHECK(tinyusdz::SetupUSDZAssetResolution(resolver, &asset));
+  lightusd::AssetResolutionResolver resolver;
+  TEST_CHECK(lightusd::SetupUSDZAssetResolution(resolver, &asset));
   TEST_CHECK(resolver.has_asset_resolution_handler("usd"));
   TEST_CHECK(resolver.has_asset_resolution_handler("usda"));
   TEST_CHECK(resolver.has_asset_resolution_handler("usdc"));
@@ -284,13 +284,13 @@ void usdz_reader_first_entry_root_test(void) {
   AppendUnalignedStoredZipEntry(&unsafe, "../root.usda", usda);
   warn.clear();
   err.clear();
-  ret = tinyusdz::LoadUSDZFromMemory(
+  ret = lightusd::LoadUSDZFromMemory(
       unsafe.data(), unsafe.size(), "unsafe.usdz", &stage, &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("Unsafe USDZ entry path") != std::string::npos);
   warn.clear();
   err.clear();
-  ret = tinyusdz::ValidateUSDZ(unsafe.data(), unsafe.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(unsafe.data(), unsafe.size(), &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("unsafe USDZ entry path") != std::string::npos);
 
@@ -299,14 +299,14 @@ void usdz_reader_first_entry_root_test(void) {
   AppendUnalignedStoredZipEntry(&duplicate, "root.usda", usda);
   warn.clear();
   err.clear();
-  ret = tinyusdz::LoadUSDZFromMemory(
+  ret = lightusd::LoadUSDZFromMemory(
       duplicate.data(), duplicate.size(), "duplicate.usdz", &stage, &warn,
       &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("Duplicate USDZ entry path") != std::string::npos);
   warn.clear();
   err.clear();
-  ret = tinyusdz::ValidateUSDZ(duplicate.data(), duplicate.size(), &warn,
+  ret = lightusd::ValidateUSDZ(duplicate.data(), duplicate.size(), &warn,
                                &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("duplicate USDZ entry path") != std::string::npos);
@@ -318,7 +318,7 @@ void usdz_reader_first_entry_root_test(void) {
   truncated_later.push_back(0x03);
   warn.clear();
   err.clear();
-  ret = tinyusdz::LoadUSDZFromMemory(
+  ret = lightusd::LoadUSDZFromMemory(
       truncated_later.data(), truncated_later.size(), "truncated.usdz",
       &stage, &warn, &err);
   TEST_CHECK(!ret);
@@ -329,7 +329,7 @@ void usdz_reader_first_entry_root_test(void) {
   std::vector<uint8_t> malformed(128, 0);
   warn.clear();
   err.clear();
-  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(
+  ret = lightusd::ReadUSDZAssetInfoFromMemory(
       malformed.data(), malformed.size(), true, &asset, &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(asset.root_asset_name.empty());
@@ -340,7 +340,7 @@ void usdz_reader_first_entry_root_test(void) {
 
   warn.clear();
   err.clear();
-  ret = tinyusdz::LoadUSDZFromMemory(valid.data(), valid.size(),
+  ret = lightusd::LoadUSDZFromMemory(valid.data(), valid.size(),
                                      "neutral-root.usdz", &stage, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
@@ -351,14 +351,14 @@ void usdz_reader_first_entry_root_test(void) {
 }
 
 void usdz_writer_root_layer_format_test(void) {
-  tinyusdz::Stage stage = MakeSimpleUSDZWriterStage();
+  lightusd::Stage stage = MakeSimpleUSDZWriterStage();
   std::map<std::string, std::vector<uint8_t>> assets;
 
   {
     std::vector<uint8_t> usdz_data;
     std::string warn, err;
-    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data,
-                                            tinyusdz::USDZWriteOptions{},
+    bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data,
+                                            lightusd::USDZWriteOptions{},
                                             &warn, &err);
     TEST_CHECK(ret);
     if (!ret) {
@@ -375,7 +375,7 @@ void usdz_writer_root_layer_format_test(void) {
     memcpy(deceptive_name.data() + 30, deceptive, sizeof(deceptive) - 1);
     warn.clear();
     err.clear();
-    ret = tinyusdz::ValidateUSDZ(deceptive_name.data(), deceptive_name.size(),
+    ret = lightusd::ValidateUSDZ(deceptive_name.data(), deceptive_name.size(),
                                  &warn, &err);
     TEST_CHECK(!ret);
     TEST_CHECK(err.find("extension matches its content") != std::string::npos);
@@ -387,19 +387,19 @@ void usdz_writer_root_layer_format_test(void) {
            sizeof(usda_name) - 1);
     warn.clear();
     err.clear();
-    ret = tinyusdz::ValidateUSDZ(mismatched_format.data(),
+    ret = lightusd::ValidateUSDZ(mismatched_format.data(),
                                  mismatched_format.size(), &warn, &err);
     TEST_CHECK(!ret);
     TEST_CHECK(err.find("extension matches its content") != std::string::npos);
   }
 
   {
-    tinyusdz::USDZWriteOptions options;
-    options.root_layer_format = tinyusdz::USDZRootLayerFormat::USDA;
+    lightusd::USDZWriteOptions options;
+    options.root_layer_format = lightusd::USDZRootLayerFormat::USDA;
 
     std::vector<uint8_t> usdz_data;
     std::string warn, err;
-    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data,
+    bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data,
                                             options, &warn, &err);
     TEST_CHECK(ret);
     if (!ret) {
@@ -410,17 +410,17 @@ void usdz_writer_root_layer_format_test(void) {
 
     warn.clear();
     err.clear();
-    ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn,
+    ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn,
                                  &err);
     TEST_CHECK(ret);
     if (!ret) {
       TEST_MSG("ValidateUSDZ USDA root failed: %s", err.c_str());
     }
 
-    tinyusdz::Stage loaded_stage;
+    lightusd::Stage loaded_stage;
     warn.clear();
     err.clear();
-    ret = tinyusdz::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
+    ret = lightusd::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
                                        "root-format.usdz", &loaded_stage,
                                        &warn, &err);
     TEST_CHECK(ret);
@@ -433,15 +433,15 @@ void usdz_writer_root_layer_format_test(void) {
 
 // Test 2: USDZ with additional assets (fake PNG data)
 void usdz_writer_with_assets_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
+  xform.spec = lightusd::Specifier::Def;
 
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -453,7 +453,7 @@ void usdz_writer_with_assets_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("SaveAsUSDZToMemory with assets failed: %s", err.c_str());
@@ -462,16 +462,16 @@ void usdz_writer_with_assets_test(void) {
 
   // Validate
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("ValidateUSDZ failed: %s", err.c_str());
   }
 
   // Read asset info
-  tinyusdz::USDZAsset usdz_asset;
+  lightusd::USDZAsset usdz_asset;
   warn.clear(); err.clear();
-  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(usdz_data.data(), usdz_data.size(),
+  ret = lightusd::ReadUSDZAssetInfoFromMemory(usdz_data.data(), usdz_data.size(),
                                                 /* asset_on_memory */ true,
                                                 &usdz_asset, &warn, &err);
   TEST_CHECK(ret);
@@ -489,15 +489,15 @@ void usdz_writer_with_assets_test(void) {
 
 // Test 3: Validate 64-byte alignment
 void usdz_validator_alignment_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
+  xform.spec = lightusd::Specifier::Def;
 
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -511,12 +511,12 @@ void usdz_validator_alignment_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
 
   // Validate alignment
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("Alignment validation failed: %s", err.c_str());
@@ -525,14 +525,14 @@ void usdz_validator_alignment_test(void) {
 
 // Test 4: CRC32 integrity validation
 void usdz_validator_crc32_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  xform.spec = lightusd::Specifier::Def;
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -542,12 +542,12 @@ void usdz_validator_crc32_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
 
   // Valid data should pass
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
   TEST_CHECK(ret);
 
   // Corrupt one byte in the file data area and check CRC fails
@@ -555,7 +555,7 @@ void usdz_validator_crc32_test(void) {
     std::vector<uint8_t> corrupted = usdz_data;
     corrupted[128] ^= 0xFF;  // flip a byte
     warn.clear(); err.clear();
-    ret = tinyusdz::ValidateUSDZ(corrupted.data(), corrupted.size(), &warn, &err);
+    ret = lightusd::ValidateUSDZ(corrupted.data(), corrupted.size(), &warn, &err);
     // May or may not fail depending on which byte was corrupted
     // (header vs data), but at minimum should not crash
     (void)ret;
@@ -565,14 +565,14 @@ void usdz_validator_crc32_test(void) {
 // Test 5: Validate compressed size == uncompressed size
 void usdz_validator_size_consistency_test(void) {
   // Build a USDZ with known content
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  xform.spec = lightusd::Specifier::Def;
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -580,12 +580,12 @@ void usdz_validator_size_consistency_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
 
   // The writer should produce valid compressed==uncompressed sizes
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("Size consistency check failed: %s", err.c_str());
@@ -596,15 +596,15 @@ void usdz_validator_size_consistency_test(void) {
   mismatched_size[18] ^= 1;
   warn.clear();
   err.clear();
-  ret = tinyusdz::ValidateUSDZ(mismatched_size.data(), mismatched_size.size(),
+  ret = lightusd::ValidateUSDZ(mismatched_size.data(), mismatched_size.size(),
                                &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("compressed size") != std::string::npos);
 
-  tinyusdz::Stage loaded_stage;
+  lightusd::Stage loaded_stage;
   warn.clear();
   err.clear();
-  ret = tinyusdz::LoadUSDZFromMemory(
+  ret = lightusd::LoadUSDZFromMemory(
       mismatched_size.data(), mismatched_size.size(), "mismatched-size.usdz",
       &loaded_stage, &warn, &err);
   TEST_CHECK(!ret);
@@ -616,20 +616,20 @@ void usdz_validator_empty_input_test(void) {
   std::string warn, err;
 
   // Null input
-  bool ret = tinyusdz::ValidateUSDZ(nullptr, 0, &warn, &err);
+  bool ret = lightusd::ValidateUSDZ(nullptr, 0, &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("null") != std::string::npos || err.find("short") != std::string::npos);
 
   // Too short
   uint8_t tiny[3] = {0x50, 0x4b, 0x03};
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(tiny, 3, &warn, &err);
+  ret = lightusd::ValidateUSDZ(tiny, 3, &warn, &err);
   TEST_CHECK(!ret);
 
   // Bad magic
   uint8_t bad_magic[4] = {0x00, 0x00, 0x00, 0x00};
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(bad_magic, 4, &warn, &err);
+  ret = lightusd::ValidateUSDZ(bad_magic, 4, &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("magic") != std::string::npos);
 }
@@ -649,7 +649,7 @@ void usdz_validator_missing_eocd_test(void) {
   memcpy(malformed.data() + 30, name.data(), name.size());
 
   std::string warn, err;
-  bool ret = tinyusdz::ValidateUSDZ(malformed.data(), malformed.size(),
+  bool ret = lightusd::ValidateUSDZ(malformed.data(), malformed.size(),
                                     &warn, &err);
   TEST_CHECK(!ret);
   TEST_CHECK(err.find("End of central directory") != std::string::npos);
@@ -657,14 +657,14 @@ void usdz_validator_missing_eocd_test(void) {
 
 // Test 7: File-based write and read roundtrip
 void usdz_writer_file_roundtrip_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  xform.spec = lightusd::Specifier::Def;
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -675,9 +675,9 @@ void usdz_writer_file_roundtrip_test(void) {
 
   // Write to file. Use io::GetTempDir() so this works on Windows (where /tmp
   // does not exist) as well as POSIX.
-  std::string tmp_path = tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(),
-                                                "tinyusdz_test_roundtrip.usdz");
-  bool ret = tinyusdz::SaveAsUSDZToFile(tmp_path, stage, assets, &warn, &err);
+  std::string tmp_path = lightusd::io::JoinPath(lightusd::io::GetTempDir(),
+                                                "lightusd_test_roundtrip.usdz");
+  bool ret = lightusd::SaveAsUSDZToFile(tmp_path, stage, assets, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("SaveAsUSDZToFile failed: %s", err.c_str());
@@ -685,9 +685,9 @@ void usdz_writer_file_roundtrip_test(void) {
   }
 
   // Read back from file
-  tinyusdz::Stage loaded;
+  lightusd::Stage loaded;
   warn.clear(); err.clear();
-  ret = tinyusdz::LoadUSDZFromFile(tmp_path, &loaded, &warn, &err);
+  ret = lightusd::LoadUSDZFromFile(tmp_path, &loaded, &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("LoadUSDZFromFile failed: %s", err.c_str());
@@ -702,14 +702,14 @@ void usdz_writer_file_roundtrip_test(void) {
 
 // Test 8: Large asset alignment stress test
 void usdz_validator_large_asset_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  xform.spec = lightusd::Specifier::Def;
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -727,21 +727,21 @@ void usdz_validator_large_asset_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
 
   // Validate all entries are aligned
   warn.clear(); err.clear();
-  ret = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
+  ret = lightusd::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn, &err);
   TEST_CHECK(ret);
   if (!ret) {
     TEST_MSG("Large asset alignment failed: %s", err.c_str());
   }
 
   // Verify asset count via ReadUSDZAssetInfo
-  tinyusdz::USDZAsset usdz_asset;
+  lightusd::USDZAsset usdz_asset;
   warn.clear(); err.clear();
-  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(usdz_data.data(), usdz_data.size(),
+  ret = lightusd::ReadUSDZAssetInfoFromMemory(usdz_data.data(), usdz_data.size(),
                                                 true, &usdz_asset, &warn, &err);
   TEST_CHECK(ret);
   // root.usdc + 8 assets = 9 entries
@@ -750,15 +750,15 @@ void usdz_validator_large_asset_test(void) {
 
 // Test 4 (original): Validator catches bad extensions
 void usdz_validator_bad_extension_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
+  xform.spec = lightusd::Specifier::Def;
 
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -769,21 +769,21 @@ void usdz_validator_bad_extension_test(void) {
   std::vector<uint8_t> usdz_data;
   std::string warn, err;
 
-  bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+  bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
   TEST_CHECK(ret);
   // Should have a warning about the skipped extension
   TEST_CHECK(warn.find("disallowed") != std::string::npos);
 }
 
 void usdz_writer_rejects_unsafe_asset_names_test(void) {
-  tinyusdz::Stage stage;
-  stage.metas().defaultPrim = tinyusdz::value::token("root");
+  lightusd::Stage stage;
+  stage.metas().defaultPrim = lightusd::value::token("root");
 
-  tinyusdz::Xform xform;
+  lightusd::Xform xform;
   xform.name = "root";
-  xform.spec = tinyusdz::Specifier::Def;
-  tinyusdz::value::Value primdata = xform;
-  tinyusdz::Prim prim("root", primdata);
+  xform.spec = lightusd::Specifier::Def;
+  lightusd::value::Value primdata = xform;
+  lightusd::Prim prim("root", primdata);
   prim.prim_type_name() = "Xform";
   stage.add_root_prim(std::move(prim));
 
@@ -805,7 +805,7 @@ void usdz_writer_rejects_unsafe_asset_names_test(void) {
     assets[name] = std::vector<uint8_t>(8, 0x42);
     std::vector<uint8_t> usdz_data;
     std::string warn, err;
-    bool ret = tinyusdz::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
+    bool ret = lightusd::SaveAsUSDZToMemory(stage, assets, &usdz_data, &warn, &err);
     TEST_CHECK(!ret);
     TEST_CHECK(!err.empty());
   }

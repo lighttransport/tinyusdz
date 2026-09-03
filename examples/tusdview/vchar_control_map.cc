@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "stage.hh"
 #include "tydra/scene-access.hh"
 
@@ -12,20 +12,20 @@ namespace {
 struct ControlVisit { std::vector<VcharControl> controls; };
 
 template <typename T>
-bool CustomValue(const tinyusdz::Dictionary& data, const std::string& key,
+bool CustomValue(const lightusd::Dictionary& data, const std::string& key,
                  T* value) {
-  tinyusdz::MetaVariable variable;
-  return tinyusdz::GetCustomDataByKey(data, key, &variable) &&
+  lightusd::MetaVariable variable;
+  return lightusd::GetCustomDataByKey(data, key, &variable) &&
          variable.get_value<T>(value);
 }
 
-bool VisitControls(const tinyusdz::Path&, const tinyusdz::Prim& prim,
+bool VisitControls(const lightusd::Path&, const lightusd::Prim& prim,
                    const int32_t, void* userdata, std::string*) {
   auto* visit = static_cast<ControlVisit*>(userdata);
   if (!visit || !visit->controls.empty() || !prim.metas().has_customData()) return true;
-  const tinyusdz::Dictionary data = prim.metas().get_customData();
+  const lightusd::Dictionary data = prim.metas().get_customData();
   std::vector<std::string> names, mappings;
-  std::vector<tinyusdz::value::float2> ranges;
+  std::vector<lightusd::value::float2> ranges;
   std::vector<float> defaults;
   if (!CustomValue(data, "vchar:controlNames", &names)) return true;
   CustomValue(data, "vchar:controlMappings", &mappings);
@@ -45,7 +45,7 @@ bool VisitControls(const tinyusdz::Path&, const tinyusdz::Prim& prim,
   return true;
 }
 
-const tinyusdz::next::Value* NextValue(const tinyusdz::next::Value& root,
+const lightusd::next::Value* NextValue(const lightusd::next::Value& root,
                                        const std::string& name) {
   const auto* rootDict = root.as_dictionary();
   const auto* group = rootDict ? rootDict->find("vchar") : nullptr;
@@ -54,16 +54,16 @@ const tinyusdz::next::Value* NextValue(const tinyusdz::next::Value& root,
 }
 }  // namespace
 
-std::vector<VcharControl> ReadVcharControls(const tinyusdz::Stage& stage) {
+std::vector<VcharControl> ReadVcharControls(const lightusd::Stage& stage) {
   ControlVisit visit;
   std::string ignored;
-  tinyusdz::tydra::VisitPrims(stage, VisitControls, &visit, &ignored);
+  lightusd::tydra::VisitPrims(stage, VisitControls, &visit, &ignored);
   return visit.controls;
 }
 
-std::vector<VcharControl> ReadVcharControls(const tinyusdz::next::Stage& stage) {
+std::vector<VcharControl> ReadVcharControls(const lightusd::next::Stage& stage) {
   std::vector<VcharControl> controls;
-  stage.Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+  stage.Traverse([&](const lightusd::next::UsdPrim& prim) {
     if (!controls.empty()) return true;
     const auto& data = prim.GetMeta().customData();
     const auto* namesValue = NextValue(data, "controlNames");

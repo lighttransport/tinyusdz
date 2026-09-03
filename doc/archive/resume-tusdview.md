@@ -600,7 +600,7 @@ rendered image.
 
 ## Repository and constraints
 
-- Repository: `/mnt/nvme02/work/tinyusdz-repo/dev`
+- Repository: `/mnt/nvme02/work/lightusd-repo/dev`
 - Read and follow the repository `AGENTS.md` before editing.
 - Preserve all unrelated dirty-worktree changes and untracked files.
 - Use `apply_patch` for edits.
@@ -658,12 +658,12 @@ checks stay enabled. Verification:
 
 ```bash
 cmake -S . -B build_asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=OFF \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=OFF \
   -DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON
-cmake --build build_asan --target unit-test-tinyusdz -j16
+cmake --build build_asan --target unit-test-lightusd -j16
 ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-  ./build_asan/unit-test-tinyusdz
+  ./build_asan/unit-test-lightusd
 ```
 
 This passes all 1,004 tests with no sanitizer diagnostics. Leak detection is
@@ -809,7 +809,7 @@ examples/tusdview/next_scene_loader.cc
 examples/tusdview/gl/gl_renderer.cc
 examples/tusdview/gpu_scene.hh
 src/next/pcp/cache-parallel-warm.inc
-src/next/tinyusdz-next.cc
+src/next/lightusd-next.cc
 src/tydra/next/render-extract.hh
 src/tydra/next/render-extract.cc
 ```

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA ASCII Parser implementation
+// LightUSD Next - USDA ASCII Parser implementation
 
 #include "ascii-parser-internal.hh"
 #include "../safe-file-size.hh"
@@ -17,7 +17,7 @@
 #include <system_error>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace {
 
@@ -982,4 +982,4 @@ const std::vector<std::string>& AsciiParser::GetWarnings() const {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

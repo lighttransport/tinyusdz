@@ -1,4 +1,4 @@
-// usdzconvert — TinyUSDZ WASM
+// usdzconvert — LightUSD WASM
 // Upload a folder or multiple files (USD + textures), convert to a USDZ with
 // options (resize / re-encode textures), and download the result.
 // Also includes a standalone texture channel-repack tool.
@@ -21,7 +21,7 @@ import {
 const container = document.createElement('div');
 container.style.cssText = 'max-width:820px;margin:32px auto;padding:20px;font-family:system-ui,sans-serif;color:#eee';
 container.innerHTML = `
-  <h1 style="margin:0 0 6px">TinyUSDZ — usdzconvert</h1>
+  <h1 style="margin:0 0 6px">LightUSD — usdzconvert</h1>
   <p style="color:#aaa;margin:0 0 18px">
     Drop or pick a <b>folder</b> (USD + textures), multiple files, or a single <b>.usdz</b>
     (its textures are unpacked and repacked — passthrough by default), set options,
@@ -122,7 +122,7 @@ container.innerHTML = `
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
       reduce <b>texture size</b> (keeps PNG) or lower <b>JPEG quality</b> (transcodes to JPG).
       Without a target, browser-supported textures are resized/re-encoded through the canvas API;
-      other formats are routed to TinyUSDZ WASM. <b>EXR</b> textures (HDR, allowed in recent USDZ)
+      other formats are routed to LightUSD WASM. <b>EXR</b> textures (HDR, allowed in recent USDZ)
       keep their format by default and can be resized; choose PNG/JPEG to tone-map them to LDR.
       EXR is encoded as <b>fp16</b> (half) — EXR→EXR stays half end-to-end (decode → resize → encode,
       no fp32 widening), so HDR re-encode/resize uses about half the memory.
@@ -252,7 +252,7 @@ function setStatus(s) { els.status.textContent = s; }
 
 const PROGRESS_LABELS = {
   preparing: 'Preparing files...',
-  wasm: 'Loading TinyUSDZ WASM...',
+  wasm: 'Loading LightUSD WASM...',
   layers: 'Reading USD layers...',
   flatten: 'Composing and flattening...',
   textures: 'Processing textures...',
@@ -375,8 +375,8 @@ function refreshNamePreview() {
 
 async function ensureWasm() {
   if (native) return native;
-  log('Loading TinyUSDZ WASM module...');
-  native = await loadWasm(() => import('./src/tinyusdz/tinyusdz.js'));
+  log('Loading LightUSD WASM module...');
+  native = await loadWasm(() => import('./src/lightusd/lightusd.js'));
   log('WASM module loaded.');
   return native;
 }
@@ -384,7 +384,7 @@ async function ensureWasm() {
 function releaseWasmModule(reason = '') {
   if (!native) return;
   native = null;
-  if (reason) log(`Released TinyUSDZ WASM module (${reason}).`);
+  if (reason) log(`Released LightUSD WASM module (${reason}).`);
 }
 
 function terminateConversionWorker(reason = '') {
@@ -859,7 +859,7 @@ els.btnRepack.addEventListener('click', async () => {
       return;
     }
 
-    log('Browser repack unavailable for these inputs; using TinyUSDZ WASM.');
+    log('Browser repack unavailable for these inputs; using LightUSD WASM.');
     await ensureWasm();
     res = native.repackChannels(args);
     if (!res.success) throw new Error(res.error);

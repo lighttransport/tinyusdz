@@ -6,7 +6,7 @@
 #include "acutest.h"
 
 #include "unit-usdc-reconstruct.h"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "core/composition-types.hh"
 #include "core/model-scope.hh"
 #include "core/path.hh"
@@ -25,7 +25,7 @@
 #include <cmath>
 #include <string>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -159,7 +159,7 @@ bool LoadLayerFromUsdcFixtureWithOptions(const std::string &filename,
 
 bool WriteLayerToUsdc(const Layer &layer, const std::string &path,
                       std::string *err) {
-  tinyusdz::experimental::CrateWriter writer(path);
+  lightusd::experimental::CrateWriter writer(path);
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) {
@@ -187,9 +187,9 @@ bool WriteLayerToUsdc(const Layer &layer, const std::string &path,
 // tests/usdc/ that can race with usdc-parser-unit-test).
 bool WriteLayerToUsdcMemory(const Layer &layer, std::vector<uint8_t> *out,
                             std::string *err) {
-  auto stream = std::make_unique<tinyusdz::experimental::MemoryOutputStream>();
+  auto stream = std::make_unique<lightusd::experimental::MemoryOutputStream>();
   auto *mem_ptr = stream.get();
-  tinyusdz::experimental::CrateWriter writer(std::move(stream));
+  lightusd::experimental::CrateWriter writer(std::move(stream));
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) (*err) = local_err;
@@ -211,9 +211,9 @@ bool WriteLayerToUsdcMemory(const Layer &layer, std::vector<uint8_t> *out,
 // Write Stage to in-memory USDC buffer.
 bool WriteStageToUsdcMemory(const Stage &stage, std::vector<uint8_t> *out,
                             std::string *err) {
-  auto stream = std::make_unique<tinyusdz::experimental::MemoryOutputStream>();
+  auto stream = std::make_unique<lightusd::experimental::MemoryOutputStream>();
   auto *mem_ptr = stream.get();
-  tinyusdz::experimental::CrateWriter writer(std::move(stream));
+  lightusd::experimental::CrateWriter writer(std::move(stream));
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) (*err) = local_err;
@@ -234,7 +234,7 @@ bool WriteStageToUsdcMemory(const Stage &stage, std::vector<uint8_t> *out,
 
 bool WriteStageToUsdc(const Stage &stage, const std::string &path,
                       std::string *err) {
-  tinyusdz::experimental::CrateWriter writer(path);
+  lightusd::experimental::CrateWriter writer(path);
   std::string local_err;
   if (!writer.Open(&local_err)) {
     if (err) {
@@ -1999,8 +1999,8 @@ void usdc_stage_variant_props_roundtrip_test(void) {
 // Golden USDC schema reconstruction.
 //
 // The .usdc fixtures under tests/usdc/schema-*.usdc were authored by Pixar
-// OpenUSD `usdcat` (ground truth), NOT by tinyusdz. These verify that the
-// TinyUSDZ crate reader reconstructs typed schema fields from real Pixar crate
+// OpenUSD `usdcat` (ground truth), NOT by lightusd. These verify that the
+// LightUSD crate reader reconstructs typed schema fields from real Pixar crate
 // files. `.authored()` on a typed field is the key signal that a property was
 // mapped into the schema struct rather than dropped.
 // ===========================================================================

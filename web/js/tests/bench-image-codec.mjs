@@ -78,7 +78,7 @@ async function main() {
   const files = collectImages(o.images, o.limit);
   if (!files.length) throw new Error('no png/jpg files found');
 
-  const glue = o.wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
+  const glue = o.wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
   console.log(`wasm: ${o.wasm64 ? 'wasm64' : 'wasm32'}  format=${o.format} resize=${o.resize} iters=${o.iters}`);
   console.log(`images: ${files.length} (largest-first)`);

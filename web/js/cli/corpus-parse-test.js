@@ -1,18 +1,18 @@
 // corpus-parse-test.js — WASM-CLI parse regression over the usd-wg/assets corpus.
 //
 // Loads every .usd/.usda/.usdc/.usdz under the corpus through the WASM module
-// (TinyUSDZLoaderNative.loadAsLayerFromBinary -> LoadLayerFromMemory: a pure
+// (LightUSDLoaderNative.loadAsLayerFromBinary -> LoadLayerFromMemory: a pure
 // parse, no composition or render-scene conversion — the WASM analogue of the
 // native `tusdcat -l` parse regression), classifies PASS/FAIL, and (optionally)
 // gates on a max failure count for use as a regression test.
 //
-// Run:  npm run test:corpus           (vite-node resolves the 'tinyusdz/' alias)
+// Run:  npm run test:corpus           (vite-node resolves the 'lightusd/' alias)
 //   or  vite-node cli/corpus-parse-test.js [--assets DIR] [--max-fail N] [--wasm64]
 //
 // Corpus dir: --assets, else $USD_WG_ASSETS_DIR, else the default below.
 // If the corpus is absent the test SKIPS (exit 0) so CI without it still passes.
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -70,12 +70,12 @@ async function main() {
     process.exit(0);
   }
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: a.useMemory64 });
   loader.setMaxMemoryLimitMB(2048);
   const native = loader.native_;
-  if (!native || !native.TinyUSDZLoaderNative) {
-    console.error('WASM module / TinyUSDZLoaderNative not available.');
+  if (!native || !native.LightUSDLoaderNative) {
+    console.error('WASM module / LightUSDLoaderNative not available.');
     process.exit(2);
   }
 
@@ -84,7 +84,7 @@ async function main() {
   const failures = [];
   for (const f of files) {
     const bytes = new Uint8Array(fs.readFileSync(f));
-    const u = new native.TinyUSDZLoaderNative();
+    const u = new native.LightUSDLoaderNative();
     let ok = false, err = '';
     try {
       ok = u.loadAsLayerFromBinary(bytes, path.basename(f));

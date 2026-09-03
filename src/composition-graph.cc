@@ -21,7 +21,7 @@
 #include "security-policy.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 // These are needed for BuildStage (PrimSpec -> Prim reconstruction)
 #include "stage.hh"
@@ -29,7 +29,7 @@
 // VariantSelectPrimSpec (variant content resolution).
 #include "composition.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace composition_graph {
 
 using security_policy::ValidateAndNormalizeAssetPath;
@@ -158,7 +158,7 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 // PrimIndex incremental-mutation helpers (friends of PrimIndex)
 // ---------------------------------------------------------------------------
 
-CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+CompNode &GetMutableNode(PrimIndex &index LIGHTUSD_LIFETIMEBOUND,
                          uint16_t node_idx) {
   // node_idx is typically from GetStrengthOrder() or DeferredPayloadInfo.
   // The latter can be stale if the deferred-payload index is corrupted,
@@ -1432,7 +1432,7 @@ bool PrimIndexBuilder::EvalSpecializes(uint16_t node_idx, std::string * /* err *
 bool PrimIndexBuilder::EvalRelocates(uint16_t /*node_idx*/,
                                      std::string * /*err*/) {
   // Relocates are handled at the CompositionGraph level as a post-pass
-  // (similar to existing tinyusdz approach). Individual PrimIndex nodes
+  // (similar to existing lightusd approach). Individual PrimIndex nodes
   // don't need relocate evaluation -- the relocates are applied to the
   // final composed namespace.
   return true;
@@ -2495,4 +2495,4 @@ std::string CompositionGraph::DumpToString() const {
 }
 
 }  // namespace composition_graph
-}  // namespace tinyusdz
+}  // namespace lightusd

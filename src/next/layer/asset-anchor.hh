@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - asset-path anchors.
+// LightUSD Next - asset-path anchors.
 //
 // A relative asset path (`asset inputs:file = @../tex/albedo.png@`) is anchored
 // to the DIRECTORY OF THE LAYER THAT AUTHORED IT, not to the stage's root layer.
@@ -23,7 +23,7 @@
 #include <cstdint>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Intern an anchor directory and return its id. The empty string maps to 0
@@ -35,4 +35,4 @@ uint32_t InternAssetAnchor(const std::string& dir);
 const std::string& AssetAnchorPath(uint32_t id);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

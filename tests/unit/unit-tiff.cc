@@ -76,19 +76,19 @@ std::vector<uint8_t> MakeRGBTiff(bool bigtiff) {
 }
 
 void CheckRGBTiff(const std::vector<uint8_t>& bytes) {
-#if defined(TINYUSDZ_WITH_TIFF)
-  auto info = tinyusdz::image::GetImageInfoFromMemory(bytes.data(), bytes.size(), "fixture.tif");
+#if defined(LIGHTUSD_WITH_TIFF)
+  auto info = lightusd::image::GetImageInfoFromMemory(bytes.data(), bytes.size(), "fixture.tif");
   TEST_CHECK(info.has_value());
   if (!info) return;
   TEST_CHECK(info->width == 2 && info->height == 2 && info->channels == 3);
-  auto image = tinyusdz::image::LoadImageFromMemory(bytes.data(), bytes.size(), "fixture.tif");
+  auto image = lightusd::image::LoadImageFromMemory(bytes.data(), bytes.size(), "fixture.tif");
   TEST_CHECK(image.has_value());
   if (!image) return;
   TEST_CHECK(image->image.width == 2 && image->image.height == 2);
   TEST_CHECK(image->image.channels == 3 || image->image.channels == 4);
 #else
   (void)bytes;
-  TEST_MSG("TINYUSDZ_WITH_TIFF is disabled; TIFF fixture skipped");
+  TEST_MSG("LIGHTUSD_WITH_TIFF is disabled; TIFF fixture skipped");
 #endif
 }
 
@@ -98,7 +98,7 @@ void tinydng_classic_tiff_test(void) { CheckRGBTiff(MakeRGBTiff(false)); }
 void tinydng_bigtiff_test(void) {
   const auto bytes = MakeRGBTiff(true);
   CheckRGBTiff(bytes);
-#if defined(TINYUSDZ_WITH_TIFF)
+#if defined(LIGHTUSD_WITH_TIFF)
   // Move only the StripOffsets metadata above 4 GiB. Metadata queries must
   // retain the 64-bit value without attempting to decode the unavailable
   // pixel payload.
@@ -108,19 +108,19 @@ void tinydng_bigtiff_test(void) {
   const size_t value = stripOffsetEntry + 12u;
   const uint64_t high = 0x100000000ull;
   for (int i = 0; i < 8; ++i) highOffset[value + i] = static_cast<uint8_t>(high >> (i * 8));
-  auto highInfo = tinyusdz::image::GetImageInfoFromMemory(
+  auto highInfo = lightusd::image::GetImageInfoFromMemory(
       highOffset.data(), highOffset.size(), "high-offset-bigtiff.tif");
   TEST_CHECK(highInfo.has_value());
   if (highInfo) TEST_CHECK(highInfo->width == 2 && highInfo->height == 2);
 
-  const std::string path = "/tmp/tinyusdz-unit-bigtiff.tif";
+  const std::string path = "/tmp/lightusd-unit-bigtiff.tif";
   {
     std::ofstream file(path, std::ios::binary);
     TEST_CHECK(file.good());
     file.write(reinterpret_cast<const char*>(bytes.data()),
                static_cast<std::streamsize>(bytes.size()));
   }
-  auto info = tinyusdz::image::GetImageInfoFromFile(path);
+  auto info = lightusd::image::GetImageInfoFromFile(path);
   TEST_CHECK(info.has_value());
   if (info) TEST_CHECK(info->width == 2 && info->height == 2 && info->channels == 3);
   std::remove(path.c_str());

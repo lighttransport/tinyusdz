@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA Lexer
+// LightUSD Next - USDA Lexer
 // Simple tokenizer for USDA ASCII format
 
 #pragma once
@@ -9,7 +9,7 @@
 #include <string>
 #include <cstdint>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Token types
@@ -159,7 +159,7 @@ public:
   /// Worker-thread hint for the parallel large-array parse path, forwarded from
   /// ParseOptions::num_threads (0 = auto, 1 = serial, >1 = that many). Carried on
   /// the lexer because the stateless value-parser array helpers receive only the
-  /// lexer; replaces the former TINYUSDZ_NEXT_NUM_THREADS env read.
+  /// lexer; replaces the former LIGHTUSD_NEXT_NUM_THREADS env read.
   int num_threads = 0;
 
   /// Reject invalid AOUSD paths and malformed Unicode immediately.
@@ -199,4 +199,4 @@ private:
 const char* TokenTypeName(TokenType type);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

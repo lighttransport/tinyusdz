@@ -30,7 +30,7 @@
 #include "tsd-internal.hh"
 #include "tsd-kernel.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 namespace {
@@ -1621,4 +1621,4 @@ Result RefineStream(const MeshView &mesh,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

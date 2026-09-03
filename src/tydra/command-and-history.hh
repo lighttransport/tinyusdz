@@ -10,7 +10,7 @@
 #include "core/prim.hh"
 #include "../layer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 enum class EditCommand
@@ -43,7 +43,7 @@ struct EditHistory
   std::string arg;
   uint64_t id;
 
-  tinyusdz::Layer layer;
+  lightusd::Layer layer;
 };
 
 // We only support queues for now(no history graph)
@@ -64,8 +64,8 @@ class HistoryQueue
  private:
   std::deque<EditHistory> history_queues;
   std::deque<EditHistory> undo_queues;
-  
+
 };
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

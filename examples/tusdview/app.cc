@@ -45,7 +45,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
-#include "next/tinyusdz-next.hh"  // tnext::Stage (per-frame --next morph weights)
+#include "next/lightusd-next.hh"  // tnext::Stage (per-frame --next morph weights)
 #include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"
@@ -1239,17 +1239,17 @@ bool WriteScreenshotImage(const std::string& path,
     return true;
   }
 
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.uri = path;
   img.width = w;
   img.height = h;
   img.channels = 4;
   img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data = rgba;
 
-  tinyusdz::image::WriteOption opt;  // Autodetect by extension
-  auto ret = tinyusdz::image::WriteImageToFile(path, img, opt);
+  lightusd::image::WriteOption opt;  // Autodetect by extension
+  auto ret = lightusd::image::WriteImageToFile(path, img, opt);
   if (!ret) {
     if (err) *err = ret.error();
     return false;
@@ -1268,19 +1268,19 @@ bool WriteLinearExr(const std::string& path, const std::vector<float>& rgba,
     if (err) *err = "invalid linear RGBA buffer";
     return false;
   }
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.uri = path;
   img.width = w;
   img.height = h;
   img.channels = 4;
   img.bpp = 32;
-  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.format = lightusd::Image::PixelFormat::Float;
   img.data.resize(sampleCount * sizeof(float));
   std::memcpy(img.data.data(), rgba.data(), img.data.size());
-  tinyusdz::image::WriteOption opt;
-  opt.format = tinyusdz::image::WriteImageFormat::EXR;
+  lightusd::image::WriteOption opt;
+  opt.format = lightusd::image::WriteImageFormat::EXR;
   opt.half = true;
-  auto ret = tinyusdz::image::WriteImageToFile(path, img, opt);
+  auto ret = lightusd::image::WriteImageToFile(path, img, opt);
   if (!ret) {
     if (err) *err = ret.error();
     return false;
@@ -1532,7 +1532,7 @@ App::~App() {
   // its members are being destroyed.
   if (mcp_) mcp_->stop();
 #endif
-  if (physicsWorldReady_) tinyusdz::tydra::FreePhysWorld(&physicsWorld_);
+  if (physicsWorldReady_) lightusd::tydra::FreePhysWorld(&physicsWorld_);
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
   // Finish any in-flight RT build: std::thread's destructor calls
   // std::terminate() if it is destroyed still joinable (e.g. a headless
@@ -2914,7 +2914,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   {
     std::vector<std::string> deferred;
     if (nextSession_) {
-      for (const tinyusdz::next::Path& path :
+      for (const lightusd::next::Path& path :
            nextSession_->GetDeferredPayloadPaths()) {
         deferred.push_back(path.str());
       }
@@ -3683,9 +3683,9 @@ bool App::stepPtexResidency(double deadlineMs) {
 
     std::string error;
     if (!ptexReaders_[nextPtexTexture_]) {
-      auto reader = std::make_shared<tinyusdz::ptx::Reader>();
+      auto reader = std::make_shared<lightusd::ptx::Reader>();
       const std::vector<uint8_t>& source = texture.PtexSourceData();
-      if (!tinyusdz::ptx::Reader::OpenMemory(source.data(), source.size(),
+      if (!lightusd::ptx::Reader::OpenMemory(source.data(), source.size(),
                                              reader.get(), &error)) {
         LOGW("Ptex residency source reopen failed: %s", error.c_str());
         ++nextPtexTexture_;
@@ -3693,7 +3693,7 @@ bool App::stepPtexResidency(double deadlineMs) {
       }
       ptexReaders_[nextPtexTexture_] = std::move(reader);
     }
-    const std::shared_ptr<tinyusdz::ptx::Reader> reader =
+    const std::shared_ptr<lightusd::ptx::Reader> reader =
         ptexReaders_[nextPtexTexture_];
     const uint32_t face = demandDriven
                               ? ptexRequestedFaces_[nextPtexTexture_][cursor++]
@@ -3703,7 +3703,7 @@ bool App::stepPtexResidency(double deadlineMs) {
       LOGW("Ptex face request %u is out of range", face);
       continue;
     }
-    const tinyusdz::ptx::FaceInfo& info = reader->info().faceInfo[face];
+    const lightusd::ptx::FaceInfo& info = reader->info().faceInfo[face];
     uint32_t mip = 0;
     uint32_t width = info.width(), height = info.height();
     while (mip + 1u < reader->info().levels && texture.ptexTileEdge > 0 &&
@@ -3766,14 +3766,14 @@ void App::loadFileBlocking(const std::string& path) {
     if (!wrapper.empty()) effPath = wrapper;
   }
   if (useNextLoader_) {
-    std::shared_ptr<tinyusdz::next::StageSession> session;
+    std::shared_ptr<lightusd::next::StageSession> session;
     const bool ok = LoadUSDViaNext(effPath, opts, &drawTmp, &tmp.warn, &tmp.err,
                                    &loadCtrl_, &session);
     tmp.ok = ok;
     tmp.filepath = path;
     tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
     if (session) {
-      const tinyusdz::next::Stage& stage = *session->GetSnapshot().stage;
+      const lightusd::next::Stage& stage = *session->GetSnapshot().stage;
       const double s = stage.GetStartTimeCode();
       const double e = stage.GetEndTimeCode();
       const double fps = stage.GetTimeCodesPerSecond();
@@ -3974,7 +3974,7 @@ void App::startLoadAsync(const std::string& path) {
       // Surface the stage's animation range so --next gets a timeline (the Tydra
       // RenderScene meta is otherwise empty here). readAnimationRange reads these.
       if (pendingNextSession_) {
-        const tinyusdz::next::Stage& stage = pendingNextSession_->GetStage();
+        const lightusd::next::Stage& stage = pendingNextSession_->GetStage();
         lp->render.meta.upAxis = stage.GetUpAxis();
         const double s = stage.GetStartTimeCode();
         const double e = stage.GetEndTimeCode();
@@ -4050,7 +4050,7 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
                 path.compare(0, root.size(), root) == 0 &&
                 path[root.size()] == '/');
       };
-      for (const tinyusdz::next::Path& deferred :
+      for (const lightusd::next::Path& deferred :
            nextSession_->GetDeferredPayloadPaths()) {
         const std::string path = deferred.str();
         for (const std::string& requested : addPrimPaths) {
@@ -5782,24 +5782,24 @@ void App::streamEncodeAndPush(std::vector<uint8_t> rgba, int w, int h,
     }
   }
 
-  tinyusdz::Image img;
+  lightusd::Image img;
   img.width = tw;
   img.height = th;
   img.channels = 4;
   img.bpp = 8;
-  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.format = lightusd::Image::PixelFormat::UInt;
   img.data = std::move(rgba);
 
-  tinyusdz::image::WriteOption opt;
+  lightusd::image::WriteOption opt;
   if (motion) {
-    opt.format = tinyusdz::image::WriteImageFormat::JPEG;
+    opt.format = lightusd::image::WriteImageFormat::JPEG;
     opt.jpeg_quality = streamMotionJpegQ_;
   } else if (streamIdleCodec_ == "qoi") {
-    opt.format = tinyusdz::image::WriteImageFormat::QOI;
+    opt.format = lightusd::image::WriteImageFormat::QOI;
   } else {  // default refinement: PNG (lossless)
-    opt.format = tinyusdz::image::WriteImageFormat::PNG;
+    opt.format = lightusd::image::WriteImageFormat::PNG;
   }
-  auto enc = tinyusdz::image::WriteImageToMemory(img, opt);
+  auto enc = lightusd::image::WriteImageToMemory(img, opt);
   if (enc) streamServer_->pushFrame(enc.value().data(), enc.value().size());
 }
 
@@ -7279,7 +7279,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       std::set<std::string> add(payloadReqs.begin(), payloadReqs.end());
       if (loadAllPayloads) {
         if (useNextLoader_ && nextSession_) {
-          for (const tinyusdz::next::Path& path :
+          for (const lightusd::next::Path& path :
                nextSession_->GetDeferredPayloadPaths()) {
             add.insert(path.str());
           }

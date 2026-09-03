@@ -4,7 +4,7 @@
 #include "arg-parser.hh"
 #include "str-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace argparser {
 
 ArgParser::ArgParser() {}
@@ -68,7 +68,7 @@ bool ArgParser::get(const std::string& name, std::string& value) const {
 bool ArgParser::get(const std::string& name, double& value) const {
     auto it = options_.find(name);
     if (it != options_.end() && it->second.is_set && it->second.has_value) {
-        double d = tinyusdz::atof(it->second.value.c_str());
+        double d = lightusd::atof(it->second.value.c_str());
         value = d;
         return true;
     }
@@ -76,7 +76,7 @@ bool ArgParser::get(const std::string& name, double& value) const {
 }
 
 const std::vector<std::string>& ArgParser::positional() const
-    TINYUSDZ_LIFETIMEBOUND {
+    LIGHTUSD_LIFETIMEBOUND {
   return positional_args_;
 }
 
@@ -89,4 +89,4 @@ void ArgParser::print_help() const {
 }
 
 } // namespace argparser
-} // namespace tinyusdz
+} // namespace lightusd

@@ -15,7 +15,7 @@ import traceback
 import unreal
 
 
-LOG_PREFIX = "TinyUSDZMetaHuman:"
+LOG_PREFIX = "LightUSDMetaHuman:"
 
 
 def log(message):
@@ -63,7 +63,7 @@ def choose_preset():
 def create_character_from_preset():
     tools = unreal.AssetToolsHelpers.get_asset_tools()
     path = "/Game/Generated"
-    name = "TinyUSDZ_DefaultHuman"
+    name = "LightUSD_DefaultHuman"
     existing = f"{path}/{name}.{name}"
     if unreal.EditorAssetLibrary.does_asset_exist(existing):
         unreal.EditorAssetLibrary.delete_asset(existing)
@@ -81,7 +81,7 @@ def create_character_from_preset():
     if not subsystem.try_add_object_to_edit(character):
         fail("Could not register MetaHuman character for editing")
     subsystem.assemble_for_preview(character)
-    if command_line_flag("TinyUSDZAutoRig"):
+    if command_line_flag("LightUSDAutoRig"):
         request = unreal.MetaHumanCharacterAutoRiggingRequestParams()
         request.blocking = True
         request.report_progress = False
@@ -253,7 +253,7 @@ def export_groom(output_dir):
         return {"status": "unavailable", "reason": f"Could not load {package}"}
     destination = os.path.join(output_dir, "MetaHuman_GroomStrands.usda")
     try:
-        bridge = unreal.TinyUSDZGroomExportLibrary
+        bridge = unreal.LightUSDGroomExportLibrary
         written = bridge.export_groom_to_usd(groom, destination, 15000)
     except Exception as exc:
         return {"status": "failed", "asset": package, "reason": str(exc)}
@@ -263,7 +263,7 @@ def export_groom(output_dir):
 
 
 def main():
-    output_dir = os.path.abspath(command_line_value("TinyUSDZOutput", os.path.join(os.getcwd(), "output")))
+    output_dir = os.path.abspath(command_line_value("LightUSDOutput", os.path.join(os.getcwd(), "output")))
     os.makedirs(output_dir, exist_ok=True)
     inventory = {
         "engine": unreal.SystemLibrary.get_engine_version(),

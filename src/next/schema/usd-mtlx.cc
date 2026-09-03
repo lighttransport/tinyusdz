@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdMtlx Schema Implementation
+// LightUSD Next - UsdMtlx Schema Implementation
 
 #include "usd-mtlx.hh"
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -239,4 +239,4 @@ bool GetMaterialXNodeIOData(const Stage& stage, const UsdPrim& prim,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

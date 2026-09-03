@@ -3,13 +3,13 @@
 #include <algorithm>
 #include <map>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/variant-converter.hh"
 #include "tydra/variant-support.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 void print_help() {
   std::cout << "Usage: variant-analyzer [options] input.usda/usdc/usdz\n\n";
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
   Stage stage;
   std::string warn, err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN: " << warn << "\n";
   }

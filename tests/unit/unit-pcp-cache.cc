@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // unit-pcp-cache.cc - Tests for the cached / lazy composition engine
-//                     (tinyusdz::pcp::Cache).
+//                     (lightusd::pcp::Cache).
 //
 
 #ifdef _MSC_VER
@@ -30,7 +30,7 @@
 #include "stage.hh"
 #include "usdGeom.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -127,7 +127,7 @@ bool open_cache(const char *usda, AssetResolutionResolver &resolver,
                 std::string *err) {
   Layer layer;
   std::string warn;
-  if (!tinyusdz_test::parse_usda_to_layer(usda, &layer, &warn, err)) {
+  if (!lightusd_test::parse_usda_to_layer(usda, &layer, &warn, err)) {
     return false;
   }
   auto result = pcp::Cache::Open(resolver, layer, opts);
@@ -508,7 +508,7 @@ def Xform "Other"
 
   // CompositionGraph path.
   Layer layer;
-  TEST_CHECK(tinyusdz_test::parse_usda_to_layer(usda, &layer, &warn, &err));
+  TEST_CHECK(lightusd_test::parse_usda_to_layer(usda, &layer, &warn, &err));
   AssetResolutionResolver resolver_b;
   auto cg = composition_graph::CompositionGraph::Compose(
       resolver_b, layer, composition_graph::CompositionGraphOptions());
@@ -856,7 +856,7 @@ def Xform "Inst" (
 
   // eager CompositionGraph oracle.
   Layer layer;
-  TEST_CHECK(tinyusdz_test::parse_usda_to_layer(root_usda, &layer, &warn, &err));
+  TEST_CHECK(lightusd_test::parse_usda_to_layer(root_usda, &layer, &warn, &err));
   AssetResolutionResolver resolver_b;
   install_mem_handler(&resolver_b, &mem);
   auto cg = composition_graph::CompositionGraph::Compose(

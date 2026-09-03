@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Crate scalar vector value decode helpers.
+// LightUSD Next - Crate scalar vector value decode helpers.
 
 #include "crate-reader-internal.hh"
 
 #include "safe-arithmetic.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool CrateReader::Impl::UnpackTokenOrStringVector(ValueRep rep,
@@ -69,4 +69,4 @@ bool CrateReader::Impl::UnpackDoubleVector(ValueRep rep, Value& out) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

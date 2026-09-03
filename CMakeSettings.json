@@ -12,12 +12,12 @@
       "ctestCommandArgs": "",
       "variables": [
         {
-          "name": "TINYUSDZ_USE_CCACHE",
+          "name": "LIGHTUSD_USE_CCACHE",
           "value": "False",
           "type": "BOOL"
         },
         {
-          "name": "TINYUSDZ_WITH_OPENSUBDIV",
+          "name": "LIGHTUSD_WITH_OPENSUBDIV",
           "value": "True",
           "type": "BOOL"
         }

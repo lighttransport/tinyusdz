@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP composition benchmark + struct memory stats.
+// LightUSD Next - PCP composition benchmark + struct memory stats.
 //
 // Phase-0 instrumentation for doc/refactor-next.md: captures the baseline
 // numbers that the later optimization phases (cycle-frame chain, FindSpecs
@@ -36,7 +36,7 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static long peak_rss_kb() {
   struct rusage ru;

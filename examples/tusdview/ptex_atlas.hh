@@ -89,8 +89,8 @@ class PtexFacePageCache {
  public:
   explicit PtexFacePageCache(size_t maxBytes) : maxBytes_(maxBytes) {}
 
-  const tinyusdz::ptx::FaceImage* Fetch(
-      const tinyusdz::ptx::Reader& reader, uint32_t face, uint32_t mip,
+  const lightusd::ptx::FaceImage* Fetch(
+      const lightusd::ptx::Reader& reader, uint32_t face, uint32_t mip,
       size_t maxDecodedFaceBytes, std::string* err);
   void Clear();
 
@@ -100,14 +100,14 @@ class PtexFacePageCache {
  private:
   struct Entry {
     uint64_t key{0};
-    tinyusdz::ptx::FaceImage image;
+    lightusd::ptx::FaceImage image;
   };
   using List = std::list<Entry>;
 
   size_t maxBytes_{0};
   List entries_;
   std::unordered_map<uint64_t, List::iterator> byKey_;
-  tinyusdz::ptx::FaceImage transient_;
+  lightusd::ptx::FaceImage transient_;
   PtexPageCacheStats stats_;
 };
 
@@ -127,7 +127,7 @@ struct PtexAtlasBuildStats {
 // are retained in `faceRects` and include only the inner texels; `image`
 // includes the surrounding gutters. Ptex's bottom-left data convention is
 // converted to tusdview's top-row-first image convention during the copy.
-bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
+bool BuildPtexAtlas(const lightusd::ptx::Reader& reader,
                     const PtexAtlasOptions& options, bool srgb,
                     light3d::Image* image,
                     std::vector<DrawPtexFaceRectCPU>* faceRects,
@@ -136,7 +136,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
 // Decode one face/mip into an independently uploadable RGBA8 rectangle with
 // clamp gutters. The returned pixel rows use the same convention as atlas
 // level zero, so the image can be passed directly to updateTextureRegion.
-bool BuildPtexPage(const tinyusdz::ptx::Reader& reader, uint32_t face,
+bool BuildPtexPage(const lightusd::ptx::Reader& reader, uint32_t face,
                    uint32_t mip, uint32_t gutter, size_t maxDecodedFaceBytes,
                    light3d::Image* page, DrawPtexFaceRectCPU* inner,
                    std::string* err);

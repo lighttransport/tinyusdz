@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // forward decl.
@@ -34,4 +34,4 @@ std::string to_string(UVReaderFloatComponentType ty);
 // std::string to_string(const UVTexture::Channel channel);
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

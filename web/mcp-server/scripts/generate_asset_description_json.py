@@ -3,7 +3,7 @@ import sys
 import json
 import glob
 
-input_dir = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry/usds/"
+input_dir = "/mnt/n/data/lightusd/mcp/african_slate_quarry/usds/"
 output_filepath = "asset-descriptions.json"
 
 if len(sys.argv) > 1:

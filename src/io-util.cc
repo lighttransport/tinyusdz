@@ -22,8 +22,8 @@
 #include <io.h>
 #include <windows.h>  // include API for expanding a file path
 
-#ifndef TINYUSDZ_MMAP_SUPPORTED
-#define TINYUSDZ_MMAP_SUPPORTED (1)
+#ifndef LIGHTUSD_MMAP_SUPPORTED
+#define LIGHTUSD_MMAP_SUPPORTED (1)
 #endif
 
 #ifdef _MSC_VER
@@ -42,7 +42,7 @@
 
 #else  // !_WIN32
 
-#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || \
+#if defined(LIGHTUSD_BUILD_IOS) || defined(TARGET_OS_IPHONE) || \
     defined(TARGET_IPHONE_SIMULATOR) || defined(__ANDROID__) || \
     defined(__EMSCRIPTEN__) || defined(__wasi__)
 
@@ -56,16 +56,16 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
-#ifndef TINYUSDZ_MMAP_SUPPORTED
-#define TINYUSDZ_MMAP_SUPPORTED (1)
+#ifndef LIGHTUSD_MMAP_SUPPORTED
+#define LIGHTUSD_MMAP_SUPPORTED (1)
 #endif
 
 #endif
 
 #endif  // _WIN32
 
-#ifndef TINYUSDZ_MMAP_SUPPORTED
-#define TINYUSDZ_MMAP_SUPPORTED (0)
+#ifndef LIGHTUSD_MMAP_SUPPORTED
+#define LIGHTUSD_MMAP_SUPPORTED (0)
 #endif
 
 #ifdef __clang__
@@ -84,7 +84,7 @@
 #include "io-util.hh"
 #include "str-util.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace io {
 
 bool OpenInputFile(std::ifstream *file, const std::string &filepath,
@@ -164,12 +164,12 @@ static std::string llama_format_win_err(DWORD err) {
 }  // namespace
 #endif
 
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+#ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
 AAssetManager *asset_manager = nullptr;
 #endif
 
 bool IsMMapSupported() {
-#if TINYUSDZ_MMAP_SUPPORTED
+#if LIGHTUSD_MMAP_SUPPORTED
   return true;
 #else
   return false;
@@ -240,7 +240,7 @@ static bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writabl
       }
     }
 #else
-    // tinyusdz is built with -fno-exceptions, so report via `err` instead of
+    // lightusd is built with -fno-exceptions, so report via `err` instead of
     // throwing.
     if (err) {
       (*err) += "PrefetchVirtualMemory unavailable";
@@ -260,7 +260,7 @@ static bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writabl
 
 bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable, std::string *err) {
 
-#if TINYUSDZ_MMAP_SUPPORTED
+#if LIGHTUSD_MMAP_SUPPORTED
 #if defined(_WIN32)
   //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
 
@@ -326,7 +326,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
 
   return true;
 #endif  // !WIN32
-#else   // !TINYUSDZ_MMAP_SUPPORTED
+#else   // !LIGHTUSD_MMAP_SUPPORTED
   (void)filepath;
   (void)handle;
   (void)writable;
@@ -338,7 +338,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
 #if defined(_WIN32)
 bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool writable, std::string *err) {
 
-#if TINYUSDZ_MMAP_SUPPORTED
+#if LIGHTUSD_MMAP_SUPPORTED
   //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
 
   HANDLE hFile = CreateFileW(unicode_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -370,7 +370,7 @@ bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool
 #endif
 
 bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
-#if TINYUSDZ_MMAP_SUPPORTED
+#if LIGHTUSD_MMAP_SUPPORTED
 #if defined(_WIN32)
   bool result = true;
 
@@ -414,7 +414,7 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
   }
   return false;
 #endif
-#else  // !TINYUSDZ_MMAP_SUPPORTED
+#else  // !LIGHTUSD_MMAP_SUPPORTED
   (void)handle;
   (void)err;
   return false;
@@ -423,12 +423,12 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 
 // Full desktop platforms (POSIX + Windows) that have a real filesystem to glob
 // against. Restricted/sandboxed targets do only string (env/tilde) expansion.
-#if !defined(__wasi__) && !defined(TINYUSDZ_BUILD_IOS) &&      \
+#if !defined(__wasi__) && !defined(LIGHTUSD_BUILD_IOS) &&      \
     !defined(TARGET_OS_IPHONE) && !defined(TARGET_IPHONE_SIMULATOR) && \
     !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__OpenBSD__)
-#define TINYUSDZ_HAVE_GLOB_FS 1
+#define LIGHTUSD_HAVE_GLOB_FS 1
 #else
-#define TINYUSDZ_HAVE_GLOB_FS 0
+#define LIGHTUSD_HAVE_GLOB_FS 0
 #endif
 
 // Simple glob matcher (`*` = any run, `?` = one char). Classic linear
@@ -503,7 +503,7 @@ namespace {
 
 }  // namespace
 
-#if TINYUSDZ_HAVE_GLOB_FS
+#if LIGHTUSD_HAVE_GLOB_FS
 namespace {
 
 inline bool HasGlobWildcard(const std::string &s) {
@@ -524,7 +524,7 @@ std::vector<std::string> SimpleGlob(const std::string &pattern,
     return results;
   }
 
-#if TINYUSDZ_HAVE_GLOB_FS
+#if LIGHTUSD_HAVE_GLOB_FS
   namespace fs = ghc::filesystem;
 
   // No wildcard: resolve to the literal path iff it exists.
@@ -646,7 +646,7 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   // is returned as-is. When wildcards match, return the first match (this
   // mirrors the old wordexp() "use we_wordv[0]" behavior); otherwise return the
   // env-expanded path unchanged.
-#if TINYUSDZ_HAVE_GLOB_FS
+#if LIGHTUSD_HAVE_GLOB_FS
   if (HasGlobWildcard(expanded)) {
     std::vector<std::string> matches = SimpleGlob(expanded, /* max */ 64);
     // Route through the NRVO variable (a second named return defeats copy
@@ -682,8 +682,8 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
                    void *userdata) {
   (void)userdata;
 
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-  if (tinyusdz::io::asset_manager) {
+#ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
+  if (lightusd::io::asset_manager) {
     AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
                                        AASSET_MODE_STREAMING);
     if (!asset) {
@@ -816,8 +816,8 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
     max_read_bytes = 1;
   }
 
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-  if (tinyusdz::io::asset_manager) {
+#ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
+  if (lightusd::io::asset_manager) {
     AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
                                        AASSET_MODE_STREAMING);
     if (!asset) {
@@ -1177,7 +1177,7 @@ bool FileExists(const std::string &filepath, void *userdata) {
   (void)userdata;
 
   bool ret{false};
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+#ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
   if (asset_manager) {
     AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
                                        AASSET_MODE_STREAMING);
@@ -1498,4 +1498,4 @@ std::vector<std::string> ListDir(const std::string &dir, bool recursive) {
 #endif
 
 }  // namespace io
-}  // namespace tinyusdz
+}  // namespace lightusd

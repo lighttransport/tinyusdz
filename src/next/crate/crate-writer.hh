@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Crate Writer
+// LightUSD Next - Crate Writer
 // Low-level binary USDC format writer
 
 #pragma once
@@ -14,7 +14,7 @@
 #include <vector>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Output sink for streaming crate writes: receives the file bytes in order, in
@@ -51,7 +51,7 @@ struct CrateWriteOptions {
   bool streaming = false;
 
   /// Worker count for parallel build/sort paths (1 = serial; <=0 = auto, capped).
-  /// Only effective in a TINYUSDZ_ENABLE_THREAD build. Output is a valid
+  /// Only effective in a LIGHTUSD_ENABLE_THREAD build. Output is a valid
   /// round-trippable crate at any thread count and is byte-identical across thread
   /// counts (the parallel build merges per-prim results in deterministic order).
   int num_threads = 1;
@@ -114,4 +114,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

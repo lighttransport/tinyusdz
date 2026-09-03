@@ -27,7 +27,7 @@
 #endif
 
 #include "hipew.h"                     // HIP VRAM query
-#include "next/tinyusdz-next.hh"       // next::Stage, LoadUSDComposed, Value
+#include "next/lightusd-next.hh"       // next::Stage, LoadUSDComposed, Value
 #include "next_scene_loader.hh"        // FindNextCamera, NextCameraPose
 #include "tydra/next/scene-access.hh"  // ComputeLocalTransform, HasResetXformStack
 #include "value-types.hh"             // value::matrix4d
@@ -36,8 +36,8 @@ namespace tusdview {
 
 namespace {
 
-namespace tnext = tinyusdz::next;
-using matrix4d = tinyusdz::value::matrix4d;
+namespace tnext = lightusd::next;
+using matrix4d = lightusd::value::matrix4d;
 constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
 
 struct District {
@@ -97,9 +97,9 @@ void WalkDistricts(const tnext::UsdPrim& prim, const matrix4d& parent_world,
                    std::map<std::string, District>* districts) {
   if (!prim.IsActive()) return;
   double dmat[16];
-  tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4dFromArray(dmat);
-  const bool reset = tinyusdz::tydra::next::HasResetXformStack(prim);
+  const bool reset = lightusd::tydra::next::HasResetXformStack(prim);
   const matrix4d world = reset ? local : Mul4(local, parent_world);
 
   if (prim.GetTypeName() == "Mesh") {

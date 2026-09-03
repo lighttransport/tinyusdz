@@ -138,13 +138,13 @@ async function startDevServer(verbose) {
     appType: 'mpa',
     resolve: {
       alias: [
-        { find: 'tinyusdz', replacement: path.join(WEB_JS_DIR, 'src/tinyusdz') },
+        { find: 'lightusd', replacement: path.join(WEB_JS_DIR, 'src/lightusd') },
         { find: 'three', replacement: path.join(DEMO_DIR, 'node_modules/three') },
         { find: 'fzstd', replacement: path.join(DEMO_DIR, 'node_modules/fzstd') },
       ],
     },
     optimizeDeps: {
-      exclude: ['tinyusdz'],
+      exclude: ['lightusd'],
     },
     logLevel: verbose ? 'info' : 'silent',
   });

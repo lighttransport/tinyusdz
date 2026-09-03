@@ -3,7 +3,7 @@
 //
 // Stage to Crate Conversion Implementation
 //
-// This file contains the implementation for converting TinyUSDZ Stage
+// This file contains the implementation for converting LightUSD Stage
 // to Crate format specs.
 //
 
@@ -21,7 +21,7 @@
 #include <iostream>
 #include <atomic>
 #include <functional>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #endif
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
@@ -43,7 +43,7 @@
 #pragma clang diagnostic ignored "-Wswitch-enum"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace experimental {
 
 // Per-thread spec sink for the parallel stage->specs conversion (see
@@ -574,7 +574,7 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     return false;
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Large stages: convert prim subtrees on worker threads (byte-identical to
   // the serial DFS — specs assembled in DFS order, field-name tokens replayed
   // serially afterwards). Small stages stay serial (thread setup dominates).
@@ -606,7 +606,7 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
   return true;
 }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 bool CrateWriter::ConvertRootPrimsParallel(const Stage& stage,
                                            std::string* err) {
   // Work unit: either a single prim's own specs (shell — its children are
@@ -671,9 +671,9 @@ bool CrateWriter::ConvertRootPrimsParallel(const Stage& stage,
     }
   }
 
-  if (const char* e = ::getenv("TINYUSDZ_FLATTEN_TIMING")) {
+  if (const char* e = ::getenv("LIGHTUSD_FLATTEN_TIMING")) {
     if (e[0] == '1') {
-      std::cerr << "[tinyusdz] parallel stage->specs: " << units.size()
+      std::cerr << "[lightusd] parallel stage->specs: " << units.size()
                 << " units\n";
     }
   }
@@ -750,7 +750,7 @@ bool CrateWriter::ConvertRootPrimsParallel(const Stage& stage,
 
   return true;
 }
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 // ============================================================================
 // Per-Prim Conversion (no recursion into children)
@@ -2292,7 +2292,7 @@ bool CrateWriter::ConvertValue(
   // Token and String types
   // Store the typed token value; the crate packer pools it through the
   // tokens section at serialization time. Storing the raw pool index (uint)
-  // here produced files that tinyusdz's reader surfaced as
+  // here produced files that lightusd's reader surfaced as
   // `var_type='uint' (unresolved)` and that pxrusd rejected with "Corrupt
   // path element token index in crate file".
   TRY_CONVERT_SET("token", value::token)
@@ -3248,7 +3248,7 @@ bool CrateWriter::ConvertVariantToFields(
 }
 
 } // namespace experimental
-} // namespace tinyusdz
+} // namespace lightusd
 
 #if defined(__clang__)
 #pragma clang diagnostic pop

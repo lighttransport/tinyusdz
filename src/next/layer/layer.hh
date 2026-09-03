@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Layer
+// LightUSD Next - Layer
 // Container for PrimSpecs with flat storage and path indexing
 
 #pragma once
@@ -13,7 +13,7 @@
 #include <memory>
 #include <unordered_map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Layer metadata
@@ -391,4 +391,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

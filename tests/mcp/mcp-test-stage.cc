@@ -9,11 +9,11 @@
 
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-tools-scene.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/js-script.hh"
 #include "pprint-enum.hh"
 
-using namespace tinyusdz::tydra::mcp;
+using namespace lightusd::tydra::mcp;
 using json = nlohmann::json;
 
 // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ void mcp_stage_new_default_test(void) {
 
   // Verify defaults (Y up per USD default)
   const auto &m = ctx.stage->metas();
-  TEST_CHECK(tinyusdz::to_string(m.upAxis.get_value()) == "Y");
+  TEST_CHECK(lightusd::to_string(m.upAxis.get_value()) == "Y");
   TEST_CHECK(m.defaultPrim.str() == "");
 }
 
@@ -55,7 +55,7 @@ void mcp_stage_new_with_metadata_test(void) {
   TEST_CHECK(ctx.stage != nullptr);
 
   const auto &m = ctx.stage->metas();
-  TEST_CHECK(tinyusdz::to_string(m.upAxis.get_value()) == "Y");
+  TEST_CHECK(lightusd::to_string(m.upAxis.get_value()) == "Y");
   TEST_CHECK(m.defaultPrim.str() == "World");
   TEST_CHECK(m.metersPerUnit.get_value() == 0.01);
   TEST_CHECK(m.timeCodesPerSecond.get_value() == 24.0);
@@ -113,9 +113,9 @@ def Xform "hello"
 }
 )";
 
-  auto stage = std::unique_ptr<tinyusdz::Stage>(new tinyusdz::Stage());
+  auto stage = std::unique_ptr<lightusd::Stage>(new lightusd::Stage());
   std::string warn, load_err;
-  bool ok = tinyusdz::LoadUSDAFromMemory(
+  bool ok = lightusd::LoadUSDAFromMemory(
       reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
       "test.usda", stage.get(), &warn, &load_err);
   TEST_CHECK(ok);

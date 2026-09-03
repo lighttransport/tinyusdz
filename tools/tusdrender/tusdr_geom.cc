@@ -46,22 +46,22 @@ Vec3 TransformNormal(const matrix4d &inv_world, const Vec3 &n) {
             inv_world.m[2][2] * double(n.z))});
 }
 
-int AxisIndex(tinyusdz::Axis axis) {
+int AxisIndex(lightusd::Axis axis) {
   switch (axis) {
-    case tinyusdz::Axis::X: return 0;
-    case tinyusdz::Axis::Y: return 1;
-    case tinyusdz::Axis::Z: return 2;
-    case tinyusdz::Axis::Invalid: break;
+    case lightusd::Axis::X: return 0;
+    case lightusd::Axis::Y: return 1;
+    case lightusd::Axis::Z: return 2;
+    case lightusd::Axis::Invalid: break;
   }
   return 2;
 }
 
-Vec3 AxisVec(tinyusdz::Axis axis) {
+Vec3 AxisVec(lightusd::Axis axis) {
   switch (axis) {
-    case tinyusdz::Axis::X: return Vec3{1.0f, 0.0f, 0.0f};
-    case tinyusdz::Axis::Y: return Vec3{0.0f, 1.0f, 0.0f};
-    case tinyusdz::Axis::Z: return Vec3{0.0f, 0.0f, 1.0f};
-    case tinyusdz::Axis::Invalid: break;
+    case lightusd::Axis::X: return Vec3{1.0f, 0.0f, 0.0f};
+    case lightusd::Axis::Y: return Vec3{0.0f, 1.0f, 0.0f};
+    case lightusd::Axis::Z: return Vec3{0.0f, 0.0f, 1.0f};
+    case lightusd::Axis::Invalid: break;
   }
   return Vec3{0.0f, 0.0f, 1.0f};
 }
@@ -305,7 +305,7 @@ void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b) {
   if (!b) return;
   for (const VolumeData &vd : vols) {
     matrix4d world;
-    if (!tinyusdz::inverse(vd.inv_world, world, 1.0e-12))
+    if (!lightusd::inverse(vd.inv_world, world, 1.0e-12))
       world = matrix4d::identity();
     for (int c = 0; c < 8; c++) {
       Vec3 corner{(c & 1) ? vd.bmax.x : vd.bmin.x,
@@ -323,11 +323,11 @@ void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b) {
   }
 }
 
-// USD upAxis token -> tinyusdz::Axis (default Y). Shared by both loaders.
-tinyusdz::Axis GetUpAxis(const std::string &up) {
-  if (up == "X") return tinyusdz::Axis::X;
-  if (up == "Z") return tinyusdz::Axis::Z;
-  return tinyusdz::Axis::Y;
+// USD upAxis token -> lightusd::Axis (default Y). Shared by both loaders.
+lightusd::Axis GetUpAxis(const std::string &up) {
+  if (up == "X") return lightusd::Axis::X;
+  if (up == "Z") return lightusd::Axis::Z;
+  return lightusd::Axis::Y;
 }
 
 }  // namespace tusdr

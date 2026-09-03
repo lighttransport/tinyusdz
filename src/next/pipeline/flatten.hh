@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Low-memory flatten pipeline
+// LightUSD Next - Low-memory flatten pipeline
 //
 // One-call "load USD (lazy when crate-backed) -> compose/flatten (structural)
 // -> write USDC (verbatim byte pass-through)" facade. Designed for both native
@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pipeline {
 
@@ -173,4 +173,4 @@ bool FlattenUSDMemoryToUSDCToSink(const std::string& key, const uint8_t* data,
 
 }  // namespace pipeline
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

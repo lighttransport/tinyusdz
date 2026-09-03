@@ -1,6 +1,6 @@
 // Minimal MCP (Model Context Protocol) client over plain HTTP fetch.
 //
-// The TinyUSDZ native MCP server (src/tydra/mcp-server.cc, civetweb) speaks
+// The LightUSD native MCP server (src/tydra/mcp-server.cc, civetweb) speaks
 // JSON-RPC 2.0 over a single POST /mcp endpoint, returns a plain JSON body, and
 // carries the session id in an `mcp-session-id` response header on initialize.
 // It does NOT implement the streamable-HTTP/SSE transport, so the official

@@ -12,12 +12,12 @@
 #include <iostream>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "tydra/render-data.hh"
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 namespace {
 

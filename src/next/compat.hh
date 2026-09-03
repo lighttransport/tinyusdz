@@ -1,33 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Compatibility Header
+// LightUSD Compatibility Header
 //
 // This header provides seamless switching between the original and "next"
-// architectures. Use -DTINYUSDZ_USE_NEXT=ON to enable the new architecture.
+// architectures. Use -DLIGHTUSD_USE_NEXT=ON to enable the new architecture.
 //
 // Usage:
 //   #include "next/compat.hh"
-//   using namespace tinyusdz::compat;
+//   using namespace lightusd::compat;
 //
 //   Stage stage;
 //   LoadUSD("model.usda", &stage);
 //
 // Or use explicit namespaces:
-//   #ifdef TINYUSDZ_USE_NEXT
-//   tinyusdz::next::Stage stage;
+//   #ifdef LIGHTUSD_USE_NEXT
+//   lightusd::next::Stage stage;
 //   #else
-//   tinyusdz::Stage stage;
+//   lightusd::Stage stage;
 //   #endif
 
 #pragma once
 
-#ifdef TINYUSDZ_USE_NEXT
+#ifdef LIGHTUSD_USE_NEXT
 
 // Use the new "next" architecture
-#include "tinyusdz-next.hh"
+#include "lightusd-next.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace compat {
 
 // Import next types into compat namespace
@@ -81,41 +81,41 @@ using next::TimeQuery;
 using next::ValueClipStageCache;
 
 }  // namespace compat
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // !TINYUSDZ_USE_NEXT
+#else  // !LIGHTUSD_USE_NEXT
 
 // Use the original architecture
-#include "../tinyusdz.hh"
+#include "../lightusd.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace compat {
 
 // Import original types into compat namespace
-using Stage = tinyusdz::Stage;
-using Path = tinyusdz::Path;
-using Value = tinyusdz::value::Value;
+using Stage = lightusd::Stage;
+using Path = lightusd::Path;
+using Value = lightusd::value::Value;
 
 // Note: The original architecture has different type names/structures
-// Users should use #ifdef TINYUSDZ_USE_NEXT for type-specific code
+// Users should use #ifdef LIGHTUSD_USE_NEXT for type-specific code
 
 // Loading functions wrapper
 inline bool LoadUSD(const std::string& filename, Stage* stage,
                     std::string* warn = nullptr, std::string* err = nullptr) {
-  return tinyusdz::LoadUSDFromFile(filename, stage, warn, err);
+  return lightusd::LoadUSDFromFile(filename, stage, warn, err);
 }
 
 inline bool LoadUSDA(const std::string& filename, Stage* stage,
                      std::string* warn = nullptr, std::string* err = nullptr) {
-  return tinyusdz::LoadUSDAFromFile(filename, stage, warn, err);
+  return lightusd::LoadUSDAFromFile(filename, stage, warn, err);
 }
 
 inline bool LoadUSDC(const std::string& filename, Stage* stage,
                      std::string* warn = nullptr, std::string* err = nullptr) {
-  return tinyusdz::LoadUSDCFromFile(filename, stage, warn, err);
+  return lightusd::LoadUSDCFromFile(filename, stage, warn, err);
 }
 
 }  // namespace compat
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_USE_NEXT
+#endif  // LIGHTUSD_USE_NEXT

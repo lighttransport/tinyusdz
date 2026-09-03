@@ -5,7 +5,7 @@
 #include <sstream>
 #include <algorithm>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 // Helper function to parse vector values
@@ -13,12 +13,12 @@ static std::vector<float> ParseFloatVector(const std::string& str) {
   std::vector<float> result;
   std::stringstream ss(str);
   std::string token;
-  
+
   while (std::getline(ss, token, ',')) {
     // Trim whitespace
     token.erase(0, token.find_first_not_of(" \t"));
     token.erase(token.find_last_not_of(" \t") + 1);
-    
+
     if (!token.empty()) {
       char* endptr;
       float val = std::strtof(token.c_str(), &endptr);
@@ -27,7 +27,7 @@ static std::vector<float> ParseFloatVector(const std::string& str) {
       }
     }
   }
-  
+
   return result;
 }
 
@@ -35,12 +35,12 @@ static std::vector<int> ParseIntVector(const std::string& str) {
   std::vector<int> result;
   std::stringstream ss(str);
   std::string token;
-  
+
   while (std::getline(ss, token, ',')) {
     // Trim whitespace
     token.erase(0, token.find_first_not_of(" \t"));
     token.erase(token.find_last_not_of(" \t") + 1);
-    
+
     if (!token.empty()) {
       char* endptr;
       long val = std::strtol(token.c_str(), &endptr, 10);
@@ -49,7 +49,7 @@ static std::vector<int> ParseIntVector(const std::string& str) {
       }
     }
   }
-  
+
   return result;
 }
 
@@ -57,18 +57,18 @@ static std::vector<int> ParseIntVector(const std::string& str) {
 
 bool MtlxElement::ParseFromXML(XMLNodePtr xml_node) {
   if (!xml_node) return false;
-  
+
   name_ = xml_node->GetAttribute("name");
   type_ = xml_node->GetAttribute("type");
   nodedef_ = xml_node->GetAttribute("nodedef");
-  
+
   // Store all other attributes
   for (const auto& attr : xml_node->GetAttributes()) {
     if (attr.first != "name" && attr.first != "type" && attr.first != "nodedef") {
       extra_attributes_[attr.first] = attr.second;
     }
   }
-  
+
   return true;
 }
 
@@ -78,12 +78,12 @@ bool MtlxInput::ParseFromXML(XMLNodePtr xml_node) {
   if (!MtlxElement::ParseFromXML(xml_node)) {
     return false;
   }
-  
+
   nodename_ = xml_node->GetAttribute("nodename");
   output_ = xml_node->GetAttribute("output");
   interfacename_ = xml_node->GetAttribute("interfacename");
   channels_ = xml_node->GetAttribute("channels");
-  
+
   // Parse value attribute
   std::string value_str = xml_node->GetAttribute("value");
   if (!value_str.empty() && !type_.empty()) {
@@ -116,7 +116,7 @@ bool MtlxInput::ParseFromXML(XMLNodePtr xml_node) {
       value_ = MtlxValue(ParseFloatVector(value_str));
     }
   }
-  
+
   return true;
 }
 
@@ -126,10 +126,10 @@ bool MtlxOutput::ParseFromXML(XMLNodePtr xml_node) {
   if (!MtlxElement::ParseFromXML(xml_node)) {
     return false;
   }
-  
+
   nodename_ = xml_node->GetAttribute("nodename");
   output_ = xml_node->GetAttribute("output");
-  
+
   return true;
 }
 
@@ -139,13 +139,13 @@ bool MtlxNode::ParseFromXML(XMLNodePtr xml_node) {
   if (!MtlxElement::ParseFromXML(xml_node)) {
     return false;
   }
-  
+
   category_ = xml_node->GetAttribute("category");
   if (category_.empty()) {
     // If no category, use the node name as category (for typed nodes)
     category_ = xml_node->GetName();
   }
-  
+
   // Parse input children
   for (const auto& child : xml_node->GetChildren()) {
     if (child->GetName() == "input") {
@@ -155,7 +155,7 @@ bool MtlxNode::ParseFromXML(XMLNodePtr xml_node) {
       }
     }
   }
-  
+
   return true;
 }
 
@@ -174,18 +174,18 @@ bool MtlxNodeGraph::ParseFromXML(XMLNodePtr xml_node) {
   if (!MtlxElement::ParseFromXML(xml_node)) {
     return false;
   }
-  
+
   // Parse children
   for (const auto& child : xml_node->GetChildren()) {
     const std::string& child_name = child->GetName();
-    
-    if (child_name == "node" || 
+
+    if (child_name == "node" ||
         // Typed nodes (e.g., <image>, <tiledimage>, etc.)
         child_name == "image" || child_name == "tiledimage" ||
         child_name == "place2d" || child_name == "constant" ||
         child_name == "multiply" || child_name == "add" ||
         child_name == "subtract" || child_name == "divide") {
-      
+
       auto node = std::make_shared<MtlxNode>();
       if (node->ParseFromXML(child)) {
         nodes_.push_back(node);
@@ -202,7 +202,7 @@ bool MtlxNodeGraph::ParseFromXML(XMLNodePtr xml_node) {
       }
     }
   }
-  
+
   return true;
 }
 
@@ -221,13 +221,13 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
   if (!MtlxElement::ParseFromXML(xml_node)) {
     return false;
   }
-  
+
   // Parse shader references
   for (const auto& child : xml_node->GetChildren()) {
     if (child->GetName() == "shaderref") {
       std::string shader_name = child->GetAttribute("name");
       std::string shader_node = child->GetAttribute("node");
-      
+
       if (shader_name == "surfaceshader" || shader_name == "sr") {
         surface_shader_ = shader_node;
       } else if (shader_name == "displacementshader" || shader_name == "dr") {
@@ -237,7 +237,7 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
       }
     }
   }
-  
+
   return true;
 }
 
@@ -245,32 +245,32 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
 
 bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
   MaterialXParser parser;
-  
+
   if (!parser.Parse(xml_string)) {
     error_ = parser.GetError();
     return false;
   }
-  
+
   warning_ = parser.GetWarning();
-  
+
   auto root = parser.GetDocument().GetRoot();
   if (!root || root->GetName() != "materialx") {
     error_ = "Invalid MaterialX document";
     return false;
   }
-  
+
   // Parse document attributes
   version_ = root->GetAttribute("version");
   colorspace_ = root->GetAttribute("colorspace");
   namespace_ = root->GetAttribute("namespace");
-  
+
   // Parse all children
   for (const auto& child : root->GetChildren()) {
     if (!ParseElement(child)) {
       return false;
     }
   }
-  
+
   return true;
 }
 
@@ -280,25 +280,25 @@ bool MtlxDocument::ParseFromFile(const std::string& filename) {
     error_ = "Failed to open file: " + filename;
     return false;
   }
-  
+
   std::stringstream buffer;
   buffer << file.rdbuf();
-  
+
   return ParseFromXML(buffer.str());
 }
 
 bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {
   if (!xml_node) return false;
-  
+
   const std::string& element_name = xml_node->GetName();
-  
-  if (element_name == "node" || 
+
+  if (element_name == "node" ||
       // Typed nodes
       element_name == "standard_surface" ||
       element_name == "UsdPreviewSurface" ||
       element_name == "image" || element_name == "tiledimage" ||
       element_name == "place2d" || element_name == "constant") {
-    
+
     auto node = std::make_shared<MtlxNode>();
     if (node->ParseFromXML(xml_node)) {
       nodes_.push_back(node);
@@ -314,12 +314,12 @@ bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {
       materials_.push_back(material);
     }
   }
-  
+
   // Recursively parse any nested nodegraphs or other elements
   for (const auto& child : xml_node->GetChildren()) {
     ParseElement(child);
   }
-  
+
   return true;
 }
 
@@ -340,13 +340,13 @@ MtlxValue MtlxDocument::ParseValue(const std::string& type, const std::string& v
     return MtlxValue(value_str == "true" || value_str == "1");
   } else if (type == "string" || type == "filename") {
     return MtlxValue(value_str);
-  } else if (type == "color3" || type == "vector3" || type == "color4" || 
+  } else if (type == "color3" || type == "vector3" || type == "color4" ||
              type == "vector4" || type == "vector2" || type == "floatarray") {
     return MtlxValue(ParseFloatVector(value_str));
   } else if (type == "integerarray") {
     return MtlxValue(ParseIntVector(value_str));
   }
-  
+
   // Default to string
   return MtlxValue(value_str);
 }
@@ -357,14 +357,14 @@ MtlxNodePtr MtlxDocument::FindNode(const std::string& name) const {
       return node;
     }
   }
-  
+
   // Also search within nodegraphs
   for (const auto& nodegraph : nodegraphs_) {
     if (auto node = nodegraph->GetNode(name)) {
       return node;
     }
   }
-  
+
   return nullptr;
 }
 
@@ -387,4 +387,4 @@ MtlxMaterialPtr MtlxDocument::FindMaterial(const std::string& name) const {
 }
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

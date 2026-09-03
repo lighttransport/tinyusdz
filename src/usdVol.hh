@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdVol {
 
 ///
@@ -70,4 +70,4 @@ bool ReadVDBFromMemory(const uint8_t *data, size_t len, const std::string &uri,
                        std::string *err = nullptr, size_t max_voxels = 0);
 
 }  // namespace usdVol
-}  // namespace tinyusdz
+}  // namespace lightusd

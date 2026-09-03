@@ -1,8 +1,8 @@
 {
-  "name": "tinyusdz",
+  "name": "lightusd",
   "private": true,
   "version": "1.0.0-rc4",
-  "description": "TinyUSDZ WebAssembly and JavaScript loaders for USD and USDZ assets",
+  "description": "LightUSD WebAssembly and JavaScript loaders for USD and USDZ assets",
   "type": "module",
   "main": "./index.js",
   "module": "./index.js",
@@ -40,12 +40,12 @@
   "license": "Apache-2.0 OR MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lighttransport/tinyusdz.git",
+    "url": "git+https://github.com/lighttransport/lightusd.git",
     "directory": "web/npm"
   },
-  "homepage": "https://github.com/lighttransport/tinyusdz/tree/release/web",
+  "homepage": "https://github.com/lighttransport/lightusd/tree/release/web",
   "bugs": {
-    "url": "https://github.com/lighttransport/tinyusdz/issues"
+    "url": "https://github.com/lighttransport/lightusd/issues"
   },
   "funding": {
     "type": "github",

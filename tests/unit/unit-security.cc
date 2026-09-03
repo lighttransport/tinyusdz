@@ -11,7 +11,7 @@
 #include "json-to-usd.hh"
 #include "security-policy.hh"
 #include "sha256.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data-internal.hh"
 #include "tydra/common-utils.hh"
 #include "zstd-compression.hh"
@@ -27,7 +27,7 @@
 #include <limits>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -479,7 +479,7 @@ void security_resolver_overreported_custom_asset_rejected_test(void) {
 }
 
 void security_nested_zstd_depth_rejected_test(void) {
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
   // Minimal valid USDA blob.
   const std::string usda =
       "#usda 1.0\n"
@@ -678,7 +678,7 @@ void security_strutil_unwrap_edge_test(void) {
 }
 
 void security_zstd_max_decompressed_size_test(void) {
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
   // Regression: the maxDecompressedSize parameter must reject decompressions
   // whose expected size exceeds the limit.
   const std::string input_str = "Hello, World!";
@@ -778,12 +778,12 @@ void security_common_utils_overflow_test(void) {
   std::vector<uint8_t> src(4, 0xAB);  // 4 bytes = 1 float
 
   // A huge elementSize that would overflow when multiplied by vertex count.
-  const auto result = tinyusdz::tydra::utils::ConstantToVertex(
+  const auto result = lightusd::tydra::utils::ConstantToVertex(
       src, uint32_t(1024 * 1024 * 1024), size_t(1024 * 1024));
   TEST_CHECK(!result.has_value());  // must fail with overflow error
 
   // Normal usage must still work.
-  const auto ok_result = tinyusdz::tydra::utils::ConstantToVertex(src, 4, 3);
+  const auto ok_result = lightusd::tydra::utils::ConstantToVertex(src, 4, 3);
   TEST_CHECK(ok_result.has_value());
   TEST_CHECK(ok_result->size() == 12);  // 3 vertices * 4 bytes
 }
@@ -794,9 +794,9 @@ void security_merge_path_overflow_test(void) {
   // Test is on the rendering data structures via composition graph.
   // Verify the composition graph GetMutableNode returns sentinel for
   // out-of-bounds indices rather than crashing.
-  tinyusdz::composition_graph::PrimIndex index;
-  tinyusdz::composition_graph::CompNode &node =
-      tinyusdz::composition_graph::GetMutableNode(index, uint16_t(65535));
+  lightusd::composition_graph::PrimIndex index;
+  lightusd::composition_graph::CompNode &node =
+      lightusd::composition_graph::GetMutableNode(index, uint16_t(65535));
   // Must not crash; the sentinel node is safe to reference.
   TEST_CHECK(true);
 }
@@ -881,7 +881,7 @@ void security_is_safe_asset_path_test(void) {
   {
     std::string out;
     bool ok =
-        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("../foo.usd",
+        lightusd::security_policy::ValidateAndNormalizeAssetPath("../foo.usd",
                                                                   &out);
     TEST_CHECK(!ok);
   }
@@ -889,7 +889,7 @@ void security_is_safe_asset_path_test(void) {
   // Paths with embedded ".." must be rejected
   {
     std::string out;
-    bool ok = tinyusdz::security_policy::ValidateAndNormalizeAssetPath(
+    bool ok = lightusd::security_policy::ValidateAndNormalizeAssetPath(
         "a/../../b/foo.usd", &out);
     TEST_CHECK(!ok);
   }
@@ -898,7 +898,7 @@ void security_is_safe_asset_path_test(void) {
   {
     std::string out;
     bool ok =
-        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("/etc/passwd",
+        lightusd::security_policy::ValidateAndNormalizeAssetPath("/etc/passwd",
                                                                   &out);
     TEST_CHECK(!ok);
   }
@@ -907,7 +907,7 @@ void security_is_safe_asset_path_test(void) {
   {
     std::string out;
     bool ok =
-        tinyusdz::security_policy::ValidateAndNormalizeAssetPath(
+        lightusd::security_policy::ValidateAndNormalizeAssetPath(
             "textures/albedo.png", &out);
     TEST_CHECK(ok);
   }
@@ -916,7 +916,7 @@ void security_is_safe_asset_path_test(void) {
   {
     std::string out;
     bool ok =
-        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("foo.usd",
+        lightusd::security_policy::ValidateAndNormalizeAssetPath("foo.usd",
                                                                   &out);
     TEST_CHECK(ok);
   }
@@ -925,7 +925,7 @@ void security_is_safe_asset_path_test(void) {
   {
     std::string out;
     bool ok =
-        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("", &out);
+        lightusd::security_policy::ValidateAndNormalizeAssetPath("", &out);
     TEST_CHECK(!ok);
   }
 }

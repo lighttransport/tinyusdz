@@ -66,8 +66,8 @@ def Xform "root" (
             {
                 uniform token info:id = "UsdUVTexture"
                 #asset inputs:file = @./assets/textures/texture-cat.jpg@
-                # WASM TinyUSDZ supports reading texture file from URL
-		asset inputs:file = @https://raw.githubusercontent.com/lighttransport/tinyusdz/171ae289c32a714d46961a5dcf9155ddd7183403/models/textures/texture-cat.jpg@
+                # WASM LightUSD supports reading texture file from URL
+		asset inputs:file = @https://raw.githubusercontent.com/lighttransport/lightusd/171ae289c32a714d46961a5dcf9155ddd7183403/models/textures/texture-cat.jpg@
                 token inputs:sourceColorSpace = "sRGB"
                 float2 inputs:st.connect = </root/_materials/Material_001/uvmap.outputs:result>
                 token inputs:wrapS = "repeat"

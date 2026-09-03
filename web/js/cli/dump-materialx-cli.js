@@ -2,7 +2,7 @@
 // MaterialX RenderMaterial Dump CLI Tool
 // Usage: node dump-materialx-cli.js <usd-file> [options]
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
@@ -300,7 +300,7 @@ async function dumpMaterials(options) {
 
   // Initialize loader
   const initStart = performance.now();
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: false });
   if (options.maxMemoryMB > 0) {
     loader.setMaxMemoryLimitMB(options.maxMemoryMB);

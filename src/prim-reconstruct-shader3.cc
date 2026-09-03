@@ -34,7 +34,7 @@
 // __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 [[maybe_unused]] constexpr auto kInputsVarname = "inputs:varname";
@@ -209,7 +209,7 @@ bool ReconstructShader<UsdUVTexture>(
                           texture->scale)
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:bias", UsdUVTexture,
                           texture->bias)
-    // tinyusdz extensions: UV set selection (index / name). Mirrored by the
+    // lightusd extensions: UV set selection (index / name). Mirrored by the
     // USDA printer (pprint-shader.cc) and USDC writer (sconv-shader.cc).
     PARSE_SHADER_INPUT_ATTRIBUTE(table, prop, "inputs:uv_set", UsdUVTexture,
                           texture->uv_set)
@@ -272,4 +272,4 @@ bool ReconstructShader<UsdTransform2d>(
 
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

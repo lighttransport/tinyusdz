@@ -217,9 +217,9 @@ Memory: pathIndexes[]      elementTokenIndexes[]      jumps[]
          SdfPathTable with full tree structure
 ```
 
-## Implementation Notes for TinyUSDZ
+## Implementation Notes for LightUSD
 
-When implementing PATHS encoding in TinyUSDZ crate-writer:
+When implementing PATHS encoding in LightUSD crate-writer:
 
 1. **Sorting**: Use `SdfPath::operator<` equivalent for stable ordering
 2. **Tree building**: Construct paths in depth-first order

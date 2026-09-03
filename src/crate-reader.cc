@@ -13,7 +13,7 @@
 #include <type_traits>
 #include "crate-reader.hh"
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
@@ -32,7 +32,7 @@
 #include "pprint-meta.hh"
 #include "core/prim-spec.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "tiny-format.hh"
@@ -55,7 +55,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 //constexpr auto kTypeName = "typeName";
@@ -86,11 +86,11 @@ bool SafeSizeForN(uint64_t n, size_t* out) {
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) 
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
     : _sr(sr), owned_memory_manager_(config.maxMemoryBudget), memory_manager_(&owned_memory_manager_), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     _config.numThreads = (std::max)(1, int(std::thread::hardware_concurrency()));
     PUSH_WARN("# of thread to use: " << std::to_string(_config.numThreads));
 #else
@@ -99,7 +99,7 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
   }
 
 
-#if !defined(TINYUSDZ_ENABLE_THREAD) || defined(__wasi__) || defined(__EMSCRIPTEN__)
+#if !defined(LIGHTUSD_ENABLE_THREAD) || defined(__wasi__) || defined(__EMSCRIPTEN__)
   PUSH_WARN("Threading is disabled for this build.");
   _config.numThreads = 1;
 #else
@@ -125,10 +125,10 @@ bool CrateReader::ReportProgress(float progress) {
   if (!_progress_callback) {
     return true;  // No callback, continue parsing
   }
-  
+
   // Clamp progress to [0.0, 1.0]
   progress = std::max(0.0f, std::min(1.0f, progress));
-  
+
   // Call the callback and return its result
   return _progress_callback(progress, _progress_userptr);
 }
@@ -1411,8 +1411,8 @@ bool CrateReader::ReadSection(crate::Section *s) {
 }
 
 bool CrateReader::ReadTokens() {
-  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadTokens");
-  
+  LIGHTUSD_PROFILE_SCOPE("crate-reader", "ReadTokens");
+
   // Report progress (20%)
   if (!ReportProgress(0.2f)) {
     PUSH_ERROR("Parsing cancelled by progress callback.");
@@ -1597,8 +1597,8 @@ bool CrateReader::ReadTokens() {
 }
 
 bool CrateReader::ReadStrings() {
-  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadStrings");
-  
+  LIGHTUSD_PROFILE_SCOPE("crate-reader", "ReadStrings");
+
   // Report progress (30%)
   if (!ReportProgress(0.3f)) {
     PUSH_ERROR("Parsing cancelled by progress callback.");
@@ -1641,7 +1641,7 @@ bool CrateReader::ReadFields() {
     PUSH_ERROR("Parsing cancelled by progress callback.");
     return false;
   }
-  
+
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -1782,7 +1782,7 @@ bool CrateReader::ReadFieldSets() {
     PUSH_ERROR("Parsing cancelled by progress callback.");
     return false;
   }
-  
+
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -2035,7 +2035,7 @@ bool CrateReader::BuildLiveFieldSets() {
       }
     }
   }
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
   else {
     std::vector<FieldValuePairVector> decoded(_fieldset_start_indices.size());
     std::atomic<size_t> next_position{0};
@@ -2118,7 +2118,7 @@ bool CrateReader::BuildLiveFieldSets() {
 
   DCOUT("# of live fieldsets = " << _live_fieldsets.size());
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef LIGHTUSD_LOCAL_DEBUG_PRINT
   size_t sum = 0;
   for (const auto &item : _live_fieldsets) {
     DCOUT("livefieldsets[" << item.first.value
@@ -2251,7 +2251,7 @@ bool CrateReader::ReadSpecs() {
     PUSH_ERROR("Parsing cancelled by progress callback.");
     return false;
   }
-  
+
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
@@ -2426,12 +2426,12 @@ bool CrateReader::ReadSpecs() {
     }
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef LIGHTUSD_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i != num_specs; ++i) {
     DCOUT("spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
                   << ", fieldset_index = " << _specs[i].fieldset_index.value
                   << ", spec_type = "
-                  << tinyusdz::to_string(_specs[i].spec_type));
+                  << lightusd::to_string(_specs[i].spec_type));
     if (auto specstr = GetSpecString(crate::Index(uint32_t(i)))) {
       DCOUT("spec[" << i << "] string_repr = " << specstr.value());
     }
@@ -2442,8 +2442,8 @@ bool CrateReader::ReadSpecs() {
 }
 
 bool CrateReader::ReadPaths() {
-  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadPaths");
-  
+  LIGHTUSD_PROFILE_SCOPE("crate-reader", "ReadPaths");
+
   // Report progress (70%)
   if (!ReportProgress(0.7f)) {
     PUSH_ERROR("Parsing cancelled by progress callback.");
@@ -2496,7 +2496,7 @@ bool CrateReader::ReadPaths() {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef LIGHTUSD_LOCAL_DEBUG_PRINT
   DCOUT("# of paths " << _paths.size());
 
   for (size_t i = 0; i < _paths.size(); i++) {
@@ -2508,7 +2508,7 @@ bool CrateReader::ReadPaths() {
 }
 
 bool CrateReader::ReadBootStrap() {
-  TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+  LIGHTUSD_PROFILE_FUNCTION("crate-reader");
 
   // Clear dedup map to prevent stale entries from previous file loads
   // This ensures each file starts with a clean dedup state
@@ -2560,7 +2560,7 @@ bool CrateReader::ReadBootStrap() {
   if ((version[0] == 0) && (version[1] <= 14)) {
     // ok
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported crate version {}.{}.{}. TinyUSDZ supports version 0.4.0 through 0.14.x",
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported crate version {}.{}.{}. LightUSD supports version 0.4.0 through 0.14.x",
       _version[0], _version[1], _version[2]));
   }
 
@@ -2582,8 +2582,8 @@ bool CrateReader::ReadBootStrap() {
 }
 
 bool CrateReader::ReadTOC() {
-  TINYUSDZ_PROFILE_FUNCTION("crate-reader");
-  
+  LIGHTUSD_PROFILE_FUNCTION("crate-reader");
+
   // Report progress (10% after bootstrap)
   if (!ReportProgress(0.1f)) {
     PUSH_ERROR("Parsing cancelled by progress callback.");
@@ -2748,4 +2748,4 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
 
 
 }  // namespace crate
-}  // namespace tinyusdz
+}  // namespace lightusd

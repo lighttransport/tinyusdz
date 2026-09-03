@@ -8,7 +8,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Helper: print a RelationshipProperty if authored
 static std::string print_rel_prop(const RelationshipProperty &rp,
@@ -489,4 +489,4 @@ std::string to_string(const MjcSensor &sensor, const uint32_t indent,
 #undef PRINT_PRIM_HEADER
 #undef PRINT_PRIM_FOOTER
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -51,7 +51,7 @@ them.
    by design (speed/memory over fidelity).
 3. **tusdrender / next** (DEFAULT): `ResolveMeshMaterialNext`
    (`tusdr_next.cc:837`) — a **hand-rolled UsdPreviewSurface resolver** on the
-   `tinyusdz::next` API that reads `inputs:diffuseColor` / `inputs:roughness` /
+   `lightusd::next` API that reads `inputs:diffuseColor` / `inputs:roughness` /
    … directly. **Never touches `RenderMaterial`.** This is the deepest
    divergence and the reason tusdrender cannot do OpenPBR.
 4. **tusdrender / legacy**: `RenderSceneConverter::ConvertToRenderScene` →

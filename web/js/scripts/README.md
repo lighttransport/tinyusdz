@@ -1,8 +1,8 @@
-# TinyUSDZ Blender Scripts
+# LightUSD Blender Scripts
 
-## TinyUSDZ Animation Clips Exporter (`tinyusdz_anim_clips.py`)
+## LightUSD Animation Clips Exporter (`lightusd_anim_clips.py`)
 
-A single-file Blender addon (v1.1) that exports **multiple Blender Actions** as USD animation clips.  Blender's built-in USD exporter only bakes the single active Action into one `UsdSkelAnimation`.  This addon fills the gap by discovering every Action in the scene (active + NLA) and emitting clip-boundary metadata that downstream consumers (TinyUSDZ viewer, custom pipelines) can use to split the timeline back into discrete clips.
+A single-file Blender addon (v1.1) that exports **multiple Blender Actions** as USD animation clips.  Blender's built-in USD exporter only bakes the single active Action into one `UsdSkelAnimation`.  This addon fills the gap by discovering every Action in the scene (active + NLA) and emitting clip-boundary metadata that downstream consumers (LightUSD viewer, custom pipelines) can use to split the timeline back into discrete clips.
 
 Two export workflows are provided:
 
@@ -25,34 +25,34 @@ Two export workflows are provided:
 1. Open Blender.
 2. **Edit > Preferences > Add-ons**.
 3. Click the gear icon > **Install from Disk**.
-4. Browse to `tinyusdz_anim_clips.py` and select it.
+4. Browse to `lightusd_anim_clips.py` and select it.
 5. Blender copies the file into its per-user addons directory (`~/.config/blender/<ver>/scripts/addons/` on Linux).
-6. Tick the checkbox next to **"TinyUSDZ Animation Clips Exporter"** to enable it.
+6. Tick the checkbox next to **"LightUSD Animation Clips Exporter"** to enable it.
 
 #### Option B — Manual copy
 
 ```bash
 # Linux
-cp tinyusdz_anim_clips.py ~/.config/blender/5.0/scripts/addons/
+cp lightusd_anim_clips.py ~/.config/blender/5.0/scripts/addons/
 
 # macOS
-cp tinyusdz_anim_clips.py ~/Library/Application\ Support/Blender/5.0/scripts/addons/
+cp lightusd_anim_clips.py ~/Library/Application\ Support/Blender/5.0/scripts/addons/
 
 # Windows
-copy tinyusdz_anim_clips.py %APPDATA%\Blender Foundation\Blender\5.0\scripts\addons\
+copy lightusd_anim_clips.py %APPDATA%\Blender Foundation\Blender\5.0\scripts\addons\
 ```
 
-Then enable in **Edit > Preferences > Add-ons** (search for "TinyUSDZ").
+Then enable in **Edit > Preferences > Add-ons** (search for "LightUSD").
 
 #### Verify installation
 
 After enabling, the Blender system console (`Window > Toggle System Console` on Windows; terminal on Linux/macOS) should print:
 
 ```
-[TinyUSDZ] Animation Clips Exporter v(1, 1, 0) registered
+[LightUSD] Animation Clips Exporter v(1, 1, 0) registered
 ```
 
-You should also see a **TinyUSDZ** tab in the 3D Viewport sidebar (press **N**).
+You should also see a **LightUSD** tab in the 3D Viewport sidebar (press **N**).
 
 ---
 
@@ -142,7 +142,7 @@ This is the simplest workflow.  Blender's standard USD export runs, and the hook
 Console output:
 
 ```
-[TinyUSDZ] Wrote 8 clip(s) to /root/CharacterRig:
+[LightUSD] Wrote 8 clip(s) to /root/CharacterRig:
   [0] MonkeySpin (XformOp, Mesh:AnimMonkey) frames 1-48
   [1] Walk (SkelAnimation, Armature:CharacterRig) frames 1-72
   [2] CamOrbit (XformOp, Camera:SceneCamera) frames 1-60
@@ -155,7 +155,7 @@ Attributes are written to the **first non-generated child prim** of the default 
 
 All multi-value fields use **`|` (pipe)** as separator.  Comma is avoided because action names may contain commas.
 
-Full USD attribute prefix: `userProperties:tinyusdz:animClips:`
+Full USD attribute prefix: `userProperties:lightusd:animClips:`
 
 | Attribute suffix | USD Type | Description |
 |-----------------|----------|-------------|
@@ -174,9 +174,9 @@ Full USD attribute prefix: `userProperties:tinyusdz:animClips:`
 When re-importing the USD with `property_import_mode='USER'` (or `'ALL'`), Blender strips the `userProperties:` prefix and creates custom properties on the corresponding Blender object:
 
 ```
-tinyusdz:animClips:clipCount = 8
-tinyusdz:animClips:names = MonkeySpin|MonkeyBounce|Walk|Idle|...
-tinyusdz:animClips:objectTypes = Mesh|Mesh|Armature|Armature|...
+lightusd:animClips:clipCount = 8
+lightusd:animClips:names = MonkeySpin|MonkeyBounce|Walk|Idle|...
+lightusd:animClips:objectTypes = Mesh|Mesh|Armature|Armature|...
 ```
 
 #### Design decisions
@@ -185,7 +185,7 @@ tinyusdz:animClips:objectTypes = Mesh|Mesh|Armature|Armature|...
 |----------|-----------|
 | Scalar strings, not arrays | Blender's USD importer silently drops `string[]` and `int[]` custom attributes.  Only scalar types (`string`, `int`, `float`) survive the round-trip. |
 | `\|` separator, not `,` | Action names like `"Walk, Fast"` would break CSV parsing.  Pipe is safe because `_sanitize_filename()` replaces `\|` when used in filenames. |
-| `userProperties:tinyusdz:` namespace | `userProperties:` is the Blender-recognized namespace for custom properties.  `tinyusdz:` sub-namespace avoids collision with other addons. |
+| `userProperties:lightusd:` namespace | `userProperties:` is the Blender-recognized namespace for custom properties.  `lightusd:` sub-namespace avoids collision with other addons. |
 | Write to first child, not default prim | Blender tags its generated root Xform with `customData.Blender.generated=1` and strips it on re-import.  Writing to the first real child ensures survival. |
 
 #### Bake modes
@@ -221,7 +221,7 @@ def Xform "root" (
 
 #### Steps
 
-1. Open the **TinyUSDZ** tab in the 3D Viewport sidebar (press **N**).
+1. Open the **LightUSD** tab in the 3D Viewport sidebar (press **N**).
 2. Review the detected clips in the panel list.
 3. Click **Export Separate Files**.
 4. Choose an output directory and a base name (defaults to the blend filename).
@@ -237,7 +237,7 @@ The operator:
 
 ### 6. Panel Location
 
-**3D Viewport > Sidebar (N) > TinyUSDZ tab**
+**3D Viewport > Sidebar (N) > LightUSD tab**
 
 The panel shows:
 
@@ -254,13 +254,13 @@ The panel shows:
 
 ### 7. Consumer-Side Integration
 
-#### JavaScript / TinyUSDZ Viewer
+#### JavaScript / LightUSD Viewer
 
 ```javascript
 // After loading the USD file, read custom attributes from the target prim.
 // Values are pipe-separated strings ("|").
 const SEP = '|';
-const NS = 'userProperties:tinyusdz:animClips:';
+const NS = 'userProperties:lightusd:animClips:';
 const version   = prim.getIntAttribute(NS + 'version');
 const clipCount = prim.getIntAttribute(NS + 'clipCount');
 const fps       = prim.getFloatAttribute(NS + 'fps');
@@ -279,9 +279,9 @@ for (let i = 0; i < clipCount; i++) {
 }
 ```
 
-#### TinyUSDZ C++ (`render-data.cc`) — Future TODO
+#### LightUSD C++ (`render-data.cc`) — Future TODO
 
-1. Read `userProperties:tinyusdz:animClips:*` attributes from child prims.
+1. Read `userProperties:lightusd:animClips:*` attributes from child prims.
 2. Parse `|`-separated strings into vectors.
 3. Split the concatenated timeline into multiple `AnimationClip` objects.
 4. Tag each with `sourceType` / `objectType`.
@@ -295,8 +295,8 @@ This is **not yet implemented**.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `[TinyUSDZ] pxr modules not available` | Running outside Blender, or Blender build without USD | Use official Blender 5.0+ build |
-| Hook does not fire | Addon not enabled | Edit > Preferences > Add-ons, search "TinyUSDZ", enable |
+| `[LightUSD] pxr modules not available` | Running outside Blender, or Blender build without USD | Use official Blender 5.0+ build |
+| Hook does not fire | Addon not enabled | Edit > Preferences > Add-ons, search "LightUSD", enable |
 | "Only 1 clip — no multi-clip metadata needed" | Only one Action exists across all objects | Push additional Actions to NLA tracks |
 | Metadata missing after re-import | Imported with `property_import_mode='NONE'` | Use `'USER'` or `'ALL'` |
 | Metadata on unexpected object | Hook writes to the first non-generated child prim of the default prim | Expected; the prim is just a carrier for global metadata |

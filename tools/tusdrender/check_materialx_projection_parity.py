@@ -95,10 +95,10 @@ def main() -> int:
     if len(sys.argv) != 2:
         return 2
     binary = pathlib.Path(sys.argv[1]).resolve()
-    cuda = (os.environ.get("TINYUSDZ_MTLX_PROJECTION_CUDA") == "1" and
+    cuda = (os.environ.get("LIGHTUSD_MTLX_PROJECTION_CUDA") == "1" and
             pathlib.Path("/dev/nvidia0").exists() and
             pathlib.Path("/dev/nvidia-uvm").exists())
-    hip = (os.environ.get("TINYUSDZ_MTLX_PROJECTION_HIP") == "1" and
+    hip = (os.environ.get("LIGHTUSD_MTLX_PROJECTION_HIP") == "1" and
            pathlib.Path("/dev/kfd").exists())
     ran = 0
     with tempfile.TemporaryDirectory(prefix="tusdrender-mtlx-projection-") as tmp:

@@ -33,7 +33,7 @@ struct half {
 
 ### 2. Half to Float Conversion
 
-Implemented `half_to_float()` function based on TinyUSDZ's conversion algorithm:
+Implemented `half_to_float()` function based on LightUSD's conversion algorithm:
 
 ```cpp
 inline float half_to_float(half h);
@@ -176,26 +176,26 @@ FP16 has only 2^16 = 65,536 possible bit patterns, making exhaustive testing fea
   3. Convert back to half via float
   4. Verify roundtrip accuracy
 
-## Integration with TinyUSDZ
+## Integration with LightUSD
 
-The fp16 implementation is designed to integrate seamlessly with TinyUSDZ's existing `value::half` type:
+The fp16 implementation is designed to integrate seamlessly with LightUSD's existing `value::half` type:
 
 ```cpp
-// TinyUSDZ's half type (in src/value-types.hh)
-namespace tinyusdz::value {
+// LightUSD's half type (in src/value-types.hh)
+namespace lightusd::value {
   struct half {
     uint16_t value;
   };
   float half_to_float(half h);
 }
 
-// Our implementation can be adapted to use TinyUSDZ's half directly
+// Our implementation can be adapted to use LightUSD's half directly
 ```
 
 **Integration Steps:**
-1. Replace `internal::half` with `tinyusdz::value::half`
-2. Use TinyUSDZ's `half_to_float()` function
-3. Add `dtoa_dragonbox` overload in TinyUSDZ's value printing code
+1. Replace `internal::half` with `lightusd::value::half`
+2. Use LightUSD's `half_to_float()` function
+3. Add `dtoa_dragonbox` overload in LightUSD's value printing code
 
 ## Performance Characteristics
 
@@ -234,7 +234,7 @@ For batch conversion of many fp16 values:
 
 1. **IEEE 754-2008 Standard**: Binary16 (half-precision) specification
 2. **Dragonbox Algorithm**: Junekey Jeon's efficient fp→string conversion
-3. **TinyUSDZ value-types.cc**: Reference half-precision conversion implementation
+3. **LightUSD value-types.cc**: Reference half-precision conversion implementation
 4. **Real-Time Rendering**: Half-precision usage in graphics pipelines
 
 ## Conclusion
@@ -243,7 +243,7 @@ The fp16 dtoa_dragonbox implementation provides:
 - ✅ Correct conversion for all fp16 values
 - ✅ Safe buffer sizes (exhaustively validated in future tests)
 - ✅ Consistent API with float/double implementations
-- ✅ Ready for integration with TinyUSDZ
+- ✅ Ready for integration with LightUSD
 - ✅ Efficient performance characteristics
 
 The implementation is production-ready and can be used immediately for fp16 value serialization in USD files and other applications.

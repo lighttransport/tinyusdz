@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - numeric helpers shared by value-parser translation units.
+// LightUSD Next - numeric helpers shared by value-parser translation units.
 
 #pragma once
 
@@ -12,7 +12,7 @@
 #include <string>
 #include <system_error>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace value_parser_detail {
 
@@ -172,4 +172,4 @@ inline bool DecimalToU64Checked(const char* s, uint64_t* out) {
 
 }  // namespace value_parser_detail
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

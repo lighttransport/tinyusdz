@@ -11,7 +11,7 @@
 #include "core/layer-types.hh"
 #include "../tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -124,10 +124,10 @@ size_t StripLargeArrays(Layer &layer, size_t threshold = 16);
 void Diff(const Layer &lhs, const Layer &rhs,
 
   /* key = primspec path */
-  tinyusdz::HashMap<std::string, PrimSpecDiff> &psDiffs,
+  lightusd::HashMap<std::string, PrimSpecDiff> &psDiffs,
 
   /* key = primspec path */
-  tinyusdz::HashMap<std::string, PropDiff> &propDiffs,
+  lightusd::HashMap<std::string, PropDiff> &propDiffs,
 
   const DiffOptions &opts = {},
 
@@ -161,4 +161,4 @@ std::pair<std::string, std::string> CenterValuePairForDiff(
     const std::string &lhs, const std::string &rhs, size_t window = 240);
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

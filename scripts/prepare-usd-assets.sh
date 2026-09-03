@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CACHE_DIR="${TINYUSDZ_VERIFY_CACHE:-${ROOT_DIR}/.cache/tinyusdz-verification}"
+CACHE_DIR="${LIGHTUSD_VERIFY_CACHE:-${ROOT_DIR}/.cache/lightusd-verification}"
 DEST="${CACHE_DIR}/usd-assets"
-MANIFEST="${TINYUSDZ_VERIFY_MANIFEST:-${ROOT_DIR}/tests/verification/manifest.json}"
+MANIFEST="${LIGHTUSD_VERIFY_MANIFEST:-${ROOT_DIR}/tests/verification/manifest.json}"
 CHECKOUT_ONLY=0
 
 while [[ $# -gt 0 ]]; do
@@ -24,11 +24,11 @@ REPO="$(node -e 'console.log(require(process.argv[1]).repositories.usd_assets.ur
 REF="$(node -e 'console.log(require(process.argv[1]).repositories.usd_assets.ref)' "${MANIFEST}")"
 
 if [[ ! -d "${DEST}/.git" ]]; then
-  [[ "${TINYUSDZ_VERIFY_OFFLINE:-0}" == 1 ]] && { echo "offline: missing USD-WG assets checkout ${DEST}" >&2; exit 2; }
+  [[ "${LIGHTUSD_VERIFY_OFFLINE:-0}" == 1 ]] && { echo "offline: missing USD-WG assets checkout ${DEST}" >&2; exit 2; }
   mkdir -p "$(dirname "${DEST}")"
   git clone --no-tags --filter=blob:none "${REPO}" "${DEST}"
 fi
-if [[ "${TINYUSDZ_VERIFY_OFFLINE:-0}" != 1 ]]; then
+if [[ "${LIGHTUSD_VERIFY_OFFLINE:-0}" != 1 ]]; then
   git -C "${DEST}" fetch --no-tags origin "${REF}"
 fi
 if ! git -C "${DEST}" cat-file -e "${REF}^{commit}" 2>/dev/null; then

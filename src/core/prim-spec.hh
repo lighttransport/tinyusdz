@@ -19,19 +19,19 @@
 #include "core/property.hh"
 #include "core/composition-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations needed before variant-types.hh
 class Prim;
 class PrimSpec;
 struct VariantSet;
 
-} // namespace tinyusdz
+} // namespace lightusd
 
 // variant-types.hh uses Prim/PrimSpec forward declarations
 #include "core/variant-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 /// Similar to PrimSpec
 /// PrimSpec is a Prim object state just after reading it from USDA and USDC.
@@ -88,24 +88,24 @@ class PrimSpec {
     return *this;
   }
 
-  const std::string &name() const TINYUSDZ_LIFETIMEBOUND { return _name; }
-  std::string &name() TINYUSDZ_LIFETIMEBOUND { return _name; }
+  const std::string &name() const LIGHTUSD_LIFETIMEBOUND { return _name; }
+  std::string &name() LIGHTUSD_LIFETIMEBOUND { return _name; }
 
-  const std::string &typeName() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &typeName() const LIGHTUSD_LIFETIMEBOUND {
     return _typeName;
   }
   // Can change type name
-  std::string &typeName() TINYUSDZ_LIFETIMEBOUND { return _typeName; }
+  std::string &typeName() LIGHTUSD_LIFETIMEBOUND { return _typeName; }
 
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND {
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND {
     return _specifier;
   }
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return _specifier; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return _specifier; }
 
-  const std::vector<PrimSpec> &children() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<PrimSpec> &children() const LIGHTUSD_LIFETIMEBOUND {
     return _children;
   }
-  std::vector<PrimSpec> &children() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<PrimSpec> &children() LIGHTUSD_LIFETIMEBOUND {
     return _children;
   }
 
@@ -175,28 +175,28 @@ class PrimSpec {
   ///
   /// key = variant name
   std::map<std::string, VariantSetSpec> &variantSets()
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _variantSets;
   }
   const std::map<std::string, VariantSetSpec> &variantSets() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _variantSets;
   }
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND {
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND {
     static const PrimMeta empty;
     return _metas ? *_metas : empty;
   }
 
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND {
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND {
     if (!_metas) _metas = std::make_unique<PrimMeta>();
     return *_metas;
   }
 
   using PropertyMap = std::map<std::string, Property>;
 
-  const PropertyMap &props() const TINYUSDZ_LIFETIMEBOUND { return _props; }
-  PropertyMap &props() TINYUSDZ_LIFETIMEBOUND { return _props; }
+  const PropertyMap &props() const LIGHTUSD_LIFETIMEBOUND { return _props; }
+  PropertyMap &props() LIGHTUSD_LIFETIMEBOUND { return _props; }
 
   const std::vector<Reference> &get_references();
   const ListEditQual &get_references_listedit_qualifier();
@@ -204,20 +204,20 @@ class PrimSpec {
   const std::vector<Payload> &get_payloads();
   const ListEditQual &get_payloads_listedit_qualifier();
 
-  const std::vector<value::token> &primChildren() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<value::token> &primChildren() const LIGHTUSD_LIFETIMEBOUND {
     return _primChildren;
   }
 
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND {
     return _properties;
   }
 
-  const std::string &get_current_working_path() const TINYUSDZ_LIFETIMEBOUND {
+  const std::string &get_current_working_path() const LIGHTUSD_LIFETIMEBOUND {
     return _current_working_path;
   }
 
   const std::vector<std::string> &get_asset_search_paths() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return _asset_search_paths;
   }
 
@@ -333,4 +333,4 @@ using PayloadList = std::vector<PayloadListOp>;
 
 }  // namespace prim
 
-} // namespace tinyusdz
+} // namespace lightusd

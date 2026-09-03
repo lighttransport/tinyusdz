@@ -54,7 +54,7 @@ struct Lexer {
             if (c == '\n') {
               curr++;
             }
-          } 
+          }
           row_++;
           column_ = 0;
         } else if (s == '\n') {
@@ -64,7 +64,7 @@ struct Lexer {
       } else {
         break;
       }
-    }   
+    }
   }
 
   bool skip_until_delim_or_close_paren(const char delim, const char close_paren) {
@@ -84,14 +84,14 @@ struct Lexer {
           if (c == '\n') {
             curr++;
           }
-        } 
+        }
         row_++;
         column_ = 0;
       } else if (s == '\n') {
         row_++;
         column_ = 0;
       }
-    }   
+    }
 
     return false;
   }
@@ -149,7 +149,7 @@ struct Lexer {
     while (!eof() && (n < n_trunc_chars)) {
       char c;
       look_char1(&c);
-      
+
       if ((c == '-') || (c == '+')) {
         if (has_sign || found_digit) {
           break;
@@ -245,7 +245,7 @@ bool lex_int_array(
         lexer.push_error("Invalid character found.");
         err = lexer.get_error();
         return false;
-      } 
+      }
 
       if (c == delim) {
         if (result.empty()) {
@@ -331,13 +331,13 @@ bool do_parse(
 
     for (uint32_t i = 0; i < nthreads; i++) {
       threads.emplace_back(std::thread([&] {
-        size_t j; 
+        size_t j;
 
         while ((j = cnt++) < results.size()) {
           int64_t val;
-          tinyusdz::tstring_view ts(spans[j].p_begin, size_t(spans[j].length));
-          if (!tinyusdz::str::parse_int64(ts, &val)) {
-            parse_failed = true; 
+          lightusd::tstring_view ts(spans[j].p_begin, size_t(spans[j].length));
+          if (!lightusd::str::parse_int64(ts, &val)) {
+            parse_failed = true;
           }
 
           results[j] = val;
@@ -357,16 +357,16 @@ bool do_parse(
   } else {
     for (size_t i = 0; i < spans.size(); i++) {
       int64_t val;
-      tinyusdz::tstring_view ts(spans[i].p_begin, size_t(spans[i].length));
-      if (!tinyusdz::str::parse_int64(ts, &val)) {
-        std::cerr << "parsing failure\n"; 
-        return false; 
+      lightusd::tstring_view ts(spans[i].p_begin, size_t(spans[i].length));
+      if (!lightusd::str::parse_int64(ts, &val)) {
+        std::cerr << "parsing failure\n";
+        return false;
       }
 
       results[i] = val;
     }
   }
-  
+
   auto end = std::chrono::steady_clock::now();
 
   std::cout << "n threads: " << nthreads << "\n";
@@ -382,7 +382,7 @@ int main(int argc, char **argv) {
   uint32_t nthreads = 1;
   bool delim_at_end = true;
   size_t n = 1024*1024*32;
-  
+
   if (argc > 1) {
     n = std::stoi(argv[1]);
   }
@@ -392,7 +392,7 @@ int main(int argc, char **argv) {
   if (argc > 3) {
     nthreads = std::stoi(argv[3]);
   }
-  
+
   lex_results.reserve(n);
 
   std::string input = gen_intarray(n, delim_at_end);
@@ -405,7 +405,7 @@ int main(int argc, char **argv) {
     std::cerr << err << "\n";
     return -1;
   }
-  
+
   auto end = std::chrono::steady_clock::now();
 
   std::cout << "n elems " << lex_results.size() << "\n";

@@ -3,7 +3,7 @@
 #
 # Build Python 3.10.6 and install it to ci/dist/python so that we don't need separated Python installation(which is sometimes difficult to setup on C.I. environment)
 #
-# This build is minimal and disables many features, including ZLIB and OpenSSL support, assuming TinyUSDZ python module does not require such python modules(ZLIB, SSL, MD5, SHA256, ...) 
+# This build is minimal and disables many features, including ZLIB and OpenSSL support, assuming LightUSD python module does not require such python modules(ZLIB, SSL, MD5, SHA256, ...)
 #
 git clone https://github.com/lighttransport/python-cmake-buildsystem ci/python-cmake-buildsystem
 curdir=`pwd`

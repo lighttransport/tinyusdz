@@ -1,4 +1,4 @@
-// Example C++ application comparing OpenUSD and TinyUSDZ
+// Example C++ application comparing OpenUSD and LightUSD
 #include <iostream>
 #include <memory>
 #include <string>
@@ -12,8 +12,8 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/base/tf/diagnostic.h>
 
-// TinyUSDZ headers
-#include "tinyusdz.hh"
+// LightUSD headers
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -70,14 +70,14 @@ void analyzeWithOpenUSD(const std::string& filepath) {
     std::cout << "Total prims: " << totalPrims << std::endl;
 }
 
-void analyzeWithTinyUSDZ(const std::string& filepath) {
-    std::cout << "\n=== TinyUSDZ Analysis ===" << std::endl;
+void analyzeWithLightUSD(const std::string& filepath) {
+    std::cout << "\n=== LightUSD Analysis ===" << std::endl;
 
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     std::string warn, err;
 
     // Load the USD file
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
 
     if (!warn.empty()) {
         std::cout << "Warnings: " << warn << std::endl;
@@ -88,7 +88,7 @@ void analyzeWithTinyUSDZ(const std::string& filepath) {
     }
 
     if (!ret) {
-        std::cerr << "Failed to load USD file with TinyUSDZ" << std::endl;
+        std::cerr << "Failed to load USD file with LightUSD" << std::endl;
         return;
     }
 
@@ -131,8 +131,8 @@ void analyzeWithTinyUSDZ(const std::string& filepath) {
 
     // Try Tydra conversion
     std::cout << "\nTrying Tydra conversion..." << std::endl;
-    tinyusdz::tydra::RenderScene renderScene;
-    tinyusdz::tydra::RenderSceneConverter converter;
+    lightusd::tydra::RenderScene renderScene;
+    lightusd::tydra::RenderSceneConverter converter;
 
     if (converter.ConvertToRenderScene(stage, &renderScene)) {
         std::cout << "Tydra conversion successful!" << std::endl;
@@ -145,7 +145,7 @@ void analyzeWithTinyUSDZ(const std::string& filepath) {
 }
 
 int main(int argc, char* argv[]) {
-    std::cout << "USD Comparison Tool (OpenUSD + TinyUSDZ)" << std::endl;
+    std::cout << "USD Comparison Tool (OpenUSD + LightUSD)" << std::endl;
     std::cout << "=========================================" << std::endl;
 
     std::string filepath;
@@ -166,9 +166,9 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        analyzeWithTinyUSDZ(filepath);
+        analyzeWithLightUSD(filepath);
     } catch (const std::exception& e) {
-        std::cerr << "TinyUSDZ exception: " << e.what() << std::endl;
+        std::cerr << "LightUSD exception: " << e.what() << std::endl;
     }
 
     std::cout << "\n=========================================" << std::endl;

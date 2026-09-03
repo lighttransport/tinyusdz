@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - asset-path anchors.
+// LightUSD Next - asset-path anchors.
 
 #include "asset-anchor.hh"
 
@@ -15,7 +15,7 @@
 #include <unistd.h>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -89,4 +89,4 @@ const std::string& AssetAnchorPath(uint32_t id) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

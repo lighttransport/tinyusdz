@@ -8,28 +8,28 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
 const distDir = path.resolve(packageRoot, 'dist');
-const smokeDir = path.join(os.tmpdir(), `tinyusdz-npm-smoke-${process.pid}`);
+const smokeDir = path.join(os.tmpdir(), `lightusd-npm-smoke-${process.pid}`);
 
 const REQUIRED_STAGED_FILES = [
   'index.js',
   'LICENSE',
   'README.md',
   'package.json',
-  'tinyusdz.js',
-  'tinyusdz.wasm',
-  'tinyusdz.wasm.zst',
-  'tinyusdz_64.js',
-  'tinyusdz_64.wasm',
-  'tinyusdz_64.wasm.zst',
-  'tinyusdz_next.js',
-  'tinyusdz_next.wasm',
-  'tinyusdz_next.wasm.zst',
-  'tinyusdz_next_64.js',
-  'tinyusdz_next_64.wasm',
-  'tinyusdz_next_64.wasm.zst',
-  'TinyUSDZLoader.js',
-  'TinyUSDZLoaderUtils.js',
-  'TinyUSDZWorkerLoader.js',
+  'lightusd.js',
+  'lightusd.wasm',
+  'lightusd.wasm.zst',
+  'lightusd_64.js',
+  'lightusd_64.wasm',
+  'lightusd_64.wasm.zst',
+  'lightusd_next.js',
+  'lightusd_next.wasm',
+  'lightusd_next.wasm.zst',
+  'lightusd_next_64.js',
+  'lightusd_next_64.wasm',
+  'lightusd_next_64.wasm.zst',
+  'LightUSDLoader.js',
+  'LightUSDLoaderUtils.js',
+  'LightUSDWorkerLoader.js',
   'usdzconvert.js'
 ];
 
@@ -84,39 +84,39 @@ function validatePublishableContents(manifest) {
 function prepareSmokeFixture() {
   fs.rmSync(smokeDir, { recursive: true, force: true });
   fs.mkdirSync(path.join(smokeDir, 'node_modules'), { recursive: true });
-  fs.symlinkSync(distDir, path.join(smokeDir, 'node_modules', 'tinyusdz'), 'dir');
+  fs.symlinkSync(distDir, path.join(smokeDir, 'node_modules', 'lightusd'), 'dir');
 
   const script = `
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import * as pkg from 'tinyusdz';
-import { TinyUSDZLoader as DeepLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import TinyUSDZWorkerLoaderDefault, { TinyUSDZWorkerLoader } from 'tinyusdz/TinyUSDZWorkerLoader.js';
+import * as pkg from 'lightusd';
+import { LightUSDLoader as DeepLoader } from 'lightusd/LightUSDLoader.js';
+import LightUSDWorkerLoaderDefault, { LightUSDWorkerLoader } from 'lightusd/LightUSDWorkerLoader.js';
 
 const require = createRequire(import.meta.url);
 
-assert.equal(typeof pkg.TinyUSDZLoader, 'function');
-assert.equal(typeof pkg.TinyUSDZLoaderUtils, 'function');
+assert.equal(typeof pkg.LightUSDLoader, 'function');
+assert.equal(typeof pkg.LightUSDLoaderUtils, 'function');
 assert.equal(typeof pkg.TextureLoadingManager, 'function');
-assert.equal(typeof pkg.TinyUSDZComposer, 'function');
+assert.equal(typeof pkg.LightUSDComposer, 'function');
 assert.equal(typeof pkg.MaterialX, 'object');
 assert.equal(typeof pkg.OpenPBRWebGL, 'object');
 assert.equal(typeof pkg.OpenPBRTSL, 'object');
-assert.equal(pkg.TinyUSDZLoader, DeepLoader);
-assert.equal(TinyUSDZWorkerLoaderDefault, TinyUSDZWorkerLoader);
-assert.equal(require.resolve('tinyusdz/TinyUSDZLoader.js').endsWith('TinyUSDZLoader.js'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz.wasm').endsWith('tinyusdz.wasm'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz.wasm.zst').endsWith('tinyusdz.wasm.zst'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz_64.wasm').endsWith('tinyusdz_64.wasm'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz_64.wasm.zst').endsWith('tinyusdz_64.wasm.zst'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz_next.wasm').endsWith('tinyusdz_next.wasm'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz_next.wasm.zst').endsWith('tinyusdz_next.wasm.zst'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz_next_64.wasm').endsWith('tinyusdz_next_64.wasm'), true);
-assert.equal(require.resolve('tinyusdz/tinyusdz_next_64.wasm.zst').endsWith('tinyusdz_next_64.wasm.zst'), true);
+assert.equal(pkg.LightUSDLoader, DeepLoader);
+assert.equal(LightUSDWorkerLoaderDefault, LightUSDWorkerLoader);
+assert.equal(require.resolve('lightusd/LightUSDLoader.js').endsWith('LightUSDLoader.js'), true);
+assert.equal(require.resolve('lightusd/lightusd.wasm').endsWith('lightusd.wasm'), true);
+assert.equal(require.resolve('lightusd/lightusd.wasm.zst').endsWith('lightusd.wasm.zst'), true);
+assert.equal(require.resolve('lightusd/lightusd_64.wasm').endsWith('lightusd_64.wasm'), true);
+assert.equal(require.resolve('lightusd/lightusd_64.wasm.zst').endsWith('lightusd_64.wasm.zst'), true);
+assert.equal(require.resolve('lightusd/lightusd_next.wasm').endsWith('lightusd_next.wasm'), true);
+assert.equal(require.resolve('lightusd/lightusd_next.wasm.zst').endsWith('lightusd_next.wasm.zst'), true);
+assert.equal(require.resolve('lightusd/lightusd_next_64.wasm').endsWith('lightusd_next_64.wasm'), true);
+assert.equal(require.resolve('lightusd/lightusd_next_64.wasm.zst').endsWith('lightusd_next_64.wasm.zst'), true);
 
 // Instantiate the lean next-only modules (wasm32 + wasm64) and check the
-// embind API surface used by the next-first TinyUSDZLoader.
-for (const nextModule of ['tinyusdz/tinyusdz_next.js', 'tinyusdz/tinyusdz_next_64.js']) {
+// embind API surface used by the next-first LightUSDLoader.
+for (const nextModule of ['lightusd/lightusd_next.js', 'lightusd/lightusd_next_64.js']) {
   const factory = (await import(nextModule)).default;
   assert.equal(typeof factory, 'function', nextModule + ' default export is a module factory');
   const instance = await factory();
@@ -125,12 +125,12 @@ for (const nextModule of ['tinyusdz/tinyusdz_next.js', 'tinyusdz/tinyusdz_next_6
   }
 }
 
-// The default tinyusdz product is the explicit legacy-compatible module.
-for (const legacyModule of ['tinyusdz/tinyusdz.js', 'tinyusdz/tinyusdz_64.js']) {
+// The default lightusd product is the explicit legacy-compatible module.
+for (const legacyModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
   const factory = (await import(legacyModule)).default;
   assert.equal(typeof factory, 'function', legacyModule + ' default export is a module factory');
   const instance = await factory();
-  assert.equal(typeof instance.TinyUSDZLoaderNative, 'function',
+  assert.equal(typeof instance.LightUSDLoaderNative, 'function',
     legacyModule + ' exposes the legacy loader');
   assert.equal(typeof instance.NextUSDZConverterNative, 'undefined',
     legacyModule + ' must not silently include the next-only converter');

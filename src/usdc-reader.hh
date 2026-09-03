@@ -7,9 +7,9 @@
 #include <functional>
 #include <cstdint>
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 ///
@@ -97,4 +97,4 @@ class USDCReader {
 };
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

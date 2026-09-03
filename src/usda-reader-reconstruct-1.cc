@@ -6,9 +6,9 @@
 // per-type back-end codegen is divided across parallel compiles. See usda-reader-impl.hh.
 #include "usda-reader-impl.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usda {
 
 #define USDA_INST_REGISTER_RECONSTRUCT(__T) \
@@ -35,6 +35,6 @@ USDA_INST_REGISTER_RECONSTRUCT(GeomCylinder_1)
 #undef USDA_INST_REGISTER_RECONSTRUCT
 
 }  // namespace usda
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // !LIGHTUSD_DISABLE_MODULE_USDA_READER

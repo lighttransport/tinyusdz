@@ -7,12 +7,12 @@
 #include "nonstd/expected.hpp"
 #include "../value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 // Forward declarations
 template<typename T> struct Animatable;
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace utils {
 
@@ -50,18 +50,18 @@ nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
 /// Convert constant attribute to facevarying variability
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
-    const std::vector<T> &src, 
+    const std::vector<T> &src,
     const std::vector<uint32_t> &faceVertexCounts);
 
 /// Convert constant attribute to vertex variability
 nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
-    const std::vector<uint8_t> &src, 
-    uint32_t elementSize, 
+    const std::vector<uint8_t> &src,
+    uint32_t elementSize,
     size_t numVertices);
 
 /// Convert constant attribute to facevarying for byte data
 nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
-    const std::vector<uint8_t> &src, 
+    const std::vector<uint8_t> &src,
     uint32_t elementSize,
     const std::vector<uint32_t> &faceVertexCounts);
 
@@ -112,6 +112,6 @@ std::string SanitizeAssetPath(const std::string& path,
                               bool allow_parent_refs = false);
 
 }  // namespace utils
-}  // namespace tydra  
-}  // namespace tinyusdz
+}  // namespace tydra
+}  // namespace lightusd
 

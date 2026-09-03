@@ -41,7 +41,7 @@
 #include "core/variant-types.hh"    // VariantSet
 #include "xform.hh"                 // Xformable
 
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr auto kSkelRoot = "SkelRoot";
 constexpr auto kSkeleton = "Skeleton";
@@ -52,7 +52,7 @@ constexpr auto kBlendShape = "BlendShape";
 struct BlendShape {
   std::string name;
   Specifier spec{Specifier::Def};
-  int64_t parent_id{-1}; 
+  int64_t parent_id{-1};
 
   void set_name(const std::string &name_) {
     name = name_;
@@ -62,8 +62,8 @@ struct BlendShape {
     return name;
   }
 
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<std::vector<value::vector3f>>
       offsets;  // uniform vector3f[]. required property
@@ -87,10 +87,10 @@ struct BlendShape {
   ///
   bool add_inbetweenBlendShape(double weight, Attribute &&attr);
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
   PrimMeta meta;
 
@@ -121,8 +121,8 @@ struct Skeleton : Xformable {
     return name;
   }
 
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
 
   TypedAttribute<std::vector<value::matrix4d>>
@@ -196,10 +196,10 @@ struct Skeleton : Xformable {
     return true;
   }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
   private:
   std::vector<value::token> _primChildren;
@@ -220,8 +220,8 @@ struct SkelRoot : Xformable {
     return name;
   }
 
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
 
   TypedAttribute<Animatable<Extent>>
@@ -247,10 +247,10 @@ struct SkelRoot : Xformable {
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
   PrimMeta meta;
 
@@ -282,8 +282,8 @@ struct SkelAnimation {
     return name;
   }
 
-  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
-  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
+  Specifier &specifier() LIGHTUSD_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const LIGHTUSD_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<std::vector<value::token>> blendShapes;  // uniform token[]
   TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights;  // float[]
@@ -292,7 +292,7 @@ struct SkelAnimation {
       rotations;  // quatf[] Joint-local unit quaternion rotations
   TypedAttribute<Animatable<std::vector<value::half3>>>
       scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use
-               // float3 for TinyUSDZ for convenience?
+               // float3 for LightUSD for convenience?
   TypedAttribute<Animatable<std::vector<value::float3>>>
       translations;  // float3[] Joint-local translation.
 
@@ -320,10 +320,10 @@ struct SkelAnimation {
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
   PrimMeta meta;
 
@@ -356,7 +356,7 @@ bool SkelSortInfluences(std::vector<int> &indices, std::vector<float> &weights, 
 //
 // Build Skeleleton Topology(hierarchy) from Skeleton's joints.
 // (Usually from Skeleton's `joints`attribute).
-// 
+//
 // If you want to get handy, full Skeleton hierarchy information, Use Tydra's BuildSkelHierarchy() API.
 //
 // @param[in] `joints` Joint paths
@@ -364,7 +364,7 @@ bool SkelSortInfluences(std::vector<int> &indices, std::vector<float> &weights, 
 // @param[out] `err` Error message when `joints` info is invalid.
 //
 // @return true upon success. false when error.
-// 
+//
 bool BuildSkelTopology(
   const std::vector<value::token> &joints,
   std::vector<int> &dst,
@@ -402,4 +402,4 @@ DEFINE_TYPE_TRAIT(BlendShape, kBlendShape, TYPE_ID_BLENDSHAPE, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

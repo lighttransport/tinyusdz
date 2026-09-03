@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MJCF -> USD -> MJCF roundtrip runner for the TinyUSDZ WASM build.
+# MJCF -> USD -> MJCF roundtrip runner for the LightUSD WASM build.
 #
 # For each MuJoCo model it runs the two CLI legs:
 #   1. forward:  cli/urdf-to-usd.js  <model.xml> --input-format mjcf  -> USD (usdc)

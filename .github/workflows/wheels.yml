@@ -84,12 +84,12 @@ jobs:
     # GitHub-issued OIDC token is exchanged for a short-lived upload token by
     # PyPI. The pypi.org project must have a matching publisher registered:
     #   owner:    lighttransport
-    #   repo:     tinyusdz
+    #   repo:     lightusd
     #   workflow: wheels.yml
     #   env:      pypi
     environment:
       name: pypi
-      url: https://pypi.org/p/tinyusdz
+      url: https://pypi.org/p/lightusd
     permissions:
       id-token: write   # mint OIDC token for PyPI
       contents: read

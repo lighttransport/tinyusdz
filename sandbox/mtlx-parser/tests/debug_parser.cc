@@ -3,7 +3,7 @@
 #include "../include/mtlx-xml-parser.hh"
 #include <iostream>
 
-using namespace tinyusdz::mtlx;
+using namespace lightusd::mtlx;
 
 int main() {
   const char* xml = R"(<?xml version="1.0"?>
@@ -11,20 +11,20 @@ int main() {
       <nodegraph name="test"/>
     </materialx>
   )";
-  
+
   std::cout << "Parsing simple XML..." << std::endl;
-  
+
   XMLDocument doc;
   if (!doc.ParseString(xml)) {
     std::cerr << "Parse failed: " << doc.GetError() << std::endl;
-    
+
     // Try with tokenizer directly
     XMLTokenizer tokenizer;
     if (!tokenizer.Initialize(xml, std::strlen(xml))) {
       std::cerr << "Tokenizer init failed: " << tokenizer.GetError() << std::endl;
       return 1;
     }
-    
+
     Token token;
     while (tokenizer.NextToken(token)) {
       if (token.type == TokenType::Error) {
@@ -32,7 +32,7 @@ int main() {
         break;
       }
       if (token.type == TokenType::EndOfDocument) break;
-      
+
       switch (token.type) {
         case TokenType::StartTag:
           std::cout << "Start: " << token.name << std::endl;
@@ -50,17 +50,17 @@ int main() {
           break;
       }
     }
-    
+
     return 1;
   }
-  
+
   std::cout << "Parse succeeded!" << std::endl;
-  
+
   auto root = doc.GetRoot();
   if (root) {
     std::cout << "Root: " << root->GetName() << std::endl;
     std::cout << "Version: " << root->GetAttribute("version") << std::endl;
   }
-  
+
   return 0;
 }

@@ -12,7 +12,7 @@
 #include "timesamples.hh"
 #include "typed-array.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Test helper to check if deduplication is working
 template<typename T>

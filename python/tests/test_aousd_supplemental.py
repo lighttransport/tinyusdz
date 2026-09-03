@@ -1,42 +1,42 @@
 # SPDX-License-Identifier: Apache-2.0
-"""AOUSD Core supplemental conformance via tinyusdz Python binding.
+"""AOUSD Core supplemental conformance via lightusd Python binding.
 
 Discovers the supplemental checkout via (first wins):
 * $AOUSD_CORE_SUPPLEMENTAL_ROOT
-* $TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT
-* ~/.cache/tinyusdz/core-spec-supplemental-release_dec2025/releases/1.0.1
+* $LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT
+* ~/.cache/lightusd/core-spec-supplemental-release_dec2025/releases/1.0.1
 * ../core-spec-supplemental-public (symlink created by fetch script)
 * ./aousd-supplemental (dev symlink)
-* /mnt/nvme02/work/tinyusdz-repo/core-spec-supplemental-public
+* /mnt/nvme02/work/lightusd-repo/core-spec-supplemental-public
 
 If no checkout is found the whole module is skipped (CI without data).
 Each category is exercised with a capped sample so the suite stays fast;
-set TINYUSDZ_AOUSD_CAP=0 for full corpus or TINYUSDZ_AOUSD_FILTER=prefix.
+set LIGHTUSD_AOUSD_CAP=0 for full corpus or LIGHTUSD_AOUSD_FILTER=prefix.
 """
 import os
 import pathlib
 import json
 import pytest
 
-import tinyusdz
+import lightusd
 
 np = pytest.importorskip("numpy")
 
 
 def _find_aousd_root():
-    for env in ("AOUSD_CORE_SUPPLEMENTAL_ROOT", "TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT"):
+    for env in ("AOUSD_CORE_SUPPLEMENTAL_ROOT", "LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT"):
         v = os.environ.get(env)
         if v and pathlib.Path(v).is_dir():
             return pathlib.Path(v)
     candidates = [
-        pathlib.Path.home() / ".cache/tinyusdz/core-spec-supplemental-release_dec2025/releases/1.0.1",
-        pathlib.Path.home() / ".cache/tinyusdz/core-spec-supplemental-release_dec2025",
+        pathlib.Path.home() / ".cache/lightusd/core-spec-supplemental-release_dec2025/releases/1.0.1",
+        pathlib.Path.home() / ".cache/lightusd/core-spec-supplemental-release_dec2025",
         pathlib.Path(__file__).resolve().parents[3] / "core-spec-supplemental-public" / "releases" / "1.0.1",
         pathlib.Path(__file__).resolve().parents[3] / "core-spec-supplemental-public",
         pathlib.Path(__file__).resolve().parents[2] / "aousd-supplemental",
         pathlib.Path(__file__).resolve().parents[3] / "aousd-supplemental",
-        pathlib.Path("/mnt/nvme02/work/tinyusdz-repo/core-spec-supplemental-public/releases/1.0.1"),
-        pathlib.Path("/mnt/nvme02/work/tinyusdz-repo/core-spec-supplemental-public"),
+        pathlib.Path("/mnt/nvme02/work/lightusd-repo/core-spec-supplemental-public/releases/1.0.1"),
+        pathlib.Path("/mnt/nvme02/work/lightusd-repo/core-spec-supplemental-public"),
         pathlib.Path("/mnt/nvme02/work/core-spec-supplemental-public/releases/1.0.1"),
     ]
     for p in candidates:
@@ -46,15 +46,15 @@ def _find_aousd_root():
         if p.name == "core-spec-supplemental-public" and (p / "releases" / "1.0.1" / "LICENSE").is_file():
             return p / "releases" / "1.0.1"
     # Try to find via dev symlink we created
-    for p in [pathlib.Path("/mnt/nvme02/work/tinyusdz-repo/dev/aousd-supplemental")]:
+    for p in [pathlib.Path("/mnt/nvme02/work/lightusd-repo/dev/aousd-supplemental")]:
         if p.is_dir() and (p / "LICENSE").is_file():
             return p
     return None
 
 
 AOUSD_ROOT = _find_aousd_root()
-CAP = int(os.environ.get("TINYUSDZ_AOUSD_CAP", "50"))
-FILTER = os.environ.get("TINYUSDZ_AOUSD_FILTER", "")
+CAP = int(os.environ.get("LIGHTUSD_AOUSD_CAP", "50"))
+FILTER = os.environ.get("LIGHTUSD_AOUSD_FILTER", "")
 
 pytestmark = [
     pytest.mark.aousd,
@@ -89,8 +89,8 @@ def test_aousd_file_formats_load():
     ok = 0
     for f in files:
         try:
-            st = tinyusdz.load(str(f))
-        except tinyusdz.UsdError as e:
+            st = lightusd.load(str(f))
+        except lightusd.UsdError as e:
             pytest.fail(f"file_formats load failed {f}: {e}")
         assert st.stats["prim_count"] >= 0
         # zero-copy sanity on first mesh
@@ -122,10 +122,10 @@ def test_aousd_value_resolution_load():
     ok = 0
     for e in entries:
         try:
-            st = tinyusdz.load(str(e))
-        except tinyusdz.UsdError as e2:
+            st = lightusd.load(str(e))
+        except lightusd.UsdError as e2:
             # Some value_resolution cases intentionally use features beyond
-            # tinyusdz coverage; treat as non-blocking but print
+            # lightusd coverage; treat as non-blocking but print
             print(f"[aousd] value_resolution skip {e}: {e2}")
             continue
         assert st.stats["prim_count"] >= 0
@@ -160,8 +160,8 @@ def test_aousd_composition_load():
             continue
         try:
             # next default is now fallback-free; corpus expects standin=render fallback for some cases (e.g. /FergusCloak)
-            st = tinyusdz.load(str(entry), variants={"standin": "render"})
-        except tinyusdz.UsdError as e:
+            st = lightusd.load(str(entry), variants={"standin": "render"})
+        except lightusd.UsdError as e:
             # Composition gaps are expected for a small ratchet; print and continue
             print(f"[aousd] composition skip {case_dir.name}: {e}")
             continue
@@ -186,4 +186,4 @@ def test_aousd_data_types_types():
     assert docs, "no data_types json"
     # At least verify our type system can resolve core type names
     for name in ["float", "double", "int", "point3f", "color3f", "matrix4d", "token", "asset"]:
-        assert tinyusdz.type_from_name(name) != 0
+        assert lightusd.type_from_name(name) != 0

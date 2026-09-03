@@ -2,7 +2,7 @@
 // Copyright 2022-Present Syoyo Fujita.
 #include "tiny-format.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace fmt {
 
 namespace detail {
@@ -82,5 +82,5 @@ std::ostringstream &format_sv(std::ostringstream &ss,
 std::string format(const std::string &in) { return in; }
 
 }  // namespace fmt
-}  // namespace tinyusdz
+}  // namespace lightusd
 

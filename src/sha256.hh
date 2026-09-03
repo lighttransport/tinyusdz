@@ -3,9 +3,9 @@
 #include <cstddef>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::string sha256(const char *binary, size_t size);
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 

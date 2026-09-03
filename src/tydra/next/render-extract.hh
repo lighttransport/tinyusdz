@@ -14,7 +14,7 @@
 #include "next/stage/stage.hh"
 #include "next/types/value-view.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -36,7 +36,7 @@ bool IsMeshRenderableTypeName(const std::string& type_name);
 bool IsUnsupportedRenderableTypeName(const std::string& type_name);
 
 struct RenderPrimRecord {
-  ::tinyusdz::next::UsdPrim prim;
+  ::lightusd::next::UsdPrim prim;
   RenderPrimKind kind = RenderPrimKind::Other;
   std::string path;
   std::string type_name;
@@ -87,9 +87,9 @@ struct RenderExtractResult {
 };
 
 struct PointInstancerData {
-  ::tinyusdz::next::UsdPrim prim;
+  ::lightusd::next::UsdPrim prim;
   std::string path;
-  std::vector<::tinyusdz::next::Path> prototypes;
+  std::vector<::lightusd::next::Path> prototypes;
   std::vector<int32_t> proto_indices;
   std::vector<float> positions;
   std::vector<float> orientations;
@@ -99,30 +99,30 @@ struct PointInstancerData {
   std::vector<int64_t> ids;
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
-  std::vector<::tinyusdz::next::PointInstancerTransform> transforms;
+  std::vector<::lightusd::next::PointInstancerTransform> transforms;
   bool valid = false;
   std::string validation_error;
 };
 
-bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
+bool CollectRenderPrims(const ::lightusd::next::Stage& stage,
                         const RenderExtractOptions& options,
                         RenderExtractResult* out);
 
-bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
+bool ReadPointInstancerData(const ::lightusd::next::UsdPrim& prim,
                             double time_code,
                             PointInstancerData* out,
                             bool compute_transforms = true);
 
-void GatherMeshPrims(const ::tinyusdz::next::UsdPrim& root,
-                     std::vector<::tinyusdz::next::UsdPrim>* out);
+void GatherMeshPrims(const ::lightusd::next::UsdPrim& root,
+                     std::vector<::lightusd::next::UsdPrim>* out);
 
-void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
+void CollectPrototypePaths(const ::lightusd::next::Stage& stage,
                            std::unordered_set<std::string>* out);
 
 template <typename T>
 struct ValueArrayRead {
-  ::tinyusdz::next::ArrayScratch<T> scratch;
-  ::tinyusdz::next::ArrayView<T> view;
+  ::lightusd::next::ArrayScratch<T> scratch;
+  ::lightusd::next::ArrayView<T> view;
 
   bool empty() const { return view.empty(); }
   size_t size() const { return view.size; }
@@ -131,58 +131,58 @@ struct ValueArrayRead {
   const T* end() const { return view.end(); }
 };
 
-bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out);
-bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim,
-                    const ::tinyusdz::next::PropNameId& name,
+bool ReadFloatArray(const ::lightusd::next::UsdPrim& prim,
+                    const ::lightusd::next::PropNameId& name,
                     double time, ValueArrayRead<float>* out);
-bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+bool ReadIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out);
-bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim,
-                  const ::tinyusdz::next::PropNameId& name,
+bool ReadIntArray(const ::lightusd::next::UsdPrim& prim,
+                  const ::lightusd::next::PropNameId& name,
                   double time, ValueArrayRead<int32_t>* out);
-bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+bool ReadInt64Array(const ::lightusd::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<int64_t>* out);
-bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim,
-                    const ::tinyusdz::next::PropNameId& name,
+bool ReadInt64Array(const ::lightusd::next::UsdPrim& prim,
+                    const ::lightusd::next::PropNameId& name,
                     double time, ValueArrayRead<int64_t>* out);
-bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+bool ReadUIntArray(const ::lightusd::next::UsdPrim& prim, const char* name,
                    double time, ValueArrayRead<uint32_t>* out);
-bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim,
-                   const ::tinyusdz::next::PropNameId& name,
+bool ReadUIntArray(const ::lightusd::next::UsdPrim& prim,
+                   const ::lightusd::next::PropNameId& name,
                    double time, ValueArrayRead<uint32_t>* out);
-bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+bool ReadUInt64Array(const ::lightusd::next::UsdPrim& prim, const char* name,
                      double time, ValueArrayRead<uint64_t>* out);
-bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim,
-                     const ::tinyusdz::next::PropNameId& name,
+bool ReadUInt64Array(const ::lightusd::next::UsdPrim& prim,
+                     const ::lightusd::next::PropNameId& name,
                      double time, ValueArrayRead<uint64_t>* out);
 
-std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+std::vector<float> ReadFloatArrayCopy(const ::lightusd::next::UsdPrim& prim,
                                       const char* name, double time);
-std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
-                                      const ::tinyusdz::next::PropNameId& name,
+std::vector<float> ReadFloatArrayCopy(const ::lightusd::next::UsdPrim& prim,
+                                      const ::lightusd::next::PropNameId& name,
                                       double time);
-std::vector<int32_t> ReadIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+std::vector<int32_t> ReadIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
                                       const char* name, double time);
-std::vector<int32_t> ReadIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
-                                      const ::tinyusdz::next::PropNameId& name,
+std::vector<int32_t> ReadIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
+                                      const ::lightusd::next::PropNameId& name,
                                       double time);
-std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+std::vector<int64_t> ReadInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
                                         const char* name, double time);
-std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
-                                        const ::tinyusdz::next::PropNameId& name,
+std::vector<int64_t> ReadInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
+                                        const ::lightusd::next::PropNameId& name,
                                         double time);
-std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+std::vector<uint32_t> ReadUIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
                                         const char* name, double time);
-std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
-                                        const ::tinyusdz::next::PropNameId& name,
+std::vector<uint32_t> ReadUIntArrayCopy(const ::lightusd::next::UsdPrim& prim,
+                                        const ::lightusd::next::PropNameId& name,
                                         double time);
-std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
                                           const char* name, double time);
-std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
-                                          const ::tinyusdz::next::PropNameId& name,
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::lightusd::next::UsdPrim& prim,
+                                          const ::lightusd::next::PropNameId& name,
                                           double time);
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

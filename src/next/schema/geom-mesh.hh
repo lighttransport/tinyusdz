@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdGeomMesh Schema
+// LightUSD Next - UsdGeomMesh Schema
 // Convenience API for Mesh primitives
 
 #pragma once
@@ -10,7 +10,7 @@
 #include "../types/value.hh"
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// UsdGeomMesh - Typed wrapper for Mesh prims
@@ -112,4 +112,4 @@ bool IsMesh(const UsdPrim& prim);
 std::vector<UsdGeomMesh> GetAllMeshes(const Stage& stage);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

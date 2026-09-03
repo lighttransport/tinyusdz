@@ -29,7 +29,7 @@
 
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 #ifdef __GNUC__
@@ -64,4 +64,4 @@ bool ReconstructPrim<SpatialAudio>(
 }
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

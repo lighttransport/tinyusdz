@@ -1,3 +1,3 @@
-TinyUSDZ version of usdcat in pxrUSD.
+LightUSD version of usdcat in pxrUSD.
 
-Assume this project is built from tinyusdz root(../../)
+Assume this project is built from lightusd root(../../)

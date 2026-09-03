@@ -60,7 +60,7 @@ To build the WASM module, you need:
    ```bash
    cd web
    rm -rf build
-   emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=ON -Bbuild
+   emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DLIGHTUSD_WASM64=ON -Bbuild
    cd build
    make
    ```

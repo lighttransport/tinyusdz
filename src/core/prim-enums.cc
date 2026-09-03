@@ -3,7 +3,7 @@
 
 #include "prim-enums.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v) {
   if ("faceVarying" == v) {
@@ -50,4 +50,4 @@ nonstd::optional<Kind> KindFromString(const std::string &str) {
   }
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

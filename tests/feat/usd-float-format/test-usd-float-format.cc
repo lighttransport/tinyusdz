@@ -6,7 +6,7 @@
 // OpenUSD (pxr_double_conversion ToShortest/ToShortestSingle) prints floats with
 // FIXED notation for decimal exponents in [-6, 15) and scientific outside, with
 // NO '+' on positive exponents and NO zero-padding -- e.g. `0.000001`, `1e-7`,
-// `0.0000019073486`, `1.234567890123456e15`. tinyusdz's default (shortest &
+// `0.0000019073486`, `1.234567890123456e15`. lightusd's default (shortest &
 // robust dragonbox) switches to scientific below 1e-4 and pads the exponent to
 // two digits with a sign -- `1e-06`, `1.9073486e-06`, `2.0887073e-07`.
 //
@@ -17,10 +17,10 @@
 #include <string>
 
 #include "str-util.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "pprinter.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 
@@ -38,7 +38,7 @@ void expect(const std::string &got, const std::string &want,
 }  // namespace
 
 int main() {
-  // (1) DEFAULT (shortest & robust) -- existing tinyusdz notation.
+  // (1) DEFAULT (shortest & robust) -- existing lightusd notation.
   SetUSDFloatFormat(false);
   expect(dtos(0.01), "0.01", "default 0.01");
   expect(dtos(0.0001), "0.0001", "default 1e-4");
@@ -75,7 +75,7 @@ int main() {
   // std::ostream 6-significant-digit formatting (LOSSY); under the opt-in they
   // use the shortest round-trip. A crate stores metersPerUnit=0.01 by inlining
   // the float 0.01f and widening to double on read (= 0.009999999776482582);
-  // usdcat prints all 17 digits, tinyusdz's default truncated to "0.01".
+  // usdcat prints all 17 digits, lightusd's default truncated to "0.01".
   {
     const double widened = static_cast<double>(0.01f);  // 0.009999999776482582
     std::string warn, err;

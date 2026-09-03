@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -567,4 +567,4 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

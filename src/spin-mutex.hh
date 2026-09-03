@@ -5,7 +5,7 @@
 //
 // Used where a lock is needed on rarely-contended paths (diagnostics,
 // cold caches) and where std::mutex is unsuitable: the class layout must not
-// depend on build-private defines like TINYUSDZ_ENABLE_THREAD, and the header
+// depend on build-private defines like LIGHTUSD_ENABLE_THREAD, and the header
 // must compile in single-threaded WASM/WASI builds (std::atomic_flag does;
 // <mutex> may not).
 
@@ -22,17 +22,17 @@
 #endif
 #if defined(__SANITIZE_THREAD__) || __has_feature(thread_sanitizer)
 #include <sched.h>
-#define TINYUSDZ_SPIN_YIELD() sched_yield()
+#define LIGHTUSD_SPIN_YIELD() sched_yield()
 #else
-#define TINYUSDZ_SPIN_YIELD() ((void)0)
+#define LIGHTUSD_SPIN_YIELD() ((void)0)
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct SpinMutex {
   void lock() {
     while (_flag.test_and_set(std::memory_order_acquire)) {
-      TINYUSDZ_SPIN_YIELD();
+      LIGHTUSD_SPIN_YIELD();
     }
   }
   void unlock() { _flag.clear(std::memory_order_release); }
@@ -52,4 +52,4 @@ struct ScopedSpinLock {
   M &_m;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenUSD No-Python Build Setup Script for comparison with TinyUSDZ
+# OpenUSD No-Python Build Setup Script for comparison with LightUSD
 # This script clones, builds, and installs OpenUSD WITHOUT Python bindings
 # Useful for C++-only applications and minimal deployments
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// usddiff CLI — TinyUSDZ WASM
+// usddiff CLI — LightUSD WASM
 //
 // Diff two USD files at the Layer / PrimSpec / Attribute level. Files are loaded
 // as Layers (pre-composition), so the full prim/attribute tree is compared.
@@ -26,10 +26,10 @@ import { loadWasm } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
 // CLI runs with plain `node`.
-const wasmGlue = new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href;
+const wasmGlue = new URL('../src/lightusd/lightusd.js', import.meta.url).href;
 
 function printUsage() {
-  console.log(`USD Layer Diff Tool — TinyUSDZ WASM
+  console.log(`USD Layer Diff Tool — LightUSD WASM
 
 USAGE:
   node cli/usddiff.js [OPTIONS] <file1> <file2>

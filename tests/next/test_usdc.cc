@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Reader Unit Tests
+// LightUSD Next - USDC Reader Unit Tests
 
 #include <iostream>
 #include <cassert>
@@ -20,7 +20,7 @@
 #include "next/types/value-view.hh"
 #include "next/writer/usdc-writer.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 // ============================================================
 // Crate format tests
@@ -451,13 +451,13 @@ static std::string FindUsdcFixture(const char* basename) {
     std::ifstream f(path);
     if (f.good()) return path;
   }
-#ifdef TINYUSDZ_TEST_REPO_ROOT
+#ifdef LIGHTUSD_TEST_REPO_ROOT
   // The relative prefixes above only resolve when the build directory sits
   // directly under the repo root. Fall back to the root baked in at configure
   // time so the test also works from an out-of-tree build dir.
   {
     std::string path =
-        std::string(TINYUSDZ_TEST_REPO_ROOT) + "/tests/usdc/" + basename;
+        std::string(LIGHTUSD_TEST_REPO_ROOT) + "/tests/usdc/" + basename;
     std::ifstream f(path);
     if (f.good()) return path;
   }
@@ -1004,7 +1004,7 @@ void test_lazy_quat_array_swizzle() {
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next USDC Reader Tests ===" << std::endl;
+  std::cout << "=== LightUSD Next USDC Reader Tests ===" << std::endl;
   std::cout << std::endl;
 
   try {

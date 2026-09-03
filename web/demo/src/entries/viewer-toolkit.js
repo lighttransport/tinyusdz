@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { showLoader, hideLoader } from '../tusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
 const SAMPLES = [
   { label: 'Suzanne PBR', url: './assets/suzanne-pbr.usda' },
@@ -314,12 +314,12 @@ function buildDisplayGUI() {
 
 async function ensureLoader() {
   if (loader) return loader;
-  setStatus('Initializing TinyUSDZ WASM...');
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    showLoader('Loading TinyUSDZ WASM...', document.getElementById('viewport'));
+  setStatus('Initializing LightUSD WASM...');
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+    showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
   await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
     hideLoader();
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
 }
 
@@ -341,8 +341,8 @@ async function loadURL(url, label) {
   setStatus(`Building scene...`);
   originalMaterials = [];
   world.clear();
-  const defaultMat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
     usd.getDefaultRootNode(), defaultMat, usd, {
       preferredMaterialType: 'usdpreviewsurface',
       textureCache: new Map(),
@@ -414,8 +414,8 @@ async function loadLocalFile(file) {
   });
   originalMaterials = [];
   world.clear();
-  const defaultMat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), defaultMat, usd, {
+  const defaultMat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(usd.getDefaultRootNode(), defaultMat, usd, {
     preferredMaterialType: 'usdpreviewsurface', textureCache: new Map(),
   });
   world.add(threeNode);

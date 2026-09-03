@@ -1,6 +1,6 @@
 # Three.js Integration Notes
 
-Notes on Three.js animation and MaterialX systems relevant to Tydra RenderScene conversion and the TinyUSDZ JavaScript viewer.
+Notes on Three.js animation and MaterialX systems relevant to Tydra RenderScene conversion and the LightUSD JavaScript viewer.
 
 ## Animation System
 
@@ -57,12 +57,12 @@ Three.js's own `MaterialXLoader` is **WebGPU only** (experimental): it supports
 Standard Surface materials, procedural textures, and noise nodes via TSL (Three
 Shading Language) for node-based authoring, with no WebGL/WebGL2 fallback.
 
-The TinyUSDZ viewer does **not** rely on `MaterialXLoader`. It ships both a
+The LightUSD viewer does **not** rely on `MaterialXLoader`. It ships both a
 WebGPU demo (`web/js/materialx-webgpu.js`, TSL `NodeMaterial`) and a WebGL2 demo
 (`web/js/materialx-webgl2.js`, a custom OpenPBR WebGL material via
-`TinyUSDZOpenPBR_WebGL.js`) — see the WebGL fallback strategy below.
+`LightUSDOpenPBR_WebGL.js`) — see the WebGL fallback strategy below.
 
-### TinyUSDZ MaterialX Architecture
+### LightUSD MaterialX Architecture
 
 Supported shader models:
 - `MtlxUsdPreviewSurface` (`src/usdMtlx.hh`): MaterialX-extended UsdPreviewSurface
@@ -87,7 +87,7 @@ class RenderMaterial {
 
 ### Property Mapping (Tydra -> Three.js)
 
-| TinyUSDZ/Tydra | Three.js | Notes |
+| LightUSD/Tydra | Three.js | Notes |
 |----------------|----------|-------|
 | OpenPBRSurface.base_color | standard_surface.base_color | Direct |
 | OpenPBRSurface.base_metalness | standard_surface.metalness | Direct |

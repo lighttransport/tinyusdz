@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdPhysics Collision Schema Implementation
+// LightUSD Next - UsdPhysics Collision Schema Implementation
 
 #include "physics-collision.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool IsPhysicsCollisionGroup(const UsdPrim& prim) {
@@ -40,4 +40,4 @@ bool GetPhysicsCollisionGroupData(const Stage& stage, const UsdPrim& prim,
 }
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

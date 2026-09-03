@@ -18,4 +18,4 @@ cd tests/fuzzer
 rm -rf build
 CXX=clang++ CC=clang meson -Dprefix=$OUT build
 cd build
-ninja && cp fuzz_intcoding fuzz_tinyusdz fuzz_usdaparser $OUT/
+ninja && cp fuzz_intcoding fuzz_lightusd fuzz_usdaparser $OUT/

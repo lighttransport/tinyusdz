@@ -1,4 +1,4 @@
-# TinyUSDZ Web Demos
+# LightUSD Web Demos
 
 24 interactive browser demos for USD loading, MaterialX, hair/fur, skinning, animation,
 physics simulation, composition, export, and more.
@@ -25,7 +25,7 @@ npm run dev               # builds local WASM + starts Vite dev server
 
 ## Development Path
 
-The dev server (`npm run dev`) builds TinyUSDZ WASM from source using the
+The dev server (`npm run dev`) builds LightUSD WASM from source using the
 local Emscripten toolchain, then serves the demo from the local source tree.
 
 ```bash
@@ -39,7 +39,7 @@ npm install
 npm run dev
 
 # Or run the prepare step manually if you already built WASM
-npm run prepare:local-tinyusdz
+npm run prepare:local-lightusd
 vite --mode development
 ```
 
@@ -118,13 +118,13 @@ step described by the exporter documentation.
 
 ### How it works
 
-1. `prepare-local-tinyusdz.sh` configures two CMake builds:
-   - `web/build_ninja/` — legacy WASM (`tinyusdz.wasm` + `tinyusdz.js`)
-   - `web/build_next_ninja/` — next WASM (`tinyusdz_next.wasm` + `tinyusdz_next.js`)
-2. Build artifacts are copied to `web/js/src/tinyusdz/`
-3. Vite serves JS modules from `web/js/src/tinyusdz/` via the `tinyusdz` alias
+1. `prepare-local-lightusd.sh` configures two CMake builds:
+   - `web/build_ninja/` — legacy WASM (`lightusd.wasm` + `lightusd.js`)
+   - `web/build_next_ninja/` — next WASM (`lightusd_next.wasm` + `lightusd_next.js`)
+2. Build artifacts are copied to `web/js/src/lightusd/`
+3. Vite serves JS modules from `web/js/src/lightusd/` via the `lightusd` alias
 4. Hot-reload is available for JS changes; WASM changes require re-running
-   `npm run prepare:local-tinyusdz`
+   `npm run prepare:local-lightusd`
 
 ### Bootstrap scripts
 
@@ -147,7 +147,7 @@ bash web/bootstrap-linux-demodev.sh
 
 ## Production Path
 
-The production build uses the pre-built `tinyusdz` npm package (no Emscripten
+The production build uses the pre-built `lightusd` npm package (no Emscripten
 toolchain needed).
 
 ```bash
@@ -167,7 +167,7 @@ npm run preview
 
 | Package | Purpose |
 |---------|---------|
-| `tinyusdz` | Pre-built WASM + JS loader (production) |
+| `lightusd` | Pre-built WASM + JS loader (production) |
 | `three` | 3D rendering (MeshPhysicalMaterial, etc.) |
 | `lil-gui` | GUI controls (sliders, color pickers) |
 | `@lighttransport/mujoco-wasm` | MuJoCo physics WASM |
@@ -176,7 +176,7 @@ npm run preview
 ### Production build notes
 
 - WASM files are emitted to `dist/assets/` with content hashes
-- The `tinyusdz` package is excluded from Vite's dependency pre-bundling
+- The `lightusd` package is excluded from Vite's dependency pre-bundling
   (`optimizeDeps.exclude`) to ensure correct WASM path resolution
 - COOP/COEP headers (`Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Embedder-Policy: require-corp`) are required for

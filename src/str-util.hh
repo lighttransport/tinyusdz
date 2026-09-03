@@ -13,7 +13,7 @@
 
 #include "nonstd/optional.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr size_t kMaxUTF8Codepoint = 0x10ffff;
 
@@ -254,7 +254,7 @@ inline bool isValidIdentifier(const std::string &str, bool is_utf8 = true) {
     return is_valid_utf8_identifier(str);
   } else {
     // legacy
-    
+
     // first char
     // [a-ZA-Z_]
     if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
@@ -284,9 +284,9 @@ std::string makeIdentifierValid(const std::string &str, bool is_utf8 = true);
 ///
 /// Simply add number suffix to make unique string.
 ///
-/// - plane -> plane1 
-/// - sphere1 -> sphere11 
-/// - xform4 -> xform41 
+/// - plane -> plane1
+/// - sphere1 -> sphere11
+/// - xform4 -> xform41
 ///
 ///
 bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name);
@@ -352,8 +352,8 @@ inline std::string codepoint_to_utf8(uint32_t code) {
 
 
 //
-// float/double to string 
-// Currently tinyusdz uses dragonbox algorithm
+// float/double to string
+// Currently lightusd uses dragonbox algorithm
 //
 // buffer must be at least 25 bytes.
 // filled string is not null-terminated.
@@ -421,13 +421,13 @@ size_t dtos(float v, char* buffer);
 size_t dtos(double v, char* buffer);
 
 ///
-/// Opt-in: format floats/doubles like OpenUSD's usdcat instead of tinyusdz's
+/// Opt-in: format floats/doubles like OpenUSD's usdcat instead of lightusd's
 /// default (shortest & robust). Default false = existing behavior.
 ///
 /// OpenUSD (pxr_double_conversion ToShortest/ToShortestSingle) uses fixed
 /// notation for decimal exponents in [-6, 15) and scientific outside, with NO
 /// `+` sign on positive exponents and NO zero-padding (e.g. `0.0000019073486`,
-/// `1e-7`, `1.234e15`). tinyusdz's default switches to scientific below 1e-4 and
+/// `1e-7`, `1.234e15`). lightusd's default switches to scientific below 1e-4 and
 /// pads the exponent to two digits with a sign (`1.9073486e-06`, `e+15`). Both
 /// produce the same shortest round-trip digits; only the notation differs.
 ///
@@ -582,4 +582,4 @@ inline std::string SubstituteExpressionVariables(
   return result;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

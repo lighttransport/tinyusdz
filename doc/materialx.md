@@ -1,6 +1,6 @@
-# MaterialX Support in TinyUSDZ
+# MaterialX Support in LightUSD
 
-TinyUSDZ provides MaterialX integration including parsing `.mtlx` files, color space conversions, OpenPBR/StandardSurface shader support, and a JavaScript MaterialX pipeline for Three.js.
+LightUSD provides MaterialX integration including parsing `.mtlx` files, color space conversions, OpenPBR/StandardSurface shader support, and a JavaScript MaterialX pipeline for Three.js.
 
 ## Source Files
 
@@ -20,7 +20,7 @@ TinyUSDZ provides MaterialX integration including parsing `.mtlx` files, color s
 | `src/tydra/render-data-material.cc` | ConvertMaterial / OpenPBR + UsdPreviewSurface shader conversion |
 | `src/tydra/render-data-material-mtlx.cc` | MaterialX NodeGraph traversal (`ExtractMtlxNodeGraphInfo`) |
 | `src/tydra/materialx-to-json.{hh,cc}` | MaterialX to JSON conversion |
-| `web/js/src/tinyusdz/TinyUSDZMaterialX.js` | JS OpenPBR to Three.js conversion |
+| `web/js/src/lightusd/LightUSDMaterialX.js` | JS OpenPBR to Three.js conversion |
 
 ## Supported Shader Types
 
@@ -30,7 +30,7 @@ TinyUSDZ provides MaterialX integration including parsing `.mtlx` files, color s
 | Standard Surface | `MtlxAutodeskStandardSurface` | `ND_standard_surface_surfaceshader` |
 | USD Preview Surface | `UsdPreviewSurface` / `MtlxUsdPreviewSurface` | `UsdPreviewSurface` |
 
-(`info:id` constants: `kNdOpenPbrSurfaceSurfaceshader`, `kNdStandardSurfaceSurfaceshader` in `src/usdMtlx.hh`; `kUsdPreviewSurface` in `src/usdShade.hh`. Note tinyusdz uses the bare `UsdPreviewSurface` id, not `ND_UsdPreviewSurface_surfaceshader`.)
+(`info:id` constants: `kNdOpenPbrSurfaceSurfaceshader`, `kNdStandardSurfaceSurfaceshader` in `src/usdMtlx.hh`; `kUsdPreviewSurface` in `src/usdShade.hh`. Note lightusd uses the bare `UsdPreviewSurface` id, not `ND_UsdPreviewSurface_surfaceshader`.)
 
 ### MaterialXConfigAPI
 
@@ -310,7 +310,7 @@ Test files: `tests/feat/node-mtlx/*.usda`
 
 ### OpenPBR Parameters and Three.js MeshPhysicalMaterial Mapping
 
-TinyUSDZ parses and converts the full OpenPBR parameter set (struct `OpenPBRSurfaceShader` in `src/tydra/render-data-shader.hh`; defaults below). The Three.js MeshPhysicalMaterial target supports only a subset. The MaterialX input names are the OpenPBR `inputs:<name>` attributes; Blender v4.5+ emits the same names.
+LightUSD parses and converts the full OpenPBR parameter set (struct `OpenPBRSurfaceShader` in `src/tydra/render-data-shader.hh`; defaults below). The Three.js MeshPhysicalMaterial target supports only a subset. The MaterialX input names are the OpenPBR `inputs:<name>` attributes; Blender v4.5+ emits the same names.
 
 Support legend: `Y` full, `~` partial / workaround, `N` no Three.js equivalent.
 
@@ -355,21 +355,21 @@ Three.js limitations: no subsurface scattering, no colored/volumetric transmissi
 import {
     convertOpenPBRToMeshPhysicalMaterial,      // Immediate (textures load async)
     convertOpenPBRToMeshPhysicalMaterialLoaded  // Await all textures
-} from 'tinyusdz/TinyUSDZMaterialX.js';
+} from 'lightusd/LightUSDMaterialX.js';
 
 const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(matData, usdScene, options);
 ```
 
-HDR/EXR textures supported via TinyUSDZ WASM decoder (HDR) and Three.js EXRLoader.
+HDR/EXR textures supported via LightUSD WASM decoder (HDR) and Three.js EXRLoader.
 
 ### NodeGraph Optimizer
 
-Location: `web/js/src/tinyusdz/TinyUSDZMaterialX.js`
+Location: `web/js/src/lightusd/LightUSDMaterialX.js`
 
 Simplifies MaterialX node graphs from Blender export:
 
 ```javascript
-import { optimizeNodeGraph, NodeGraphOptimizationLevel } from 'tinyusdz/TinyUSDZMaterialX.js';
+import { optimizeNodeGraph, NodeGraphOptimizationLevel } from 'lightusd/LightUSDMaterialX.js';
 const optimized = optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD);
 ```
 

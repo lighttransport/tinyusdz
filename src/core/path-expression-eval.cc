@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -272,4 +272,4 @@ bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
   return e.Eval();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

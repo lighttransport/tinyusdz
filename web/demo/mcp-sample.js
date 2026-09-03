@@ -6,8 +6,8 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js'
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js'
 
 // MCP
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -24,7 +24,7 @@ style.textContent = `
     pointer-events: none;
     z-index: 1000;
   }
-  
+
   .region-selection-status {
     position: fixed;
     top: 10px;
@@ -48,7 +48,7 @@ const gui = new GUI({ width: 450 });
 let ui_state = {}
 ui_state['rot_scale'] = 1.0;
 ui_state['enable_rotation'] = false;
-ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
+ui_state['defaultMtl'] = LightUSDLoaderUtils.createDefaultMaterial();
 
 ui_state['envMapIntensity'] = 1.0; // NOTE: pi(3.14) is good for pisaHDR;
 ui_state['ambient'] = 0.4;
@@ -193,7 +193,7 @@ gizmoFolder.add(params, 'regionSelectionEnabled').name('Region Selection Mode').
   ui_state['regionSelectionEnabled'] = value;
   const controls = ui_state['controls'];
   const statusIndicator = ui_state['statusIndicator'];
-  
+
   if (value) {
     // Disable OrbitControls when region selection is enabled
     if (controls) {
@@ -203,7 +203,7 @@ gizmoFolder.add(params, 'regionSelectionEnabled').name('Region Selection Mode').
       statusIndicator.style.display = 'block';
     }
     console.log('Region selection mode enabled - OrbitControls disabled');
-    
+
     // Clear any existing selection when switching modes
     clearSelection();
   } else {
@@ -215,7 +215,7 @@ gizmoFolder.add(params, 'regionSelectionEnabled').name('Region Selection Mode').
       statusIndicator.style.display = 'none';
     }
     console.log('Region selection mode disabled - OrbitControls enabled');
-    
+
     // Clear selection when disabling
     clearSelection();
   }
@@ -316,9 +316,9 @@ materialFolder.open();
 
 async function switchEnvironmentMap(type) {
   console.log('Switching environment map to:', type);
-  
+
   let envmap = null;
-  
+
   switch (type) {
     case 'pisa':
       // Load HDR cube map (original)
@@ -326,29 +326,29 @@ async function switchEnvironmentMap(type) {
         .setPath('assets/textures/cube/pisaHDR/')
         .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr']);
       break;
-      
+
     case 'goegap':
       // Load equirectangular HDR
       envmap = await new RGBELoader()
         .loadAsync('assets/textures/goegap_1k.hdr');
       envmap.mapping = THREE.EquirectangularReflectionMapping;
       break;
-      
+
     case 'studio':
       // Generate synthetic studio lighting
       envmap = generateStudioLighting();
       break;
   }
-  
+
   if (envmap) {
     // Update scene background and environment
     scene.background = envmap;
     scene.environment = envmap;
-    
+
     // Update default material
     ui_state['defaultMtl'].envMap = envmap;
     ui_state['defaultMtl'].needsUpdate = true;
-    
+
     // Update all materials in the scene immediately
     scene.traverse((object) => {
       if (object.material) {
@@ -386,7 +386,7 @@ async function switchEnvironmentMap(type) {
         }
       }
     });
-    
+
     console.log('Environment map switched successfully');
   }
 }
@@ -396,33 +396,33 @@ function generateStudioLighting() {
   const width = 512;
   const height = 256;
   const data = new Uint8Array(width * height * 4); // RGBA format
-  
+
   for (let i = 0; i < height; i++) {
     for (let j = 0; j < width; j++) {
       const index = (i * width + j) * 4;
-      
+
       // Convert to spherical coordinates
       const phi = (j / width) * Math.PI * 2; // longitude
       const theta = (i / height) * Math.PI; // latitude
-      
+
       // Create studio lighting: bright top, darker bottom, with some directional lights
       let intensity = 0.1; // base ambient
-      
+
       // Top hemisphere brighter
       if (theta < Math.PI / 2) {
         intensity += 0.8 * (1 - theta / (Math.PI / 2));
       }
-      
+
       // Add some directional key lights
       const keyLight1 = Math.max(0, Math.cos(phi - Math.PI / 4) * Math.cos(theta - Math.PI / 6));
       const keyLight2 = Math.max(0, Math.cos(phi - Math.PI * 1.2) * Math.cos(theta - Math.PI / 4));
-      
+
       intensity += keyLight1 * 2.0 + keyLight2 * 1.5;
-      
+
       // Clamp intensity and convert to 0-255 range
       intensity = Math.min(intensity, 3.0);
       const normalizedIntensity = Math.min(intensity / 3.0 * 255, 255);
-      
+
       // Set RGBA values (slightly warm lighting)
       data[index] = normalizedIntensity * 1.0;     // R
       data[index + 1] = normalizedIntensity * 0.9; // G
@@ -430,37 +430,37 @@ function generateStudioLighting() {
       data[index + 3] = 255;                       // A (full opacity)
     }
   }
-  
+
   const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.UnsignedByteType);
   texture.mapping = THREE.EquirectangularReflectionMapping;
   texture.needsUpdate = true;
-  
+
   return texture;
 }
 
 function applyDebugMaterialParams(material) {
   const debugMat = ui_state['debugMaterial'];
-  
+
   // Apply diffuse color (base color for PBR materials)
   if (material.color !== undefined) {
     material.color.setRGB(debugMat.diffuseColor.r, debugMat.diffuseColor.g, debugMat.diffuseColor.b);
   }
-  
+
   // Apply roughness
   if (material.roughness !== undefined) {
     material.roughness = debugMat.roughness;
   }
-  
+
   // Apply clearcoat (only for MeshPhysicalMaterial)
   if (material.isMeshPhysicalMaterial && material.clearcoat !== undefined) {
     material.clearcoat = debugMat.clearcoat;
   }
-  
+
   // Apply clearcoat roughness (only for MeshPhysicalMaterial)
   if (material.isMeshPhysicalMaterial && material.clearcoatRoughness !== undefined) {
     material.clearcoatRoughness = debugMat.clearcoatRoughness;
   }
-  
+
   // Store original maps for restoration
   if (!material._originalMaps) {
     material._originalMaps = {
@@ -470,34 +470,34 @@ function applyDebugMaterialParams(material) {
       normalMap: material.normalMap
     };
   }
-  
+
   // Control diffuse map (base color map)
   if (material._originalMaps.map !== undefined) {
     material.map = debugMat.diffuseMapEnabled ? material._originalMaps.map : null;
   }
-  
+
   // Control AO map
   if (material._originalMaps.aoMap !== undefined) {
     material.aoMap = debugMat.aoMapEnabled ? material._originalMaps.aoMap : null;
   }
-  
+
   // Control roughness map
   if (material._originalMaps.roughnessMap !== undefined) {
     material.roughnessMap = debugMat.roughnessMapEnabled ? material._originalMaps.roughnessMap : null;
   }
-  
+
   // Control normal map
   if (material._originalMaps.normalMap !== undefined) {
     material.normalMap = debugMat.normalMapEnabled ? material._originalMaps.normalMap : null;
   }
-  
+
   material.needsUpdate = true;
 }
 
 function readMaterialParamsFromScene() {
   // Find the first material in the scene to read its parameters
   let foundMaterial = null;
-  
+
   scene.traverse((object) => {
     if (object.material && !foundMaterial) {
       if (Array.isArray(object.material)) {
@@ -507,56 +507,56 @@ function readMaterialParamsFromScene() {
       }
     }
   });
-  
+
   if (foundMaterial) {
     console.log('Reading material parameters from:', foundMaterial);
-    
+
     // Read diffuse color
     if (foundMaterial.color !== undefined) {
       ui_state['debugMaterial'].diffuseColor.r = foundMaterial.color.r;
       ui_state['debugMaterial'].diffuseColor.g = foundMaterial.color.g;
       ui_state['debugMaterial'].diffuseColor.b = foundMaterial.color.b;
-      
+
       // Update GUI parameters
       params.diffuseR = foundMaterial.color.r;
       params.diffuseG = foundMaterial.color.g;
       params.diffuseB = foundMaterial.color.b;
     }
-    
+
     // Read roughness
     if (foundMaterial.roughness !== undefined) {
       ui_state['debugMaterial'].roughness = foundMaterial.roughness;
       params.roughness = foundMaterial.roughness;
     }
-    
+
     // Read clearcoat
     if (foundMaterial.isMeshPhysicalMaterial && foundMaterial.clearcoat !== undefined) {
       ui_state['debugMaterial'].clearcoat = foundMaterial.clearcoat;
       params.clearcoat = foundMaterial.clearcoat;
     }
-    
+
     // Read clearcoat roughness
     if (foundMaterial.isMeshPhysicalMaterial && foundMaterial.clearcoatRoughness !== undefined) {
       ui_state['debugMaterial'].clearcoatRoughness = foundMaterial.clearcoatRoughness;
       params.clearcoatRoughness = foundMaterial.clearcoatRoughness;
     }
-    
+
     // Read map states
     ui_state['debugMaterial'].diffuseMapEnabled = foundMaterial.map !== null;
     params.diffuseMapEnabled = ui_state['debugMaterial'].diffuseMapEnabled;
-    
+
     ui_state['debugMaterial'].aoMapEnabled = foundMaterial.aoMap !== null;
     params.aoMapEnabled = ui_state['debugMaterial'].aoMapEnabled;
-    
+
     ui_state['debugMaterial'].roughnessMapEnabled = foundMaterial.roughnessMap !== null;
     params.roughnessMapEnabled = ui_state['debugMaterial'].roughnessMapEnabled;
-    
+
     ui_state['debugMaterial'].normalMapEnabled = foundMaterial.normalMap !== null;
     params.normalMapEnabled = ui_state['debugMaterial'].normalMapEnabled;
-    
+
     // Update the GUI display
     updateGUIDisplay();
-    
+
     console.log('Material parameters read:', {
       color: { r: params.diffuseR, g: params.diffuseG, b: params.diffuseB },
       roughness: params.roughness,
@@ -579,7 +579,7 @@ function updateGUIDisplay() {
   for (let i in gui.__controllers) {
     gui.__controllers[i].updateDisplay();
   }
-  
+
   // Also update material folder controllers
   if (materialFolder) {
     for (let i in materialFolder.__controllers) {
@@ -593,29 +593,29 @@ function createSelectionBox() {
   selectionBox.className = 'selection-box';
   selectionBox.style.display = 'none';
   document.body.appendChild(selectionBox);
-  
+
   // Also create status indicator
   const statusIndicator = document.createElement('div');
   statusIndicator.className = 'region-selection-status';
   statusIndicator.textContent = 'Region Selection Mode - Drag to select multiple objects (Press Q to toggle)';
   document.body.appendChild(statusIndicator);
   ui_state['statusIndicator'] = statusIndicator;
-  
+
   return selectionBox;
 }
 
 function updateSelectionBox() {
   const selectionBox = ui_state['selectionBox'];
   if (!selectionBox) return;
-  
+
   const start = ui_state['selectionStart'];
   const end = ui_state['selectionEnd'];
-  
+
   const left = Math.min(start.x, end.x);
   const top = Math.min(start.y, end.y);
   const width = Math.abs(end.x - start.x);
   const height = Math.abs(end.y - start.y);
-  
+
   selectionBox.style.left = left + 'px';
   selectionBox.style.top = top + 'px';
   selectionBox.style.width = width + 'px';
@@ -634,21 +634,21 @@ function getObjectsInSelectionBox() {
   const camera = ui_state['camera'];
   const start = ui_state['selectionStart'];
   const end = ui_state['selectionEnd'];
-  
+
   // Convert screen coordinates to normalized device coordinates
   const left = Math.min(start.x, end.x);
   const top = Math.min(start.y, end.y);
   const right = Math.max(start.x, end.x);
   const bottom = Math.max(start.y, end.y);
-  
+
   const leftNDC = (left / window.innerWidth) * 2 - 1;
   const rightNDC = (right / window.innerWidth) * 2 - 1;
   const topNDC = -(top / window.innerHeight) * 2 + 1;
   const bottomNDC = -(bottom / window.innerHeight) * 2 + 1;
-  
+
   const selectedObjects = [];
   const selectableObjects = [];
-  
+
   // Get all selectable objects (USD root nodes)
   scene.traverse((object) => {
     if (object.name === 'USD_Asset_Wrapper' && object.parent === scene) {
@@ -658,27 +658,27 @@ function getObjectsInSelectionBox() {
       }
     }
   });
-  
+
   // Check if each object's center is within the selection box
   for (const obj of selectableObjects) {
     // Get world position of the object
     const worldPosition = new THREE.Vector3();
     obj.getWorldPosition(worldPosition);
-    
+
     // Project to screen coordinates
     const screenPosition = worldPosition.clone();
     screenPosition.project(camera);
-    
+
     // Convert to screen pixel coordinates
     const screenX = (screenPosition.x + 1) / 2 * window.innerWidth;
     const screenY = -(screenPosition.y - 1) / 2 * window.innerHeight;
-    
+
     // Check if within selection box
     if (screenX >= left && screenX <= right && screenY >= top && screenY <= bottom) {
       selectedObjects.push(obj);
     }
   }
-  
+
   return selectedObjects;
 }
 
@@ -687,7 +687,7 @@ function clearSelection() {
   if (transformControls) {
     transformControls.detach();
   }
-  
+
   // Clean up multi-selection group if it exists
   const selectedObject = ui_state['selectedObject'];
   if (selectedObject && selectedObject.userData.isMultiSelectionGroup) {
@@ -701,28 +701,28 @@ function clearSelection() {
       delete obj.userData.originalLocalScale;
       delete obj.userData.selectionIndex;
     }
-    
+
     // Remove the group from scene
     scene.remove(selectedObject);
     console.log('Multi-selection group removed');
   }
-  
+
   ui_state['selectedObject'] = null;
   ui_state['selectedObjects'] = [];
-  
+
   console.log('Selection cleared');
 }
 
 function selectObjects(objects) {
   clearSelection();
-  
+
   if (objects.length === 0) {
     console.log('No objects selected');
     return;
   }
-  
+
   ui_state['selectedObjects'] = objects;
-  
+
   if (objects.length === 1) {
     // Single object selection - attach gizmo to the object
     const transformControls = ui_state['transformControls'];
@@ -735,11 +735,11 @@ function selectObjects(objects) {
     // Multiple object selection - create a group for transformation
     const group = new THREE.Group();
     group.name = 'MultiSelectionGroup';
-    
+
     // Calculate the center of all selected objects in world coordinates
     const center = new THREE.Vector3();
     const objectPositions = [];
-    
+
     for (const obj of objects) {
       const worldPos = new THREE.Vector3();
       obj.getWorldPosition(worldPos);
@@ -747,16 +747,16 @@ function selectObjects(objects) {
       center.add(worldPos);
     }
     center.divideScalar(objects.length);
-    
+
     group.position.copy(center);
     scene.add(group);
-    
+
     // Store references to selected objects and their original states
     group.userData.isMultiSelectionGroup = true;
     group.userData.selectedObjects = objects;
     group.userData.originalPositions = objectPositions;
     group.userData.originalCenter = center.clone();
-    
+
     // Store original transforms for each selected object
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
@@ -767,13 +767,13 @@ function selectObjects(objects) {
       obj.userData.originalLocalScale = obj.scale.clone();
       obj.userData.selectionIndex = i;
     }
-    
+
     const transformControls = ui_state['transformControls'];
     if (transformControls) {
       transformControls.attach(group);
       ui_state['selectedObject'] = group;
     }
-    
+
     console.log('Multiple objects selected:', objects.length, 'Group created at:', center);
   }
 }
@@ -781,18 +781,18 @@ function selectObjects(objects) {
 function onMouseDown(event) {
   // Prevent default to avoid text selection
   event.preventDefault();
-  
+
   if (ui_state['regionSelectionEnabled']) {
     // Start region selection
     ui_state['isSelecting'] = true;
     ui_state['selectionStart'].set(event.clientX, event.clientY);
     ui_state['selectionEnd'].set(event.clientX, event.clientY);
-    
+
     const selectionBox = ui_state['selectionBox'];
     if (selectionBox) {
       updateSelectionBox();
     }
-    
+
     console.log('Region selection started');
   }
 }
@@ -810,11 +810,11 @@ function onMouseUp(event) {
     // End region selection
     ui_state['isSelecting'] = false;
     hideSelectionBox();
-    
+
     // Get objects within selection box
     const selectedObjects = getObjectsInSelectionBox();
     selectObjects(selectedObjects);
-    
+
     console.log('Region selection completed, objects selected:', selectedObjects.length);
   }
 }
@@ -824,19 +824,19 @@ function onMouseClick(event) {
     // In region selection mode, clicks are handled by mouse down/up
     return;
   }
-  
+
   if (!ui_state['gizmoEnabled']) return;
-  
+
   const transformControls = ui_state['transformControls'];
   if (transformControls && transformControls.dragging) return; // Don't select while dragging gizmo
-  
+
   // Calculate mouse position in normalized device coordinates (-1 to +1) for both components
   ui_state['mouse'].x = (event.clientX / window.innerWidth) * 2 - 1;
   ui_state['mouse'].y = -(event.clientY / window.innerHeight) * 2 + 1;
-  
+
   // Update the picking ray with the camera and mouse position
   ui_state['raycaster'].setFromCamera(ui_state['mouse'], ui_state['camera']);
-  
+
   // Calculate objects intersecting the picking ray
   const intersectableObjects = [];
   scene.traverse((object) => {
@@ -844,27 +844,27 @@ function onMouseClick(event) {
       intersectableObjects.push(object);
     }
   });
-  
+
   const intersects = ui_state['raycaster'].intersectObjects(intersectableObjects, false);
-  
+
   if (intersects.length > 0) {
     const selectedObject = intersects[0].object;
-    
+
     // Find the wrapper group (USD_Asset_Wrapper) by traversing up
     let wrapperNode = selectedObject;
     while (wrapperNode.parent && wrapperNode.parent !== scene) {
       wrapperNode = wrapperNode.parent;
     }
-    
+
     // If we found a wrapper node that's directly under the scene, get the USD root node inside it
     if (wrapperNode && wrapperNode.parent === scene && wrapperNode.name === 'USD_Asset_Wrapper') {
       // Get the actual USD root node (first child of the wrapper)
       const usdRootNode = wrapperNode.children[0];
-      
+
       console.log('Selected object:', selectedObject);
       console.log('Wrapper node:', wrapperNode);
       console.log('USD root node:', usdRootNode);
-      
+
       // Ensure the USD root node has valid transform values before attaching gizmo
       if (usdRootNode && isFinite(usdRootNode.position.x) && isFinite(usdRootNode.position.y) && isFinite(usdRootNode.position.z)) {
         // Attach transform controls to the USD root node instead of the wrapper
@@ -891,7 +891,7 @@ function onMouseClick(event) {
 function onKeyDown(event) {
   const transformControls = ui_state['transformControls'];
   if (!transformControls || !ui_state['gizmoEnabled']) return;
-  
+
   switch (event.code) {
     case 'KeyT':
       transformControls.setMode('translate');
@@ -923,7 +923,7 @@ function onKeyDown(event) {
       // Toggle region selection mode with Q key
       ui_state['regionSelectionEnabled'] = !ui_state['regionSelectionEnabled'];
       params.regionSelectionEnabled = ui_state['regionSelectionEnabled'];
-      
+
       const controls = ui_state['controls'];
       const statusIndicator = ui_state['statusIndicator'];
       if (ui_state['regionSelectionEnabled']) {
@@ -939,7 +939,7 @@ function onKeyDown(event) {
       updateGUIDisplay();
       break;
   }
-  
+
   // Update GUI display to reflect mode change
   updateGUIDisplay();
 }
@@ -947,7 +947,7 @@ function onKeyDown(event) {
 function resetCamera() {
   const camera = ui_state['camera'];
   const controls = ui_state['controls'];
-  
+
   if (camera && controls) {
     // Reset camera to default angled position (30 degrees horizontal, 15 degrees vertical)
     const horizontalAngle = 30 * (Math.PI / 180);
@@ -967,7 +967,7 @@ function resetCamera() {
 function fitToScene() {
   const camera = ui_state['camera'];
   const controls = ui_state['controls'];
-  
+
   if (!camera || !controls) {
     console.error('Camera or controls not available');
     return;
@@ -976,7 +976,7 @@ function fitToScene() {
   // Compute bounding box of all objects in the scene
   const box = new THREE.Box3();
   const objectsToFit = [];
-  
+
   scene.traverse((object) => {
     // Include mesh objects but exclude lights, cameras, and helpers
     if (object.isMesh && object.visible) {
@@ -1003,30 +1003,30 @@ function fitToScene() {
   // Get the center and size of the bounding box
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  
+
   // Calculate the maximum dimension to determine camera distance
   const maxDim = Math.max(size.x, size.y, size.z);
-  
+
   // Calculate distance based on camera's field of view
   const fov = camera.fov * (Math.PI / 180); // Convert to radians
   const distance = maxDim / (2 * Math.tan(fov / 2));
-  
+
   // Add some padding (make camera a bit further back)
   const paddedDistance = distance * 1.5;
-  
+
   // Set camera position and look-at target
   // Position camera along the current view direction but at the calculated distance
   const direction = new THREE.Vector3();
   camera.getWorldDirection(direction);
   direction.normalize();
-  
+
   // Position camera at the calculated distance from the center
   const newPosition = center.clone().add(direction.multiplyScalar(-paddedDistance));
-  
+
   camera.position.copy(newPosition);
   controls.target.copy(center);
   controls.update();
-  
+
   console.log(`Fitted to scene - Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), Distance: ${paddedDistance.toFixed(2)}`);
 
 }
@@ -1168,7 +1168,7 @@ async function getAsset(asset_info) {
   args.name = asset_info.name;
   if (asset_info.instance_id) {
     args.instance_id = asset_info.instance_id;
-  } 
+  }
   console.log('args:', args);
 
   try {
@@ -1177,14 +1177,14 @@ async function getAsset(asset_info) {
       arguments: args
     });
     console.log('Asset retrieved:', response);
-    
+
     // Parse the JSON response
     const assetInfo = JSON.parse(response.content[0].text);
     console.log('Parsed asset info:', assetInfo);
-    
+
     // Create data URI from base64 data
     const dataUri = "data:application/octet-stream;base64," + assetInfo.data;
-    
+
     // Return object with data URI and transform information
     return {
       dataUri: dataUri,
@@ -1204,16 +1204,16 @@ async function getAsset(asset_info) {
 
 async function loadScenes() {
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
 
   ui_state['usdLoader'] = loader; // Store loader in ui_state
 
-  // Use zstd compressed tinyusdz.wasm to save the bandwidth.
+  // Use zstd compressed lightusd.wasm to save the bandwidth.
   //await loader.init({useZstdCompressedWasm: true});
 
   const suzanne_filename = "./assets/suzanne-pbr.usda";
@@ -1245,7 +1245,7 @@ async function loadScenes() {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+    const threeNode = await LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
@@ -1356,30 +1356,30 @@ async function reloadScenes(loader, renderer, asset_names) {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+    const threeNode = await LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     // Apply transform information from MCP
     console.log('Applying transform to', asset_name, ':', transform);
-    
+
     // Apply position (add to offset for spacing)
     threeNode.position.set(
       transform.position[0],
-      transform.position[1], 
+      transform.position[1],
       transform.position[2]
     );
-    
+
     // Apply scale (multiply with existing scale)
     threeNode.scale.multiply(new THREE.Vector3(
       transform.scale[0],
-      transform.scale[1], 
+      transform.scale[1],
       transform.scale[2]
     ));
-    
+
     // Apply rotation (convert degrees to radians and add to existing rotation)
     threeNode.rotation.x += transform.rotation[0] * (Math.PI / 180);
     threeNode.rotation.y += transform.rotation[1] * (Math.PI / 180);
     threeNode.rotation.z += transform.rotation[2] * (Math.PI / 180);
-    
+
     console.log('Final transform applied - Position:', threeNode.position, 'Scale:', threeNode.scale, 'Rotation (rad):', threeNode.rotation);
 
     //offset += 3.0;
@@ -1393,15 +1393,15 @@ async function reloadScenes(loader, renderer, asset_names) {
     // Create a wrapper group to handle the Y-up axis conversion
     const wrapperGroup = new THREE.Group();
     wrapperGroup.name = 'USD_Asset_Wrapper';
-    
+
     // Apply the Y-up axis rotation to the wrapper instead of the root node
     wrapperGroup.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
     //wrapperGroup.rotation.y = -Math.PI; // Rotate to match Y-up axis
     //wrapperGroup.rotation.z = Math.PI / 2; // Rotate to match Y-up axis
-    
+
     // Add the USD root node to the wrapper (keeping its original transform)
     wrapperGroup.add(rootNode);
-    
+
     // Add the wrapper to the scene instead of the root node directly
     scene.add(wrapperGroup);
 
@@ -1459,15 +1459,15 @@ function createTransformControlsHelper(camera, renderer) {
   //transformControls.setMode(ui_state['gizmoMode']);
   transformControls.visible = ui_state['gizmoEnabled'];
   //transformControls.setSpace(ui_state['gizmoSpace']); // Use the space setting from ui_state
-  
+
   // Check if transformControls is a valid THREE.Object3D before adding
   console.log('TransformControls type:', transformControls);
   console.log('Is Object3D:', transformControls instanceof THREE.Object3D);
   console.log('TransformControls constructor:', TransformControls);
-  
-  
+
+
   ui_state['transformControls'] = transformControls;
-  
+
   const controls = ui_state['controls'];
 
   // Add event listeners for transform controls
@@ -1478,7 +1478,7 @@ function createTransformControlsHelper(camera, renderer) {
     }
     // In region selection mode, keep OrbitControls disabled
   });
-  
+
   transformControls.addEventListener('change', () => {
     // Add callback for when transform changes with NaN protection
     const selectedObject = ui_state['selectedObject'];
@@ -1496,64 +1496,64 @@ function createTransformControlsHelper(camera, renderer) {
         console.warn('NaN detected in scale, resetting to one');
         selectedObject.scale.set(1, 1, 1);
       }
-      
+
       // Handle multi-selection group transformation
       if (selectedObject.userData.isMultiSelectionGroup) {
         const selectedObjects = ui_state['selectedObjects'];
         const originalCenter = selectedObject.userData.originalCenter;
-        
+
         // Ensure we still have valid selected objects
         if (!selectedObjects || selectedObjects.length === 0) {
           console.warn('Multi-selection group lost its selected objects');
           return;
         }
-        
+
         // Calculate transformation deltas
         const groupPosition = selectedObject.position;
         const groupRotation = selectedObject.rotation;
         const groupScale = selectedObject.scale;
-        
+
         // Calculate position delta
         const positionDelta = new THREE.Vector3();
         positionDelta.subVectors(groupPosition, originalCenter);
-        
+
         // Apply transformations to each selected object
         for (let i = 0; i < selectedObjects.length; i++) {
           const obj = selectedObjects[i];
-          
+
           // Ensure object still has required userData
           if (!obj.userData.originalWorldPosition || !obj.userData.originalLocalPosition) {
             console.warn('Object missing original transform data, skipping:', obj);
             continue;
           }
-          
+
           const originalWorldPos = obj.userData.originalWorldPosition;
           const originalLocalPos = obj.userData.originalLocalPosition;
           const originalLocalRot = obj.userData.originalLocalRotation;
           const originalLocalScale = obj.userData.originalLocalScale;
-          
+
           // Calculate relative position from original center
           const relativePos = new THREE.Vector3();
           relativePos.subVectors(originalWorldPos, originalCenter);
-          
+
           // Apply rotation to relative position
           const rotatedRelativePos = relativePos.clone();
-          
+
           // Create rotation matrix from group rotation
           const rotationMatrix = new THREE.Matrix4();
           rotationMatrix.makeRotationFromEuler(groupRotation);
-          
+
           // Apply rotation to the relative position
           rotatedRelativePos.applyMatrix4(rotationMatrix);
-          
+
           // Apply scale to the relative position
           rotatedRelativePos.multiply(groupScale);
-          
+
           // Calculate new world position
           const newWorldPos = originalCenter.clone();
           newWorldPos.add(rotatedRelativePos);
           newWorldPos.add(positionDelta);
-          
+
           // Convert world position back to local position in the wrapper coordinate system
           // The objects are children of wrapper groups with -90 degree X rotation
           const wrapper = obj.parent;
@@ -1566,36 +1566,36 @@ function createTransformControlsHelper(camera, renderer) {
             // Fallback: set world position directly
             obj.position.copy(newWorldPos);
           }
-          
+
           // Apply rotation (additive to original)
           obj.rotation.copy(originalLocalRot);
           obj.rotation.x += groupRotation.x;
           obj.rotation.y += groupRotation.y;
           obj.rotation.z += groupRotation.z;
-          
+
           // Apply scale (multiplicative with original)
           obj.scale.copy(originalLocalScale);
           obj.scale.multiply(groupScale);
         }
-        
+
         console.log('Multi-selection transform applied to', selectedObjects.length, 'objects');
       }
-      
+
       console.log('Transform changed - Position:', selectedObject.position, 'Rotation:', selectedObject.rotation, 'Scale:', selectedObject.scale);
     }
   });
-  
+
   transformControls.addEventListener('objectChange', () => {
     // This fires when the attached object changes
     const selectedObjects = ui_state['selectedObjects'];
     if (selectedObjects.length > 1) {
       console.log('Multi-selection transform updated, objects count:', selectedObjects.length);
     }
-    
+
     // Check if the gizmo got detached unexpectedly in region selection mode
     if (ui_state['regionSelectionEnabled'] && selectedObjects.length > 0 && !transformControls.object) {
       console.warn('TransformControls detached unexpectedly in region selection mode, re-attaching...');
-      
+
       // Re-attach to the current selected object
       const selectedObject = ui_state['selectedObject'];
       if (selectedObject) {
@@ -1643,7 +1643,7 @@ async function initScene() {
   controls.target.set(0, 0, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
-  
+
   // Configure mouse controls
   // Left mouse button: rotate
   controls.mouseButtons = {
@@ -1651,7 +1651,7 @@ async function initScene() {
     MIDDLE: THREE.MOUSE.DOLLY,
     RIGHT: THREE.MOUSE.PAN
   };
-  
+
   controls.update();
   ui_state['controls'] = controls;
 
@@ -1666,7 +1666,7 @@ async function initScene() {
   renderer.domElement.addEventListener('mousemove', onMouseMove);
   renderer.domElement.addEventListener('mouseup', onMouseUp);
   renderer.domElement.addEventListener('click', onMouseClick);
-  
+
   // Add keyboard event listeners for gizmo mode switching
   window.addEventListener('keydown', onKeyDown);
 
@@ -1678,13 +1678,13 @@ async function initScene() {
     // Create a wrapper group to handle the Y-up axis conversion
     const wrapperGroup = new THREE.Group();
     wrapperGroup.name = 'USD_Asset_Wrapper';
-    
+
     // Apply the Y-up axis rotation to the wrapper instead of the root node
     wrapperGroup.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
-    
+
     // Add the USD root node to the wrapper (keeping its original transform)
     wrapperGroup.add(rootNode);
-    
+
     // Add the wrapper to the scene instead of the root node directly
     scene.add(wrapperGroup);
 
@@ -1727,10 +1727,10 @@ async function initScene() {
   //} catch (error) {
   //  console.error('Error adding TransformControls to scene:', error);
   //}
-  
+
   // Read material parameters from the loaded scene
   readMaterialParamsFromScene();
-  
+
   // Use requestAnimationFrame to ensure the scene is fully rendered before fitting
   requestAnimationFrame(() => {
 
@@ -1762,12 +1762,12 @@ async function initScene() {
     if (controls) {
       controls.update();
     }
-    
+
     // Ensure TransformControls stays attached in region selection mode
     if (ui_state['regionSelectionEnabled'] && ui_state['selectedObjects'].length > 0) {
       const transformControls = ui_state['transformControls'];
       const selectedObject = ui_state['selectedObject'];
-      
+
       if (transformControls && selectedObject && !transformControls.object) {
         console.log('Re-attaching TransformControls in region selection mode');
         transformControls.attach(selectedObject);
@@ -1827,12 +1827,12 @@ async function initScene() {
 function onWindowResize() {
   const camera = ui_state['camera'];
   const renderer = ui_state['renderer'];
-  
+
   if (camera && renderer) {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    
+
     // Update transform controls if they exist
     const transformControls = ui_state['transformControls'];
     if (transformControls) {
@@ -1853,13 +1853,13 @@ window.addEventListener('beforeunload', () => {
     renderer.domElement.removeEventListener('click', onMouseClick);
   }
   window.removeEventListener('keydown', onKeyDown);
-  
+
   // Remove selection box
   const selectionBox = ui_state['selectionBox'];
   if (selectionBox && selectionBox.parentNode) {
     selectionBox.parentNode.removeChild(selectionBox);
   }
-  
+
   // Remove status indicator
   const statusIndicator = ui_state['statusIndicator'];
   if (statusIndicator && statusIndicator.parentNode) {

@@ -2,7 +2,7 @@
 // UsdLux Light Dump CLI Tool
 // Usage: node dump-usdlux-cli.js <usd-file> [options]
 
-import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
@@ -523,7 +523,7 @@ async function dumpLights(options) {
   }
 
   // Initialize loader
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: false });
   loader.setMaxMemoryLimitMB(500);
 

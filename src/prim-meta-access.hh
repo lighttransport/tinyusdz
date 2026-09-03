@@ -10,7 +10,7 @@
 // schema headers. Not part of the public API.
 #pragma once
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct PrimMetas;
 using PrimMeta = PrimMetas;
@@ -21,4 +21,4 @@ class Value;
 const PrimMeta *GetPrimMeta(const value::Value &v);
 PrimMeta *GetPrimMeta(value::Value &v);
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -3,8 +3,8 @@
 import sys
 import sysconfig
 
-import tinyusdz
-from tinyusdz import _core
+import lightusd
+from lightusd import _core
 
 FREE_THREADED = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
 
@@ -28,5 +28,5 @@ def test_gil_stays_disabled():
 
 
 def test_version():
-    assert isinstance(tinyusdz.__version__, str)
+    assert isinstance(lightusd.__version__, str)
     assert _core.__version__

@@ -5,9 +5,9 @@
 //
 #include "task-queue.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Header-only implementation
-// This file exists for consistency with TinyUSDZ source structure
+// This file exists for consistency with LightUSD source structure
 
-}  // namespace tinyusdz
+}  // namespace lightusd

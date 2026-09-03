@@ -10,13 +10,13 @@
 
 #include "../common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
 
 
-} // namespace 
+} // namespace
 
 namespace detail {
 
@@ -63,4 +63,4 @@ bool ComputePrimSpecBound(const PrimSpec &ps, const bool use_extent, Extent &bbo
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -7,7 +7,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-types.hh"
 #include "unit-value-types.h"
 #include "core/prim.hh"
@@ -18,8 +18,8 @@
 
 #include <cmath>
 
-using namespace tinyusdz;
-using namespace tinyusdz_test;
+using namespace lightusd;
+using namespace lightusd_test;
 
 // Helper: check upper-left 3x3 of two 4x4 matrices are close
 static bool mat3x3_close(const value::matrix4d &a, const value::matrix4d &b,
@@ -132,7 +132,7 @@ void xformOp_test(void) {
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
     TEST_CHECK(ret);
-    
+
     std::cout << "rotXYZ = " << m << "\n";
 
     //double eps = std::numeric_limits<double>::epsilon();
@@ -183,7 +183,7 @@ void xformOp_test(void) {
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
     TEST_CHECK(ret);
-    
+
     std::cout << "rotXYZ = " << m << "\n";
 
     // 0.4120283041870241, -0.9111710468121587, 0, 0
@@ -232,7 +232,7 @@ void xformOp_test(void) {
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
     TEST_CHECK(ret);
-    
+
     std::cout << "rotXYZ = " << m << "\n";
 
     double eps = std::numeric_limits<double>::epsilon();
@@ -281,12 +281,12 @@ void xformOp_test(void) {
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
     TEST_CHECK(ret);
-    
+
     std::cout << "rotXYZ = " << m << "\n";
 
     double eps = std::numeric_limits<double>::epsilon();
 
-  
+
     TEST_CHECK(float_equals(m.m[0][0], 0.7102852087270047, eps));
     TEST_CHECK(float_equals(m.m[0][1], -0.7026225180689177, eps));
     TEST_CHECK(float_equals(m.m[0][2], 0.0426206448347375, eps));
@@ -460,7 +460,7 @@ void xformOp_test(void) {
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
 
     TEST_CHECK(ret);
-    
+
     std::cout << "trans x scale = " << m << "\n";
 
     // 1.5 0 0 0, 0 1.5 0 0, 0 0 1.5 0, 1 0 0 1

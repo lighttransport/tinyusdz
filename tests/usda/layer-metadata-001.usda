@@ -2,20 +2,20 @@
 (
     doc = "Layer metadata test - time settings, custom data, and layer-level configuration"
     defaultPrim = "LayerMetadataTests"
-    
+
     # Time configuration
     timeCodesPerSecond = 24.0
     framesPerSecond = 24.0
     startTimeCode = 1
     endTimeCode = 100
-    
+
     # Metering and units
     metersPerUnit = 0.01
     upAxis = "Y"
-    
+
     # Custom layer data
     customLayerData = {
-        string author = "TinyUSDZ Test Suite"
+        string author = "LightUSD Test Suite"
         string copyright = "Public Domain"
         string[] tags = ["test", "metadata", "animation"]
         int version = 1
@@ -27,7 +27,7 @@
             string renderer = "Arnold"
         }
     }
-    
+
     # Sublayer ordering
     subLayers = [
         @./sublayer-metadata-base.usda@

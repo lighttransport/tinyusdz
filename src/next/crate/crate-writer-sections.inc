@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - CrateWriter::Impl section emission and VALUE layout.
+// LightUSD Next - CrateWriter::Impl section emission and VALUE layout.
 // Included inside CrateWriter::Impl private section.
 
   // ============================================================
@@ -107,7 +107,7 @@
 
   void WriteFieldsetsSection() {
     // Build flat array: for each fieldset, write its field indices then a
-    // 0xFFFFFFFF sentinel (matching pxrUSD and the old tinyusdz writer).
+    // 0xFFFFFFFF sentinel (matching pxrUSD and the old lightusd writer).
     std::vector<uint32_t> flat;
     for (const auto& fieldset : fieldsets_) {
       for (uint32_t field_idx : fieldset) {
@@ -613,7 +613,7 @@
         if (sz) std::memcpy(out + value_offsets_[i], value_data_[i].bytes(), sz);
       }
     };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     int P = (std::min)(ResolveThreads(), 16);
     if (P > 1 && n >= 4096 && total >= (8u << 20)) {
       // Byte-balanced index boundaries (offsets are ascending).

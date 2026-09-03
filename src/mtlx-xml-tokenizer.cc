@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 bool XMLTokenizer::Initialize(const char* data, size_t size, size_t max_size) {
@@ -12,12 +12,12 @@ bool XMLTokenizer::Initialize(const char* data, size_t size, size_t max_size) {
     error_ = "Input data is null";
     return false;
   }
-  
+
   if (size > max_size) {
     error_ = "Input size exceeds maximum allowed size";
     return false;
   }
-  
+
   data_ = data;
   size_ = size;
   position_ = 0;
@@ -25,7 +25,7 @@ bool XMLTokenizer::Initialize(const char* data, size_t size, size_t max_size) {
   current_column_ = 1;
   in_tag_ = false;
   error_.clear();
-  
+
   return true;
 }
 
@@ -57,18 +57,18 @@ void XMLTokenizer::UpdatePosition(char c) {
 
 bool XMLTokenizer::Match(const char* str) {
   if (!str) return false;
-  
+
   size_t len = std::strlen(str);
   if (position_ + len > size_) {
     return false;
   }
-  
+
   return std::memcmp(data_ + position_, str, len) == 0;
 }
 
 bool XMLTokenizer::Consume(const char* str) {
   if (!Match(str)) return false;
-  
+
   size_t len = std::strlen(str);
   for (size_t i = 0; i < len; ++i) {
     NextChar();
@@ -92,13 +92,13 @@ bool XMLTokenizer::SkipWhitespace() {
 
 bool XMLTokenizer::ParseName(std::string& name) {
   name.clear();
-  
+
   char c = PeekChar();
   // XML name must start with letter or underscore
   if (!std::isalpha(c) && c != '_' && c != ':') {
     return false;
   }
-  
+
   while (position_ < size_ && name.length() < MAX_NAME_LENGTH) {
     c = PeekChar();
     if (std::isalnum(c) || c == '_' || c == '-' || c == '.' || c == ':') {
@@ -107,23 +107,23 @@ bool XMLTokenizer::ParseName(std::string& name) {
       break;
     }
   }
-  
+
   if (name.length() >= MAX_NAME_LENGTH) {
     error_ = "Name exceeds maximum length";
     return false;
   }
-  
+
   return !name.empty();
 }
 
 bool XMLTokenizer::ParseQuotedString(std::string& str, char quote) {
   str.clear();
-  
+
   if (PeekChar() != quote) {
     return false;
   }
   NextChar(); // Consume opening quote
-  
+
   while (position_ < size_ && str.length() < MAX_STRING_LENGTH) {
     char c = PeekChar();
     if (c == quote) {
@@ -157,12 +157,12 @@ bool XMLTokenizer::ParseQuotedString(std::string& str, char quote) {
       str += NextChar();
     }
   }
-  
+
   if (str.length() >= MAX_STRING_LENGTH) {
     error_ = "String exceeds maximum length";
     return false;
   }
-  
+
   error_ = "Unterminated quoted string";
   return false;
 }
@@ -178,12 +178,12 @@ bool XMLTokenizer::ParseUntil(std::string& str, const char* delimiter) {
     }
     str += NextChar();
   }
-  
+
   if (str.length() >= MAX_TEXT_LENGTH) {
     error_ = "Text exceeds maximum length";
     return false;
   }
-  
+
   return false;
 }
 
@@ -191,16 +191,16 @@ bool XMLTokenizer::ParseComment(Token& token) {
   if (!Consume("<!--")) {
     return false;
   }
-  
+
   token.type = TokenType::Comment;
   token.line = current_line_;
   token.column = current_column_;
-  
+
   if (!ParseUntil(token.value, "-->")) {
     error_ = "Unterminated comment";
     return false;
   }
-  
+
   Consume("-->");
   return true;
 }
@@ -209,16 +209,16 @@ bool XMLTokenizer::ParseCDATA(Token& token) {
   if (!Consume("<![CDATA[")) {
     return false;
   }
-  
+
   token.type = TokenType::CDATA;
   token.line = current_line_;
   token.column = current_column_;
-  
+
   if (!ParseUntil(token.value, "]]>")) {
     error_ = "Unterminated CDATA section";
     return false;
   }
-  
+
   Consume("]]>");
   return true;
 }
@@ -227,28 +227,28 @@ bool XMLTokenizer::ParseProcessingInstruction(Token& token) {
   if (!Consume("<?")) {
     return false;
   }
-  
+
   token.type = TokenType::ProcessingInstruction;
   token.line = current_line_;
   token.column = current_column_;
-  
+
   if (!ParseName(token.name)) {
     error_ = "Invalid processing instruction name";
     return false;
   }
-  
+
   SkipWhitespace();
-  
+
   if (!ParseUntil(token.value, "?>")) {
     error_ = "Unterminated processing instruction";
     return false;
   }
-  
+
   // Trim trailing whitespace from value
   while (!token.value.empty() && std::isspace(token.value.back())) {
     token.value.pop_back();
   }
-  
+
   Consume("?>");
   return true;
 }
@@ -257,7 +257,7 @@ bool XMLTokenizer::ParseStartTag(Token& token) {
   if (PeekChar() != '<') {
     return false;
   }
-  
+
   // Check for special cases
   if (Match("<!--")) {
     return ParseComment(token);
@@ -271,21 +271,21 @@ bool XMLTokenizer::ParseStartTag(Token& token) {
   if (Match("</")) {
     return ParseEndTag(token);
   }
-  
+
   NextChar(); // Consume '<'
-  
+
   token.type = TokenType::StartTag;
   token.line = current_line_;
   token.column = current_column_;
-  
+
   if (!ParseName(token.name)) {
     error_ = "Invalid tag name";
     return false;
   }
-  
+
   current_tag_name_ = token.name;
   in_tag_ = true;
-  
+
   return true;
 }
 
@@ -293,24 +293,24 @@ bool XMLTokenizer::ParseEndTag(Token& token) {
   if (!Consume("</")) {
     return false;
   }
-  
+
   token.type = TokenType::EndTag;
   token.line = current_line_;
   token.column = current_column_;
-  
+
   if (!ParseName(token.name)) {
     error_ = "Invalid end tag name";
     return false;
   }
-  
+
   SkipWhitespace();
-  
+
   if (PeekChar() != '>') {
     error_ = "Expected '>' after end tag name";
     return false;
   }
   NextChar();
-  
+
   in_tag_ = false;
   return true;
 }
@@ -319,9 +319,9 @@ bool XMLTokenizer::ParseAttribute(Token& token) {
   if (!in_tag_) {
     return false;
   }
-  
+
   SkipWhitespace();
-  
+
   // Check for tag closure
   if (Match("/>")) {
     Consume("/>");
@@ -332,45 +332,45 @@ bool XMLTokenizer::ParseAttribute(Token& token) {
     in_tag_ = false;
     return true;
   }
-  
+
   if (PeekChar() == '>') {
     NextChar();
     in_tag_ = false;
     // Return to indicate end of attributes, caller should retry for content
     return false;
   }
-  
+
   token.type = TokenType::Attribute;
   token.line = current_line_;
   token.column = current_column_;
-  
+
   if (!ParseName(token.name)) {
     error_ = "Invalid attribute name";
     return false;
   }
-  
+
   SkipWhitespace();
-  
+
   if (PeekChar() != '=') {
     // Attribute without value (like HTML boolean attributes)
     token.value.clear();
     return true;
   }
   NextChar(); // Consume '='
-  
+
   SkipWhitespace();
-  
+
   char quote = PeekChar();
   if (quote != '"' && quote != '\'') {
     error_ = "Expected quoted attribute value";
     return false;
   }
-  
+
   if (!ParseQuotedString(token.value, quote)) {
     error_ = "Invalid attribute value";
     return false;
   }
-  
+
   return true;
 }
 
@@ -379,7 +379,7 @@ bool XMLTokenizer::ParseText(Token& token) {
   token.line = current_line_;
   token.column = current_column_;
   token.value.clear();
-  
+
   while (position_ < size_ && token.value.length() < MAX_TEXT_LENGTH) {
     char c = PeekChar();
     if (c == '<') {
@@ -410,12 +410,12 @@ bool XMLTokenizer::ParseText(Token& token) {
       token.value += NextChar();
     }
   }
-  
+
   if (token.value.length() >= MAX_TEXT_LENGTH) {
     error_ = "Text content exceeds maximum length";
     return false;
   }
-  
+
   // Trim whitespace-only text between tags
   bool all_whitespace = true;
   for (char c : token.value) {
@@ -424,23 +424,23 @@ bool XMLTokenizer::ParseText(Token& token) {
       break;
     }
   }
-  
+
   if (all_whitespace && !token.value.empty()) {
     // Skip whitespace-only text, try next token
     return NextToken(token);
   }
-  
+
   return !token.value.empty();
 }
 
 bool XMLTokenizer::NextToken(Token& token) {
   token = Token();
-  
+
   if (position_ >= size_) {
     token.type = TokenType::EndOfDocument;
     return true;
   }
-  
+
   // If we're inside a tag, parse attributes
   if (in_tag_) {
     if (ParseAttribute(token)) {
@@ -453,18 +453,18 @@ bool XMLTokenizer::NextToken(Token& token) {
     token.value.clear();
     return true;
   }
-  
+
   // Skip whitespace between tags
   SkipWhitespace();
-  
+
   if (position_ >= size_) {
     token.type = TokenType::EndOfDocument;
     return true;
   }
-  
+
   // Check what's next
   char c = PeekChar();
-  
+
   if (c == '<') {
     return ParseStartTag(token);
   } else {
@@ -479,19 +479,19 @@ bool XMLTokenizer::PeekToken(Token& token) {
   size_t saved_col = current_column_;
   bool saved_in_tag = in_tag_;
   std::string saved_tag_name = current_tag_name_;
-  
+
   // Get next token
   bool result = NextToken(token);
-  
+
   // Restore state
   position_ = saved_pos;
   current_line_ = saved_line;
   current_column_ = saved_col;
   in_tag_ = saved_in_tag;
   current_tag_name_ = saved_tag_name;
-  
+
   return result;
 }
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

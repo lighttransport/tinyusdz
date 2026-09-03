@@ -16,7 +16,7 @@
   #define TASKQUEUE_HAS_BUILTIN_ATOMICS 0
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace sandbox {
 
 // C function pointer task type
@@ -379,4 +379,4 @@ class TaskQueueFunc {
 };
 
 }  // namespace sandbox
-}  // namespace tinyusdz
+}  // namespace lightusd

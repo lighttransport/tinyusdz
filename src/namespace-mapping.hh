@@ -17,7 +17,7 @@
 
 #include "core/path.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// A namespace mapping is a list of (source_path, target_path) pairs that
@@ -228,4 +228,4 @@ inline std::vector<std::string> ValidateRelocates(
   return errors;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP LayerRegistry
+// LightUSD Next - PCP LayerRegistry
 //
 // Parse-once, resolved-path-keyed cache of layers. A referenced/sublayer file
 // is parsed exactly once and shared (shared_ptr) across every prim index that
@@ -18,12 +18,12 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <future>
 #include <mutex>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -46,7 +46,7 @@ struct LayerLoadOptions {
 
 class LayerRegistry {
  public:
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   LayerRegistry() : mu_(new std::mutex()) {}
 #else
   LayerRegistry() = default;
@@ -70,7 +70,7 @@ class LayerRegistry {
   /// resolving to that id composes it without touching disk). Does not count as
   /// a parse. Useful for embedding already-loaded layers.
   void Preload(const std::string &resolved_id, std::shared_ptr<Layer> layer) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
     by_resolved_[resolved_id] = std::move(layer);
@@ -81,26 +81,26 @@ class LayerRegistry {
   void Drop(const std::string &resolved_path);
 
   void Clear() {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
     by_resolved_.clear();
   }
   size_t size() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
     return by_resolved_.size();
   }
   size_t parse_count() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
     return parse_count_;
   }
 
   size_t memory_usage() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
     size_t bytes = 0;
@@ -114,7 +114,7 @@ class LayerRegistry {
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
   size_t parse_count_ = 0;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_
   // and in_flight_.
   std::unique_ptr<std::mutex> mu_;
@@ -175,4 +175,4 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

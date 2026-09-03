@@ -5,12 +5,12 @@
 ### Three Builds Available
 
 ```bash
-cd /mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/aousd/
+cd /mnt/nvme02/work/lightusd-repo/crate-writer-2025/aousd/
 
 # 1. No-Python Monolithic (C++ only)
 source setup_env_nopython_monolithic.sh
 
-# 2. Standard Python (51 libraries)  
+# 2. Standard Python (51 libraries)
 source setup_env.sh
 
 # 3. Monolithic Python (1 library)
@@ -59,7 +59,7 @@ stage = Usd.Stage.Open("crate_writer_output.usdc")
 # Traverse and print
 for prim in stage.Traverse():
     print(f"Prim: {prim.GetPath()} (type: {prim.GetTypeName()})")
-    
+
 # Check layer info
 layer = stage.GetRootLayer()
 print(f"\nLayer identifier: {layer.identifier}")
@@ -156,7 +156,7 @@ ls -lh aousd/dist_nopython_monolithic/lib/libusd_ms.so
 ls aousd/dist/lib/libusd_*.so | wc -l
 # 51
 
-# Monolithic Python  
+# Monolithic Python
 ls -lh aousd/dist_monolithic/lib/libusd_ms.so
 # -rw-r--r-- 1 user user 49M
 

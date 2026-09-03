@@ -6,7 +6,7 @@
 #include <limits>
 #include <cmath>
 
-namespace tinyusdz_test {
+namespace lightusd_test {
 
 template <typename T>
 static bool float_equals(T x, T y, T eps = std::numeric_limits<T>::epsilon()) {
@@ -32,41 +32,41 @@ static bool float_array_equals(const T *a, const T *b, const int n) {
   return true;
 }
 
-}  // namespace tinyusdz_test
+}  // namespace lightusd_test
 
 // Forward declarations for test helpers
-namespace tinyusdz {
+namespace lightusd {
 class Stage;
 class Layer;
 }
 
 #include <cstring>
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-namespace tinyusdz_test {
+namespace lightusd_test {
 
 /// Parse USDA string into a Stage. Returns true on success.
-static inline bool parse_usda_to_stage(const char *usda, tinyusdz::Stage *stage,
+static inline bool parse_usda_to_stage(const char *usda, lightusd::Stage *stage,
                                         std::string *warn = nullptr,
                                         std::string *err = nullptr) {
   std::string w, e;
   if (!warn) warn = &w;
   if (!err) err = &e;
-  return tinyusdz::LoadUSDAFromMemory(
+  return lightusd::LoadUSDAFromMemory(
       reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
       "test.usda", stage, warn, err);
 }
 
 /// Parse USDA string into a Layer. Returns true on success.
-static inline bool parse_usda_to_layer(const char *usda, tinyusdz::Layer *layer,
+static inline bool parse_usda_to_layer(const char *usda, lightusd::Layer *layer,
                                         std::string *warn = nullptr,
                                         std::string *err = nullptr) {
   std::string w, e;
   if (!warn) warn = &w;
   if (!err) err = &e;
-  return tinyusdz::LoadLayerFromMemory(
+  return lightusd::LoadLayerFromMemory(
       reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
       "test.usda", layer, warn, err);
 }
 
-}  // namespace tinyusdz_test
+}  // namespace lightusd_test

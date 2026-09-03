@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache stage materialization and instance flattening.
+// LightUSD Next - PCP Cache stage materialization and instance flattening.
 // Included inside Cache::Impl.
 
   // --- BuildStage ---------------------------------------------------------
@@ -17,7 +17,7 @@
   };
 
   // Temporary internal-breakdown profiling accumulators (ns), summed across all
-  // root subtrees; printed by the top-level BuildStage under TINYUSDZ_NEXT_TIMING.
+  // root subtrees; printed by the top-level BuildStage under LIGHTUSD_NEXT_TIMING.
   mutable uint64_t prof_sources_ns_ = 0;
   mutable uint64_t prof_compose_ns_ = 0;
   mutable uint64_t prof_reg_ns_ = 0;

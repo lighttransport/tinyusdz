@@ -34,7 +34,7 @@
 #include "core/extent.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -59,10 +59,10 @@ bool ComputeBound(const Layer &layer, const bool use_extent, Extent &bbox,
 /// Calculates the axis-aligned bounding box for a single prim's geometry.
 /// Handles time-sampled geometry and can use pre-computed extent attributes.
 ///
-/// @param[in] ps PrimSpec to analyze  
+/// @param[in] ps PrimSpec to analyze
 /// @param[in] use_extent Use 'extent' attribute when available (faster)
 /// @param[out] bbox Computed bounding box extent
-/// @param[in] t Time code for evaluation (default = no time sampling)  
+/// @param[in] t Time code for evaluation (default = no time sampling)
 /// @return true on success, false if prim is not boundable
 ///
 /// Limitation: Current implementation does not consider skinning transforms
@@ -71,4 +71,4 @@ bool ComputePrimSpecBound(const PrimSpec &ps, const bool use_extent, Extent &bbo
                   const double t = value::TimeCode::Default());
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

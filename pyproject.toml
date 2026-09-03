@@ -7,7 +7,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tinyusdz"
+name = "lightusd"
 dynamic = ["version"]
 description = "Tiny, dependency-free USD/USDA/USDC/USDZ loader + Tydra render-scene access, with NumPy-friendly zero-copy arrays (CPython abi3 + free-threaded wheels)."
 readme = "python/README.md"
@@ -37,22 +37,22 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lighttransport/tinyusdz"
-Repository = "https://github.com/lighttransport/tinyusdz"
-Issues = "https://github.com/lighttransport/tinyusdz/issues"
+Homepage = "https://github.com/lighttransport/lightusd"
+Repository = "https://github.com/lighttransport/lightusd"
+Issues = "https://github.com/lighttransport/lightusd/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "numpy>=2.2,<3"]
 
 [tool.setuptools]
 package-dir = {"" = "python"}
-packages = ["tinyusdz"]
+packages = ["lightusd"]
 
 [tool.setuptools.package-data]
-tinyusdz = ["py.typed", "*.pyi"]
+lightusd = ["py.typed", "*.pyi"]
 
 [tool.setuptools_scm]
-version_file = "python/tinyusdz/_version.py"
+version_file = "python/lightusd/_version.py"
 
 # --------------------------------------------------------------------------
 # cibuildwheel configuration
@@ -63,7 +63,7 @@ version_file = "python/tinyusdz/_version.py"
 [tool.cibuildwheel]
 build = ["cp310-*", "cp314t-*"]
 enable = ["cpython-freethreading"]
-# No PyPy; tinyusdz is CPython-only.
+# No PyPy; lightusd is CPython-only.
 skip = [
     "pp*",
     "*-musllinux*",

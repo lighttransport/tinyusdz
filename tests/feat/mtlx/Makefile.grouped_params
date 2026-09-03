@@ -1,6 +1,6 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -I../../../src -I../../../
-LDFLAGS = -L../../../build -ltinyusdz_static -lpthread
+LDFLAGS = -L../../../build -llightusd_static -lpthread
 
 test_grouped_params: test_grouped_params.cc
 	$(CXX) $(CXXFLAGS) -o test_grouped_params test_grouped_params.cc $(LDFLAGS)

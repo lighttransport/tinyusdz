@@ -3,14 +3,14 @@
 import assert from 'node:assert/strict';
 
 import { loadWasm } from '../src/usdzconvert.js';
-import { transformLinearColor } from '../src/tinyusdz/ColorSpaceUtils.js';
+import { transformLinearColor } from '../src/lightusd/ColorSpaceUtils.js';
 
 const encoder = new TextEncoder();
 const legacy = await loadWasm(() => import(
-  new URL('../src/tinyusdz/tinyusdz.js', import.meta.url).href));
+  new URL('../src/lightusd/lightusd.js', import.meta.url).href));
 const next = await loadWasm(() => import(
-  new URL('../src/tinyusdz/tinyusdz_next.js', import.meta.url).href), {
-  locateFile: (file) => new URL('../src/tinyusdz/' + file,
+  new URL('../src/lightusd/lightusd_next.js', import.meta.url).href), {
+  locateFile: (file) => new URL('../src/lightusd/' + file,
     import.meta.url).pathname
 });
 
@@ -173,7 +173,7 @@ function assertNear(actual, expected, tolerance, label) {
 }
 
 function loadLegacy(usda, name) {
-  const loader = new legacy.TinyUSDZLoaderNative();
+  const loader = new legacy.LightUSDLoaderNative();
   assert(loader.loadFromBinary(encoder.encode(usda), name), loader.error());
   return loader;
 }

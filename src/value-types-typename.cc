@@ -13,7 +13,7 @@
 
 #include "external/mapbox/eternal/include/mapbox/eternal.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace value {
 
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
@@ -355,4 +355,4 @@ bool IsRoleType(const uint32_t tyid) {
 }
 
 } // namespace value
-} // namespace tinyusdz
+} // namespace lightusd

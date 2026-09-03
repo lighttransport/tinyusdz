@@ -16,18 +16,18 @@
 namespace tusdr {
 
 struct RenderContext {
-  tinyusdz::next::Stage stage;  // keeps the lazy point/index arrays alive
+  lightusd::next::Stage stage;  // keeps the lazy point/index arrays alive
   // Loader used by procedural/value-clip curves. It is populated while the
   // composed session is still alive so relative clip assets can use its layer
   // dependency anchors.
-  tinyusdz::next::ValueClipStageLoader clip_stage_loader;
+  lightusd::next::ValueClipStageLoader clip_stage_loader;
   // Flat (no-instance) path buffers: default allocator so the shared
   // Shade/RenderImage signatures stay std::vector. The big, OOM-prone instanced
   // geometry lives in the budget-tracked Blas buffers below.
   std::vector<float> vertices;  // packed triangle positions (flat-path BVH input)
   std::vector<FlatTri> tris;    // slim per-triangle: geometry + purpose + mat_id
   std::vector<TriMat> flat_mats;  // flat-path material table (one per mesh-job)
-  std::vector<tinyusdz::tydra::LightRtOpenPBRParams> flat_openpbr_mats;
+  std::vector<lightusd::tydra::LightRtOpenPBRParams> flat_openpbr_mats;
   std::vector<Texture> textures;  // diffuse textures referenced by flat_mats[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
@@ -47,7 +47,7 @@ struct RenderContext {
   DirectScene direct;             // empty for the next path
   LightCache lights;              // empty -> camera-headlight fallback
   IblCache ibl;                   // image-based lighting (--env / DomeLight)
-  tinyusdz::Axis up_axis{tinyusdz::Axis::Y};
+  lightusd::Axis up_axis{lightusd::Axis::Y};
   CameraFrame camera;
   std::vector<BackPlateImage> backplates;
   Options opt;  // mutable render parameters (width/height/ambient/bg/...)
@@ -86,7 +86,7 @@ void PrintUsage(const char *prog);
 
 bool ParseArgs(int argc, char **argv, Options *opt);
 
-void SetupNullAssetResolution(tinyusdz::AssetResolutionResolver *resolver);
+void SetupNullAssetResolution(lightusd::AssetResolutionResolver *resolver);
 
 Vec3 MaterialColor(const RenderScene &scene, const RenderMesh &mesh,
                    int material_id);
@@ -179,7 +179,7 @@ void CollectLights(const RenderScene &scene, LightCache *cache);
 
 // ---- tusdr_geom.cc ----
 void ExpandBoundsByVolume(const std::vector<VolumeData> &vols, Bounds *b);
-tinyusdz::Axis GetUpAxis(const std::string &up);
+lightusd::Axis GetUpAxis(const std::string &up);
 bool BuildNodeMatrixMap(const Node &node,
                         std::unordered_map<std::string, matrix4d> *map);
 
@@ -191,9 +191,9 @@ matrix4d MatrixForPath(const std::unordered_map<std::string, matrix4d> &map,
 
 Vec3 TransformNormal(const matrix4d &inv_world, const Vec3 &n);
 
-int AxisIndex(tinyusdz::Axis axis);
+int AxisIndex(lightusd::Axis axis);
 
-Vec3 AxisVec(tinyusdz::Axis axis);
+Vec3 AxisVec(lightusd::Axis axis);
 
 float Coord(const Vec3 &v, int axis);
 
@@ -268,7 +268,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
-                    const tinyusdz::tydra::LightRtOpenPBRParams **out_openpbr =
+                    const lightusd::tydra::LightRtOpenPBRParams **out_openpbr =
                         nullptr);
 
 Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
@@ -284,7 +284,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const RayDiff &rd = RayDiff{}, int depth = 0,
            const ByteVec *tri_colors = nullptr,
            const std::vector<float> *tri_normals = nullptr,
-           const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+           const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                *openpbr_mats = nullptr,
            // This ray is a BSDF-sampled indirect bounce, not a camera/transmission
            // ray. Two contributions are then already accounted for at the surface
@@ -308,7 +308,7 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene);
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg);
 
-tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
+lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<FlatTri> &tris,
                             const std::vector<TriMat> &mats,
                             const LightCache &lights, const IblCache *ibl,
@@ -322,7 +322,7 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const ByteVec *tri_colors = nullptr,
                             const std::vector<float> *tri_normals = nullptr,
                             const std::vector<VolumeData> *volumes = nullptr,
-                            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                            const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats = nullptr,
                             const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
                             const std::vector<BackPlateImage> *backplates = nullptr);
@@ -332,7 +332,7 @@ bool LoadProgress(float progress, void *);
 // ---- next-loader / driver (defined in tusdrender.cc for now) ----
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
-bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
+bool BuildNextGaussianEllipses(const lightusd::next::Stage &stage,
                                RenderContext &ctx, double time,
                                bool defer_gpu_bvh = false);
 
@@ -344,7 +344,7 @@ void PrintRTStats(const RenderContext &ctx);
 double RenderFrameTo(RenderContext &ctx, const std::string &path);
 void ResolveCameraNext(RenderContext &ctx);
 
-#ifdef TINYUSDZ_WITH_QJS
+#ifdef LIGHTUSD_WITH_QJS
 int RunJSScriptMode(const Options &opt, const std::string &script_path);
 int RunMCPMode(const Options &opt);
 #endif
@@ -411,25 +411,25 @@ unsigned WorkerThreadCount(int requested);
 bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);
 CameraFrame MakeCameraFrame(const RenderScene &scene, const Options &opt,
                             const Bounds &bounds, int height,
-                            tinyusdz::Axis up_axis);
+                            lightusd::Axis up_axis);
 matrix4d Mat4FromArray(const double d[16]);
-uint32_t PurposeBit(tinyusdz::Purpose purpose);
+uint32_t PurposeBit(lightusd::Purpose purpose);
 
-std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
+std::vector<float> ReadFloatArrayLazy(const lightusd::next::UsdPrim &prim,
                                       const char *name, double time);
 
 bool ReadFloatArrayViewLazy(
-    const tinyusdz::next::UsdPrim &prim, const char *name, double time,
-    tinyusdz::tydra::next::ValueArrayRead<float> *out);
+    const lightusd::next::UsdPrim &prim, const char *name, double time,
+    lightusd::tydra::next::ValueArrayRead<float> *out);
 
 // Large compressed SH payloads are optional for preview: only the DC RGB
 // coefficient is consumed, so avoid materializing an oversized array.
-bool AllowGaussianSHDecode(const tinyusdz::next::UsdPrim &prim);
+bool AllowGaussianSHDecode(const lightusd::next::UsdPrim &prim);
 
-std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
+std::vector<int32_t> ReadIntArrayLazy(const lightusd::next::UsdPrim &prim,
                                       const char *name, double time);
 
-std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
+std::vector<int64_t> ReadInt64ArrayLazy(const lightusd::next::UsdPrim &prim,
                                         const char *name, double time);
 
 std::string DirName(const std::string &path);
@@ -437,22 +437,22 @@ std::string DirName(const std::string &path);
 bool UsdzEntryMatches(const std::string &entry, const std::string &asset);
 
 
-tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
-                                          const tinyusdz::next::UsdPrim &prim,
+lightusd::next::UsdPrim ConnectedPrimNext(const lightusd::next::Stage &stage,
+                                          const lightusd::next::UsdPrim &prim,
                                           const std::string &prop);
 
 WrapMode ParseWrapMode(const std::string &s);
 
-void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
-                              const tinyusdz::next::UsdPrim &surf,
+void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
+                              const lightusd::next::UsdPrim &surf,
                               const std::string &input, TextureCache &tc,
                               ScalarTex *out);
 
-UvXform ResolveUvXform(const tinyusdz::next::Stage &stage,
-                       const tinyusdz::next::UsdPrim &uvtex);
+UvXform ResolveUvXform(const lightusd::next::Stage &stage,
+                       const lightusd::next::UsdPrim &uvtex);
 
-void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
-                             const tinyusdz::next::UsdPrim &mesh,
+void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
+                             const lightusd::next::UsdPrim &mesh,
                              TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
                              float *roughness, float *metallic,
                              int32_t *normal_tex_id, UvXform *uv_xform,
@@ -475,22 +475,22 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
                              ScalarTex *displacement_tex = nullptr);
 
 void ResolveMeshMaterialCached(
-    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,
+    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &mesh,
     TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
     MeshJobNext *job);
 
 bool PathMatchesMask(const std::string &path,
                      const std::vector<std::string> &mask);
 
-bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim);
+bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim);
 
-bool MeshHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim);
+bool MeshHasAnimatedGeom(const lightusd::next::UsdPrim &prim);
 
-bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
+bool SubtreeGeometryAnimated(const lightusd::next::UsdPrim &prim,
                              const std::vector<std::string> &mask,
                              bool ancestor_xform_animated);
 
-bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
+bool SceneGeometryAnimated(const lightusd::next::Stage &stage,
                            const std::vector<std::string> &mask);
 
 // When `expand_instancers` is true, UsdGeomPointInstancer prims are EXPANDED in
@@ -505,10 +505,10 @@ bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
 // instancer expansion stops early. This bounds host memory on scenes with tens of
 // millions of instances (e.g. Moana island) -- the -vkInstanced collector passes
 // a budget so a huge instancer yields a bounded preview instead of OOMing.
-void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
-                                const tinyusdz::next::UsdPrim &prim,
+void CollectRTPreviewMeshesNext(const lightusd::next::Stage &stage,
+                                const lightusd::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
-                                tinyusdz::Purpose inherited_purpose, double time,
+                                lightusd::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
                                 std::vector<MeshJobNext> *jobs,
                                 bool expand_instancers = false,
@@ -521,53 +521,53 @@ void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
 // per instance (each ~392 B); a large instanced scene then costs ~88 B/placement
 // of host memory during collection instead of ~392 B, so Moana island fits in far
 // less RAM. See CollectRTInstancePlacementsNext.
-using RtInstanceSink = std::function<void(const tinyusdz::next::UsdPrim & /*prim*/,
+using RtInstanceSink = std::function<void(const lightusd::next::UsdPrim & /*prim*/,
                                           const matrix4d & /*world*/,
-                                          tinyusdz::Purpose /*purpose*/)>;
+                                          lightusd::Purpose /*purpose*/)>;
 
 // Streaming counterpart of CollectRTPreviewMeshesNext(expand_instancers=true):
 // traverses `prim`, expands PointInstancer / native instances, and delivers each
 // placement to `sink` instead of appending a MeshJobNext. Stops after
 // `max_placements` sink calls (0 = unlimited). Returns the number of placements
 // emitted (so the caller can report a hit budget).
-size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
-                                       const tinyusdz::next::UsdPrim &prim,
+size_t CollectRTInstancePlacementsNext(const lightusd::next::Stage &stage,
+                                       const lightusd::next::UsdPrim &prim,
                                        const matrix4d &parent_world,
-                                       tinyusdz::Purpose inherited_purpose,
+                                       lightusd::Purpose inherited_purpose,
                                        double time,
                                        const std::vector<std::string> &mask,
                                        const RtInstanceSink &sink,
                                        size_t max_placements);
 
-void CollectVolumesNext(const tinyusdz::next::Stage &stage,
-                        const tinyusdz::next::UsdPrim &prim,
+void CollectVolumesNext(const lightusd::next::Stage &stage,
+                        const lightusd::next::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
                         const std::string &baseDir,
                         std::vector<VolumeData> *out,
                         size_t max_density_bytes = 0,
                         size_t *density_bytes_used = nullptr);
 
-float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+float ReadCamFloatNext(const lightusd::next::UsdPrim &prim, const char *name,
                        float fallback);
 
-bool FindNextCameraFrameRecursive(const tinyusdz::next::Stage &stage,
-                                  const tinyusdz::next::UsdPrim &prim,
+bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
+                                  const lightusd::next::UsdPrim &prim,
                                   const matrix4d &parent_world,
                                   const std::string &query, double time,
                                   CameraFrame *frame, float *aspect);
 
-bool FindNextCameraFrame(const tinyusdz::next::Stage &stage,
+bool FindNextCameraFrame(const lightusd::next::Stage &stage,
                          const std::string &query, double time,
                          CameraFrame *frame, float *aspect);
 
-CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
+CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lightusd::Axis up_axis,
                                 int width, int *out_height);
 
-bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim);
+bool IsCurvePrimNext(const lightusd::next::UsdPrim &prim);
 
-std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
-    const tinyusdz::next::UsdPrim &prim, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader);
+std::vector<lightusd::value::point3f> ReadCurvePointsNext(
+    const lightusd::next::UsdPrim &prim, double time,
+    const lightusd::next::ValueClipStageLoader &clip_loader);
 
 bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                      double time, bool include_flat = true);
@@ -577,36 +577,36 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 // flat-curve intersector.
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+    const lightusd::next::ValueClipStageLoader &clip_loader,
     const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors);
 
 bool BuildNextFlatCurveBounds(
     const std::vector<CurveJobNext> &jobs, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader, Bounds *bounds);
+    const lightusd::next::ValueClipStageLoader &clip_loader, Bounds *bounds);
 
 matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
                      const float *scale3);
 
-void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
+void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
                           const matrix4d &parent_world,
-                          tinyusdz::Purpose inherited_purpose, double time,
+                          lightusd::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out);
 
-void CollectProtoCurves(const tinyusdz::next::Stage &stage,
+void CollectProtoCurves(const lightusd::next::Stage &stage,
                         const std::string &proto_path,
-                        tinyusdz::Purpose start_purpose, double time,
+                        lightusd::Purpose start_purpose, double time,
                         std::vector<CurveJobNext> *out);
 
-int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
+int32_t ReserveCurveProto(const lightusd::next::Stage &stage,
                           const std::string &proto_path,
-                          tinyusdz::Purpose purpose, double time,
+                          lightusd::Purpose purpose, double time,
                           CurveProtoCollect *curve_inst);
 
-void CollectPointInstancer(const tinyusdz::next::Stage &stage,
-                           const tinyusdz::next::UsdPrim &instancer,
+void CollectPointInstancer(const lightusd::next::Stage &stage,
+                           const lightusd::next::UsdPrim &instancer,
                            const matrix4d &instancer_world,
-                           tinyusdz::Purpose purpose, double time,
+                           lightusd::Purpose purpose, double time,
                            const std::vector<std::string> &mask,
                            std::vector<InstanceRT> *instances,
                            std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -619,10 +619,10 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
                            // still deduped into curve_inst.
                            std::vector<CurveInstanceRT> *curve_out = nullptr);
 
-void CollectSceneSplit(const tinyusdz::next::Stage &stage,
-                       const tinyusdz::next::UsdPrim &prim,
+void CollectSceneSplit(const lightusd::next::Stage &stage,
+                       const lightusd::next::UsdPrim &prim,
                        const matrix4d &parent_world,
-                       tinyusdz::Purpose inherited_purpose, double time,
+                       lightusd::Purpose inherited_purpose, double time,
                        const std::vector<std::string> &mask,
                        std::vector<MeshJobNext> *base_jobs,
                        std::vector<InstanceRT> *instances,
@@ -633,8 +633,8 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        const std::unordered_set<std::string> *proto_holders);
 
 void CollectProtoMeshNestingRec(
-    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
-    const matrix4d &parent_world, tinyusdz::Purpose inherited_purpose, double time,
+    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
+    const matrix4d &parent_world, lightusd::Purpose inherited_purpose, double time,
     const std::vector<std::string> &mask, std::vector<InstanceRT> *nested,
     std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
@@ -643,36 +643,36 @@ void CollectProtoMeshNestingRec(
     const std::unordered_set<std::string> *proto_holders);
 
 void CollectProtoMeshNesting(
-    const tinyusdz::next::Stage &stage, const std::string &proto_path,
-    tinyusdz::Purpose purpose, double time, const std::vector<std::string> &mask,
+    const lightusd::next::Stage &stage, const std::string &proto_path,
+    lightusd::Purpose purpose, double time, const std::vector<std::string> &mask,
     std::vector<InstanceRT> *nested, std::vector<CurveInstanceRT> *nested_curves,
     std::unordered_map<std::string, uint32_t> *proto_ids,
     std::vector<ProtoBuildReq> *protos, CurveProtoCollect *curve_inst,
     RTPreviewStats *stats,
     const std::unordered_set<std::string> *proto_holders);
 
-void CollectPrototypePaths(const tinyusdz::next::UsdPrim &prim,
+void CollectPrototypePaths(const lightusd::next::UsdPrim &prim,
                            std::unordered_set<std::string> *out);
 
-void CollectProtoJobs(const tinyusdz::next::Stage &stage,
+void CollectProtoJobs(const lightusd::next::Stage &stage,
                       const std::string &proto_path,
-                      tinyusdz::Purpose start_purpose, double time,
+                      lightusd::Purpose start_purpose, double time,
                       std::vector<MeshJobNext> *jobs);
 
-inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
+inline size_t EstimateTrisForJob(const lightusd::next::UsdPrim &prim,
                                  double time);
 
 void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
                                   const float o2w[12]);
 
-void CollectLightsNext(const tinyusdz::next::Stage &stage,
-                       const tinyusdz::next::UsdPrim &prim,
+void CollectLightsNext(const lightusd::next::Stage &stage,
+                       const lightusd::next::UsdPrim &prim,
                        const matrix4d &parent_world, double time,
                        LightCache *cache);
 
-tinyusdz::next::UsdPrim FindDomeLightRec(const tinyusdz::next::UsdPrim &prim);
+lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim);
 
-bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
+bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);
 
 bool ParseFrameSpec(const std::string &spec, std::vector<double> *times);
@@ -683,9 +683,9 @@ int RunRTPreviewNext(const Options &opt);
 
 // Compose through the persistent next-core session with aggregate accounting,
 // then release transient PCP caches before returning the retained Stage.
-bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
+bool LoadNextStageBudgeted(const Options &opt, lightusd::next::Stage *stage,
                            std::string *warn, std::string *err,
-                           tinyusdz::next::ValueClipStageLoader *clip_loader = nullptr);
+                           lightusd::next::ValueClipStageLoader *clip_loader = nullptr);
 
 // ---- tusdr_lod.cc (view-dependent district LOD pre-pass) ----
 // Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.
@@ -700,7 +700,7 @@ size_t QueryDeviceLocalVRAMBytes();
 bool PrepareLodStream(Options *opt, std::string *generated_wrapper);
 
 // ---- shared helpers (defined in tusdrender.cc) ----
-void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &points,
+void AppendLinearCurveStrands(const std::vector<lightusd::value::point3f> &points,
                               const std::vector<int> &counts,
                               const std::vector<float> &widths,
                               const matrix4d &world,
@@ -740,14 +740,14 @@ inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
 
 // Load `path` into `stage` WITH composition (sublayers / references / payloads /
 // inherits / variants / specializes composed to a fixed point).
-// `tinyusdz::LoadUSDFromFile` alone parses a single layer and expands no arcs, so
+// `lightusd::LoadUSDFromFile` alone parses a single layer and expands no arcs, so
 // anything contributed by a reference or payload — a Material in a look layer,
 // payload-gated geometry — was simply absent from the legacy render. Falls back to
 // the direct parser for .usdz and for layers with no arcs (which keeps zero-copy
 // USDC storage and the schemas LayerToStage does not carry).
 bool LoadStageComposedLegacy(const std::string &path,
-                             const tinyusdz::USDLoadOptions &load_options,
-                             tinyusdz::Stage *stage, std::string *warn,
+                             const lightusd::USDLoadOptions &load_options,
+                             lightusd::Stage *stage, std::string *warn,
                              std::string *err);
 
 std::vector<int> FaceMaterialIds(const RenderMesh &mesh);
@@ -778,7 +778,7 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
 // Absolute prim path -> inherited purpose bit; 0 = visibility="invisible"
 // (subtree pruned). Built by BuildLegacyPurposeVisibility.
 using PurposeVisibilityMap = std::unordered_map<std::string, uint32_t>;
-void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+void BuildLegacyPurposeVisibility(const lightusd::Stage &stage,
                                   PurposeVisibilityMap *out);
 
 // `tri_uvs` (when non-null) receives 6 floats per emitted triangle — the raw USD
@@ -811,49 +811,49 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                         const PurposeVisibilityMap *pv = nullptr);
 
-matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
+matrix4d LocalMatrixOrIdentity(const lightusd::Xformable *xformable, double time,
                                bool *reset);
 
-tinyusdz::Purpose ResolvePurpose(const tinyusdz::Prim &prim,
-                                 tinyusdz::Purpose inherited);
+lightusd::Purpose ResolvePurpose(const lightusd::Prim &prim,
+                                 lightusd::Purpose inherited);
 
-bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path,
-                      const tinyusdz::GeomMesh &mesh, const matrix4d &world,
-                      double time, tinyusdz::Purpose purpose,
+bool AddRTPreviewMesh(const lightusd::Stage &stage, const std::string &prim_path,
+                      const lightusd::GeomMesh &mesh, const matrix4d &world,
+                      double time, lightusd::Purpose purpose,
                       uint32_t purpose_mask,
                       std::vector<float> *vertices, std::vector<TriInfo> *tris,
                       Bounds *bounds, RTPreviewStats *stats);
 
-void CollectRTPreviewMeshes(const tinyusdz::Prim &prim,
+void CollectRTPreviewMeshes(const lightusd::Prim &prim,
                             const matrix4d &parent_world, double time,
-                            tinyusdz::Purpose inherited_purpose,
+                            lightusd::Purpose inherited_purpose,
                             std::vector<MeshJob> *jobs);
 
-bool BuildRTPreviewScene(const tinyusdz::Stage &stage, const Options &opt,
+bool BuildRTPreviewScene(const lightusd::Stage &stage, const Options &opt,
                          std::vector<float> *vertices,
                          std::vector<TriInfo> *tris, Bounds *bounds,
                          RTPreviewStats *stats, std::string *err);
 
-bool MatchPrimNameOrPath(const tinyusdz::Prim &prim, const std::string &query);
+bool MatchPrimNameOrPath(const lightusd::Prim &prim, const std::string &query);
 
-bool CameraFrameFromGeomCamera(const tinyusdz::Stage &stage,
-                               const tinyusdz::GeomCamera &cam,
+bool CameraFrameFromGeomCamera(const lightusd::Stage &stage,
+                               const lightusd::GeomCamera &cam,
                                const matrix4d &world, double time,
                                CameraFrame *frame);
 
-bool FindStageCameraFrameRecursive(const tinyusdz::Stage &stage,
-                                   const tinyusdz::Prim &prim,
+bool FindStageCameraFrameRecursive(const lightusd::Stage &stage,
+                                   const lightusd::Prim &prim,
                                    const std::string &query,
                                    const matrix4d &parent_world, double time,
                                    CameraFrame *frame);
 
-bool FindStageCameraFrame(const tinyusdz::Stage &stage, const std::string &query,
+bool FindStageCameraFrame(const lightusd::Stage &stage, const std::string &query,
                           double time, CameraFrame *frame);
 
-bool EvalAxis(const tinyusdz::TypedAttributeWithFallback<tinyusdz::Axis> &attr,
-              tinyusdz::Axis *out);
+bool EvalAxis(const lightusd::TypedAttributeWithFallback<lightusd::Axis> &attr,
+              lightusd::Axis *out);
 
-std::string PrimPathString(const tinyusdz::Prim &prim);
+std::string PrimPathString(const lightusd::Prim &prim);
 
 float ApproxScale(const matrix4d &m);
 
@@ -868,25 +868,25 @@ void AddDirectTriangle(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
 void AddDirectCube(double size, const matrix4d &world, std::vector<float> *vertices,
                    std::vector<TriInfo> *tris, Bounds *bounds);
 
-void AddDirectPlane(double width, double length, tinyusdz::Axis axis,
+void AddDirectPlane(double width, double length, lightusd::Axis axis,
                     const matrix4d &world, std::vector<float> *vertices,
                     std::vector<TriInfo> *tris, Bounds *bounds);
 
 double BSplineBasis(int i, int degree, double u, const std::vector<double> &knots);
 
-Vec3 EvalNurbsPatchPoint(const std::vector<tinyusdz::value::point3f> &points,
+Vec3 EvalNurbsPatchPoint(const std::vector<lightusd::value::point3f> &points,
                          const std::vector<double> &weights, int u_count,
                          int v_count, int u_order, int v_order,
                          const std::vector<double> &u_knots,
                          const std::vector<double> &v_knots, double u, double v);
 
-void AddNurbsPatchTriangles(const tinyusdz::Stage &stage,
-                            const tinyusdz::GeomNurbsPatch &patch,
+void AddNurbsPatchTriangles(const lightusd::Stage &stage,
+                            const lightusd::GeomNurbsPatch &patch,
                             const matrix4d &world, double time,
                             std::vector<float> *vertices,
                             std::vector<TriInfo> *tris, Bounds *bounds);
 
-void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+void TraverseDirectPrims(const lightusd::Stage &stage, const lightusd::Prim &prim,
                          const std::unordered_map<std::string, matrix4d> &matrices,
                          double time, DirectScene *direct,
                          std::vector<float> *vertices, std::vector<TriInfo> *tris,
@@ -904,7 +904,7 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
                          std::vector<float> *bez_cps,
                          std::vector<float> *tet_aabbs);
 
-bool BuildDirectScene(const tinyusdz::Stage &stage, const RenderScene &render_scene,
+bool BuildDirectScene(const lightusd::Stage &stage, const RenderScene &render_scene,
                       const Options &opt, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       DirectScene *direct, std::string *err);

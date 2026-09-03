@@ -22,7 +22,7 @@
 #include <string>
 #include "next/schema/schema-registry.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 namespace {
 
@@ -2963,7 +2963,7 @@ void TestMetadataAndListOpFidelity() {
          "empty relocate target must round-trip as <>, not </>");
 
   // Unmodeled (unknown) prim- AND layer-level metadata must survive USDC
-  // verbatim (encoded in a tinyusdz-private field). Parsed non-strict since
+  // verbatim (encoded in a lightusd-private field). Parsed non-strict since
   // strict AOUSD mode rejects unknown metadata.
   LoadResult um = LoadUSDAFromString(
       "#usda 1.0\n"

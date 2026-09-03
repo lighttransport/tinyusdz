@@ -22,13 +22,13 @@
 #include <sstream>
 #include <vector>
 
-#include "../tinyusdz.hh"
+#include "../lightusd.hh"
 #include "../composition.hh"
 #include "../asset-resolution.hh"
 #include "../str-util.hh"
 #include "diff-and-compare.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -58,19 +58,19 @@ std::string DirOf(const std::string &path) {
 
 // Flatten a layer with the same composition sequence tusdcat uses
 // (subLayers, then references/payload/inherits/variant to a fixed point).
-bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
-                         tinyusdz::Layer *out, std::string *warn,
+bool FlattenLayerForDiff(lightusd::Layer &&in, const std::string &base_dir,
+                         lightusd::Layer *out, std::string *warn,
                          std::string *err) {
-  tinyusdz::AssetResolutionResolver resolver;
+  lightusd::AssetResolutionResolver resolver;
   if (!base_dir.empty()) {
     resolver.set_search_paths({base_dir});
   }
 
-  tinyusdz::Layer src = std::move(in);
+  lightusd::Layer src = std::move(in);
 
   {
-    tinyusdz::Layer composited;
-    if (!tinyusdz::CompositeSublayers(resolver, src, &composited, warn, err)) {
+    lightusd::Layer composited;
+    if (!lightusd::CompositeSublayers(resolver, src, &composited, warn, err)) {
       return false;
     }
     src = std::move(composited);
@@ -81,9 +81,9 @@ bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
     bool any = false;
     if (src.check_unresolved_references()) {
       any = true;
-      tinyusdz::Layer composited;
-      if (!tinyusdz::CompositeReferencesInPlace(
-              resolver, std::make_unique<tinyusdz::Layer>(std::move(src)),
+      lightusd::Layer composited;
+      if (!lightusd::CompositeReferencesInPlace(
+              resolver, std::make_unique<lightusd::Layer>(std::move(src)),
               &composited, warn, err)) {
         return false;
       }
@@ -91,9 +91,9 @@ bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
     }
     if (src.check_unresolved_payload()) {
       any = true;
-      tinyusdz::Layer composited;
-      if (!tinyusdz::CompositePayloadInPlace(
-              resolver, std::make_unique<tinyusdz::Layer>(std::move(src)),
+      lightusd::Layer composited;
+      if (!lightusd::CompositePayloadInPlace(
+              resolver, std::make_unique<lightusd::Layer>(std::move(src)),
               &composited, warn, err)) {
         return false;
       }
@@ -101,8 +101,8 @@ bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
     }
     if (src.check_unresolved_inherits()) {
       any = true;
-      tinyusdz::Layer composited;
-      if (!tinyusdz::CompositeInherits(src, &composited, warn, err)) {
+      lightusd::Layer composited;
+      if (!lightusd::CompositeInherits(src, &composited, warn, err)) {
         return false;
       }
       src = std::move(composited);
@@ -111,9 +111,9 @@ bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
       any = true;
       // AOUSD Core Spec 10.3.2.5: defer variant composition until references and
       // payloads are resolved (this loop always resolves both).
-      if (!tinyusdz::ShouldDeferVariantComposition(src)) {
-        tinyusdz::Layer composited;
-        if (!tinyusdz::CompositeVariant(src, &composited, warn, err)) {
+      if (!lightusd::ShouldDeferVariantComposition(src)) {
+        lightusd::Layer composited;
+        if (!lightusd::CompositeVariant(src, &composited, warn, err)) {
           return false;
         }
         src = std::move(composited);
@@ -128,7 +128,7 @@ bool FlattenLayerForDiff(tinyusdz::Layer &&in, const std::string &base_dir,
 
 // Load one diff side from {path | data(base64) | uuid}. Sets default_name and,
 // for path inputs, base_dir (used by optional flatten). Returns false on error.
-bool LoadDiffSide(Context &ctx, const nlohmann::json &side, tinyusdz::Layer *out,
+bool LoadDiffSide(Context &ctx, const nlohmann::json &side, lightusd::Layer *out,
                   std::string *default_name, std::string *base_dir,
                   std::string &err) {
   if (side.contains("uuid") && side["uuid"].is_string()) {
@@ -146,7 +146,7 @@ bool LoadDiffSide(Context &ctx, const nlohmann::json &side, tinyusdz::Layer *out
   std::string warn;
   if (side.contains("path") && side["path"].is_string()) {
     const std::string path = side["path"].get<std::string>();
-    if (!tinyusdz::LoadLayerFromFile(path, out, &warn, &err)) {
+    if (!lightusd::LoadLayerFromFile(path, out, &warn, &err)) {
       return false;
     }
     *default_name = path;
@@ -156,9 +156,9 @@ bool LoadDiffSide(Context &ctx, const nlohmann::json &side, tinyusdz::Layer *out
 
   if (side.contains("data") && side["data"].is_string()) {
     const std::string binary =
-        tinyusdz::base64_decode(side["data"].get<std::string>());
+        lightusd::base64_decode(side["data"].get<std::string>());
     const std::string name = side.value("name", std::string("memory.usd"));
-    if (!tinyusdz::LoadLayerFromMemory(
+    if (!lightusd::LoadLayerFromMemory(
             reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
             name, out, &warn, &err)) {
       return false;
@@ -526,7 +526,7 @@ bool DiffOpen(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   const bool flatten = args.value("flatten", false);
   if (flatten) {
     std::string warn;
-    tinyusdz::Layer fl, fr;
+    lightusd::Layer fl, fr;
     if (!FlattenLayerForDiff(std::move(session->left), left_base, &fl, &warn,
                              &err)) {
       err = "flatten(left) failed: " + err;
@@ -631,4 +631,4 @@ bool DiffJson(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
 }  // namespace mcp
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -6,7 +6,7 @@
 #include "usdc-reader-impl.hh"
 #include "usdc-reader-prim-detail.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 INSTANTIATE_RECONSTRUCT_PRIM(GeomCapsule_1);
@@ -26,4 +26,4 @@ INSTANTIATE_RECONSTRUCT_PRIM(DomeLight_1);
 INSTANTIATE_RECONSTRUCT_PRIM(LightFilter);
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

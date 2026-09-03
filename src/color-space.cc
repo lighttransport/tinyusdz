@@ -4,14 +4,14 @@
 #include "color-space.hh"
 #include "tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
 // Token to enum lookup table (heap-allocated to avoid exit-time destructor)
-const tinyusdz::HashMap<std::string, ColorSpace>& GetTokenToEnumMap() {
-  static tinyusdz::HashMap<std::string, ColorSpace>* kTokenToEnum =
-    new tinyusdz::HashMap<std::string, ColorSpace>({
+const lightusd::HashMap<std::string, ColorSpace>& GetTokenToEnumMap() {
+  static lightusd::HashMap<std::string, ColorSpace>* kTokenToEnum =
+    new lightusd::HashMap<std::string, ColorSpace>({
       // Linear spaces
       {colorspace::kLinAp1Scene, ColorSpace::LinAp1Scene},
       {colorspace::kLinAp0Scene, ColorSpace::LinAp0Scene},
@@ -44,9 +44,9 @@ const tinyusdz::HashMap<std::string, ColorSpace>& GetTokenToEnumMap() {
 }
 
 // Enum to token lookup table (heap-allocated to avoid exit-time destructor)
-const tinyusdz::HashMap<ColorSpace, std::string>& GetEnumToTokenMap() {
-  static tinyusdz::HashMap<ColorSpace, std::string>* kEnumToToken =
-    new tinyusdz::HashMap<ColorSpace, std::string>({
+const lightusd::HashMap<ColorSpace, std::string>& GetEnumToTokenMap() {
+  static lightusd::HashMap<ColorSpace, std::string>* kEnumToToken =
+    new lightusd::HashMap<ColorSpace, std::string>({
       // Linear spaces
       {ColorSpace::LinAp1Scene, colorspace::kLinAp1Scene},
       {ColorSpace::LinAp0Scene, colorspace::kLinAp0Scene},
@@ -128,4 +128,4 @@ bool is_data(ColorSpace cs) {
   return (cs == ColorSpace::Data) || (cs == ColorSpace::Raw);
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

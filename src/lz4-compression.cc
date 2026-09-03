@@ -2,7 +2,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#endif 
+#endif
 
 //
 #include <cstring>
@@ -48,10 +48,10 @@
 // language governing permissions and limitations under the Apache License.
 //
 
-// TinyUSDZ : Use orignal lz4.
+// LightUSD : Use orignal lz4.
 #include "lz4/lz4.h"
 
-namespace tinyusdz {
+namespace lightusd {
 
 size_t LZ4Compression::GetMaxInputSize() {
   return 127 * static_cast<size_t>(LZ4_MAX_INPUT_SIZE);
@@ -206,7 +206,7 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
            (*err) += "Corrupted chunk data.";
         }
         return 0;
-          
+
       }
 
       memcpy(&chunkSize, compressedPtr, sizeof(chunkSize));
@@ -335,4 +335,4 @@ size_t LZ4Compression::DecompressFromStreamReader(const StreamReader &stream,
   return decompressed;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

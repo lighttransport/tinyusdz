@@ -6,7 +6,7 @@
 #include "usdc-reader-impl.hh"
 #include "usdc-reader-prim-detail.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 INSTANTIATE_RECONSTRUCT_PRIM(PhysicsDistanceJoint);
@@ -26,4 +26,4 @@ INSTANTIATE_RECONSTRUCT_PRIM(Preliminary_Text);
 INSTANTIATE_RECONSTRUCT_PRIM(SpatialAudio);
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd

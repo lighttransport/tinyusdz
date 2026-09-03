@@ -5,4 +5,4 @@
 * Python 3.7+
 * gltflib https://github.com/lukas-shawford/gltflib
   * load glTF file in Python
-* Python binding of TinyUSDZ
+* Python binding of LightUSD

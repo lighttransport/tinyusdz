@@ -3,7 +3,7 @@
 //
 // Generic typed-attribute evaluation template bodies.
 //
-// Included (inside namespace tinyusdz::tydra) by the per-type-group
+// Included (inside namespace lightusd::tydra) by the per-type-group
 // instantiation TUs: attribute-eval-typed-inst-{scalar,array}.cc.
 // The std::string specializations live in attribute-eval-typed-all.cc.
 
@@ -14,7 +14,7 @@
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage, const TypedAttribute<T> &tattr,
+    const lightusd::Stage &stage, const TypedAttribute<T> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err) {
@@ -67,7 +67,7 @@ bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage, const TypedAttribute<Animatable<T>> &tattr,
+    const lightusd::Stage &stage, const TypedAttribute<Animatable<T>> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err,
@@ -136,7 +136,7 @@ bool EvaluateTypedAnimatableAttribute(
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<T> &tattr,
+    const lightusd::Stage &stage, const TypedAttributeWithFallback<T> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err) {
@@ -176,7 +176,7 @@ bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
+    const lightusd::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err,

@@ -20,7 +20,7 @@
 #include "extent.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 struct VariantSet;
@@ -54,9 +54,9 @@ struct Model : public Collection, MaterialBinding {
   const std::vector<value::token> &primChildrenNames() const {
     return _primChildren;
   }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -79,7 +79,7 @@ struct Model : public Collection, MaterialBinding {
 // retained generically in `props`. Shape mirrors the minimal `Scope`
 // placeholder.
 // -----------------------------------------------------------------------------
-#define TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(__cls)                              \
+#define LIGHTUSD_DEFINE_PLACEHOLDER_PRIM(__cls)                              \
   struct __cls {                                                             \
     __cls() = default;                                                       \
     std::string name;                                                        \
@@ -93,8 +93,8 @@ struct Model : public Collection, MaterialBinding {
     const std::vector<value::token> &propertyNames() const {                 \
       return _properties;                                                    \
     }                                                                        \
-    std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; } \
-    std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }       \
+    std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; } \
+    std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }       \
                                                                              \
    private:                                                                  \
     std::vector<value::token> _primChildren;                                 \
@@ -102,14 +102,14 @@ struct Model : public Collection, MaterialBinding {
   }
 
 // UsdRender
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderSettings);
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderProduct);
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderVar);
+LIGHTUSD_DEFINE_PLACEHOLDER_PRIM(RenderSettings);
+LIGHTUSD_DEFINE_PLACEHOLDER_PRIM(RenderProduct);
+LIGHTUSD_DEFINE_PLACEHOLDER_PRIM(RenderVar);
 
 // UsdProc
-TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(GenerativeProcedural);
+LIGHTUSD_DEFINE_PLACEHOLDER_PRIM(GenerativeProcedural);
 
-#undef TINYUSDZ_DEFINE_PLACEHOLDER_PRIM
+#undef LIGHTUSD_DEFINE_PLACEHOLDER_PRIM
 
 // NOTE: The UsdVol schema prims (Volume, FieldAsset, OpenVDBAsset,
 // Field3DAsset) are GPrim-derived and defined in usdGeom.hh.
@@ -153,9 +153,9 @@ struct Scope : Collection, MaterialBinding {
   const std::vector<value::token> &primChildrenNames() const {
     return _primChildren;
   }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -180,4 +180,4 @@ DEFINE_TYPE_TRAIT(GenerativeProcedural, "GenerativeProcedural", TYPE_ID_GENERATI
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

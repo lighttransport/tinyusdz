@@ -1,5 +1,5 @@
 //
-// TinyUSDZ modification:
+// LightUSD modification:
 // - Disable exception
 // - Use GHC filesystem
 //

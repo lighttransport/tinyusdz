@@ -15,7 +15,7 @@
 #include "stage.hh"
 #include "variant-support.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 bool VariantConverter::ConvertVariants(const Stage &stage, RenderScene *scene,
@@ -89,7 +89,7 @@ int32_t VariantConverter::ExtractVariantGroup(const Prim &prim,
   // Extract each variant set
   for (const auto &vs_pair : variant_sets) {
     const std::string &vs_name = vs_pair.first;
-    const tinyusdz::VariantSet &usd_vs = vs_pair.second;
+    const lightusd::VariantSet &usd_vs = vs_pair.second;
 
     auto extracted_vs =
         ExtractVariantSetDefinition(vs_name, usd_vs, scene, err);
@@ -110,7 +110,7 @@ int32_t VariantConverter::ExtractVariantGroup(const Prim &prim,
 
 tydra::VariantSet VariantConverter::ExtractVariantSetDefinition(
     const std::string &variant_set_name,
-    const tinyusdz::VariantSet &usd_variant_set,
+    const lightusd::VariantSet &usd_variant_set,
     RenderScene *scene,
     std::string *err) {
   tydra::VariantSet vs;
@@ -121,7 +121,7 @@ tydra::VariantSet VariantConverter::ExtractVariantSetDefinition(
   // int32_t option_idx = 0;  // Currently unused
   for (const auto &var_pair : usd_variant_set.variantSet) {
     const std::string &var_name = var_pair.first;
-    const tinyusdz::Variant &usd_variant = var_pair.second;
+    const lightusd::Variant &usd_variant = var_pair.second;
 
     auto extracted_option = ExtractVariantOption(var_name, usd_variant, scene, err);
     vs.options.push_back(extracted_option);
@@ -134,7 +134,7 @@ tydra::VariantSet VariantConverter::ExtractVariantSetDefinition(
 
 VariantOption VariantConverter::ExtractVariantOption(
     const std::string &variant_name,
-    const tinyusdz::Variant &variant,
+    const lightusd::Variant &variant,
     RenderScene *scene,
     std::string *err) {
   VariantOption option;
@@ -153,7 +153,7 @@ VariantOption VariantConverter::ExtractVariantOption(
 }
 
 std::vector<std::shared_ptr<tydra::VariantSet>>
-VariantConverter::ExtractNestedVariantSets(const tinyusdz::Variant &variant,
+VariantConverter::ExtractNestedVariantSets(const lightusd::Variant &variant,
                                             RenderScene *scene,
                                             std::string *err) {
   std::vector<std::shared_ptr<tydra::VariantSet>> nested_sets;
@@ -165,7 +165,7 @@ VariantConverter::ExtractNestedVariantSets(const tinyusdz::Variant &variant,
 
   for (const auto &vs_pair : usd_variant_sets) {
     const std::string &vs_name = vs_pair.first;
-    const tinyusdz::VariantSet &usd_vs = vs_pair.second;
+    const lightusd::VariantSet &usd_vs = vs_pair.second;
 
     auto extracted_vs =
         ExtractVariantSetDefinition(vs_name, usd_vs, scene, err);
@@ -211,4 +211,4 @@ bool VariantConverter::ExtractVariantSelections(
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

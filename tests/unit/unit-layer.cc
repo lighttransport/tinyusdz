@@ -9,9 +9,9 @@
 #include "layer.hh"
 #include "core/prim-spec.hh"
 #include "composition.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void layer_create_empty_test(void) {
   Layer layer;

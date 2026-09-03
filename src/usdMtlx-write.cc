@@ -5,13 +5,13 @@
 
 #include "usdMtlx.hh"
 #include "usdShade.hh"
-#include "usdLux.hh"  // SphereLight/RectLight (no longer re-exported by tinyusdz.hh)
+#include "usdLux.hh"  // SphereLight/RectLight (no longer re-exported by lightusd.hh)
 #include "safe-arithmetic.hh"
 
 // Use built-in MaterialX parser instead of pugixml
 #include "mtlx-usd-adapter.hh"
 
-#if defined(TINYUSDZ_USE_USDMTLX)
+#if defined(LIGHTUSD_USE_USDMTLX)
 
 // ============================================================================
 // Configuration flags for MaterialX support
@@ -20,8 +20,8 @@
 // Other shader types (UsdPreviewSurface, StandardSurface) export paths are
 // disabled until needed. Enable these flags to re-enable those code paths.
 // ============================================================================
-#define TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 1
-#define TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT 1
+#define LIGHTUSD_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 1
+#define LIGHTUSD_MTLX_ENABLE_STANDARDSURFACE_EXPORT 1
 
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
@@ -46,7 +46,7 @@
 // MaterialX WRITE path (USD -> .mtlx XML), split from usdMtlx.cc to divide back-end
 // codegen. Read and write paths share no statics. See usdMtlx.cc for the read path.
 
-namespace tinyusdz {
+namespace lightusd {
 namespace detail {
 
 template <typename T>
@@ -103,9 +103,9 @@ bool SerializeAttribute(const std::string &attr_name,
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to get the value at default time of `{}`", attr_name));
       }
-    } else { 
+    } else {
       // no time-varying(timesamples) attribute in MaterialX.
-      
+
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to get the value of `{}`", attr_name));
     }
@@ -115,7 +115,7 @@ bool SerializeAttribute(const std::string &attr_name,
   return true;
 }
 
-#if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
+#if LIGHTUSD_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
 static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
@@ -211,9 +211,9 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
 
   return true;
 }
-#endif // TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
+#endif // LIGHTUSD_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
 
-#if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
+#if LIGHTUSD_MTLX_ENABLE_STANDARDSURFACE_EXPORT
 static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
@@ -365,7 +365,7 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
 
   return true;
 }
-#endif // TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
+#endif // LIGHTUSD_MTLX_ENABLE_STANDARDSURFACE_EXPORT
 
 // ============================================================================
 // OpenPBR Surface Export - ACTIVE PATH
@@ -749,13 +749,13 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
     return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
 
-#if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
+#if LIGHTUSD_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
     return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
 #endif
 
-#if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
+#if LIGHTUSD_MTLX_ENABLE_STANDARDSURFACE_EXPORT
   if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
     return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
@@ -767,6 +767,6 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_USE_USDMTLX
+#endif  // LIGHTUSD_USE_USDMTLX

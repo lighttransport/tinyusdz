@@ -31,7 +31,7 @@ std::vector<uint8_t> ImageData(Reader &r, size_t w, size_t h, size_t channels,
   if (!present) return {};
   size_t total = 0;
   if (channels == 0 || channels > 4 ||
-      !tinyusdz::safe::mul3(w, h, channels, &total) || total > 512) {
+      !lightusd::safe::mul3(w, h, channels, &total) || total > 512) {
     total = r.bounded(64);
   }
 
@@ -67,7 +67,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   std::vector<uint8_t> dst;
   size_t dst_w = 0;
   size_t dst_h = 0;
-  (void)tinyusdz::tydra::BuildOcclusionRoughnessMetallicTexture(
+  (void)lightusd::tydra::BuildOcclusionRoughnessMetallicTexture(
       occlusion, roughness, metallic,
       images[0], dims[0][0], dims[0][1], dims[0][2], channel_indices[0],
       images[1], dims[1][0], dims[1][1], dims[1][2], channel_indices[1],

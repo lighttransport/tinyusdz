@@ -14,7 +14,7 @@ const demoDir = path.resolve(scriptDir, '..');
 const repositoryRoot = path.resolve(demoDir, '..', '..');
 const localAssetsLink = path.join(repositoryRoot, 'usd-assets');
 const outputDir = path.join(demoDir, 'public', 'assets', 'openchess');
-const markerPath = path.join(outputDir, '.tinyusdz-openchess.json');
+const markerPath = path.join(outputDir, '.lightusd-openchess.json');
 const indexPath = path.join(outputDir, 'asset-index.json');
 const checkOnly = process.argv.includes('--check');
 const force = process.argv.includes('--force');
@@ -62,11 +62,11 @@ if (!sourceRoot && validTree(path.join(localAssetsLink, RELATIVE_SOURCE))) {
 if (sourceRoot) {
   sourceRoot = path.resolve(sourceRoot);
   const revision = git(['-C', sourceRoot, 'rev-parse', 'HEAD']).trim();
-  if (revision !== PIN && process.env.TINYUSDZ_ALLOW_UNPINNED_OPENCHESS !== '1') {
-    throw new Error(`USD assets checkout is ${revision}; expected ${PIN}. Set TINYUSDZ_ALLOW_UNPINNED_OPENCHESS=1 to override.`);
+  if (revision !== PIN && process.env.LIGHTUSD_ALLOW_UNPINNED_OPENCHESS !== '1') {
+    throw new Error(`USD assets checkout is ${revision}; expected ${PIN}. Set LIGHTUSD_ALLOW_UNPINNED_OPENCHESS=1 to override.`);
   }
 } else {
-  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tinyusdz-openchess-'));
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lightusd-openchess-'));
   sourceRoot = path.join(temporaryRoot, 'assets');
   git(['clone', '--filter=blob:none', '--no-checkout', REPOSITORY, sourceRoot], { inherit: true });
   git(['-C', sourceRoot, 'sparse-checkout', 'set', RELATIVE_SOURCE], { inherit: true });

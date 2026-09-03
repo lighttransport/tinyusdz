@@ -10,7 +10,7 @@
 #include "core/path.hh"
 #include "core/model-scope.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 void prim_type_test(void) {
   // Path
@@ -18,7 +18,7 @@ void prim_type_test(void) {
     Path path("/", "");
     TEST_CHECK(path.is_root_path() == true);
     TEST_CHECK(path.is_root_prim() == false);
-    // invalid 
+    // invalid
     TEST_CHECK(path.get_parent_path().is_valid() == false);
   }
 
@@ -136,9 +136,9 @@ void prim_add_test(void) {
   TEST_CHECK(root.add_child(std::move(bprim)));
 
   // cannot add child Prim with same elementName
-  TEST_CHECK(!root.add_child(std::move(cprim), /* rename_if_required */false)); 
+  TEST_CHECK(!root.add_child(std::move(cprim), /* rename_if_required */false));
 
   // can add child Prim with renaming
-  TEST_CHECK(root.add_child(std::move(dprim), /* rename_if_required */true)); 
-  
+  TEST_CHECK(root.add_child(std::move(dprim), /* rename_if_required */true));
+
 }

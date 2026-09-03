@@ -3,7 +3,7 @@
 //
 // array-edit.hh
 //
-// value::ArrayEdit -- tinyusdz' type-erased representation of OpenUSD's
+// value::ArrayEdit -- lightusd' type-erased representation of OpenUSD's
 // VtArrayEdit<T> (Crate value type, ValueRep "array edit" bit, crate >= 0.14.0).
 //
 // An array edit is a sparse list of edit operations (write/insert/erase/resize/
@@ -14,7 +14,7 @@
 //   - valuesRep   : a packed VtArray<T> of literal element values, and
 //   - indexesRep  : a packed VtInt64Array -- the op instruction stream `_ins`.
 //
-// tinyusdz preserves both faithfully so array edits round-trip through Crate.
+// lightusd preserves both faithfully so array edits round-trip through Crate.
 // The op stream uses OpenUSD's Vt_ArrayEditOps encoding: each instruction is a
 // packed int64 word [count:56 | op:8] followed by `arity(op) * count` int64
 // operands (literal indices, ref/dst indices, or sizes).
@@ -26,7 +26,7 @@
 
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace value {
 
 // OpenUSD Vt_ArrayEditOps::Op (pxr/base/vt/arrayEditOps.h). Values are part of
@@ -103,4 +103,4 @@ DEFINE_TYPE_TRAIT(ArrayEdit, "ArrayEdit", TYPE_ID_ARRAY_EDIT, 1);
 #undef DEFINE_ROLE_TYPE_TRAIT
 
 }  // namespace value
-}  // namespace tinyusdz
+}  // namespace lightusd

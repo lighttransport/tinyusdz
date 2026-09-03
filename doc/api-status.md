@@ -1,6 +1,6 @@
 # USD API Implementation Status
 
-Coverage of OpenUSD schema domains in tinyusdz.
+Coverage of OpenUSD schema domains in lightusd.
 
 > This page's historical `done/stub` counts describe the legacy typed-prim
 > surface only. They are not renderer or cross-pipeline percentages. The pinned
@@ -154,7 +154,7 @@ Coverage of OpenUSD schema domains in tinyusdz.
 | PhysicsDriveAPI | API (multi) | done | |
 | PhysicsLimitAPI | API (multi) | done | |
 
-**Also: MuJoCo extensions** (tinyusdz-specific, not in OpenUSD):
+**Also: MuJoCo extensions** (lightusd-specific, not in OpenUSD):
 MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (concrete); MjcSceneAPI, MjcJointAPI, MjcCollisionAPI, MjcMeshCollisionAPI, MjcMaterialAPI, MjcSiteAPI, MjcImageableAPI, MjcEqualityAPI and variants (API schemas).
 
 **Coverage: 8/8 concrete, 9/9 API -- 100%**
@@ -238,13 +238,13 @@ PointDataGrid is diagnosed and skipped. The external corpus regression is
 
 ## Built-in Mesh Import Plugins (non-USD formats)
 
-These are tinyusdz-specific built-in importers (not OpenUSD schemas). A file
+These are lightusd-specific built-in importers (not OpenUSD schemas). A file
 referenced via `references = @model.obj@` is decoded into a `GPrim`/mesh.
 Import only -- no writer.
 
 | Format | Source | Status | Notes |
 |--------|--------|--------|-------|
-| Wavefront OBJ (`usdObj`) | `src/usdObj.{hh,cc}` | partial (import) | Group/object hierarchy flattened to a single mesh; no materials; texcoords/normals expanded to face-varying. Built-in, gated by `TINYUSDZ_USE_USDOBJ`. |
+| Wavefront OBJ (`usdObj`) | `src/usdObj.{hh,cc}` | partial (import) | Group/object hierarchy flattened to a single mesh; no materials; texcoords/normals expanded to face-varying. Built-in, gated by `LIGHTUSD_USE_USDOBJ`. |
 | MagicaVoxel VOX (`usdVox`) | `src/usdVox.{hh,cc}` | partial (import) | Voxel asset import only. |
 
 OBJ TODO (durable): indexed primvars for texcoords/normals, preserve shape
@@ -255,7 +255,7 @@ load-time triangulation.
 
 ## Unsupported Domains (no plans to implement)
 
-The following OpenUSD domains are renderer/DCC-specific and are out of scope for tinyusdz:
+The following OpenUSD domains are renderer/DCC-specific and are out of scope for lightusd:
 
 | Domain | Schemas | Reason |
 |--------|---------|--------|

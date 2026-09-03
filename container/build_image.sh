@@ -1,1 +1,1 @@
-podman build -t tinyusdz .
+podman build -t lightusd .

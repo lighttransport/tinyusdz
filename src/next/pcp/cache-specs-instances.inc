@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache spec lookup, payload policy, variants, and instancing.
+// LightUSD Next - PCP Cache spec lookup, payload policy, variants, and instancing.
 // Included inside Cache::Impl.
 
   // --- spec lookup --------------------------------------------------------
@@ -349,7 +349,7 @@
                         const std::vector<Src> &srcs, bool prefer_min = false) {
     if (!options.detect_instances || !IsInstanceableSources(srcs)) return;
     const std::string ik = ComputeInstanceKeyImpl(srcs);
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (defer_instances_) {
       // Worker mode: stash for the deterministic input-order merge.
       pending_instance_[prim_path] = {true, ik};

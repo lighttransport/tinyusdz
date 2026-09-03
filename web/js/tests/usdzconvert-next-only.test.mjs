@@ -1,14 +1,14 @@
 // Smoke test for usdzconvert with the next-core + tydra-next only WASM module.
 //
-// Runs on the default wasm32 next glue; set TINYUSDZ_WASM64=1 to use
-// tinyusdz_next_64.js.
+// Runs on the default wasm32 next glue; set LIGHTUSD_WASM64=1 to use
+// lightusd_next_64.js.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as THREE from 'three';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
-import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 import {
   applyMaterialXPixelOps,
   buildNextThreeNode,
@@ -16,11 +16,11 @@ import {
   materialXTextureSpecForParam,
   NextTextureLoadingManager,
   textureColorRole
-} from '../src/tinyusdz/NextRenderSceneUtils.js';
+} from '../src/lightusd/NextRenderSceneUtils.js';
 import {
   installTextureColorTransform,
   textureColorTransform
-} from '../src/tinyusdz/ColorSpaceUtils.js';
+} from '../src/lightusd/ColorSpaceUtils.js';
 
 const COMPOUND_ROTATION_DECAL_BYTES = new Uint8Array(fs.readFileSync(
   new URL('../../../tests/usda/xform-rotatexyz-decal-001.usda', import.meta.url)));
@@ -299,11 +299,11 @@ async function testAsync(name, fn) {
   }
 }
 
-const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
-const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
-                    : '../src/tinyusdz/tinyusdz_next.js';
+const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
+const glue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
+                    : '../src/lightusd/lightusd_next.js';
 const glueUrl = new URL(glue, import.meta.url).href;
-const wasmDir = new URL('../src/tinyusdz/', import.meta.url);
+const wasmDir = new URL('../src/lightusd/', import.meta.url);
 const native = await loadWasm(() => import(glueUrl), {
   locateFile: (file) => new URL(file, wasmDir).pathname,
 });
@@ -550,7 +550,7 @@ await testAsync('next queues graph-derived opacity from a shared color image', a
 
 assert.equal(typeof native.NextUSDZConverterNative, 'function',
   'next-only glue should expose NextUSDZConverterNative');
-assert.equal(typeof native.TinyUSDZLoaderNative, 'undefined',
+assert.equal(typeof native.LightUSDLoaderNative, 'undefined',
   'next-only glue must not depend on the legacy converter binding');
 
 await testAsync('next RenderStream exposes analytic geometry and MaterialX node graphs', async () => {
@@ -967,7 +967,7 @@ await testAsync('next merge-bake keeps compound-rotated decal vertices coplanar'
 });
 
 await testAsync('next loader optimization path preserves compound-rotated decal placement', async () => {
-  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  const loader = new LightUSDLoader({ suppressNativeInfoLogs: true });
   await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
   const adapter = await new Promise((resolve, reject) => {
     loader.parse(COMPOUND_ROTATION_DECAL_BYTES,
@@ -1038,7 +1038,7 @@ def Xform "Second" (
     let merged = null;
     for (let i = 0; i < stream.meshCount(); ++i) {
       const candidate = stream.getMesh(i);
-      if (candidate.primPath?.includes('__tinyusdz_next_merged')) {
+      if (candidate.primPath?.includes('__lightusd_next_merged')) {
         merged = candidate;
         break;
       }
@@ -1116,7 +1116,7 @@ await testAsync('next merge keeps inferred alpha billboards double-sided', async
     let mergedAlpha = null;
     for (let i = 0; i < stream.meshCount(); ++i) {
       const candidate = stream.getMesh(i);
-      if (candidate?.primPath?.startsWith('/__tinyusdz_next_merged/') &&
+      if (candidate?.primPath?.startsWith('/__lightusd_next_merged/') &&
           candidate?.material?.textureMetadata?.opacity?.path) {
         mergedAlpha = candidate;
         break;
@@ -1283,7 +1283,7 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
 }
 
 async function assertEntityAccessorsWithAdapter(usdz, label) {
-  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  const loader = new LightUSDLoader({ suppressNativeInfoLogs: true });
   await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
   const adapter = await new Promise((resolve, reject) => {
     loader.parse(usdz, `${label}.usdz`, resolve, reject, { backend: 'next' });
@@ -1454,7 +1454,7 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
 }
 
 async function assertMeshOnlyAdapter(usdz, label) {
-  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  const loader = new LightUSDLoader({ suppressNativeInfoLogs: true });
   await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
   const adapter = await new Promise((resolve, reject) => {
     loader.parse(usdz, `${label}.usdz`, resolve, reject, {
@@ -1484,9 +1484,9 @@ async function assertWorkerModuleImports() {
     onmessage: null,
   };
   try {
-    await import(new URL('../src/tinyusdz/TinyUSDZWorker.js?next-only-smoke', import.meta.url).href);
+    await import(new URL('../src/lightusd/LightUSDWorker.js?next-only-smoke', import.meta.url).href);
     assert.ok(messages.some((message) => message?.type === 'ready'),
-      'TinyUSDZWorker module should signal ready after import');
+      'LightUSDWorker module should signal ready after import');
   } finally {
     if (previousSelf === undefined) {
       delete globalThis.self;

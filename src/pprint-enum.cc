@@ -11,7 +11,7 @@
 //
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declaration — defined in pprint-meta.cc (or pprinter.cc).
 std::string print_customData(const CustomDataType &customData,
@@ -349,19 +349,19 @@ std::string to_string(const Payload &v) {
 //
 // CollectionInstance::ExpansionRule
 //
-std::string to_string(tinyusdz::CollectionInstance::ExpansionRule rule) {
+std::string to_string(lightusd::CollectionInstance::ExpansionRule rule) {
   std::string s;
 
   switch (rule) {
-    case tinyusdz::CollectionInstance::ExpansionRule::ExplicitOnly: {
+    case lightusd::CollectionInstance::ExpansionRule::ExplicitOnly: {
       s = kExplicitOnly;
       break;
     }
-    case tinyusdz::CollectionInstance::ExpansionRule::ExpandPrims: {
+    case lightusd::CollectionInstance::ExpansionRule::ExpandPrims: {
       s = kExpandPrims;
       break;
     }
-    case tinyusdz::CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
+    case lightusd::CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
       s = kExpandPrimsAndProperties;
       break;
     }
@@ -373,20 +373,20 @@ std::string to_string(tinyusdz::CollectionInstance::ExpansionRule rule) {
 //
 // Kind
 //
-std::string to_string(tinyusdz::Kind v) {
-  if (v == tinyusdz::Kind::Model) {
+std::string to_string(lightusd::Kind v) {
+  if (v == lightusd::Kind::Model) {
     return "model";
-  } else if (v == tinyusdz::Kind::Group) {
+  } else if (v == lightusd::Kind::Group) {
     return "group";
-  } else if (v == tinyusdz::Kind::Assembly) {
+  } else if (v == lightusd::Kind::Assembly) {
     return "assembly";
-  } else if (v == tinyusdz::Kind::Component) {
+  } else if (v == lightusd::Kind::Component) {
     return "component";
-  } else if (v == tinyusdz::Kind::Subcomponent) {
+  } else if (v == lightusd::Kind::Subcomponent) {
     return "subcomponent";
-  } else if (v == tinyusdz::Kind::SceneLibrary) {
+  } else if (v == lightusd::Kind::SceneLibrary) {
     return "sceneLibrary";
-  } else if (v == tinyusdz::Kind::UserDef) {
+  } else if (v == lightusd::Kind::UserDef) {
     // Should use PrimMeta::get_kind() to get actual Kind string value.
     return "[[InternalError. UserDefKind]]";
   } else {
@@ -397,12 +397,12 @@ std::string to_string(tinyusdz::Kind v) {
 //
 // Axis
 //
-std::string to_string(tinyusdz::Axis v) {
-  if (v == tinyusdz::Axis::X) {
+std::string to_string(lightusd::Axis v) {
+  if (v == lightusd::Axis::X) {
     return "X";
-  } else if (v == tinyusdz::Axis::Y) {
+  } else if (v == lightusd::Axis::Y) {
     return "Y";
-  } else if (v == tinyusdz::Axis::Z) {
+  } else if (v == lightusd::Axis::Z) {
     return "Z";
   } else {
     return "[[InvalidAxis]]";
@@ -412,8 +412,8 @@ std::string to_string(tinyusdz::Axis v) {
 //
 // Visibility
 //
-std::string to_string(tinyusdz::Visibility v) {
-  if (v == tinyusdz::Visibility::Inherited) {
+std::string to_string(lightusd::Visibility v) {
+  if (v == lightusd::Visibility::Inherited) {
     return "inherited";
   } else {
     return "invisible";
@@ -423,8 +423,8 @@ std::string to_string(tinyusdz::Visibility v) {
 //
 // Orientation
 //
-std::string to_string(tinyusdz::Orientation o) {
-  if (o == tinyusdz::Orientation::RightHanded) {
+std::string to_string(lightusd::Orientation o) {
+  if (o == lightusd::Orientation::RightHanded) {
     return "rightHanded";
   } else {
     return "leftHanded";
@@ -434,18 +434,18 @@ std::string to_string(tinyusdz::Orientation o) {
 //
 // ListEditQual
 //
-std::string to_string(tinyusdz::ListEditQual v) {
-  if (v == tinyusdz::ListEditQual::ResetToExplicit) {
+std::string to_string(lightusd::ListEditQual v) {
+  if (v == lightusd::ListEditQual::ResetToExplicit) {
     return "";  // unqualified
-  } else if (v == tinyusdz::ListEditQual::Append) {
+  } else if (v == lightusd::ListEditQual::Append) {
     return "append";
-  } else if (v == tinyusdz::ListEditQual::Add) {
+  } else if (v == lightusd::ListEditQual::Add) {
     return "add";
-  } else if (v == tinyusdz::ListEditQual::Delete) {
+  } else if (v == lightusd::ListEditQual::Delete) {
     return "delete";
-  } else if (v == tinyusdz::ListEditQual::Prepend) {
+  } else if (v == lightusd::ListEditQual::Prepend) {
     return "prepend";
-  } else if (v == tinyusdz::ListEditQual::Order) {
+  } else if (v == lightusd::ListEditQual::Order) {
     return "order";
   }
 
@@ -455,7 +455,7 @@ std::string to_string(tinyusdz::ListEditQual v) {
 //
 // Interpolation
 //
-std::string to_string(tinyusdz::Interpolation interp) {
+std::string to_string(lightusd::Interpolation interp) {
   switch (interp) {
     case Interpolation::Invalid:
       return "[[Invalid interpolation value]]";
@@ -478,7 +478,7 @@ std::string to_string(tinyusdz::Interpolation interp) {
 //
 // SpecType
 //
-std::string to_string(tinyusdz::SpecType ty) {
+std::string to_string(lightusd::SpecType ty) {
   if (SpecType::Attribute == ty) {
     return "SpecTypeAttribute";
   } else if (SpecType::Connection == ty) {
@@ -508,12 +508,12 @@ std::string to_string(tinyusdz::SpecType ty) {
 //
 // Specifier
 //
-std::string to_string(tinyusdz::Specifier s) {
-  if (s == tinyusdz::Specifier::Def) {
+std::string to_string(lightusd::Specifier s) {
+  if (s == lightusd::Specifier::Def) {
     return "def";
-  } else if (s == tinyusdz::Specifier::Over) {
+  } else if (s == lightusd::Specifier::Over) {
     return "over";
-  } else if (s == tinyusdz::Specifier::Class) {
+  } else if (s == lightusd::Specifier::Class) {
     return "class";
   } else {
     return "[[SpecifierInvalid]]";
@@ -523,10 +523,10 @@ std::string to_string(tinyusdz::Specifier s) {
 //
 // Permission
 //
-std::string to_string(tinyusdz::Permission s) {
-  if (s == tinyusdz::Permission::Public) {
+std::string to_string(lightusd::Permission s) {
+  if (s == lightusd::Permission::Public) {
     return "public";
-  } else if (s == tinyusdz::Permission::Private) {
+  } else if (s == lightusd::Permission::Private) {
     return "private";
   } else {
     return "[[PermissionInvalid]]";
@@ -536,7 +536,7 @@ std::string to_string(tinyusdz::Permission s) {
 //
 // Purpose
 //
-std::string to_string(tinyusdz::Purpose purpose) {
+std::string to_string(lightusd::Purpose purpose) {
   switch (purpose) {
     case Purpose::Default: {
       return "default";
@@ -559,12 +559,12 @@ std::string to_string(tinyusdz::Purpose purpose) {
 //
 // Variability
 //
-std::string to_string(tinyusdz::Variability v) {
-  if (v == tinyusdz::Variability::Varying) {
+std::string to_string(lightusd::Variability v) {
+  if (v == lightusd::Variability::Varying) {
     return "varying";
-  } else if (v == tinyusdz::Variability::Uniform) {
+  } else if (v == lightusd::Variability::Uniform) {
     return "uniform";
-  } else if (v == tinyusdz::Variability::Config) {
+  } else if (v == lightusd::Variability::Config) {
     return "config";
   } else {
     return "\"[[VariabilityInvalid]]\"";
@@ -574,7 +574,7 @@ std::string to_string(tinyusdz::Variability v) {
 //
 // Extent
 //
-std::string to_string(tinyusdz::Extent e) {
+std::string to_string(lightusd::Extent e) {
   std::stringstream ss;
 
   ss << "[" << e.lower << ", " << e.upper << "]";
@@ -692,4 +692,4 @@ std::string dump_path(const Path &path) {
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

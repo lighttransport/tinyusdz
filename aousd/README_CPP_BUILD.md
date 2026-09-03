@@ -1,6 +1,6 @@
-# C++ Build Examples for OpenUSD + TinyUSDZ
+# C++ Build Examples for OpenUSD + LightUSD
 
-This directory contains two build system examples for creating C++ applications that use both OpenUSD and TinyUSDZ libraries for comparison and testing.
+This directory contains two build system examples for creating C++ applications that use both OpenUSD and LightUSD libraries for comparison and testing.
 
 ## Prerequisites
 
@@ -12,12 +12,12 @@ Before building, ensure you have:
    ./setup_openusd.sh  # If not already built
    ```
 
-2. **TinyUSDZ built** in the main `build/` directory:
+2. **LightUSD built** in the main `build/` directory:
    ```bash
-   cd ../..  # Go to TinyUSDZ root
+   cd ../..  # Go to LightUSD root
    mkdir build && cd build
-   cmake .. -DTINYUSDZ_BUILD_STATIC_LIB=ON
-   make tinyusdz_static
+   cmake .. -DLIGHTUSD_BUILD_STATIC_LIB=ON
+   make lightusd_static
    ```
 
 3. **Required compilers**: clang-20 and clang++-20 (or modify the build files for your compiler)
@@ -68,7 +68,7 @@ LD_LIBRARY_PATH=../dist/lib ./usd_comparison ../../models/suzanne.usda
 Edit the Makefile to adjust:
 - `CXX` - C++ compiler (default: clang++-20)
 - `OPENUSD_ROOT` - Path to OpenUSD installation
-- `TINYUSDZ_BUILD` - Path to TinyUSDZ build directory
+- `LIGHTUSD_BUILD` - Path to LightUSD build directory
 
 ## Option 2: CMake Build
 
@@ -90,8 +90,8 @@ mkdir build && cd build
 CC=clang-20 CXX=clang++-20 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DOPENUSD_ROOT=../../dist \
-    -DTINYUSDZ_ROOT=../../.. \
-    -DTINYUSDZ_BUILD=../../../build
+    -DLIGHTUSD_ROOT=../../.. \
+    -DLIGHTUSD_BUILD=../../../build
 make -j
 ```
 
@@ -108,8 +108,8 @@ make run
 
 - `-DCMAKE_BUILD_TYPE=[Debug|Release]` - Build configuration
 - `-DOPENUSD_ROOT=path` - OpenUSD installation path
-- `-DTINYUSDZ_ROOT=path` - TinyUSDZ source path
-- `-DTINYUSDZ_BUILD=path` - TinyUSDZ build directory
+- `-DLIGHTUSD_ROOT=path` - LightUSD source path
+- `-DLIGHTUSD_BUILD=path` - LightUSD build directory
 
 ## The Example Application
 
@@ -119,12 +119,12 @@ Both build systems compile the same `main.cpp` that:
 2. **Compares metadata**: Up axis, meters per unit
 3. **Lists prims** and their types
 4. **Counts meshes** and other elements
-5. **Tests Tydra conversion** (TinyUSDZ's render scene converter)
+5. **Tests Tydra conversion** (LightUSD's render scene converter)
 
 ### Sample Output
 
 ```
-USD Comparison Tool (OpenUSD + TinyUSDZ)
+USD Comparison Tool (OpenUSD + LightUSD)
 =========================================
 
 === OpenUSD Analysis ===
@@ -138,7 +138,7 @@ Prims in stage:
   /Suzanne/Suzanne [Mesh] - 500 faces
 Total prims: 2
 
-=== TinyUSDZ Analysis ===
+=== LightUSD Analysis ===
 Successfully loaded: ../../models/suzanne.usda
 Up axis: Z
 Meters per unit: 1
@@ -160,8 +160,8 @@ Comparison complete!
 - Shading: `usdShade`
 - Utilities: `tf`, `vt`, `arch`, `trace`
 
-### TinyUSDZ Libraries Used
-- `tinyusdz_static` - Main static library
+### LightUSD Libraries Used
+- `lightusd_static` - Main static library
 - Includes Tydra for render scene conversion
 
 ### System Libraries
@@ -181,19 +181,19 @@ export LD_LIBRARY_PATH=/path/to/aousd/dist/lib:$LD_LIBRARY_PATH
 
 ### Undefined Symbols
 
-Ensure both OpenUSD and TinyUSDZ are built with the same compiler:
+Ensure both OpenUSD and LightUSD are built with the same compiler:
 ```bash
 CC=clang-20 CXX=clang++-20 ./setup_openusd.sh
 ```
 
-### TinyUSDZ Static Library Missing
+### LightUSD Static Library Missing
 
-Build it in TinyUSDZ root:
+Build it in LightUSD root:
 ```bash
 cd ../..
 mkdir -p build && cd build
-cmake .. -DTINYUSDZ_BUILD_STATIC_LIB=ON
-make tinyusdz_static
+cmake .. -DLIGHTUSD_BUILD_STATIC_LIB=ON
+make lightusd_static
 ```
 
 ## Extending the Examples
@@ -208,7 +208,7 @@ To add more comparison features:
    }
    ```
 
-2. **Add TinyUSDZ features**:
+2. **Add LightUSD features**:
    ```cpp
    // Access animation
    if (stage.has_timesamples()) {

@@ -143,7 +143,7 @@ int RunMetadataOnly(const Options& options) {
   int failures = 0;
   for (const auto& path : paths) {
     const auto begin = std::chrono::steady_clock::now();
-    auto info = tinyusdz::image::GetImageInfoFromFile(path);
+    auto info = lightusd::image::GetImageInfoFromFile(path);
     const auto end = std::chrono::steady_clock::now();
     if (!info) {
       ++failures;
@@ -174,9 +174,9 @@ std::vector<CompressionFormat> Formats(const std::string& s) {
   return out;
 }
 
-bool IsLdr(const tinyusdz::Image& img) {
+bool IsLdr(const lightusd::Image& img) {
   return img.width > 0 && img.height > 0 && img.bpp == 8 &&
-         img.format == tinyusdz::Image::PixelFormat::UInt &&
+         img.format == lightusd::Image::PixelFormat::UInt &&
          (img.channels == 3 || img.channels == 4);
 }
 
@@ -200,10 +200,10 @@ uint8_t ToneMap(float v) {
 }
 
 bool Load(const std::string& path, ImageInput* out) {
-  auto loaded = tinyusdz::image::LoadImageFromFile(path);
+  auto loaded = lightusd::image::LoadImageFromFile(path);
   if (!loaded) { std::fprintf(stderr, "SKIP image %s: %s\n", path.c_str(), loaded.error().c_str()); return false; }
-  const tinyusdz::Image& image = loaded->image;
-  if (image.format == tinyusdz::Image::PixelFormat::Float && image.width > 0 && image.height > 0 && image.channels >= 3 && (image.bpp == 16 || image.bpp == 32)) {
+  const lightusd::Image& image = loaded->image;
+  if (image.format == lightusd::Image::PixelFormat::Float && image.width > 0 && image.height > 0 && image.channels >= 3 && (image.bpp == 16 || image.bpp == 32)) {
     out->path = path; out->width = static_cast<uint32_t>(image.width); out->height = static_cast<uint32_t>(image.height); out->hdr = true;
     const size_t n = static_cast<size_t>(out->width) * out->height; out->rgbf.resize(n * 3u); out->rgba.resize(n * 4u, 255);
     for (size_t i = 0; i < n; ++i) for (int c = 0; c < 3; ++c) {
@@ -226,13 +226,13 @@ bool Load(const std::string& path, ImageInput* out) {
 
 bool LoadPtexFace(const std::string& path, uint32_t face, uint32_t level,
                   ImageInput* out) {
-  tinyusdz::ptx::Reader reader;
+  lightusd::ptx::Reader reader;
   std::string error;
-  if (!tinyusdz::ptx::Reader::OpenFile(path, &reader, &error)) {
+  if (!lightusd::ptx::Reader::OpenFile(path, &reader, &error)) {
     std::fprintf(stderr, "SKIP PTEX %s: %s\n", path.c_str(), error.c_str());
     return false;
   }
-  tinyusdz::ptx::FaceImage page;
+  lightusd::ptx::FaceImage page;
   if (!reader.ReadFace(face, level, size_t(256ull * 1024ull * 1024ull),
                        &page, &error)) {
     std::fprintf(stderr, "SKIP PTEX %s face %u mip %u: %s\n", path.c_str(),
@@ -249,9 +249,9 @@ bool LoadPtexFace(const std::string& path, uint32_t face, uint32_t level,
   out->ptex = true;
   out->ptexFace = face;
   out->ptexLevel = level;
-  if (page.dataType == tinyusdz::ptx::DataType::UInt8 ||
-      page.dataType == tinyusdz::ptx::DataType::UInt16) {
-    const size_t bytesPerSample = page.dataType == tinyusdz::ptx::DataType::UInt16 ? 2u : 1u;
+  if (page.dataType == lightusd::ptx::DataType::UInt8 ||
+      page.dataType == lightusd::ptx::DataType::UInt16) {
+    const size_t bytesPerSample = page.dataType == lightusd::ptx::DataType::UInt16 ? 2u : 1u;
     if (page.data.size() < pixels * page.channels * bytesPerSample) return false;
     out->rgba.resize(pixels * 4u, 255);
     for (size_t i = 0; i < pixels; ++i) {
@@ -273,7 +273,7 @@ bool LoadPtexFace(const std::string& path, uint32_t face, uint32_t level,
     }
     return true;
   }
-  const size_t bytesPerSample = page.dataType == tinyusdz::ptx::DataType::Half ? 2u : 4u;
+  const size_t bytesPerSample = page.dataType == lightusd::ptx::DataType::Half ? 2u : 4u;
   if (page.data.size() < pixels * page.channels * bytesPerSample || page.channels < 3) return false;
   out->hdr = true;
   out->rgbf.resize(pixels * 3u);
@@ -298,7 +298,7 @@ bool LoadInput(const std::string& path, bool ptex, ImageInput* out) {
   const auto end = std::chrono::steady_clock::now();
   out->loadMs = std::chrono::duration<double, std::milli>(end - begin).count();
   out->sourceBytes = static_cast<uint64_t>(fs::file_size(path));
-  out->mappedBytes = tinyusdz::io::IsMMapSupported() ? out->sourceBytes : 0;
+  out->mappedBytes = lightusd::io::IsMMapSupported() ? out->sourceBytes : 0;
   const uint64_t rssAfter = CurrentRSSBytes();
   out->rssDeltaBytes = rssAfter > rssBefore ? rssAfter - rssBefore : 0;
   return ok;

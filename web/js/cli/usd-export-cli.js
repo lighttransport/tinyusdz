@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// USD Export CLI Tool — TinyUSDZ WASM
+// USD Export CLI Tool — LightUSD WASM
 // Load a USD file, export as USDA / USDC / USDZ.
 // Usage: vite-node cli/usd-export-cli.js <input-file> [options]
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -11,7 +11,7 @@ import path from 'node:path';
 
 function printHelp() {
   console.log(`
-USD Export CLI — TinyUSDZ WASM
+USD Export CLI — LightUSD WASM
 
 Usage:
   vite-node cli/usd-export-cli.js <input-file> [options]
@@ -143,11 +143,11 @@ async function main() {
   const opts = parseArgs();
 
   // Init WASM
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: false });
   if (opts.verbose) console.log('WASM module loaded.');
 
-  const usd = new loader.native_.TinyUSDZLoaderNative();
+  const usd = new loader.native_.LightUSDLoaderNative();
 
   if (opts.sample) {
     // Generate sample scene (no texture in CLI mode — just geometry)

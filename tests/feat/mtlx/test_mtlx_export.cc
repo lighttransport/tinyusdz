@@ -5,7 +5,7 @@
 #include <string>
 
 #include "usdMtlx.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 // Test MaterialX XML - simple UsdPreviewSurface without connections first
 const char* test_connected_mtlx = R"(<?xml version="1.0"?>
@@ -21,12 +21,12 @@ const char* test_connected_mtlx = R"(<?xml version="1.0"?>
 int main(int argc, char** argv) {
   std::string warn, err;
 
-  std::cout << "=== TinyUSDZ MaterialX Export Test ===\n\n";
+  std::cout << "=== LightUSD MaterialX Export Test ===\n\n";
 
   // Test 1: Parse MaterialX with connections
   std::cout << "Test 1: Parsing MaterialX XML with connections...\n";
-  tinyusdz::MtlxModel mtlx;
-  bool ret = tinyusdz::ReadMaterialXFromString(
+  lightusd::MtlxModel mtlx;
+  bool ret = lightusd::ReadMaterialXFromString(
       test_connected_mtlx, "test_export.mtlx", &mtlx, &warn, &err);
 
   if (!ret) {
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
   warn.clear();
   err.clear();
 
-  ret = tinyusdz::WriteMaterialXToString(mtlx, xml_out, &warn, &err);
+  ret = lightusd::WriteMaterialXToString(mtlx, xml_out, &warn, &err);
 
   if (!ret) {
     std::cerr << "ERROR: Failed to export MaterialX\n";

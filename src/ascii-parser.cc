@@ -40,7 +40,7 @@
 #include "tiny-format.hh"
 
 //
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
 
 //
 
@@ -77,11 +77,11 @@
 #include "core/prim-spec.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace ascii {
 
@@ -398,31 +398,31 @@ std::string AsciiParser::GetError() {
   }
 
   std::stringstream ss;
-  
+
   // Track unique error messages to avoid duplicates
   std::set<std::string> seen_errors;
   std::vector<ErrorDiagnostic> errors;
-  
+
   // Collect all errors
   while (!err_stack.empty()) {
     errors.push_back(err_stack.top());
     err_stack.pop();
   }
-  
+
   // Process errors in reverse order (oldest first)
   for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
-    
+
     // Create a unique key for this error location and message
     std::stringstream error_key;
     error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
-    
+
     // Skip duplicate errors
     if (seen_errors.count(error_key.str()) > 0) {
       continue;
     }
     seen_errors.insert(error_key.str());
-    
+
     // Format error with error type and precise location
     ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
        << ", column " << (diag.cursor.col + 1) << ": ";
@@ -450,31 +450,31 @@ std::string AsciiParser::GetWarning() {
   }
 
   std::stringstream ss;
-  
+
   // Track unique warning messages to avoid duplicates
   std::set<std::string> seen_warnings;
   std::vector<ErrorDiagnostic> warnings;
-  
+
   // Collect all warnings
   while (!warn_stack.empty()) {
     warnings.push_back(warn_stack.top());
     warn_stack.pop();
   }
-  
+
   // Process warnings in reverse order (oldest first)
   for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
-    
+
     // Create a unique key for this warning location and message
     std::stringstream warning_key;
     warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
-    
+
     // Skip duplicate warnings
     if (seen_warnings.count(warning_key.str()) > 0) {
       continue;
     }
     seen_warnings.insert(warning_key.str());
-    
+
     // Format warning with error type and precise location
     ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
        << ", column " << (diag.cursor.col + 1) << ": ";
@@ -625,7 +625,7 @@ std::string AsciiParser::GetErrorWithHints(bool show_hints) {
   }
 
   // Process errors in reverse order (oldest first) with aggressive deduplication
-  tinyusdz::HashMap<std::string, int> error_counts;  // Group similar errors by message
+  lightusd::HashMap<std::string, int> error_counts;  // Group similar errors by message
   for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     error_counts[diag.err]++;
@@ -687,7 +687,7 @@ std::string AsciiParser::GetWarningWithHints(bool show_hints) {
   }
 
   // Process warnings in reverse order (oldest first) with aggressive deduplication
-  tinyusdz::HashMap<std::string, int> warning_counts;  // Group similar warnings by message
+  lightusd::HashMap<std::string, int> warning_counts;  // Group similar warnings by message
   for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
     warning_counts[diag.err]++;
@@ -1226,7 +1226,7 @@ bool AsciiParser::ParseVariantsElement(std::string *out_key,
   // must be `string`
   if (type_name != value::kString) {
     PUSH_ERROR_AND_RETURN(
-        "TinyUSDZ only accepts type `string` for `variants` element.");
+        "LightUSD only accepts type `string` for `variants` element.");
   }
 
   if (!SkipWhitespace()) {
@@ -1379,7 +1379,7 @@ bool AsciiParser::MaybeArrayEdit() {
   return false;
 }
 
-bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
+bool AsciiParser::MaybeListEditQual(lightusd::ListEditQual *qual) {
   if (!SkipWhitespace()) {
     return false;
   }
@@ -1394,25 +1394,25 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
 
   if (tok == "prepend") {
     DCOUT("`prepend` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Prepend;
+    (*qual) = lightusd::ListEditQual::Prepend;
   } else if (tok == "append") {
     DCOUT("`append` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Append;
+    (*qual) = lightusd::ListEditQual::Append;
   } else if (tok == "add") {
     DCOUT("`add` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Add;
+    (*qual) = lightusd::ListEditQual::Add;
   } else if (tok == "delete") {
     DCOUT("`delete` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Delete;
+    (*qual) = lightusd::ListEditQual::Delete;
   } else if (tok == "order") {
     DCOUT("`order` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Order;
+    (*qual) = lightusd::ListEditQual::Order;
   } else {
     DCOUT("No ListEdit qualifier.");
     // unqualified
     // rewind
     SeekTo(loc);
-    (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
+    (*qual) = lightusd::ListEditQual::ResetToExplicit;
   }
 
   if (!SkipWhitespace()) {
@@ -1422,7 +1422,7 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   return true;
 }
 
-bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability,
+bool AsciiParser::MaybeVariability(lightusd::Variability *variability,
                                    bool *varying_authored) {
   if (!SkipWhitespace()) {
     return false;
@@ -1437,10 +1437,10 @@ bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability,
   }
 
   if (tok == "uniform") {
-    (*variability) = tinyusdz::Variability::Uniform;
+    (*variability) = lightusd::Variability::Uniform;
     (*varying_authored) = false;
   } else if (tok == "varying") {
-    (*variability) = tinyusdz::Variability::Varying;
+    (*variability) = lightusd::Variability::Varying;
     (*varying_authored) = true;
   } else {
     (*varying_authored) = false;
@@ -2539,7 +2539,7 @@ bool AsciiParser::ParseStageMetaOpt() {
         } else {
           PUSH_ERROR_AND_RETURN("\"" << item.str()
                                      << "\" is not supported(at the moment) "
-                                        "for `apiSchemas` in TinyUSDZ.");
+                                        "for `apiSchemas` in LightUSD.");
         }
       }
     } else {
@@ -3899,12 +3899,12 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
     return false;
   }
 
-  tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
+  lightusd::ListEditQual qual{ListEditQual::ResetToExplicit};
   if (!MaybeListEditQual(&qual)) {
     return false;
   }
 
-  DCOUT("list-edit qual: " << tinyusdz::to_string(qual));
+  DCOUT("list-edit qual: " << lightusd::to_string(qual));
 
   if (!SkipWhitespaceAndNewline()) {
     return false;
@@ -3965,9 +3965,9 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
 //  ParseVariantSet, ParseBlock, Parse)
 
 }  // namespace ascii
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#else  // LIGHTUSD_DISABLE_MODULE_USDA_READER
 
 bool ParseUnregistredValue(const std::string &typeName, const std::string &str,
                            value::Value *value, std::string *err) {
@@ -3977,4 +3977,4 @@ bool ParseUnregistredValue(const std::string &typeName, const std::string &str,
   return false;
 }
 
-#endif  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+#endif  // LIGHTUSD_DISABLE_MODULE_USDA_READER

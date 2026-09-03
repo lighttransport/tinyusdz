@@ -4,7 +4,7 @@ USDC cross-writer diff test runner.
 
 For each input USD file:
   1. Pixar usdcat writes USDC:   usdcat input.usd -o pixar.usdc --usdFormat usdc
-  2. TinyUSDZ tusdcat writes USDC: tusdcat input.usd -o tinyusdz.usdc
+  2. LightUSD tusdcat writes USDC: tusdcat input.usd -o lightusd.usdc
   3. Both USDC files are read back and compared via tusddiff
 
 tusddiff exit codes: 0 = identical, 1 = differences, 2 = error.
@@ -75,7 +75,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
     failed = 0
     skipped = 0
     pixar_errors = 0
-    tinyusdz_errors = 0
+    lightusd_errors = 0
     failures = []
 
     tmpdir = tempfile.mkdtemp(prefix="diffusd_")
@@ -104,7 +104,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         # Pixar usdcat requires .usd extension with --usdFormat
         pixar_usd = os.path.join(tmpdir, stem + "_pixar.usd")
         pixar_usdc = os.path.join(tmpdir, stem + "_pixar.usdc")
-        tiny_usdc = os.path.join(tmpdir, stem + "_tiny.usdc")
+        light_usdc = os.path.join(tmpdir, stem + "_tiny.usdc")
 
         # Step 1: Pixar usdcat → USDC (write as .usd, rename to .usdc)
         pr = subprocess.run(
@@ -123,12 +123,12 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
                 print(f"  SKIP (pixar write): {basename}: {err}")
             continue
 
-        # Step 2: TinyUSDZ tusdcat → USDC
+        # Step 2: LightUSD tusdcat → USDC
         tr = subprocess.run(
-            [tusdcat, filepath, "-o", tiny_usdc],
+            [tusdcat, filepath, "-o", light_usdc],
             capture_output=True, text=True, timeout=10)
         if tr.returncode != 0:
-            tinyusdz_errors += 1
+            lightusd_errors += 1
             failed += 1
             err = (tr.stderr.strip().split("\n")[0] if tr.stderr.strip() else "unknown")
             failures.append((basename, f"tusdcat write failed: {err}"))
@@ -137,12 +137,12 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
             continue
 
         # Step 3: Compare USDC content
-        # Pixar writes USDC (reference), TinyUSDZ writes USDC (test).
+        # Pixar writes USDC (reference), LightUSD writes USDC (test).
         # Each tool reads the OTHER's USDC and produces USDA text.
-        # We compare Pixar-reading-original vs TinyUSDZ-reading-Pixar-USDC.
-        # This tests that TinyUSDZ can correctly read Pixar's USDC files.
+        # We compare Pixar-reading-original vs LightUSD-reading-Pixar-USDC.
+        # This tests that LightUSD can correctly read Pixar's USDC files.
         pixar_usda_out = os.path.join(tmpdir, stem + "_pixar_ref.usda")
-        tiny_usda_out = os.path.join(tmpdir, stem + "_tiny_read.usda")
+        light_usda_out = os.path.join(tmpdir, stem + "_tiny_read.usda")
 
         # Reference: Pixar reads original USDA → USDA text
         pr2 = subprocess.run(
@@ -154,7 +154,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
                 print(f"  SKIP (pixar read orig): {basename}")
             continue
 
-        # Test: TinyUSDZ reads Pixar's USDC → USDA text
+        # Test: LightUSD reads Pixar's USDC → USDA text
         tr2 = subprocess.run(
             [tusdcat, pixar_usdc],
             capture_output=True, text=True, timeout=10)
@@ -166,7 +166,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
                 print(f"  FAIL (read pixar USDC): {basename}")
             continue
 
-        # Check for VALUE_PPRINT placeholder (pprinter bug in TinyUSDZ)
+        # Check for VALUE_PPRINT placeholder (pprinter bug in LightUSD)
         if "VALUE_PPRINT" in tr2.stdout:
             failed += 1
             vp_lines = [l.strip() for l in tr2.stdout.split("\n")
@@ -181,7 +181,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         # Compare using compare-usda.js (semantic, order-independent)
         with open(pixar_usda_out, "w") as fp:
             fp.write(pr2.stdout)
-        with open(tiny_usda_out, "w") as fp:
+        with open(light_usda_out, "w") as fp:
             fp.write(tr2.stdout)
 
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -190,11 +190,11 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
         try:
             if os.path.isfile(compare_js):
                 dr = subprocess.run(
-                    ["node", compare_js, pixar_usda_out, tiny_usda_out],
+                    ["node", compare_js, pixar_usda_out, light_usda_out],
                     capture_output=True, text=True, timeout=10)
             else:
                 dr = subprocess.run(
-                    [tusddiff, pixar_usda_out, tiny_usda_out],
+                    [tusddiff, pixar_usda_out, light_usda_out],
                     capture_output=True, text=True, timeout=10)
         except subprocess.TimeoutExpired:
             skipped += 1
@@ -207,7 +207,7 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
             if verbose:
                 print(f"  PASS: {basename}")
             if not keep_tmp:
-                for fp in (pixar_usdc, tiny_usdc, pixar_usda_out, tiny_usda_out):
+                for fp in (pixar_usdc, light_usdc, pixar_usda_out, light_usda_out):
                     try:
                         os.unlink(fp)
                     except OSError:
@@ -259,11 +259,11 @@ def run_tests(tusdcat, tusddiff, usdcat, basedir,
 # =========================================================================
 
 def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
-    """Compare USDA text output: Pixar usdcat vs TinyUSDZ tusdcat.
+    """Compare USDA text output: Pixar usdcat vs LightUSD tusdcat.
 
     For each input file:
       1. Pixar usdcat input.usda → USDA text (reference)
-      2. TinyUSDZ tusdcat input.usda → USDA text (test)
+      2. LightUSD tusdcat input.usda → USDA text (test)
       3. compare-usda.js compares both (semantic, order-independent)
     """
     for tool in (tusdcat, usdcat):
@@ -327,7 +327,7 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
                 print(f"  SKIP (pixar): {basename}")
             continue
 
-        # TinyUSDZ tusdcat → USDA text (test)
+        # LightUSD tusdcat → USDA text (test)
         tr = subprocess.run([tusdcat, filepath],
                             capture_output=True, text=True, timeout=10)
         if tr.returncode != 0:
@@ -338,7 +338,7 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
                 print(f"  FAIL (tusdcat): {basename}")
             continue
 
-        # Check for VALUE_PPRINT placeholder (pprinter bug in TinyUSDZ)
+        # Check for VALUE_PPRINT placeholder (pprinter bug in LightUSD)
         if "VALUE_PPRINT" in tr.stdout:
             failed += 1
             vp_lines = [l.strip() for l in tr.stdout.split("\n")
@@ -412,11 +412,11 @@ def run_usda_tests(tusdcat, usdcat, basedir, verbose=False, globs=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Cross-writer diff: Pixar usdcat vs TinyUSDZ tusdcat")
+        description="Cross-writer diff: Pixar usdcat vs LightUSD tusdcat")
     parser.add_argument("--tusdcat", required=True,
-                        help="Path to TinyUSDZ tusdcat")
+                        help="Path to LightUSD tusdcat")
     parser.add_argument("--tusddiff", default="",
-                        help="Path to TinyUSDZ tusddiff (for usdc mode)")
+                        help="Path to LightUSD tusddiff (for usdc mode)")
     parser.add_argument("--usdcat", required=True,
                         help="Path to Pixar usdcat")
     parser.add_argument("--basedir", required=True,
@@ -448,7 +448,7 @@ def main():
             return 1
         print()
         print("=" * 60)
-        print("USDC Cross-Writer Test (TinyUSDZ reads Pixar USDC)")
+        print("USDC Cross-Writer Test (LightUSD reads Pixar USDC)")
         print("=" * 60)
         r = run_tests(args.tusdcat, args.tusddiff, args.usdcat,
                       args.basedir, args.verbose, args.keep_tmp, args.globs)

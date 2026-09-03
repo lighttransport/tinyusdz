@@ -43,14 +43,14 @@ int main(int argc, char **argv) {
 
     if (arg == "--flatten") {
       do_compose = true;
-    } else if (tinyusdz::startsWith(arg, "--composition=")) {
-      std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
+    } else if (lightusd::startsWith(arg, "--composition=")) {
+      std::string value_str = lightusd::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
         std::cerr << "No values specified to --composition.\n";
         exit(-1);
       }
 
-      std::vector<std::string> items = tinyusdz::split(value_str, ",");
+      std::vector<std::string> items = lightusd::split(value_str, ",");
       comp_features.subLayers = false;
       comp_features.inherits = false;
       comp_features.variantSets = false;
@@ -90,26 +90,26 @@ int main(int argc, char **argv) {
   filename = argv[input_idx];
 
   std::string base_dir;
-  base_dir = tinyusdz::io::GetBaseDir(filename);
+  base_dir = lightusd::io::GetBaseDir(filename);
 
-  if (!tinyusdz::io::USDFileExists(filename)) {
+  if (!lightusd::io::USDFileExists(filename)) {
     std::cerr << "Input file does not exist or failed to read: " << filename << "\n";
     return -1;
   }
 
-  if (!tinyusdz::IsUSDC(filename)) {
+  if (!lightusd::IsUSDC(filename)) {
     std::cerr << "Input file isn't a USDC file: " << filename << "\n";
     return -1;
   }
 
   std::vector<uint8_t> data;
   std::string err;
-  if (!tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */0)) {
+  if (!lightusd::io::ReadWholeFile(&data, &err, filename, /* filesize_max */0)) {
     std::cerr << "Failed to open file: " << filename << ":" << err << "\n";
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::usdc::USDCReader reader(&sr);
+  lightusd::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  lightusd::usdc::USDCReader reader(&sr);
 
   //std::cout << "Basedir = " << base_dir << "\n";
   //reader.SetBaseDir(base_dir);
@@ -131,18 +131,18 @@ int main(int argc, char **argv) {
 
   // Composite or Dump
   if (do_compose) {
-    tinyusdz::Layer root_layer;
+    lightusd::Layer root_layer;
     bool ret = reader.get_as_layer(&root_layer);
 
     std::cout << "# input\n";
     std::cout << root_layer << "\n";
 
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     stage.metas() = root_layer.metas();
 
     std::string warn;
 
-    tinyusdz::AssetResolutionResolver resolver;
+    lightusd::AssetResolutionResolver resolver;
     resolver.set_search_paths({base_dir});
 
     //
@@ -155,10 +155,10 @@ int main(int argc, char **argv) {
     // - [ ] Specializes
     //
 
-    tinyusdz::Layer src_layer = root_layer;
+    lightusd::Layer src_layer = root_layer;
     if (comp_features.subLayers) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::Layer composited_layer;
+      if (!lightusd::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -172,10 +172,10 @@ int main(int argc, char **argv) {
 
       src_layer = std::move(composited_layer);
     }
-    
+
     if (comp_features.references) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::Layer composited_layer;
+      if (!lightusd::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite `references`: " << err << "\n";
         return -1;
       }
@@ -191,8 +191,8 @@ int main(int argc, char **argv) {
     }
 
     if (comp_features.payload) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+      lightusd::Layer composited_layer;
+      if (!lightusd::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite `payload`: " << err << "\n";
         return -1;
       }
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
 
     // TODO...
   } else {
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     bool ret = reader.ReconstructStage(&stage);
     if (!ret) {
 

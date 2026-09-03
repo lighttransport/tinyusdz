@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Lazy array reference
+// LightUSD Next - Lazy array reference
 //
 // A LazyArrayRef points at an (undecoded) array value that still lives as bytes
 // inside a retained CrateDataSource buffer. Keeping the reference instead of a
@@ -17,7 +17,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 class CrateDataSource;
@@ -62,4 +62,4 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
                      size_t max_elements, LazyArrayRef* out);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

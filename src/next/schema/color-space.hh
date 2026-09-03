@@ -8,12 +8,12 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace color_management {
 
-using ::tinyusdz::color::ColorSpaceDesc;
-using ::tinyusdz::color::ColorTransform;
+using ::lightusd::color::ColorSpaceDesc;
+using ::lightusd::color::ColorTransform;
 
 struct RenderingColorConfig {
   std::string render_settings_path;
@@ -49,4 +49,4 @@ bool ResolveRenderingColorConfig(const Stage &stage,
 
 }  // namespace color_management
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

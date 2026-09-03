@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 
 class DynamicBitset {
  public:
@@ -167,4 +167,4 @@ class DynamicBitset {
   size_t _num_bits{0};
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

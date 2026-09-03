@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache implementation
+// LightUSD Next - PCP Cache implementation
 // Phase 1: sublayers + references.  Phase 2: ancestral opinions + deferred payloads.
 
 #include "cache.hh"
@@ -10,7 +10,7 @@
 #include "cache-utils.hh"
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 #include "../strfmt.hh"                    // IntToStr / UIntToStr
-#include "../../logger.hh"                 // tinyusdz::logging TUSDZ_LOG_*
+#include "../../logger.hh"                 // lightusd::logging TUSDZ_LOG_*
 
 #include <algorithm>
 #include <cmath>
@@ -23,12 +23,12 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pcp {
 
@@ -459,7 +459,7 @@ struct Cache::Impl {
   LayerRegistry *reg_ = &registry;  // borrowed pointer: worker Impls point this
                                     // at the *main* Impl's registry (parse-once
                                     // shared across the parallel build).
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   mutable PcpMutex api_mu_;  // guards all shared state below (F6: non-recursive)
 
   // --- parallel-build worker hooks (see PrewarmPrimIndices) ---------------
@@ -620,7 +620,7 @@ struct Cache::Impl {
 
   #include "cache-stage-fill.inc"
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   #include "cache-parallel-merge.inc"
 #endif
 
@@ -811,7 +811,7 @@ void Cache::TrimTransientCaches() {
 
 const PrimSpec *Cache::ComposePrim(const Path &prim_path, std::string *warn,
                                    std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD) && defined(TINYUSDZ_NEXT_FINE_LOCKS)
+#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_NEXT_FINE_LOCKS)
   {
     NEXT_PCP_READ_LOCK(impl_->api_mu_);
     auto it = impl_->composed_cache_.find(prim_path.str());
@@ -1033,4 +1033,4 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
 
 }  // namespace pcp
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

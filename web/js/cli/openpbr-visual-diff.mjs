@@ -53,7 +53,7 @@ function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     out: path.join(WEB_JS_DIR, 'tests', 'screenshots', 'openpbr-visual-diff'),
     port: 5195,
-    baseUrl: process.env.TINYUSDZ_VISUAL_DIFF_BASE_URL?.replace(/\/$/, '') || '',
+    baseUrl: process.env.LIGHTUSD_VISUAL_DIFF_BASE_URL?.replace(/\/$/, '') || '',
     width: 1280,
     height: 800,
     timeout: 90000,
@@ -147,7 +147,7 @@ function startVite(port) {
       ...process.env,
       // Serve the tracked demo fixtures directly. web/js/assets is an ignored
       // developer convenience directory and may be empty in a clean checkout.
-      TINYUSDZ_VITE_PUBLIC_DIR: process.env.TINYUSDZ_VITE_PUBLIC_DIR ||
+      LIGHTUSD_VITE_PUBLIC_DIR: process.env.LIGHTUSD_VITE_PUBLIC_DIR ||
         path.resolve(WEB_JS_DIR, '../demo/public'),
     },
   });
@@ -323,7 +323,7 @@ try {
     try {
       await waitForServer(baseUrl, vite, options.timeout);
     } catch (error) {
-      const message = `${error?.message || String(error)}${ 
+      const message = `${error?.message || String(error)}${
         (vite?._startupLog ? `\n${vite._startupLog}` : '')}`;
       if (isEphemeralListenError(error) ||
           (vite && vite.exitCode !== null && vite.exitCode !== 0)) {

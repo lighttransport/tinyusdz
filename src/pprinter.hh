@@ -27,7 +27,7 @@
 #include "core/layer-types.hh"  // LayerMetas
 #include "layer.hh"             // Layer
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // Setting `closing_brace` false won't emit `}`(for printing USD scene graph
@@ -224,4 +224,4 @@ std::string to_string(const Layer &layer, const uint32_t indent = 0,
 std::string to_string(const PrimSpec &primspec, const uint32_t indent = 0,
                       bool closing_brace = true);
 
-}  // namespace tinyusdz
+}  // namespace lightusd

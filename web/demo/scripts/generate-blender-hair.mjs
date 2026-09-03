@@ -11,7 +11,7 @@ const demoRoot = path.resolve(here, '..');
 const repoRoot = path.resolve(demoRoot, '../..');
 const blender = process.env.BLENDER || '/mnt/nvme02/local/blender-5.2.1-linux-x64/blender';
 const output = path.join(demoRoot, 'public/assets/blender-hair-curves.usdc');
-const blend = process.env.HAIR_BLEND_OUTPUT || path.join('/tmp', 'tinyusdz-hair-curves.blend');
+const blend = process.env.HAIR_BLEND_OUTPUT || path.join('/tmp', 'lightusd-hair-curves.blend');
 const tusdcat = process.env.TUSDCAT || path.join(repoRoot, 'build_ninja/tusdcat');
 const checkOnly = process.argv.includes('--check');
 
@@ -25,7 +25,7 @@ async function check() {
 }
 
 if (!checkOnly) {
-  const temp = await mkdtemp(path.join(tmpdir(), 'tinyusdz-blender-hair-'));
+  const temp = await mkdtemp(path.join(tmpdir(), 'lightusd-blender-hair-'));
   try {
     const nativeUsd = path.join(temp, 'blender-native.usda');
     const script = path.join(here, 'blender-generate-hair.py');

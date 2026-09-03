@@ -3,12 +3,12 @@
 ( defaultPrim = "a"
 
 """
-repro scene for https://github.com/lighttransport/tinyusdz/pull/195
+repro scene for https://github.com/lighttransport/lightusd/pull/195
 Issue 195: base properties(e.g. 'HelloWorld') disappear after `--flatten`.
 """
 )
 
-def "a" 
+def "a"
 (
     prepend references = @./issue-195-ref.usda@
 )

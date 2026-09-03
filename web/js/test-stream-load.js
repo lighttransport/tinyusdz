@@ -7,7 +7,7 @@
 // Usage (Browser):
 //   Include this script and call the browser examples with a URL
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
 
 // ============================================================
 // Memory Usage Reporting (Node.js only)
@@ -26,7 +26,7 @@ async function exampleStreamFetch(url) {
   console.log('=== Stream Fetch Example ===');
   console.log(`URL: ${url}`);
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const startTime = performance.now();
@@ -72,7 +72,7 @@ async function exampleStreamFile(filePath) {
   console.log('=== Stream File Example (Node.js) ===');
   console.log(`File: ${filePath}`);
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const startTime = performance.now();
@@ -119,7 +119,7 @@ async function exampleLoadWithStreaming(url) {
   console.log('=== Load With Streaming Example ===');
   console.log(`URL: ${url}`);
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const startTime = performance.now();
@@ -151,7 +151,7 @@ async function exampleStreamMultiple(assets) {
   console.log('=== Stream Multiple Assets Example ===');
   console.log(`Assets: ${assets.length}`);
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const startTime = performance.now();
@@ -196,7 +196,7 @@ async function exampleLoadOnly(filePath) {
   console.log(`File: ${filePath}`);
   console.log('Mode: Layer-only parsing (no RenderScene conversion)');
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const fs = await import('fs');
@@ -207,7 +207,7 @@ async function exampleLoadOnly(filePath) {
   const startTime = performance.now();
 
   try {
-    const usd = new loader.native_.TinyUSDZLoaderNative();
+    const usd = new loader.native_.LightUSDLoaderNative();
 
     // Load as Layer only - no RenderScene conversion
     const loadOk = usd.loadAsLayerFromBinary(fileData, filePath);
@@ -248,7 +248,7 @@ async function exampleCompareLoadModes(filePath) {
   console.log('=== Compare Load Modes ===');
   console.log(`File: ${filePath}`);
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const fs = await import('fs');
@@ -260,7 +260,7 @@ async function exampleCompareLoadModes(filePath) {
   console.log('\n--- Mode 1: Load Only (Layer) ---');
   const loadOnlyStart = performance.now();
 
-  const usd1 = new loader.native_.TinyUSDZLoaderNative();
+  const usd1 = new loader.native_.LightUSDLoaderNative();
   const ok1 = usd1.loadAsLayerFromBinary(fileData, filePath);
   const loadOnlyTime = performance.now() - loadOnlyStart;
 
@@ -282,7 +282,7 @@ async function exampleCompareLoadModes(filePath) {
   console.log('\n--- Mode 2: Full Load (with Scene Conversion) ---');
   const fullLoadStart = performance.now();
 
-  const usd2 = new loader.native_.TinyUSDZLoaderNative();
+  const usd2 = new loader.native_.LightUSDLoaderNative();
   const ok2 = usd2.loadFromBinary(fileData, filePath);
   const fullLoadTime = performance.now() - fullLoadStart;
 
@@ -323,7 +323,7 @@ async function exampleComparePerformance(filePath) {
   console.log('=== Performance Comparison ===');
   console.log(`File: ${filePath}`);
 
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
   await loader.init({ useMemory64: true });
 
   const fs = await import('fs');
@@ -337,7 +337,7 @@ async function exampleComparePerformance(filePath) {
   console.log(`  File size: ${fileSizeMB} MB`);
   const traditionalReadTime = performance.now() - traditionalStart;
 
-  const usd1 = new loader.native_.TinyUSDZLoaderNative();
+  const usd1 = new loader.native_.LightUSDLoaderNative();
   const ok1 = usd1.loadFromBinary(fileData, filePath);
   const traditionalTotalTime = performance.now() - traditionalStart;
 

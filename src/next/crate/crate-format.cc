@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Crate Format Implementation
+// LightUSD Next - Crate Format Implementation
 
 #include "crate-format.hh"
 #include "safe-arithmetic.hh"
 
-// Include LZ4 from existing TinyUSDZ
+// Include LZ4 from existing LightUSD
 #include "../../lz4/lz4.h"
 
 #include <algorithm>
@@ -14,7 +14,7 @@
 #include <limits>
 #include <map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 const char* CrateTypeIdName(CrateTypeId id) {
@@ -1140,4 +1140,4 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

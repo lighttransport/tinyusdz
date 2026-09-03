@@ -1,6 +1,6 @@
 # Nested VariantSet Test Files
 
-This directory contains synthetic USDA test files for validating nested variantSet parsing and construction in TinyUSDZ.
+This directory contains synthetic USDA test files for validating nested variantSet parsing and construction in LightUSD.
 
 ## Test Files
 
@@ -62,14 +62,14 @@ This directory contains synthetic USDA test files for validating nested variantS
 ## Validation Results
 
 All test files have been validated with:
-- ✅ `test_tinyusdz` - All files load successfully
+- ✅ `test_lightusd` - All files load successfully
 - ✅ `tusdcat` - All files parse and reconstruct correctly
 
 ## Testing Commands
 
 ```bash
 # Test a single file
-./build/test_tinyusdz tests/feat/nestedVariantSet/basic-2level-001.usda
+./build/test_lightusd tests/feat/nestedVariantSet/basic-2level-001.usda
 
 # View parsed structure
 ./build/tusdcat tests/feat/nestedVariantSet/basic-2level-001.usda
@@ -77,7 +77,7 @@ All test files have been validated with:
 # Test all files
 for f in tests/feat/nestedVariantSet/*.usda; do
     echo "Testing: $f"
-    ./build/test_tinyusdz "$f" && echo "✓ PASSED"
+    ./build/test_lightusd "$f" && echo "✓ PASSED"
 done
 ```
 
@@ -96,4 +96,4 @@ These tests cover:
 
 ## Implementation Status
 
-Successfully validated nested variantSet support in TinyUSDZ USDA parser on the `nested-variantset` branch.
+Successfully validated nested variantSet support in LightUSD USDA parser on the `nested-variantset` branch.

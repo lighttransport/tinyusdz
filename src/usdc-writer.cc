@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDC_WRITER)
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #if defined(__clang__)
@@ -47,7 +47,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 namespace {
@@ -131,7 +131,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   std::vector<uint8_t> compressed;
 
   if (use_compression) {
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
     if (!ZstdCompression::Compress(output.data(), output.size(),
                                    &compressed, options.zstd_compression_level, err)) {
       return false;
@@ -141,7 +141,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
     std::cout << "Compressing USDC with zstd (" << output.size() << " -> " << compressed.size() << " bytes)\n";
 #else
     if (err) {
-      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+      (*err) = "zstd compression requested but LIGHTUSD_WITH_ZSTD_COMPRESSION is not enabled.\n";
     }
     return false;
 #endif
@@ -202,7 +202,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
   std::vector<uint8_t> compressed;
 
   if (use_compression) {
-#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+#ifdef LIGHTUSD_WITH_ZSTD_COMPRESSION
     if (!ZstdCompression::Compress(output.data(), output.size(),
                                    &compressed, options.zstd_compression_level, err)) {
       return false;
@@ -213,7 +213,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Layer &layer,
     std::vector<uint8_t> compressed;
     (void)compressed;
     if (err) {
-      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+      (*err) = "zstd compression requested but LIGHTUSD_WITH_ZSTD_COMPRESSION is not enabled.\n";
     }
     return false;
 #endif
@@ -279,17 +279,17 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     return false;
   }
 
-  // TINYUSDZ_FLATTEN_TIMING=1: print write-phase timings to stderr
+  // LIGHTUSD_FLATTEN_TIMING=1: print write-phase timings to stderr
   // (diagnostic; off by default).
   const bool flatten_timing = []() {
-    const char* e = ::getenv("TINYUSDZ_FLATTEN_TIMING");
+    const char* e = ::getenv("LIGHTUSD_FLATTEN_TIMING");
     return e && e[0] == '1';
   }();
   auto phase_start = std::chrono::steady_clock::now();
   auto report_phase = [&](const char* name) {
     if (!flatten_timing) return;
     auto now = std::chrono::steady_clock::now();
-    std::cerr << "[tinyusdz] usdc-write phase " << name << ": "
+    std::cerr << "[lightusd] usdc-write phase " << name << ": "
               << std::chrono::duration<double>(now - phase_start).count()
               << " s\n";
     phase_start = now;
@@ -383,11 +383,11 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
 }
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #else
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
@@ -455,6 +455,6 @@ bool SaveAsUSDCToMemory(const Layer &layer, std::vector<uint8_t> *output,
 }
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #endif

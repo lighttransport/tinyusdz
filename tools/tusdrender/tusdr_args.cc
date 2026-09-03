@@ -177,7 +177,7 @@ void PrintUsage(const char *prog) {
       << "  -materialShading legacy|lightrt-bsdf\n"
       << "                         CPU material shading path. lightrt-bsdf is an\n"
       << "                         experimental opt-in direct-light BSDF path.\n"
-#ifdef TINYUSDZ_WITH_QJS
+#ifdef LIGHTUSD_WITH_QJS
       << "  -js <file.js>          Drive rendering from a JavaScript script.\n"
       << "                         Scene + BVH stay resident across renders\n"
       << "                         (memory-persistent, e.g. camera animation).\n"
@@ -650,9 +650,9 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->subdivision_level) ||
           opt->subdivision_level < 0 ||
-          opt->subdivision_level > tinyusdz::tsd::kMaxLevel) {
+          opt->subdivision_level > lightusd::tsd::kMaxLevel) {
         std::cerr << "Invalid subdivision level. Expected 0.."
-                  << tinyusdz::tsd::kMaxLevel << ".\n";
+                  << lightusd::tsd::kMaxLevel << ".\n";
         return false;
       }
     }
@@ -937,9 +937,9 @@ int NullARRead(const char *, uint64_t, uint8_t *, uint64_t *, std::string *,
   return -1;
 }
 
-void SetupNullAssetResolution(tinyusdz::AssetResolutionResolver *resolver) {
+void SetupNullAssetResolution(lightusd::AssetResolutionResolver *resolver) {
   if (!resolver) return;
-  tinyusdz::AssetResolutionHandler handler;
+  lightusd::AssetResolutionHandler handler;
   handler.resolve_fun = NullARResolve;
   handler.size_fun = NullARSize;
   handler.read_fun = NullARRead;

@@ -1,11 +1,11 @@
 /**
  * @file example_mesh.c
- * @brief Example of extracting mesh data using TinyUSDZ C API
+ * @brief Example of extracting mesh data using LightUSD C API
  *
  * This example shows how to extract vertex, face, normal, and UV data from meshes.
  */
 
-#include "tinyusdz_c.h"
+#include "lightusd_c.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -282,7 +282,7 @@ int main(int argc, char* argv[]) {
 
     // Initialize
     if (tusdz_init() != TUSDZ_SUCCESS) {
-        fprintf(stderr, "Failed to initialize TinyUSDZ\n");
+        fprintf(stderr, "Failed to initialize LightUSD\n");
         return 1;
     }
 

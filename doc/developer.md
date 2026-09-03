@@ -9,8 +9,8 @@ the two publish pipelines and how to verify them locally.
 
 | Channel | Artifact | Trigger | Publish gate |
 |---|---|---|---|
-| **PyPI** (`tinyusdz` wheel) | CPython abi3 + free-threaded wheels, sdist | Tag push `v*.*.*` → `.github/workflows/wheels.yml` | Final tags only (no `-` suffix) |
-| **npm** (`tinyusdz` package) | WASM/JS loaders (4 variants) | Manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml` | Final versions only (no `-` suffix) |
+| **PyPI** (`lightusd` wheel) | CPython abi3 + free-threaded wheels, sdist | Tag push `v*.*.*` → `.github/workflows/wheels.yml` | Final tags only (no `-` suffix) |
+| **npm** (`lightusd` package) | WASM/JS loaders (4 variants) | Manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml` | Final versions only (no `-` suffix) |
 
 Both channels **build and upload artifacts for pre-releases** but **skip the
 registry publish** for any hyphenated (pre-release) version — by design, so an
@@ -21,8 +21,8 @@ for how to distribute pre-releases.
 
 | Component | File | How version is set |
 |---|---|---|
-| C++ library (compile-time constants) | `src/tinyusdz.hh` (`version_major/minor/micro/rev` near line 51) | Hand-edit |
-| Python wheel | git tag via `setuptools_scm` (`[tool.setuptools_scm]` in `pyproject.toml`; writes `python/tinyusdz/_version.py` at build time) | **Automatic from tag — never hand-edit** |
+| C++ library (compile-time constants) | `src/lightusd.hh` (`version_major/minor/micro/rev` near line 51) | Hand-edit |
+| Python wheel | git tag via `setuptools_scm` (`[tool.setuptools_scm]` in `pyproject.toml`; writes `python/lightusd/_version.py` at build time) | **Automatic from tag — never hand-edit** |
 | npm package (published manifest) | `web/npm/package.json` `"version"` | Hand-edit as baseline; the workflow's `release_version` input overrides it at stage time |
 | npm demo app (NOT published) | `web/js/package.json` `"version"` | Hand-edit for parity only — the published package is `web/npm/` |
 
@@ -32,7 +32,7 @@ Notes:
   `release_version` input (`web/npm/scripts/stage-package.mjs` rewrites the
   staged manifest; the checked-in `web/npm/package.json` is the fallback
   baseline when the input matches it).
-- Keep `src/tinyusdz.hh`, `web/npm/package.json`, and `web/js/package.json`
+- Keep `src/lightusd.hh`, `web/npm/package.json`, and `web/js/package.json`
   mutually consistent with the version you are cutting. As of the 1.0.0 bump
   they are in sync at 1.0.0.
 
@@ -69,7 +69,7 @@ Skipped: PyPy, musllinux/windows i686, win32. Linux uses manylinux_2_28 images.
   **and** the tag contains **no `-`** (i.e. final `vX.Y.Z` only).
 - Uses **PyPI Trusted Publishing (OIDC)** — no API token. Prerequisite: the
   `pypi` environment must exist on GitHub and PyPI must have the trusted
-  publisher registered (`owner: lighttransport`, `repo: tinyusdz`,
+  publisher registered (`owner: lighttransport`, `repo: lightusd`,
   `workflow: wheels.yml`, `env: pypi`).
 - Emits PEP 740 attestations (`attestations: true`).
 - Pre-release tags: wheels + sdist still build and land in the run's
@@ -103,17 +103,17 @@ Four WASM variants (Emscripten SDK 4.0.9), then packages all of them:
 
 | Variant | CMake dir | Flags |
 |---|---|---|
-| WASM32 legacy | `web/cmake-build` | `-DTINYUSDZ_WASM_PRODUCT=legacy` |
-| WASM64 legacy | `web/cmake-build64` | `-DTINYUSDZ_WASM_PRODUCT=legacy -DTINYUSDZ_WASM64=1` |
-| WASM32 next | `web/cmake-build-next` | `-DTINYUSDZ_WASM_PRODUCT=next` |
-| WASM64 next | `web/cmake-build-next64` | `-DTINYUSDZ_WASM_PRODUCT=next -DTINYUSDZ_WASM64=1` |
+| WASM32 legacy | `web/cmake-build` | `-DLIGHTUSD_WASM_PRODUCT=legacy` |
+| WASM64 legacy | `web/cmake-build64` | `-DLIGHTUSD_WASM_PRODUCT=legacy -DLIGHTUSD_WASM64=1` |
+| WASM32 next | `web/cmake-build-next` | `-DLIGHTUSD_WASM_PRODUCT=next` |
+| WASM64 next | `web/cmake-build-next64` | `-DLIGHTUSD_WASM_PRODUCT=next -DLIGHTUSD_WASM64=1` |
 
 Gates before publish:
 
 1. **Smoke test**: `web/js/tests/usdzconvert-next.test.mjs` on both 32- and
    64-bit (a next-pipeline regression blocks publish).
 2. **Staging**: `npm run build:stage -- --release-version=<input>` — copies the
-   8 required files (`tinyusdz*.js`/`*.wasm`/`*_64*`/`*_next*`, zstd-compressed
+   8 required files (`lightusd*.js`/`*.wasm`/`*_64*`/`*_next*`, zstd-compressed
    variants) into `web/npm/dist`, rewrites `../` imports, and stamps the
    manifest version.
 3. **Validation**: `npm run validate` — checks staged files + publishable
@@ -125,7 +125,7 @@ Gates before publish:
 - `npm publish --provenance --access public --tag <npm_tag>` — provenance
   attestation requires the `id-token: write` permission already granted to the
   job; npm must be configured for OIDC provenance on the `lighttransport` org.
-- Artifacts are always uploaded (`tinyusdz-npm-<release_version>`), including
+- Artifacts are always uploaded (`lightusd-npm-<release_version>`), including
   for pre-releases.
 
 ## 5. Local verification before cutting a release
@@ -142,7 +142,7 @@ cd python && python3 -m pytest tests/ -q
 python -m pip install --upgrade build
 python -m build --sdist --wheel
 # Verify the wheel version matches the intended tag (setuptools_scm):
-unzip -p dist/tinyusdz-*.whl tinyusdz/_version.py | head
+unzip -p dist/lightusd-*.whl lightusd/_version.py | head
 ```
 
 ### 5.2 npm
@@ -160,7 +160,7 @@ npm run build:wasm
 
 ## 6. End-to-end release checklist
 
-1. Bump versions per [`ci.md`](ci.md) §1 (`src/tinyusdz.hh`,
+1. Bump versions per [`ci.md`](ci.md) §1 (`src/lightusd.hh`,
    `web/npm/package.json`, `web/js/package.json`); commit on the right branch
    (`release` for stable, `dev` for RCs).
 2. Run the full regression gate (AGENTS.md pre-merge checklist).
@@ -176,8 +176,8 @@ npm run build:wasm
    to PyPI. RC tags such as `v1.0.0-rc4` are normalized to `1.0.0rc4`.
 6. Trigger `wasmPublish.yml` manually (UI or `gh workflow run`, §4.1) with the
    matching `release_version` and `npm_tag` (`latest` for stable).
-7. Confirm on PyPI (https://pypi.org/p/tinyusdz) and npm
-   (https://www.npmjs.com/package/tinyusdz, dist-tags).
+7. Confirm on PyPI (https://pypi.org/p/lightusd) and npm
+   (https://www.npmjs.com/package/lightusd, dist-tags).
 8. Write GitHub Release notes on the UI.
 
 ## 7. Troubleshooting
@@ -186,6 +186,6 @@ npm run build:wasm
 |---|---|
 | `wheels.yml` built but nothing on PyPI | Confirm the run was triggered by a pushed `v*.*.*` tag and that the PyPI trusted-publisher environment approved the publish job |
 | `HTTP 422: Unexpected inputs provided` | `gh workflow run` resolved `wasmPublish.yml` from the wrong ref (e.g. `release` lacks the inputs); pass `--ref dev` |
-| Wheel version wrong | `setuptools_scm` reads the git tag — push the tag first, use `fetch-depth: 0` locally (`git fetch --tags`), never hand-edit `python/tinyusdz/_version.py` |
+| Wheel version wrong | `setuptools_scm` reads the git tag — push the tag first, use `fetch-depth: 0` locally (`git fetch --tags`), never hand-edit `python/lightusd/_version.py` |
 | npm publish needs auth/provenance | OIDC provenance must be configured for the org/package; locally you cannot publish from a dev machine without an npm token (not supported by this workflow) |
 | WASM smoke test fails | A `next` pipeline regression — fix before publishing; the gate intentionally blocks `wasmPublish.yml` |

@@ -23,7 +23,7 @@
 #include "usdShade.hh"
 
 
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
 constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandardSurface";
@@ -419,4 +419,4 @@ DEFINE_TYPE_TRAIT(MtlxLight, kMtlxLight,
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

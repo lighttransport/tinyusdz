@@ -1,10 +1,10 @@
 # Zstd USD Compression Feature Tests
 
-This directory contains feature tests for zstd-compressed USD file support in TinyUSDZ.
+This directory contains feature tests for zstd-compressed USD file support in LightUSD.
 
 ## Overview
 
-TinyUSDZ supports file-level zstd compression for USD files. This allows:
+LightUSD supports file-level zstd compression for USD files. This allows:
 - Reading zstd-compressed USDA/USDC/USDZ files (automatic detection)
 - Writing zstd-compressed USD files (via `USDWriteOptions` or `.zst` extension)
 
@@ -34,7 +34,7 @@ Or directly:
 4. **Corrupt Data Handling** - Error handling for invalid data
 5. **GetCompressBound** - Tests the compress bound calculation
 6. **USDA Round-trip** - Full USDA compression/decompression cycle
-7. **IsZstdCompressed Wrapper** - Tests the tinyusdz namespace wrapper
+7. **IsZstdCompressed Wrapper** - Tests the lightusd namespace wrapper
 8. **Load Compressed USDA from Memory** - Tests LoadUSDFromMemory with zstd data
 9. **Memory Budget Enforcement** - Tests memory limit checking
 10. **Write Compressed USDA** - Tests SaveAsUSDA with compression
@@ -42,7 +42,7 @@ Or directly:
 ## Requirements
 
 - C++14 compiler
-- TinyUSDZ source tree
+- LightUSD source tree
 - Zstd library (bundled in src/external/zstd.c)
 
 ## Notes

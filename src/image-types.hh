@@ -7,7 +7,7 @@
 #include <string>
 #include <cstdint>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Simple image class.
 // No colorspace conversion will be applied when decoding image data
@@ -20,7 +20,7 @@ struct Image {
     Int, // For ao/normal/displacement map, DNG photo
     Float, // HDR image
   };
-   
+
   std::string uri;  // filename or uri;
 
   int width{-1};     // -1 = invalid
@@ -28,7 +28,7 @@ struct Image {
   int channels{-1};  // Image channels. 3=RGB, 4=RGBA. -1 = invalid
   int bpp{-1};       // bits per pixel. 8=LDR, 16,32=HDR
   PixelFormat format{PixelFormat::UInt};
-  
+
   std::vector<uint8_t> data; // Raw data.
 
   std::string colorspace; // Colorspace metadata in the image. Optional.
@@ -45,4 +45,4 @@ inline std::string to_string(Image::PixelFormat fmt) {
   return s;
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

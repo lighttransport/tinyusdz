@@ -8,7 +8,7 @@
 #include "unit-dedup.h"
 #include "../../src/crate-reader.hh"
 #include "../../src/crate-writer.hh"
-#include "../../src/tinyusdz.hh"
+#include "../../src/lightusd.hh"
 #include "../../src/core/prim.hh"
 #include "../../src/core/prim-spec.hh"
 #include "../../src/primvar.hh"
@@ -23,11 +23,11 @@
 #include <fstream>
 #include <limits>
 
-using namespace tinyusdz;
-using namespace tinyusdz::experimental;
+using namespace lightusd;
+using namespace lightusd::experimental;
 
-using CrateDataTypeId = tinyusdz::crate::CrateDataTypeId;
-using CrateValueRep = tinyusdz::crate::ValueRep;
+using CrateDataTypeId = lightusd::crate::CrateDataTypeId;
+using CrateValueRep = lightusd::crate::ValueRep;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,9 +43,9 @@ static size_t GetFileSize(const std::string& filename) {
 // Windows, where WriteStageUSDC would then fail to open the output file.
 static std::string TempPath(const std::string& name) {
   const std::string base =
-      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tinyusdz_dedup_test");
-  tinyusdz::io::CreateDirectories(base);
-  return tinyusdz::io::JoinPath(base, name);
+      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "lightusd_dedup_test");
+  lightusd::io::CreateDirectories(base);
+  return lightusd::io::JoinPath(base, name);
 }
 
 // Build a Stage with a single Xform prim carrying one custom timesampled
@@ -149,14 +149,14 @@ static bool ReadFieldValueRepsByToken(const std::string& filename,
                                       std::vector<CrateValueRep>* reps,
                                       std::string* err) {
   std::vector<uint8_t> data;
-  if (!tinyusdz::io::ReadWholeFile(&data, err, filename, 0, nullptr)) {
+  if (!lightusd::io::ReadWholeFile(&data, err, filename, 0, nullptr)) {
     return false;
   }
 
   StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
-  tinyusdz::crate::CrateReaderConfig config;
+  lightusd::crate::CrateReaderConfig config;
   config.numThreads = 1;
-  tinyusdz::crate::CrateReader reader(&sr, config);
+  lightusd::crate::CrateReader reader(&sr, config);
 
   if (!reader.ReadBootStrap() || !reader.ReadTOC() || !reader.ReadTokens() ||
       !reader.ReadFields()) {
@@ -273,7 +273,7 @@ void dedup_float_array_test(void) {
   // deduplicated file loads and preserves the sample count.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   const value::TimeSamples* rts = GetLayerAttrTS(layer, "DedupTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) TEST_CHECK(rts->size() == 100);
@@ -294,7 +294,7 @@ void dedup_double_array_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(filename, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(filename, &layer, &warn, &err));
   const value::TimeSamples* rts =
       GetLayerAttrTS(layer, "DedupDoubleTest", "animAttr");
   TEST_CHECK(rts != nullptr);
@@ -368,7 +368,7 @@ void dedup_string_array_test(void) {
   // dedup for string[]; verify the result loads and preserves the sample count.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   const value::TimeSamples* rts =
       GetLayerAttrTS(layer, "StringArrayTest", "animAttr");
   TEST_CHECK(rts != nullptr);
@@ -442,7 +442,7 @@ void dedup_cross_attribute_timesamples_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   for (size_t a = 0; a < k_attrs; ++a) {
     const value::TimeSamples* rts =
         GetLayerAttrTS(layer, "CrossAttrTS", "animAttr_" + std::to_string(a));
@@ -625,7 +625,7 @@ void inline_openusd_value_coverage_test(void) {
   Layer layer;
   std::string warn;
   err.clear();
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(filename, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(filename, &layer, &warn, &err));
   if (!err.empty()) {
     TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
   }
@@ -692,7 +692,7 @@ void dedup_low_memory_budget_test(void) {
 
   Layer layer;
   std::string warn;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(filename, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(filename, &layer, &warn, &err));
   const value::TimeSamples* rts =
       GetLayerAttrTS(layer, "LowMemDedup", "animAttr");
   TEST_CHECK(rts != nullptr);
@@ -744,7 +744,7 @@ void dedup_role_array_test(void) {
   // Read back: the deduplicated file must load and preserve every sample value.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   const value::TimeSamples* rts =
       GetLayerAttrTS(layer, "RoleArrayTest", "animAttr");
   TEST_CHECK(rts != nullptr);
@@ -801,7 +801,7 @@ void dedup_compressed_int_array_test(void) {
   // The deduplicated compressed file must load and preserve the sample count.
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   const value::TimeSamples* rts = GetLayerAttrTS(layer, "CompIntTest", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) {
@@ -816,7 +816,7 @@ void dedup_compressed_int_array_test(void) {
   Layer layer_no;
   warn.clear();
   err.clear();
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_no, &layer_no, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_no, &layer_no, &warn, &err));
   const value::TimeSamples* rts_no =
       GetLayerAttrTS(layer_no, "CompIntTest", "animAttr");
   TEST_CHECK(rts_no != nullptr);
@@ -1115,7 +1115,7 @@ void uchar_roundtrip_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
 
   const auto& pss = layer.primspecs();
   auto pit = pss.find("UCharPrim");
@@ -1214,7 +1214,7 @@ void dedup_cross_attr_value_readback_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK_(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err),
+    TEST_CHECK_(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err),
                 "load %s: %s", fn.c_str(), err.c_str());
     for (int i = 0; i < kAttrs; ++i) {
       const std::string s = std::to_string(i);
@@ -1301,7 +1301,7 @@ void dedup_cross_type_no_false_share_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
 
   const value::Value* vf1 = GetLayerAttrValue(layer, "NoFalseShare", "f1");
   TEST_CHECK(vf1 && vf1->as<std::vector<float>>());
@@ -1390,7 +1390,7 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(f_dedup, &layer, &warn, &err));
   const value::TimeSamples* rts = GetLayerAttrTS(layer, "NanPrim", "animAttr");
   TEST_CHECK(rts != nullptr);
   if (rts) {
@@ -1482,7 +1482,7 @@ void dedup_blocked_timesamples_roundtrip_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+    TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
     for (const char* attr : {"animAttr_0", "animAttr_1"}) {
       const value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedTS", attr);
       TEST_CHECK_(rts != nullptr, "%s: missing %s", fn.c_str(), attr);
@@ -1551,7 +1551,7 @@ void dedup_blocked_array_timesamples_roundtrip_test(void) {
   for (const std::string& fn : {f_dedup, f_no}) {
     Layer layer;
     std::string warn, err;
-    TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+    TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
     for (const char* attr : {"animAttr_0", "animAttr_1"}) {
       const value::TimeSamples* rts = GetLayerAttrTS(layer, "BlockedArrTS", attr);
       TEST_CHECK_(rts != nullptr, "%s: missing %s", fn.c_str(), attr);
@@ -1607,7 +1607,7 @@ void dedup_empty_array_roundtrip_test(void) {
 
   Layer layer;
   std::string warn, err;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
 
   for (const char* name : {"empty_f", "empty_f2"}) {
     const value::Value* v = GetLayerAttrValue(layer, "EmptyArr", name);
@@ -1686,7 +1686,7 @@ void inline_inf_double_test(void) {
   // Values must survive the roundtrip.
   Layer layer;
   std::string warn;
-  TEST_CHECK(tinyusdz::LoadLayerFromFile(fn, &layer, &warn, &err));
+  TEST_CHECK(lightusd::LoadLayerFromFile(fn, &layer, &warn, &err));
   const value::Value* vp = GetLayerAttrValue(layer, "InfDouble", "pinf");
   const value::Value* vn = GetLayerAttrValue(layer, "InfDouble", "ninf");
   const value::Value* vx = GetLayerAttrValue(layer, "InfDouble", "notexact");

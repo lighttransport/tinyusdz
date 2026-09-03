@@ -16,7 +16,7 @@ scripts/verify.sh prepare --profile web
 ```
 
 The dataset is stored in the ignored root cache at
-`.cache/tinyusdz-verification/menagerie`. Set `MUJOCO_MENAGERIE` or
+`.cache/lightusd-verification/menagerie`. Set `MUJOCO_MENAGERIE` or
 `MENAGERIE_DIR` to use another checkout. The setup script detaches the checkout
 at `tests/fixtures/mujoco-menagerie.lock`; a moving branch is never used by the
 regression gate.
@@ -25,12 +25,12 @@ Build both WASM modules before browser tests or after changing C++/WASM
 bindings:
 
 ```bash
-bash ../demo/scripts/prepare-local-tinyusdz.sh
+bash ../demo/scripts/prepare-local-lightusd.sh
 ```
 
 This configures `web/build_ninja` for the combined legacy module and
 `web/build_next_ninja` for the next-only module, then writes the four generated
-artifacts under `web/js/src/tinyusdz/`.
+artifacts under `web/js/src/lightusd/`.
 
 MuJoCo physics-only tests use the prepared cache when run through
 `scripts/verify.sh`. Direct runs should set `MUJOCO_WASM_DIR`, or set
@@ -116,9 +116,9 @@ ctest --test-dir ../build_ninja -R wasm-regression-full --output-on-failure
 ```
 
 The default web build is deliberately non-threaded. Both
-`TINYUSDZ_ENABLE_THREAD` and `TINYUSDZ_NEXT_ENABLE_THREAD` must be `OFF`, and
+`LIGHTUSD_ENABLE_THREAD` and `LIGHTUSD_NEXT_ENABLE_THREAD` must be `OFF`, and
 generated compile commands must contain no `-pthread`, `PTHREAD`, or
-`TINYUSDZ_ENABLE_THREAD` define. `std::shared_ptr` remains valid here because
+`LIGHTUSD_ENABLE_THREAD` define. `std::shared_ptr` remains valid here because
 it provides ownership/lifetime semantics; it does not enable parallel
 execution. The next-core WASM build uses `shared_ptr::use_count()` ownership
 checks because `shared_ptr::unique()` is unavailable in the active C++20

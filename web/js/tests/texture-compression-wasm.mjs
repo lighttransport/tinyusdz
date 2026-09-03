@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 
-import createTinyUSDZ from '../src/tinyusdz/tinyusdz.js';
+import createLightUSD from '../src/lightusd/lightusd.js';
 
-const tinyusdz = await createTinyUSDZ();
-assert.equal(typeof tinyusdz.compressTextureToUni, 'function');
-assert.equal(typeof tinyusdz.transcodeTextureUni, 'function');
+const lightusd = await createLightUSD();
+assert.equal(typeof lightusd.compressTextureToUni, 'function');
+assert.equal(typeof lightusd.transcodeTextureUni, 'function');
 
 const width = 8;
 const height = 8;
@@ -17,17 +17,17 @@ for (let y = 0; y < height; ++y) {
   }
 }
 
-const uni = tinyusdz.compressTextureToUni(rgba, width, height, true);
+const uni = lightusd.compressTextureToUni(rgba, width, height, true);
 assert.equal(uni.success, true, uni.error);
 assert.equal(uni.data.byteLength, 64);
 
 for (const target of ['bc7', 'astc4x4', 'etc2rgba']) {
-  const result = tinyusdz.transcodeTextureUni(uni.data, width, height, target);
+  const result = lightusd.transcodeTextureUni(uni.data, width, height, target);
   assert.equal(result.success, true, `${target}: ${result.error}`);
   assert.equal(result.data.byteLength, 64);
 }
 
-const decoded = tinyusdz.transcodeTextureUni(
+const decoded = lightusd.transcodeTextureUni(
   uni.data, width, height, 'rgba8');
 assert.equal(decoded.success, true, decoded.error);
 assert.equal(decoded.data.byteLength, rgba.byteLength);
@@ -36,10 +36,10 @@ assert.ok(decoded.data[2] > decoded.data[0]);
 const last = decoded.data.byteLength - 4;
 assert.ok(decoded.data[last] > decoded.data[last + 2]);
 
-const invalid = tinyusdz.compressTextureToUni(
+const invalid = lightusd.compressTextureToUni(
   new Uint8Array(3), width, height, false);
 assert.equal(invalid.success, false);
-const unsupported = tinyusdz.transcodeTextureUni(
+const unsupported = lightusd.transcodeTextureUni(
   uni.data, width, height, 'not-a-format');
 assert.equal(unsupported.success, false);
 

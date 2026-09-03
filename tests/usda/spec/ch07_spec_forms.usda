@@ -9,7 +9,7 @@
     framesPerSecond = 24
     documentation = "Test layer metadata"
     customLayerData = {
-        string creator = "TinyUSDZ spec test"
+        string creator = "LightUSD spec test"
     }
 )
 

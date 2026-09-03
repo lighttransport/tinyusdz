@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDA Reader
+// LightUSD Next - USDA Reader
 // High-level interface for reading USDA files
 
 #pragma once
@@ -10,7 +10,7 @@
 #include "../parser/ascii-parser.hh"
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Options for loading USDA files
@@ -52,4 +52,4 @@ LoadResult LoadUSDAFromStringOwned(std::string&& data,
 bool IsUSDAFile(const char* filename);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

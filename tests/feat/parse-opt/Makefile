@@ -3,25 +3,25 @@
 CXX = clang++
 CXXFLAGS = -std=c++14 -O2 -g -Wall -Wextra
 INCLUDES = -I../../../src
-LDFLAGS = -L../../../build -ltinyusdz_static -ldl -lpthread
+LDFLAGS = -L../../../build -llightusd_static -ldl -lpthread
 
 TARGET = test-parse-opt
 SOURCES = test-parse-opt.cc
 OBJECTS = $(SOURCES:.cc=.o)
 
 # Library dependency
-LIBTINYUSDZ = ../../../build/libtinyusdz_static.a
+LIBLIGHTUSD = ../../../build/liblightusd_static.a
 
 all: $(TARGET)
 
-$(TARGET): $(OBJECTS) $(LIBTINYUSDZ)
+$(TARGET): $(OBJECTS) $(LIBLIGHTUSD)
 	$(CXX) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
 
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(LIBTINYUSDZ):
-	@echo "Building libtinyusdz_static.a..."
+$(LIBLIGHTUSD):
+	@echo "Building liblightusd_static.a..."
 	@cd ../../../build && $(MAKE)
 
 clean:

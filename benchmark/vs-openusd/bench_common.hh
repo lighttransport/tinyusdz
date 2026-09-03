@@ -1,4 +1,4 @@
-// Shared helpers for the tinyusdz vs OpenUSD benchmark harness.
+// Shared helpers for the lightusd vs OpenUSD benchmark harness.
 #pragma once
 
 #include <algorithm>

@@ -4,7 +4,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "layer.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
@@ -82,14 +82,14 @@ int main(int argc, char **argv) {
       load_only = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
-    } else if (tinyusdz::startsWith(arg, "--composition=")) {
-      std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
+    } else if (lightusd::startsWith(arg, "--composition=")) {
+      std::string value_str = lightusd::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
         std::cerr << "No values specified to --composition.\n";
         exit(-1);
       }
 
-      std::vector<std::string> items = tinyusdz::split(value_str, ",");
+      std::vector<std::string> items = lightusd::split(value_str, ",");
       comp_features.subLayers = false;
       comp_features.inherits = false;
       comp_features.variantSets = false;
@@ -132,7 +132,7 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
   std::string base_dir;
-  base_dir = tinyusdz::io::GetBaseDir(filepath);
+  base_dir = lightusd::io::GetBaseDir(filepath);
 
   if (has_flatten) {
 
@@ -142,13 +142,13 @@ int main(int argc, char **argv) {
     }
 
     // TODO: flatten for USDZ
-    if (tinyusdz::IsUSDZ(filepath)) {
+    if (lightusd::IsUSDZ(filepath)) {
 
       std::cout << "--flatten is ignored for USDZ at the moment.\n";
 
-      tinyusdz::Stage stage;
+      lightusd::Stage stage;
 
-      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+      bool ret = lightusd::LoadUSDZFromFile(filepath, &stage, &warn, &err);
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
       }
@@ -167,8 +167,8 @@ int main(int argc, char **argv) {
       return EXIT_SUCCESS;
     }
 
-    tinyusdz::Layer root_layer;
-    bool ret = tinyusdz::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
+    lightusd::Layer root_layer;
+    bool ret = lightusd::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
       std::cout << "WARN: " << warn << "\n";
     }
@@ -182,12 +182,12 @@ int main(int argc, char **argv) {
     std::cout << "# input\n";
     std::cout << root_layer << "\n";
 
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
     stage.metas() = root_layer.metas();
 
     std::string warn;
 
-    tinyusdz::AssetResolutionResolver resolver;
+    lightusd::AssetResolutionResolver resolver;
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
 
@@ -201,18 +201,18 @@ int main(int argc, char **argv) {
     // - [ ] Specializes
     //
 
-    tinyusdz::Layer src_layer = root_layer;
+    lightusd::Layer src_layer = root_layer;
     if (comp_features.subLayers) {
 
       // NOTE: subLayers are resolved recursively.
 
-      std::vector<std::string> subLayerAssetPaths = tinyusdz::ExtractSublayerAssetPaths(src_layer);
+      std::vector<std::string> subLayerAssetPaths = lightusd::ExtractSublayerAssetPaths(src_layer);
       for (size_t i = 0; i < subLayerAssetPaths.size(); i++) {
           std::cout << "subLayer asset path: " << subLayerAssetPaths[i] << "\n";
       }
-        
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+
+      lightusd::Layer composited_layer;
+      if (!lightusd::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -238,8 +238,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+          lightusd::Layer composited_layer;
+          if (!lightusd::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `references`: " << err << "\n";
             return -1;
           }
@@ -261,8 +261,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+          lightusd::Layer composited_layer;
+          if (!lightusd::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `payload`: " << err << "\n";
             return -1;
           }
@@ -284,8 +284,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
+          lightusd::Layer composited_layer;
+          if (!lightusd::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `inherits`: " << err << "\n";
             return -1;
           }
@@ -306,7 +306,7 @@ int main(int argc, char **argv) {
         // and payloads are resolved (see ShouldDeferVariantComposition).
         if (!src_layer.check_unresolved_variant()) {
           std::cout << "# iter " << i << ": no unresolved variant.\n";
-        } else if (tinyusdz::ShouldDeferVariantComposition(
+        } else if (lightusd::ShouldDeferVariantComposition(
                        src_layer, comp_features.references,
                        comp_features.payload)) {
           std::cout << "# iter " << i
@@ -315,8 +315,8 @@ int main(int argc, char **argv) {
         } else {
           has_unresolved = true;
 
-          tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
+          lightusd::Layer composited_layer;
+          if (!lightusd::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `variantSet`: " << err << "\n";
             return -1;
           }
@@ -347,16 +347,16 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
-      tinyusdz::Dictionary dict;
-      if (!tinyusdz::ExtractVariants(src_layer, &dict, &err)) {
+      lightusd::Dictionary dict;
+      if (!lightusd::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        std::cout << "== Variants info ==\n" << lightusd::to_string(dict) << "\n";
       }
 
     }
 
-    tinyusdz::Stage comp_stage;
+    lightusd::Stage comp_stage;
     ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     if (warn.size()) {
       std::cout << warn<< "\n";
@@ -365,13 +365,13 @@ int main(int argc, char **argv) {
     if (!ret) {
       std::cerr << err << "\n";
     }
-    
+
     std::cout << comp_stage.ExportToString() << "\n";
 
-    using MeshMap = tinyusdz::tydra::PathPrimMap<tinyusdz::GeomMesh>;
+    using MeshMap = lightusd::tydra::PathPrimMap<lightusd::GeomMesh>;
     MeshMap meshmap;
 
-    tinyusdz::tydra::ListPrims(comp_stage, meshmap);
+    lightusd::tydra::ListPrims(comp_stage, meshmap);
 
     for (const auto &item : meshmap) {
 
@@ -380,12 +380,12 @@ int main(int argc, char **argv) {
 
   } else {
 
-    tinyusdz::Stage stage;
+    lightusd::Stage stage;
 
-    tinyusdz::USDLoadOptions options;
+    lightusd::USDLoadOptions options;
 
     // auto detect format.
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+    bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -407,11 +407,11 @@ int main(int argc, char **argv) {
     std::cout << s << "\n";
 
     if (has_extract_variants) {
-      tinyusdz::Dictionary dict;
-      if (!tinyusdz::ExtractVariants(stage, &dict, &err)) {
+      lightusd::Dictionary dict;
+      if (!lightusd::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        std::cout << "== Variants info ==\n" << lightusd::to_string(dict) << "\n";
       }
 
     }

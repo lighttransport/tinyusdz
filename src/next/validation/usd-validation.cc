@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - AOUSD Core semantic validation.
+// LightUSD Next - AOUSD Core semantic validation.
 //
 // Port of the legacy validator (src/usd-validation.cc) onto the next-core
 // layer model. Rule ids / severities / messages mirror the legacy validator.
@@ -47,7 +47,7 @@
 #include "../types/value.hh"
 #include "color-transform.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace {
 
@@ -100,7 +100,7 @@ bool EndsWith(const std::string &s, const std::string &suffix) {
 // parser and lexer use. The previous file-local approximation accepted ANY
 // byte >= 0x80, so malformed UTF-8 and non-XID codepoints passed validation.
 // (The shared IsValidIdentifier / IsValidNamespacedIdentifier are visible
-// here through the enclosing tinyusdz::next namespace.)
+// here through the enclosing lightusd::next namespace.)
 
 // ---------------------------------------------------------------------------
 // Issue helpers
@@ -4482,7 +4482,7 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
     if (!schema.name.empty() && !IsKnownAPISchemaName(schema.name)) {
       AddWarning(result, "core.apiSchema.unknown", prim_location,
                  "API schema `" + schema.name +
-                     "` is not present in TinyUSDZ's built-in schema registry");
+                     "` is not present in LightUSD's built-in schema registry");
     }
     const std::string key = schema.name + ":" + schema.instance_name;
     if (!seen.insert(key).second) {
@@ -5001,7 +5001,7 @@ ColorSpaceSet CollectLocalColorSpaceDefinitions(
         std::string value;
       if (GetTokenProperty(ps, prop_name, &value) && !value.empty()) {
         local_defs.insert(value);
-        local_defs.insert(::tinyusdz::color::CanonicalizeToken(value));
+        local_defs.insert(::lightusd::color::CanonicalizeToken(value));
         }
       }
       continue;
@@ -5012,7 +5012,7 @@ ColorSpaceSet CollectLocalColorSpaceDefinitions(
         "colorSpaceDefinition:" + schema.instance_name + ":name";
     if (GetTokenProperty(ps, name_prop, &value) && !value.empty()) {
       local_defs.insert(value);
-      local_defs.insert(::tinyusdz::color::CanonicalizeToken(value));
+      local_defs.insert(::lightusd::color::CanonicalizeToken(value));
     }
   }
   return local_defs;
@@ -5024,7 +5024,7 @@ bool IsKnownColorSpaceToken(const std::string &token,
     return true;
   }
   const std::string canonical =
-      ::tinyusdz::color::CanonicalizeToken(token);
+      ::lightusd::color::CanonicalizeToken(token);
   if (IsCanonicalColorSpaceToken(canonical)) {
     return true;
   }
@@ -5049,7 +5049,7 @@ void ValidateLocalColorSpaceDefinitions(
       name = authored_name;
     }
     const std::string canonical =
-        ::tinyusdz::color::CanonicalizeToken(name);
+        ::lightusd::color::CanonicalizeToken(name);
     auto inserted = names.emplace(canonical, schema.instance_name);
     if (!inserted.second) {
       AddError(result, "core.schema.ColorSpaceDefinitionAPI.duplicate",
@@ -5077,8 +5077,8 @@ void ValidateLocalColorSpaceDefinitions(
     double bias = 0.0;
     (void)GetNumericScalarProperty(ps, prefix + "gamma", &gamma);
     (void)GetNumericScalarProperty(ps, prefix + "linearBias", &bias);
-    ::tinyusdz::color::ColorSpaceDesc definition;
-    if (!::tinyusdz::color::MakeColorSpaceFromChromaticities(
+    ::lightusd::color::ColorSpaceDesc definition;
+    if (!::lightusd::color::MakeColorSpaceFromChromaticities(
             canonical, red, green, blue, white, static_cast<float>(gamma),
             static_cast<float>(bias), &definition)) {
       AddError(result, "core.schema.ColorSpaceDefinitionAPI.invalid",
@@ -5490,7 +5490,7 @@ bool IsArkitShaderId(const std::string &shader_id) {
          StartsWith(shader_id, "ND_");
 }
 
-// The shader ids tinyusdz's built-in registry knows: the UsdPreviewSurface
+// The shader ids lightusd's built-in registry knows: the UsdPreviewSurface
 // node family plus MaterialX ND_* definitions. OpenUSD's sdr registry is
 // plugin-extensible, so an id outside this set is only a WARNING (it may be
 // perfectly valid in a pipeline that ships the plugin) -- mirrors
@@ -7288,7 +7288,7 @@ void ApplyUsdcheckerCompatSeverities(USDValidationResult *result) {
   if (!result) {
     return;
   }
-  // Rules OpenUSD's usdchecker reports as ERRORS where the tinyusdz defaults
+  // Rules OpenUSD's usdchecker reports as ERRORS where the lightusd defaults
   // use warnings (or where the presence rules default to warnings). Keyed by
   // rule id so the upgrade also covers issues merged in from the
   // byte-container checks.
@@ -7383,4 +7383,4 @@ std::string ValidationOptions::group_summary() const {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP instancing group-assignment performance + correctness
+// LightUSD Next - PCP instancing group-assignment performance + correctness
 //
 // Guards pcp::AssignPrototype (RegisterInstance) against an O(N^2) regression:
 // a single prototype group with N instanceable members used to cost O(N^2)
@@ -22,9 +22,9 @@
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int g_failures = 0;
 #define IG_CHECK(cond, msg)                                                 \
@@ -72,7 +72,7 @@ static void test_large_instance_group() {
   IG_CHECK(opened.has_value(), "Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
 
-  tinyusdz::next::Stage stage;
+  lightusd::next::Stage stage;
   std::string warn, err;
   const auto t1 = std::chrono::steady_clock::now();
   IG_CHECK(cache.BuildStage(&stage, &warn, &err), "BuildStage failed");

@@ -37,7 +37,7 @@
 
 namespace {
 
-namespace tsd = tinyusdz::tsd;
+namespace tsd = lightusd::tsd;
 using namespace OpenSubdiv;
 
 int g_failed_cases = 0;

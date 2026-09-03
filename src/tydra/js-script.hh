@@ -18,7 +18,7 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct LayerMetas;
 class Attribute;
@@ -44,27 +44,27 @@ bool InitJSEngine(JSEngineState &engine, std::string &err);
 bool DestroyJSEngine(JSEngineState &engine);
 
 // ---------------------------------------------------------------------------
-// Register the tinyusdz.* module against a Stage reference.
+// Register the lightusd.* module against a Stage reference.
 // After this, JS scripts can use:
-//   tinyusdz.stage.info()
-//   tinyusdz.prim.list(path)
-//   tinyusdz.prim.get(path)
-//   tinyusdz.prim.create(path, typeName)
-//   tinyusdz.attr.list(path)
-//   tinyusdz.attr.get(path, name)
-//   tinyusdz.composition.referenceAdd(path, assetPath, ...)
-//   tinyusdz.query.findAllByType(typeName)
-//   tinyusdz.value.create(typeName, data)
+//   lightusd.stage.info()
+//   lightusd.prim.list(path)
+//   lightusd.prim.get(path)
+//   lightusd.prim.create(path, typeName)
+//   lightusd.attr.list(path)
+//   lightusd.attr.get(path, name)
+//   lightusd.composition.referenceAdd(path, assetPath, ...)
+//   lightusd.query.findAllByType(typeName)
+//   lightusd.value.create(typeName, data)
 // ---------------------------------------------------------------------------
 bool RegisterUSDModule(JSEngineState &engine, Stage *stage, std::string &err);
 
 // ---------------------------------------------------------------------------
-// Register the tinyusdz.diff.* submodule against a cached layer diff.
+// Register the lightusd.diff.* submodule against a cached layer diff.
 // After this, JS scripts can use:
-//   tinyusdz.diff.summary()
-//   tinyusdz.diff.paths(filter?)   // {reason?, path_substr?, kind?, offset?, limit?}
-//   tinyusdz.diff.prim(path)
-// Creates the tinyusdz global if absent (diff-only session), else augments it.
+//   lightusd.diff.summary()
+//   lightusd.diff.paths(filter?)   // {reason?, path_substr?, kind?, offset?, limit?}
+//   lightusd.diff.prim(path)
+// Creates the lightusd global if absent (diff-only session), else augments it.
 // ---------------------------------------------------------------------------
 namespace mcp { struct DiffSession; }
 bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
@@ -73,7 +73,7 @@ bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
 // ---------------------------------------------------------------------------
 // Execute JavaScript and capture the return value as JSON.
 // The script runs in the engine's JS context and can access the registered
-// tinyusdz.* module.
+// lightusd.* module.
 //
 // Returns:
 //   - ok=true, return_value contains the script's return value as JSON
@@ -95,4 +95,4 @@ bool RunJSScriptWithLayer(const std::string &js_code, const class Layer *layer,
                           std::string &err);
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

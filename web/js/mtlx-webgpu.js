@@ -1,11 +1,11 @@
-// TinyUSDZ WebGPU + OpenPBR Demo
+// LightUSD WebGPU + OpenPBR Demo
 // High-performance USD viewer using WebGPU with:
 // - Uber shader for OpenPBR materials
 // - UBO-based material parameters for efficient multi-material rendering
 // - Bindless textures via texture arrays
 // - Minimal draw calls through material batching
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
 // ============================================================================
 // WGSL Uber Shader for OpenPBR
@@ -2643,9 +2643,9 @@ class Application {
             // Setup controls
             this.controls = new OrbitControls(this.renderer.camera, this.canvas);
 
-            // Initialize TinyUSDZ loader
-            this.updateStatus('Initializing TinyUSDZ WASM...');
-            this.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+            // Initialize LightUSD loader
+            this.updateStatus('Initializing LightUSD WASM...');
+            this.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
             await this.loader.init({ useMemory64: false });
 
             // Setup UI
@@ -2829,7 +2829,7 @@ class Application {
         this.renderer.clearMeshes();
 
         // Create new native loader
-        this.nativeLoader = new this.loader.native_.TinyUSDZLoaderNative();
+        this.nativeLoader = new this.loader.native_.LightUSDLoaderNative();
 
         const success = this.nativeLoader.loadFromBinary(data, filename);
         if (!success) {

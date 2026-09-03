@@ -3,7 +3,7 @@
 //
 // large-scene-loader.cc - see large-scene-loader.hh.
 //
-// Two backends selected at compile time by TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE.
+// Two backends selected at compile time by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE.
 
 #include "large-scene-loader.hh"
 
@@ -21,13 +21,13 @@
 #include "io-util.hh"
 #include "layer.hh"
 #include "pcp/layer-registry.hh"
-#include "tinyusdz.hh"
-#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#include "lightusd.hh"
+#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 #include "next/layer/asset-anchor.hh"
 #include "next/types/value-view.hh"
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -55,7 +55,7 @@ uint64_t BudgetMiBToBytes(size_t mib) {
 // =========================================================================
 // Old backend (CompositionGraph, enabled by default)
 // =========================================================================
-#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 
 namespace {
 
@@ -331,7 +331,7 @@ size_t LargeSceneLoader::layer_parse_count() const {
 }
 
 // =========================================================================
-// New backend (next::pcp::Cache, enabled by TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+// New backend (next::pcp::Cache, enabled by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 // =========================================================================
 #else
 
@@ -511,12 +511,12 @@ bool LargeSceneLoader::Load(const std::string &filename,
   return true;
 }
 
-/// Helper: convert tinyusdz::Path (old) to tinyusdz::next::Path (new).
+/// Helper: convert lightusd::Path (old) to lightusd::next::Path (new).
 static next::Path ToNextPath(const Path &p) {
   return next::Path(p.full_path_name());
 }
 
-/// Helper: convert tinyusdz::next::Path (new) to tinyusdz::Path (old).
+/// Helper: convert lightusd::next::Path (new) to lightusd::Path (old).
 static Path FromNextPath(const next::Path &np) {
   return Path(np.str(), "");
 }
@@ -606,14 +606,14 @@ size_t LargeSceneLoader::layer_parse_count() const {
   return _cache ? _cache->layer_registry().parse_count() : 0;
 }
 
-#endif  // TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
+#endif  // LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
 
 // =========================================================================
 // One-shot convenience (old path only; new path users call LargeSceneLoader
 // directly or use next::pcp::ComposeStageFromFile).
 // =========================================================================
 
-#if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
 
 bool LoadStageFromFile(const std::string &filename, Stage *stage,
                        std::string *warn, std::string *err,
@@ -630,6 +630,6 @@ bool LoadStageFromFile(const std::string &filename, Stage *stage,
   return true;
 }
 
-#endif  // !TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
+#endif  // !LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE
 
-}  // namespace tinyusdz
+}  // namespace lightusd

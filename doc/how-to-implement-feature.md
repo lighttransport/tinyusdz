@@ -1,6 +1,6 @@
 # How to Add a New USD Schema / Prim Type
 
-This document is the step-by-step procedure for adding support for a new USD schema to tinyusdz. It covers research, implementation, testing, and common pitfalls.
+This document is the step-by-step procedure for adding support for a new USD schema to lightusd. It covers research, implementation, testing, and common pitfalls.
 
 The Physics (`src/usdPhysics.hh`, `src/prim-reconstruct-physics.cc`, `src/pprint-physics.cc`, `src/sconv-physics.cc`) and AR (`src/usdAR.hh`, `src/prim-reconstruct-ar.cc`, `src/pprint-ar.cc`, `src/sconv-ar.cc`) implementations are the canonical references.
 
@@ -86,7 +86,7 @@ private:
 
 Match USD types exactly. Using the wrong C++ type causes "Property type mismatch" errors at parse time.
 
-| USD type in schema `.usda` | C++ type in tinyusdz |
+| USD type in schema `.usda` | C++ type in lightusd |
 |---------------------------|---------------------|
 | `bool` | `bool` |
 | `int` | `int` |
@@ -233,7 +233,7 @@ def Xform "Root"
 
 ```bash
 # Build
-cd build && cmake .. -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=ON
+cd build && cmake .. -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 make -j16
 
 # All tests must pass
@@ -248,7 +248,7 @@ diff /tmp/r1.usda /tmp/r2.usda
 ctest -R usda-parser-unit-test --output-on-failure   # Parse test
 ctest -R usda-roundtrip-test --output-on-failure      # USDA roundtrip
 ctest -R usdc-roundtrip-test --output-on-failure      # USDC roundtrip
-ctest -R unit-test-tinyusdz --output-on-failure       # Unit tests
+ctest -R unit-test-lightusd --output-on-failure       # Unit tests
 ```
 
 ---

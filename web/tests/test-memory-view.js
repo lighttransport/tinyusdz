@@ -2,7 +2,7 @@
 
 /**
  * Test for getAssetCacheDataAsMemoryView method
- * 
+ *
  * This test verifies that the new method returns cache data as a memory view
  * and that it behaves correctly for both existing and non-existing assets.
  */
@@ -10,11 +10,11 @@
 const fs = require('fs');
 const path = require('path');
 
-// Load TinyUSDZ module (prefer 64-bit/builtin 64-bit-friendly build when available)
-function loadTinyUSDZModule() {
+// Load LightUSD module (prefer 64-bit/builtin 64-bit-friendly build when available)
+function loadLightUSDModule() {
   const candidates = [
-    '../js/src/tinyusdz/tinyusdz_64.js',
-    '../js/src/tinyusdz/tinyusdz.js',
+    '../js/src/lightusd/lightusd_64.js',
+    '../js/src/lightusd/lightusd.js',
   ];
 
   for (const candidate of candidates) {
@@ -26,20 +26,20 @@ function loadTinyUSDZModule() {
     }
   }
 
-  throw new Error('Failed to load any TinyUSDZ JS module candidate');
+  throw new Error('Failed to load any LightUSD JS module candidate');
 }
 
-const TinyUSDZInit = loadTinyUSDZModule();
+const LightUSDInit = loadLightUSDModule();
 
 async function runTest() {
-  console.log('Loading TinyUSDZ module...');
-  
+  console.log('Loading LightUSD module...');
+
   try {
-    const tinyusdz = await TinyUSDZInit();
-    console.log('✓ TinyUSDZ module loaded successfully');
+    const lightusd = await LightUSDInit();
+    console.log('✓ LightUSD module loaded successfully');
 
     // Create a loader instance
-    const loader = new tinyusdz.TinyUSDZLoaderNative();
+    const loader = new lightusd.LightUSDLoaderNative();
     console.log('✓ Loader created');
 
     // Test data - simple string content
@@ -62,7 +62,7 @@ async function runTest() {
     // Test the new getAssetCacheDataAsMemoryView method
     console.log('Testing getAssetCacheDataAsMemoryView...');
     const memoryView = loader.getAssetCacheDataAsMemoryView(testAssetName);
-    
+
     if (memoryView === undefined) {
       throw new Error('Memory view should not be undefined for existing asset');
     }
@@ -101,14 +101,14 @@ async function runTest() {
     const binaryAssetName = 'binary-test.bin';
     const binaryData = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
     const binaryString = String.fromCharCode(...binaryData);
-    
+
     loader.setAsset(binaryAssetName, binaryString);
     const binaryMemoryView = loader.getAssetCacheDataAsMemoryView(binaryAssetName);
-    
+
     if (binaryMemoryView.length !== binaryData.length) {
       throw new Error(`Binary data size mismatch. Expected: ${binaryData.length}, Got: ${binaryMemoryView.length}`);
     }
-    
+
     for (let i = 0; i < binaryData.length; i++) {
       if (binaryMemoryView[i] !== binaryData[i]) {
         throw new Error(`Binary data mismatch at index ${i}. Expected: ${binaryData[i]}, Got: ${binaryMemoryView[i]}`);
@@ -122,12 +122,12 @@ async function runTest() {
     if (!assetObj || !assetObj.data) {
       throw new Error('getAsset should return object with data');
     }
-    
+
     // Both should have the same content
     if (assetObj.data.length !== memoryView.length) {
       throw new Error('getAsset and getAssetCacheDataAsMemoryView should return same size data');
     }
-    
+
     for (let i = 0; i < memoryView.length; i++) {
       if (assetObj.data[i] !== memoryView[i]) {
         throw new Error(`Data mismatch at index ${i} between getAsset and getAssetCacheDataAsMemoryView`);
@@ -138,7 +138,7 @@ async function runTest() {
     console.log('\n🎉 All tests passed!');
     console.log('✓ getAssetCacheDataAsMemoryView method works correctly');
     console.log('✓ Returns Uint8Array memory view for existing assets');
-    console.log('✓ Returns undefined for non-existing assets');  
+    console.log('✓ Returns undefined for non-existing assets');
     console.log('✓ Handles both text and binary data correctly');
     console.log('✓ Consistent with existing getAsset method');
 

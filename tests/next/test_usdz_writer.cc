@@ -2,7 +2,7 @@
 /// Writes a Stage to USDZ, reads it back with the USDZ reader,
 /// then reads the embedded USDC with the USDC reader.
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/reader/usdz-reader.hh"
@@ -11,7 +11,7 @@
 #include <vector>
 #include <cstring>
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 static int test_count = 0;
 static int pass_count = 0;
@@ -236,7 +236,7 @@ void test_usdz_root_is_first_entry() {
   if (!reader.Open(valid.data(), valid.size())) {
     FAIL("failed to reopen valid fixture before state-reset check"); return;
   }
-  if (reader.OpenFile("/tmp/tinyusdz-next-definitely-missing.usdz") ||
+  if (reader.OpenFile("/tmp/lightusd-next-definitely-missing.usdz") ||
       reader.NumEntries() != 0 || reader.EntryData(0) != nullptr) {
     FAIL("failed OpenFile retained entries from the previous archive"); return;
   }

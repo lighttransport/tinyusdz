@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 
 np = pytest.importorskip("numpy")
 

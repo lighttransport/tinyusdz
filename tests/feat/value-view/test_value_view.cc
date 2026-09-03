@@ -6,8 +6,8 @@
 #include <vector>
 #include <cstring>
 
-using namespace tinyusdz;
-using namespace tinyusdz::value;
+using namespace lightusd;
+using namespace lightusd::value;
 
 int main() {
     std::cout << "Testing compact ValueView implementation...\n\n";

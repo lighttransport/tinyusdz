@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 class Stage;
 
@@ -36,7 +36,7 @@ struct URDFMeshBuffer {
 ///   names.
 ///
 /// The generated stage authors standard UsdPhysics, MuJoCo, and Newton API
-/// schema properties where TinyUSDZ has schema support.
+/// schema properties where LightUSD has schema support.
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     Stage *stage,
@@ -51,4 +51,4 @@ bool ConvertURDFJsonToUSDStage(
     std::string *err = nullptr);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -9,7 +9,7 @@
 
 #include "tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace argparser {
 
 struct Option {
@@ -40,15 +40,15 @@ public:
     bool get(const std::string& name, double& value) const;
 
     // Get positional arguments (non-option arguments)
-    const std::vector<std::string>& positional() const TINYUSDZ_LIFETIMEBOUND;
+    const std::vector<std::string>& positional() const LIGHTUSD_LIFETIMEBOUND;
 
     // Print help for all options
     void print_help() const;
 
 private:
-    tinyusdz::HashMap<std::string, Option> options_;
+    lightusd::HashMap<std::string, Option> options_;
     std::vector<std::string> positional_args_;
 };
 
 } // namespace argparser
-} // namespace tinyusdz
+} // namespace lightusd

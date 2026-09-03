@@ -6,11 +6,11 @@
 
 #include "mcp-context.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
-/// Ensure the session's JS engine is initialized and the tinyusdz.* module
+/// Ensure the session's JS engine is initialized and the lightusd.* module
 /// is registered against the current stage.
 bool EnsureJSEngineReady(Context &ctx, std::string &err);
 
@@ -22,4 +22,4 @@ bool RunScript(Context &ctx, const nlohmann::json &args,
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

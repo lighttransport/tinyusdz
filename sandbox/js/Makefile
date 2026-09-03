@@ -1,2 +1,2 @@
 all:
-	deno run src/TinyUSDZLoader.ts
+	deno run src/LightUSDLoader.ts

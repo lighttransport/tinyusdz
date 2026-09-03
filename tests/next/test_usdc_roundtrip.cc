@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - USDC Roundtrip Test
+// LightUSD Next - USDC Roundtrip Test
 // Creates a stage with multiple schema types, writes to USDC,
 // and verifies the binary output by parsing TOC/sections.
 
@@ -23,7 +23,7 @@
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
 #include "next/crate/lazy-array.hh"
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
 #include "next/parser/ascii-parser.hh"
@@ -31,9 +31,9 @@
 #include "next/pcp/prim-index.hh"
 #include "next/schema/color-space.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
-#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                             \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
 constexpr bool kExpectUsdaLazyMmap = true;
@@ -1473,7 +1473,7 @@ def Xform "World" (
   assert(color_management::ResolveColorSpaceDefinition(
       read.stage.GetPrimAtPath("/World/Mat/Surface"), "studio_ap1",
       &definition, &error));
-  assert(::tinyusdz::color::IsLinear(definition));
+  assert(::lightusd::color::IsLinear(definition));
   std::cout << "  color-management schema USDC roundtrip passed!\n\n";
 }
 
@@ -2210,7 +2210,7 @@ void test_roundtrip_deferred_items() {
 }
 
 int main() {
-  std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
+  std::cout << "=== LightUSD Next USDC Roundtrip Tests ===\n\n";
 
   try {
     test_half_conversion();

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
- * tinyusdz._core — tydra render-scene binding (RenderScene + item facades).
+ * lightusd._core — tydra render-scene binding (RenderScene + item facades).
  */
 
 #include "py-internal.h"
-#include "tinyusdz-render-c.h"
+#include "lightusd-render-c.h"
 
 /* Additional state fields live in tusd_state (see py-internal.h). */
 
@@ -951,7 +951,7 @@ static PyGetSetDef RScene_getset[] = {
       {0, NULL},                                                  \
   };                                                              \
   static PyType_Spec pyname##_spec = {                            \
-      .name = "tinyusdz._core." #pyname,                          \
+      .name = "lightusd._core." #pyname,                          \
       .basicsize = sizeof(TusdRenderItem),                        \
       .flags = TUSD_ITEM_FLAGS,                                   \
       .slots = pyname##_slots,                                    \
@@ -981,7 +981,7 @@ static PyType_Slot RScene_slots[] = {
 };
 
 static PyType_Spec RScene_spec = {
-    .name = "tinyusdz._core.RenderScene",
+    .name = "lightusd._core.RenderScene",
     .basicsize = sizeof(TusdRenderScene),
     .flags = TUSD_ITEM_FLAGS,
     .slots = RScene_slots,
@@ -1013,7 +1013,7 @@ PyObject* tusd_to_render_scene(PyObject* module, PyObject* args,
   tusd_state* st = tusd_state_from_module(module);
   if (!st) return NULL;
   if (!PyObject_TypeCheck(stage_obj, (PyTypeObject*)st->StageType)) {
-    PyErr_SetString(PyExc_TypeError, "expected a tinyusdz.Stage");
+    PyErr_SetString(PyExc_TypeError, "expected a lightusd.Stage");
     return NULL;
   }
   tusd_stage* stage = tusd_stage_handle(stage_obj);

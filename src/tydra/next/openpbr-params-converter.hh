@@ -7,7 +7,7 @@
 #include "render-data.hh"
 #include "tydra/openpbr-params.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -30,9 +30,9 @@ inline bool AnyShaderParamHasTexture(
 }
 
 inline bool BuildRealtimePbrMaterial(
-    const RenderMaterial &rm, tinyusdz::tydra::RealtimePbrMaterial *out) {
+    const RenderMaterial &rm, lightusd::tydra::RealtimePbrMaterial *out) {
   if (!out) return false;
-  tinyusdz::tydra::RealtimePbrMaterial p;
+  lightusd::tydra::RealtimePbrMaterial p;
   if (rm.shader_type == RenderMaterial::ShaderType::PreviewSurface &&
       rm.preview_surface) {
     const PreviewSurfaceShader &s = *rm.preview_surface;
@@ -102,7 +102,7 @@ inline bool BuildRealtimePbrMaterial(
   } else {
     return false;
   }
-  tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+  lightusd::tydra::ClampRealtimePbrMaterial(&p);
   *out = p;
   return true;
 }
@@ -111,10 +111,10 @@ inline bool BuildRealtimePbrMaterial(
 // should use BuildRealtimePbrMaterial to avoid coupling Tydra extraction to a
 // particular evaluator.
 inline bool BuildLightRtOpenPBRParams(
-    const RenderMaterial &rm, tinyusdz::tydra::LightRtOpenPBRParams *out) {
+    const RenderMaterial &rm, lightusd::tydra::LightRtOpenPBRParams *out) {
   return BuildRealtimePbrMaterial(rm, out);
 }
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

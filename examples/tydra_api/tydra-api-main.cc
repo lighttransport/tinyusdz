@@ -2,7 +2,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -30,19 +30,19 @@ static std::string str_tolower(std::string s) {
 }
 
 // key = Full absolute prim path(e.g. `/bora/dora`)
-using XformMap = tinyusdz::tydra::PathPrimMap<tinyusdz::Xform>;
-using MeshMap = tinyusdz::tydra::PathPrimMap<tinyusdz::GeomMesh>;
-using MaterialMap = tinyusdz::tydra::PathPrimMap<tinyusdz::Material>;
+using XformMap = lightusd::tydra::PathPrimMap<lightusd::Xform>;
+using MeshMap = lightusd::tydra::PathPrimMap<lightusd::GeomMesh>;
+using MaterialMap = lightusd::tydra::PathPrimMap<lightusd::Material>;
 using PreviewSurfaceMap =
-    std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPreviewSurface *>>;
-using UVTextureMap = std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdUVTexture *>>;
+    std::map<std::string, std::pair<const lightusd::Shader *, const lightusd::UsdPreviewSurface *>>;
+using UVTextureMap = std::map<std::string, std::pair<const lightusd::Shader *, const lightusd::UsdUVTexture *>>;
 using PrimvarReader_float2Map =
-    std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPrimvarReader_float2 *>>;
+    std::map<std::string, std::pair<const lightusd::Shader *, const lightusd::UsdPrimvarReader_float2 *>>;
 
 #if 0
 template <typename T>
 static bool TraverseRec(const std::string &path_prefix,
-                        const tinyusdz::Prim &prim, uint32_t depth,
+                        const lightusd::Prim &prim, uint32_t depth,
                         std::map<std::string, const T *> &itemmap) {
   if (depth > 1024 * 128) {
     // Too deep
@@ -51,10 +51,10 @@ static bool TraverseRec(const std::string &path_prefix,
 
   std::string prim_abs_path = path_prefix + "/" + prim.local_path().full_path_name();
 
-  if (prim.is<tinyusdz::Material>()) {
+  if (prim.is<lightusd::Material>()) {
     if (const T *pv = prim.as<T>()) {
       std::cout << "Path : <" << prim_abs_path << "> is "
-                << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
+                << lightusd::value::TypeTraits<T>::type_name() << ".\n";
       itemmap[prim_abs_path] = pv;
     }
   }
@@ -70,7 +70,7 @@ static bool TraverseRec(const std::string &path_prefix,
 
 template <typename T>
 static bool TraverseShaderRec(const std::string &path_prefix,
-                        const tinyusdz::Prim &prim, uint32_t depth,
+                        const lightusd::Prim &prim, uint32_t depth,
                         std::map<std::string, const T *> &itemmap) {
   if (depth > 1024 * 128) {
     // Too deep
@@ -80,11 +80,11 @@ static bool TraverseShaderRec(const std::string &path_prefix,
   std::string prim_abs_path = path_prefix + "/" + prim.local_path().full_path_name();
 
   // First test if Shader prim.
-  if (const tinyusdz::Shader *ps = prim.as<tinyusdz::Shader>()) {
+  if (const lightusd::Shader *ps = prim.as<lightusd::Shader>()) {
     // Concrete Shader object(e.g. UsdUVTexture) is stored in .data.
     if (const T *s = ps->value.as<T>()) {
       std::cout << "Path : <" << prim_abs_path << "> is "
-                << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
+                << lightusd::value::TypeTraits<T>::type_name() << ".\n";
       itemmap[prim_abs_path] = s;
     }
   }
@@ -98,26 +98,26 @@ static bool TraverseShaderRec(const std::string &path_prefix,
   return true;
 }
 
-static void TraverseMaterial(const tinyusdz::Stage &stage, MaterialMap &m) {
+static void TraverseMaterial(const lightusd::Stage &stage, MaterialMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseRec(/* root */ "", prim, 0, m);
   }
 }
 
-static void TraversePreviewSurface(const tinyusdz::Stage &stage,
+static void TraversePreviewSurface(const lightusd::Stage &stage,
                                    PreviewSurfaceMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseShaderRec(/* root */ "", prim, 0, m);
   }
 }
 
-static void TraverseUVTexture(const tinyusdz::Stage &stage, UVTextureMap &m) {
+static void TraverseUVTexture(const lightusd::Stage &stage, UVTextureMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseShaderRec(/* root */ "", prim, 0, m);
   }
 }
 
-static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
+static void TraversePrimvarReader_float2(const lightusd::Stage &stage,
                                          PrimvarReader_float2Map &m) {
   for (const auto &prim : stage.GetRootPrims()) {
     TraverseShaderRec(/* root */ "", prim, 0, m);
@@ -127,7 +127,7 @@ static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need USD file with Material/Shader(e.g. `<tinyusdz>/models/texturescube.usda`)\n" << std::endl;
+    std::cout << "Need USD file with Material/Shader(e.g. `<lightusd>/models/texturescube.usda`)\n" << std::endl;
     return EXIT_FAILURE;
   }
 
@@ -137,13 +137,13 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
 
-  if (!tinyusdz::IsUSD(filepath)) {
+  if (!lightusd::IsUSD(filepath)) {
     std::cerr << "File not found or not a USD format: " << filepath << "\n";
   }
 
-  bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  bool ret = lightusd::LoadUSDFromFile(filepath, &stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN : " << warn << "\n";
   }
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // bool is_usdz = tinyusdz::IsUSDZ(filepath);
+  // bool is_usdz = lightusd::IsUSDZ(filepath);
 
   std::string s = stage.ExportToString();
   std::cout << s << "\n";
@@ -165,14 +165,14 @@ int main(int argc, char **argv) {
             << "\n";
 
   // Visit all Prims in the Stage.
-  auto prim_visit_fun = [](const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
+  auto prim_visit_fun = [](const lightusd::Path &abs_path, const lightusd::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
     (void)err;
-    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << " : AbsPath " << tinyusdz::to_string(abs_path) << "\n";
+    std::cout << lightusd::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << " : AbsPath " << lightusd::to_string(abs_path) << "\n";
 
     // Use as() or is() for Prim specific processing.
-    if (const tinyusdz::Material *pm = prim.as<tinyusdz::Material>()) {
+    if (const lightusd::Material *pm = prim.as<lightusd::Material>()) {
       (void)pm;
-      std::cout << tinyusdz::pprint::Indent(level) << "  Got Material!\n";
+      std::cout << lightusd::pprint::Indent(level) << "  Got Material!\n";
       // return false + `err` empty if you want to terminate traversal earlier.
       //return false;
     }
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
 
   void *userdata = nullptr;
 
-  tinyusdz::tydra::VisitPrims(stage, prim_visit_fun, userdata);
+  lightusd::tydra::VisitPrims(stage, prim_visit_fun, userdata);
 
 
   std::cout << "--------------------------------------"
@@ -190,14 +190,14 @@ int main(int argc, char **argv) {
 
   // Compute Xform of each Prim at time t.
   {
-    tinyusdz::tydra::XformNode xformnode;
-    double t = tinyusdz::value::TimeCode::Default();
-    tinyusdz::value::TimeSampleInterpolationType tinterp = tinyusdz::value::TimeSampleInterpolationType::Held; // Held or Linear
+    lightusd::tydra::XformNode xformnode;
+    double t = lightusd::value::TimeCode::Default();
+    lightusd::value::TimeSampleInterpolationType tinterp = lightusd::value::TimeSampleInterpolationType::Held; // Held or Linear
 
-    if (!tinyusdz::tydra::BuildXformNodeFromStage(stage, &xformnode, t, tinterp)) {
+    if (!lightusd::tydra::BuildXformNodeFromStage(stage, &xformnode, t, tinterp)) {
       std::cerr << "BuildXformNodeFromStage error.\n";
     } else {
-      std::cout << tinyusdz::tydra::DumpXformNode(xformnode) << "\n";
+      std::cout << lightusd::tydra::DumpXformNode(xformnode) << "\n";
     }
   }
 
@@ -212,22 +212,22 @@ int main(int argc, char **argv) {
   PrimvarReader_float2Map preadermap;
 
   // Collect and make full path <-> Prim/Shader mapping
-  tinyusdz::tydra::ListPrims(stage, xformmap);
-  tinyusdz::tydra::ListPrims(stage, meshmap);
-  tinyusdz::tydra::ListPrims(stage, matmap);
-  tinyusdz::tydra::ListShaders(stage, surfacemap);
-  tinyusdz::tydra::ListShaders(stage, texmap);
-  tinyusdz::tydra::ListShaders(stage, preadermap);
+  lightusd::tydra::ListPrims(stage, xformmap);
+  lightusd::tydra::ListPrims(stage, meshmap);
+  lightusd::tydra::ListPrims(stage, matmap);
+  lightusd::tydra::ListShaders(stage, surfacemap);
+  lightusd::tydra::ListShaders(stage, texmap);
+  lightusd::tydra::ListShaders(stage, preadermap);
 
   //
   // Query example
   //
   for (const auto &item : matmap) {
-    nonstd::expected<const tinyusdz::Prim*, std::string> mat = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::Prim*, std::string> mat = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
     if (mat) {
       std::cout << "Found Material <" << item.first << "> from Stage:\n";
-      if (const tinyusdz::Material *mp = mat.value()->as<tinyusdz::Material>()) { // this should be true though.
-        std::cout << tinyusdz::to_string(*mp) << "\n";
+      if (const lightusd::Material *mp = mat.value()->as<lightusd::Material>()) { // this should be true though.
+        std::cout << lightusd::to_string(*mp) << "\n";
       }
     } else {
       std::cerr << "Err: " << mat.error() << "\n";
@@ -236,16 +236,16 @@ int main(int argc, char **argv) {
 
   for (const auto &item : surfacemap) {
     // Returned Prim is Shader class
-    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdPreviewSurface) <" << item.first << "> from Stage:\n";
 
-      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
       if (sp) { // this should be true though.
 
-        if (const tinyusdz::UsdPreviewSurface *surf = sp->value.as<tinyusdz::UsdPreviewSurface>()) {
+        if (const lightusd::UsdPreviewSurface *surf = sp->value.as<lightusd::UsdPreviewSurface>()) {
           // Print Shader
-          std::cout << tinyusdz::to_string(*sp) << "\n";
+          std::cout << lightusd::to_string(*sp) << "\n";
         }
       }
 
@@ -256,14 +256,14 @@ int main(int argc, char **argv) {
 
   for (const auto &item : texmap) {
     // Returned Prim is Shader class
-    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdUVTexture) <" << item.first << "> from Stage:\n";
 
-      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
       if (sp) { // this should be true though.
-        if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) {
-          std::cout << tinyusdz::to_string(*sp);
+        if (const lightusd::UsdUVTexture *tex = sp->value.as<lightusd::UsdUVTexture>()) {
+          std::cout << lightusd::to_string(*sp);
         }
       }
 
@@ -274,15 +274,15 @@ int main(int argc, char **argv) {
 
   for (const auto &item : preadermap) {
     // Returned Prim is Shader class
-    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
 
-      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
       if (sp) { // this should be true though.
 
-        if (const tinyusdz::UsdPrimvarReader_float2 *preader = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
-          std::cout << tinyusdz::to_string(*sp) << "\n";
+        if (const lightusd::UsdPrimvarReader_float2 *preader = sp->value.as<lightusd::UsdPrimvarReader_float2>()) {
+          std::cout << lightusd::to_string(*sp) << "\n";
         }
       }
 
@@ -297,9 +297,9 @@ int main(int argc, char **argv) {
   for (const auto &item : surfacemap) {
     // Usually Parent is Material
     std::string err;
-    if (const tinyusdz::Prim *p = tinyusdz::tydra::GetParentPrim(stage, tinyusdz::Path(item.first, /* property */""), &err)) {
-      std::cout << "Input path = " << tinyusdz::to_string(item.first) << "\n";
-      std::cout << "Parent prim = " << tinyusdz::prim::print_prim(*p) << "\n";
+    if (const lightusd::Prim *p = lightusd::tydra::GetParentPrim(stage, lightusd::Path(item.first, /* property */""), &err)) {
+      std::cout << "Input path = " << lightusd::to_string(item.first) << "\n";
+      std::cout << "Parent prim = " << lightusd::prim::print_prim(*p) << "\n";
     } else {
       std::cerr << err;
     }
@@ -308,8 +308,8 @@ int main(int argc, char **argv) {
   std::cout << "GetProperty example -------------\n";
   for (const auto &item : xformmap) {
     std::string err;
-    tinyusdz::Property prop;
-    if (tinyusdz::tydra::GetProperty(*item.second, "xformOp:transform", &prop, &err)) {
+    lightusd::Property prop;
+    if (lightusd::tydra::GetProperty(*item.second, "xformOp:transform", &prop, &err)) {
       std::cout << "Property value = " << print_prop(prop, "xformOp:transform", 0) << "\n";
     } else {
       std::cerr << err;
@@ -334,11 +334,11 @@ int main(int argc, char **argv) {
   std::cout << "GetBoundMaterial example -------------\n";
   for (const auto &item : meshmap) {
 
-    tinyusdz::Path matPath;
-    const tinyusdz::Material *material{nullptr};
+    lightusd::Path matPath;
+    const lightusd::Material *material{nullptr};
     std::string err;
 
-    bool ret = tinyusdz::tydra::GetDirectlyBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
+    bool ret = lightusd::tydra::GetDirectlyBoundMaterial(stage, lightusd::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
     std::cout << "Prim : " << item.first << "\n";
     if (ret) {
       std::cout << "has directlyBoundMaterial: " << matPath.full_path_name() << "\n";
@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
       std::cout << "GetDirectlyBoundMaterial failed: " << err << "\n";
     }
 
-    ret = tinyusdz::tydra::GetBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
+    ret = lightusd::tydra::GetBoundMaterial(stage, lightusd::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
 
     if (ret) {
       std::cout << item.first << " has bound Material. Material Path = " << matPath << "\n";
@@ -369,18 +369,18 @@ int main(int argc, char **argv) {
   std::cout << "EvaluateAttribute example -------------\n";
   for (const auto &item : preadermap) {
     // Returned Prim is Shader class
-    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    nonstd::expected<const lightusd::Prim*, std::string> shader = stage.GetPrimAtPath(lightusd::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
 
-      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      const lightusd::Shader *sp = shader.value()->as<lightusd::Shader>();
       if (sp) { // this should be true though.
 
-        if (const tinyusdz::UsdPrimvarReader_float2 *preader = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
+        if (const lightusd::UsdPrimvarReader_float2 *preader = sp->value.as<lightusd::UsdPrimvarReader_float2>()) {
 
-          tinyusdz::tydra::TerminalAttributeValue tav;
+          lightusd::tydra::TerminalAttributeValue tav;
           std::string err;
-          bool ret = tinyusdz::tydra::EvaluateAttribute(stage, *shader.value(), "inputs:varname", &tav, &err);
+          bool ret = lightusd::tydra::EvaluateAttribute(stage, *shader.value(), "inputs:varname", &tav, &err);
 
           if (!ret) {
             std::cout << "Resolving `inputs:varname` failed: " << err << "\n";
@@ -388,7 +388,7 @@ int main(int argc, char **argv) {
 
           std::cout << "type = " << tav.type_name() << "\n";
 
-          if (auto pv = tav.as<tinyusdz::value::token>()) {
+          if (auto pv = tav.as<lightusd::value::token>()) {
             std::cout << "inputs:varname = " << (*pv) << "\n";
           }
         }

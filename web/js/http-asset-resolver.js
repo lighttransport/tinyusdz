@@ -22,7 +22,7 @@
 //   - HttpAssetResolver rewrites a USD asset path (relative, or already
 //     absolute http(s)/data/blob) to an absolute URL against a configurable
 //     base, fetches it, and caches it under the path AS WRITTEN in the USD.
-//   - TinyUSDZComposer.progressiveComposition() runs the LIVRPS loop:
+//   - LightUSDComposer.progressiveComposition() runs the LIVRPS loop:
 //     extract*AssetPaths() -> resolver.resolveAsync() (fetch) -> layer.setAsset()
 //     -> compose*(). We inject HttpAssetResolver via composer.setAssetResolver().
 //   - Textures are resolved in a second pass: layerToRenderScene() leaves remote
@@ -42,14 +42,14 @@
 // mountHttpAssetResolverDemo().
 
 import { StreamingUSDRenderer } from './streaming.js';
-import { TinyUSDZComposer } from './src/tinyusdz/TinyUSDZComposer.js';
+import { LightUSDComposer } from './src/lightusd/LightUSDComposer.js';
 import { parseUSDZEntries, ZipStreamWriter } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
 // HttpAssetResolver — fetch + base-URL rewrite, keyed by the authored path.
 // ---------------------------------------------------------------------------
 
-// Implements the resolver interface TinyUSDZComposer expects:
+// Implements the resolver interface LightUSDComposer expects:
 //   resolveAsync(assetPath, { parentAssetPath? }) -> Promise<[assetPath, ArrayBuffer, resolvedUrl]>
 //   getAsset / hasAsset / setAsset / clearCache
 // plus rewrite(): relative paths resolve against `baseUrl`, absolute ones
@@ -321,7 +321,7 @@ function prepareNextRoot(rootBytes, filename) {
 
 // Session handle abstraction over the two WASM flavors:
 // - next-only module: instance-based `NextFlattenSession` class
-// - legacy module: `TinyUSDZLoaderNative.nextFlattenAsync*` session-id protocol
+// - legacy module: `LightUSDLoaderNative.nextFlattenAsync*` session-id protocol
 function openNextFlattenSession(native, usd, prepared) {
   if (usd && typeof usd.nextFlattenAsyncBegin === 'function') {
     const uuid = allocateNextInput(native, usd, prepared.rootBytes);
@@ -358,10 +358,10 @@ function openNextFlattenSession(native, usd, prepared) {
 async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
   const native = renderer.native;
   if (!native) {
-    throw new Error('next HTTP composition requires a TinyUSDZ WASM module');
+    throw new Error('next HTTP composition requires a LightUSD WASM module');
   }
-  const usd = typeof native.TinyUSDZLoaderNative === 'function'
-    ? new native.TinyUSDZLoaderNative() : null;
+  const usd = typeof native.LightUSDLoaderNative === 'function'
+    ? new native.LightUSDLoaderNative() : null;
   try {
     const prepared = prepareNextRoot(rootBytes, filename);
     const handle = openNextFlattenSession(native, usd, prepared);
@@ -462,7 +462,7 @@ export async function composeOverHttp({ renderer, rootBytes, filename, resolver,
   const native = renderer.native;
   const u8 = rootBytes instanceof Uint8Array ? rootBytes : new Uint8Array(rootBytes);
 
-  const layer = new native.TinyUSDZLoaderNative();
+  const layer = new native.LightUSDLoaderNative();
   // Keep textures ENCODED in the heap (JS decodes them off-heap) — low memory.
   if (typeof layer.setLoadTextureInNative === 'function') layer.setLoadTextureInNative(false);
   // Allow USD `../` parent-dir references during composition (resolved by the
@@ -501,7 +501,7 @@ export async function composeOverHttp({ renderer, rootBytes, filename, resolver,
 
   // Composition arcs (references/payloads/sublayers) over HTTP, reusing the
   // proven LIVRPS loop with our HTTP resolver injected.
-  const composer = new TinyUSDZComposer();
+  const composer = new LightUSDComposer();
   composer.setLayer(layer);
   composer.setUSDLoader(renderer.loader);
   composer.setAssetResolver(resolver);

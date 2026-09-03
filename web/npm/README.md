@@ -1,15 +1,15 @@
-# TinyUSDZ WASM/JS
+# LightUSD WASM/JS
 
-JS/WASM distribution of TinyUSDZ.
+JS/WASM distribution of LightUSD.
 
 ## Demos
 
-[GitHub Pages demos](https://lighttransport.github.io/tinyusdz/demos/)
+[GitHub Pages demos](https://lighttransport.github.io/lightusd/demos/)
 
 ## Install
 
 ```bash
-npm install tinyusdz
+npm install lightusd
 ```
 
 ## Quick usage
@@ -17,10 +17,10 @@ npm install tinyusdz
 The package now exposes a root entrypoint for the common loader APIs:
 
 ```js
-import { TinyUSDZLoader, TinyUSDZLoaderUtils } from 'tinyusdz';
+import { LightUSDLoader, LightUSDLoaderUtils } from 'lightusd';
 
 async function loadScenes() {
-  const loader = new TinyUSDZLoader();
+  const loader = new LightUSDLoader();
 
   // it is recommended to call init() before loadAsync()
   // (init() does wasm loading/compiling)
@@ -29,13 +29,13 @@ async function loadScenes() {
   const suzanneUrl = './assets/suzanne-pbr.usda';
   const usdScene = await loader.loadAsync(suzanneUrl);
   const usdRootNode = usdScene.getDefaultRootNode();
-  const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+  const defaultMtl = LightUSDLoaderUtils.createDefaultMaterial();
 
   const options = {
     overrideMaterial: false // override USD material with defaultMtl(default false)
   };
 
-  const threeNode = TinyUSDZLoaderUtils.buildThreeNode(
+  const threeNode = LightUSDLoaderUtils.buildThreeNode(
     usdRootNode,
     defaultMtl,
     usdScene,
@@ -48,7 +48,7 @@ async function loadScenes() {
 }
 ```
 
-`TinyUSDZLoader` selects the next-only module by default. Select the legacy
+`LightUSDLoader` selects the next-only module by default. Select the legacy
 product explicitly when an application depends on the legacy conversion path:
 
 ```js
@@ -56,16 +56,16 @@ await loader.init({ backend: 'legacy' });
 const scene = await loader.loadAsync(url, { backend: 'legacy' });
 ```
 
-Deep imports such as `tinyusdz/TinyUSDZLoader.js` remain supported for existing code.
+Deep imports such as `lightusd/LightUSDLoader.js` remain supported for existing code.
 
 ## Using zstd-compressed WASM
 
-TinyUSDZ's WASM module is roughly 2 MB uncompressed. The npm package also ships zstd-compressed WASM binaries, which are substantially smaller.
+LightUSD's WASM module is roughly 2 MB uncompressed. The npm package also ships zstd-compressed WASM binaries, which are substantially smaller.
 
 If you want to use zstd-compressed WASM, set `useZstdCompressedWasm` to `true` in the `init()` options.
 
 ```js
-const loader = new TinyUSDZLoader();
+const loader = new LightUSDLoader();
 await loader.init({ useZstdCompressedWasm: true });
 ```
 
@@ -81,9 +81,9 @@ If the wasm64 module is unavailable in the runtime or bundle, the loader falls b
 
 ## More examples
 
-See the TinyUSDZ web demos:
+See the LightUSD web demos:
 
-https://github.com/lighttransport/tinyusdz/tree/release/web/demo
+https://github.com/lighttransport/lightusd/tree/release/web/demo
 
 ## Packaging workflow
 
@@ -136,7 +136,7 @@ source ./setup-emsdk.sh
 
 The publishable package is generated into `web/npm/dist` by `stage-package.mjs`. That staging step:
 
-- copies JS modules from `web/js/src/tinyusdz/`
+- copies JS modules from `web/js/src/lightusd/`
 - copies wasm32 and wasm64 assets
 - generates `.wasm.zst` files with Node.js built-in Zstd compression
 - copies `LICENSE` and `README.md`
@@ -153,12 +153,12 @@ cd web/npm
 
 The script configures and builds:
 
-- `web/cmake-build` for wasm32 legacy (`TINYUSDZ_WASM_PRODUCT=legacy`)
+- `web/cmake-build` for wasm32 legacy (`LIGHTUSD_WASM_PRODUCT=legacy`)
 - `web/cmake-build64` for wasm64 legacy
-- `web/cmake-build-next` for wasm32 next (`TINYUSDZ_WASM_PRODUCT=next`)
+- `web/cmake-build-next` for wasm32 next (`LIGHTUSD_WASM_PRODUCT=next`)
 - `web/cmake-build-next64` for wasm64 next
 
-`web/CMakeLists.txt` then writes the generated outputs into `web/js/src/tinyusdz/`.
+`web/CMakeLists.txt` then writes the generated outputs into `web/js/src/lightusd/`.
 
 You can override a few knobs when needed:
 
@@ -167,19 +167,19 @@ CMAKE_BUILD_TYPE=Debug ./build-wasm.sh
 PARALLEL_JOBS=8 ./build-wasm.sh
 ```
 
-After `build-wasm.sh`, the following files should exist in `web/js/src/tinyusdz/`:
+After `build-wasm.sh`, the following files should exist in `web/js/src/lightusd/`:
 
-- `tinyusdz.js`
-- `tinyusdz.wasm`
-- `tinyusdz_64.js`
-- `tinyusdz_64.wasm`
-- `tinyusdz_next.js`
-- `tinyusdz_next.wasm`
-- `tinyusdz_next_64.js`
-- `tinyusdz_next_64.wasm`
+- `lightusd.js`
+- `lightusd.wasm`
+- `lightusd_64.js`
+- `lightusd_64.wasm`
+- `lightusd_next.js`
+- `lightusd_next.wasm`
+- `lightusd_next_64.js`
+- `lightusd_next_64.wasm`
 
-The `tinyusdz_next*` modules are the lean next-core + Tydra-next builds used
-by `TinyUSDZLoader` by default. The deprecated `useNextOnlyWasm` option and
+The `lightusd_next*` modules are the lean next-core + Tydra-next builds used
+by `LightUSDLoader` by default. The deprecated `useNextOnlyWasm` option and
 `nextWasm` query alias remain accepted during migration.
 
 The equivalent manual sequence is:
@@ -207,8 +207,8 @@ Useful commands:
 
 `npm run validate` checks the staged file set, runs `npm pack --dry-run`, and performs a smoke test for:
 
-- root imports such as `import { TinyUSDZLoader } from 'tinyusdz'`
-- legacy deep imports such as `import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'`
+- root imports such as `import { LightUSDLoader } from 'lightusd'`
+- legacy deep imports such as `import { LightUSDLoader } from 'lightusd/LightUSDLoader.js'`
 - direct wasm asset resolution through the package exports map
 
 ### GitHub publish workflow
@@ -233,8 +233,8 @@ The workflow does the following:
 
 ### Notes
 
-- The root package entrypoint is `tinyusdz`, but deep import paths remain supported for compatibility.
-- If the wasm64 module is missing at runtime, `TinyUSDZLoader` falls back to wasm32.
+- The root package entrypoint is `lightusd`, but deep import paths remain supported for compatibility.
+- If the wasm64 module is missing at runtime, `LightUSDLoader` falls back to wasm32.
 - `setup-emsdk.sh` must be sourced, not executed, because it updates `PATH` and `EM_CONFIG` in the current shell.
 - `setup-nodejs.sh` must be sourced, not executed, because it updates `PATH` in the current shell.
 - `web/npm/dist` is generated output and should not be edited by hand.

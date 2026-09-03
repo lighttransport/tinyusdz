@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Layer / PrimSpec diff
+// LightUSD Next - Layer / PrimSpec diff
 //
 // Structural + value-level diff over two next::Layer trees, mirroring the
 // legacy tydra diff-and-compare semantics (src/tydra/diff-and-compare.hh):
@@ -24,7 +24,7 @@
 
 #include "../layer/layer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 ///
@@ -142,4 +142,4 @@ std::pair<std::string, std::string> CenterValuePairForDiff(
     const std::string &lhs, const std::string &rhs, size_t window = 240);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

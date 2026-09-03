@@ -14,7 +14,7 @@
 #include "../../src/math-util.inc"
 #include "../../src/value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -747,4 +747,4 @@ inline void GeneratePlaneMesh(
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

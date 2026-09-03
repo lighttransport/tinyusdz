@@ -7,7 +7,7 @@
 // against the correct directory.
 //
 // Bug (cwp anchoring, the variant-nested sub-case of "Bug 2"): the initial
-// PropagateAssetResolverState (src/tinyusdz.cc) recursed only into ps.children()
+// PropagateAssetResolverState (src/lightusd.cc) recursed only into ps.children()
 // and never into ps.variantSets(), so a prim that exists only inside a variant
 // (e.g. ALab's `geo_vis` proxy GEO_PROXY) loaded with an EMPTY cwp. When that
 // variant was later selected and its payload composed, CompositePayloadRec read
@@ -28,12 +28,12 @@
 #include <string>
 #include <utility>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "composition.hh"
 #include "asset-resolution.hh"
 #include "core/prim-spec.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

@@ -18,7 +18,7 @@
 #include <cstdlib>
 #include <cstdint>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // Test that all half values round-trip correctly through dtos()
 void half_roundtrip_exhaustive_test(void) {
@@ -37,7 +37,7 @@ void half_roundtrip_exhaustive_test(void) {
 
     tested++;
 
-    // Convert half to string using TinyUSDZ
+    // Convert half to string using LightUSD
     std::string s = dtos(h);
 
     // Parse back to float and convert to half
@@ -142,7 +142,7 @@ void half_roundtrip_edge_cases_test(void) {
 
 // Test that we produce short representations where possible
 void half_shortest_representation_test(void) {
-  // Value 0x3CCD: pxrUSD outputs "1.2002", TinyUSDZ should output something shorter
+  // Value 0x3CCD: pxrUSD outputs "1.2002", LightUSD should output something shorter
   {
     value::half h;
     h.value = 0x3CCD;
@@ -170,7 +170,7 @@ void half_shortest_representation_test(void) {
     h.value = 0x3A66;  // ~0.79980469
     std::string s = dtos(h);
 
-    // "0.799805" has 8 chars, TinyUSDZ should produce something shorter
+    // "0.799805" has 8 chars, LightUSD should produce something shorter
     TEST_CHECK_(s.length() <= 8,
                 "0x3A66 should have short representation (<=8 chars), got \"%s\" (len=%zu)",
                 s.c_str(), s.length());

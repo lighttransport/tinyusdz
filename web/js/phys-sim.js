@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import {
-  createConfiguredTinyUSDZLoader,
+  createConfiguredLightUSDLoader,
   parseUSDSceneFromArrayBuffer
-} from 'tinyusdz/LoaderConfigUtils.js';
+} from 'lightusd/LoaderConfigUtils.js';
 
 const configuredMujocoDir = import.meta.env.VITE_MUJOCO_WASM_DIR || '';
 const MUJOCO_DIST = configuredMujocoDir ? `/@fs${configuredMujocoDir}` : './assets/mujoco';
@@ -185,19 +185,19 @@ async function usdaText() {
   return response.text();
 }
 
-async function loadTinyUSDZScene() {
-  setStatus('Loading TinyUSDZ WASM...');
-  state.tinyLoader = await createConfiguredTinyUSDZLoader();
-  TinyUSDZLoaderUtils.setTinyUSDZ(state.tinyLoader.native_);
-  state.tinyNative = new state.tinyLoader.native_.TinyUSDZLoaderNative();
+async function loadLightUSDScene() {
+  setStatus('Loading LightUSD WASM...');
+  state.tinyLoader = await createConfiguredLightUSDLoader();
+  LightUSDLoaderUtils.setLightUSD(state.tinyLoader.native_);
+  state.tinyNative = new state.tinyLoader.native_.LightUSDLoaderNative();
 
   const text = await usdaText();
   const bytes = new TextEncoder().encode(text);
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const sceneData = await parseUSDSceneFromArrayBuffer(state.tinyLoader, arrayBuffer, 'embedded_robot.usda');
   const rootNode = sceneData.getDefaultRootNode();
-  const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
-  state.usdObject = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
+  const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
+  state.usdObject = await LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
     overrideMaterial: false,
   });
   state.usdObject.name = 'USD rest pose';
@@ -205,11 +205,11 @@ async function loadTinyUSDZScene() {
   restRoot.add(state.usdObject);
 
   if (!state.tinyNative.loadFromBinary(bytes, 'embedded_robot.usda')) {
-    throw new Error(state.tinyNative.error() || 'TinyUSDZ physics extraction failed.');
+    throw new Error(state.tinyNative.error() || 'LightUSD physics extraction failed.');
   }
   const jsonText = state.tinyNative.extractPhysicsSceneJSON();
   if (!jsonText) {
-    throw new Error(state.tinyNative.error() || 'TinyUSDZ returned empty physics JSON.');
+    throw new Error(state.tinyNative.error() || 'LightUSD returned empty physics JSON.');
   }
   state.physicsJson = JSON.parse(jsonText);
   els.physicsJson.textContent = JSON.stringify(state.physicsJson, null, 2);
@@ -238,7 +238,7 @@ function addMuJoCoBox(mj, body, name, halfSize, pos, rgba, mass = 0) {
 function buildMuJoCoModel() {
   const mj = state.mujoco;
   const spec = new mj.MjSpec();
-  spec.setModelName('TinyUSDZEmbeddedArm');
+  spec.setModelName('LightUSDEmbeddedArm');
   spec.setTimestep(0.005);
   spec.setGravity(0, 0, -9.80665);
   const worldBody = spec.worldBody();
@@ -387,7 +387,7 @@ function animate(now) {
 async function main() {
   bindUI();
   buildSimulationDisplay();
-  await loadTinyUSDZScene();
+  await loadLightUSDScene();
   await loadMuJoCoPhysics();
   buildMuJoCoModel();
   fitCamera();

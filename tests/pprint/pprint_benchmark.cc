@@ -16,11 +16,11 @@
 #include "prim-pprint-parallel.hh"
 #include "stream-writer.hh"
 #include "timesamples-pprint.hh"
-#include "tinyusdz.hh"
-#include "usdGeom.hh"  // Geom* (no longer re-exported by tinyusdz.hh)
+#include "lightusd.hh"
+#include "usdGeom.hh"  // Geom* (no longer re-exported by lightusd.hh)
 #include "value-types.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // ============================================================================
 // Configuration
@@ -271,7 +271,7 @@ BenchmarkResult benchmark_chunked_pprint(const std::vector<Prim>& prims) {
   return result;
 }
 
-#ifdef TINYUSDZ_ENABLE_THREAD
+#ifdef LIGHTUSD_ENABLE_THREAD
 // Benchmark: Parallel ChunkedStreamWriter pprint
 // Commented out: parallel printing API not available
 #if 0
@@ -367,7 +367,7 @@ int main(int argc, char** argv) {
 
   // Print configuration
   std::cout << "========================================\n";
-  std::cout << "TinyUSDZ Pretty-Print Benchmark\n";
+  std::cout << "LightUSD Pretty-Print Benchmark\n";
   std::cout << "========================================\n\n";
 
   config.print();
@@ -434,7 +434,7 @@ int main(int argc, char** argv) {
     results.push_back(result);
   }
 
-#ifdef TINYUSDZ_ENABLE_THREAD
+#ifdef LIGHTUSD_ENABLE_THREAD
   // Benchmark 4: Parallel ChunkedStreamWriter
   if (config.use_parallel && prims.size() >= 4) {
     // Note: Parallel print_prims_parallel not available in current build

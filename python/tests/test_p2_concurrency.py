@@ -7,15 +7,15 @@ import concurrent.futures as cf
 
 import pytest
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 from conftest import SIMPLE_USDA
 
 np = pytest.importorskip("numpy")
 
 
 def test_concurrent_tydra():
-    st = tinyusdz.loads(SIMPLE_USDA)
+    st = lightusd.loads(SIMPLE_USDA)
 
     def work(_):
         scene = tydra.to_render_scene(st)
@@ -35,7 +35,7 @@ def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"])
 ''')
 
     def work(sel):
-        return tinyusdz.load(str(base), variants={"lod": sel}).prim_at("/R")["a"]
+        return lightusd.load(str(base), variants={"lod": sel}).prim_at("/R")["a"]
 
     with cf.ThreadPoolExecutor(8) as ex:
         highs = list(ex.map(work, ["high"] * 8))
@@ -45,7 +45,7 @@ def Xform "R" (variants = { string lod = "high" } prepend variantSets = ["lod"])
 
 
 def test_concurrent_mixed_ops(tmp_path):
-    st = tinyusdz.loads(SIMPLE_USDA)
+    st = lightusd.loads(SIMPLE_USDA)
     # mixed read / export / tydra
     def reader(_):
         return float(np.asarray(st.prim_at("/World/Quad")["points"]).sum())
@@ -68,11 +68,11 @@ def test_concurrent_mixed_ops(tmp_path):
 
 def test_concurrent_close_vs_read():
     # close must not race with reads after close – readers should get UsdError
-    st = tinyusdz.loads(SIMPLE_USDA)
+    st = lightusd.loads(SIMPLE_USDA)
     st.close()
 
     def work(_):
-        with pytest.raises(tinyusdz.UsdError):
+        with pytest.raises(lightusd.UsdError):
             st.prim_at("/World")
 
     with cf.ThreadPoolExecutor(8) as ex:
@@ -82,17 +82,17 @@ def test_concurrent_close_vs_read():
 def test_stage_mutation_not_concurrent():
     # Structural mutation on one thread while others are blocked should be safe
     # if done sequentially; here we just verify mutation detection via generation
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.define_prim("/A", "Xform")
     a = st.prim_at("/A")
     st.define_prim("/B", "Xform")  # bumps generation
     # Old handle `a` self-heals? For structural edit, current Python binding
     # allows old handles to self-heal for define, but remove should stale.
     # Verify remove stales:
-    st2 = tinyusdz.Stage.create()
+    st2 = lightusd.Stage.create()
     b = st2.define_prim("/X", "Xform")
     st2.define_prim("/Y", "Xform")
     c = st2.prim_at("/X")
     st2.remove_prim("/X")
-    with pytest.raises(tinyusdz.StaleHandleError):
+    with pytest.raises(lightusd.StaleHandleError):
         _ = c.name

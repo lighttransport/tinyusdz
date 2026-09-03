@@ -13,7 +13,7 @@
 #include "primvar.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 struct XformOp {
   enum class OpType {
@@ -131,11 +131,11 @@ struct XformOp {
     return _var.get_interpolated_value<T>(t, interp, dst);
   }
 
-  const primvar::PrimVar &get_var() const TINYUSDZ_LIFETIMEBOUND {
+  const primvar::PrimVar &get_var() const LIGHTUSD_LIFETIMEBOUND {
     return _var;
   }
 
-  primvar::PrimVar &var() TINYUSDZ_LIFETIMEBOUND { return _var; }
+  primvar::PrimVar &var() LIGHTUSD_LIFETIMEBOUND { return _var; }
 
   // Connection support
   bool has_connections() const { return !_connections.empty(); }
@@ -156,10 +156,10 @@ struct XformOp {
     return nonstd::nullopt;
   }
 
-  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Path> &connections() const LIGHTUSD_LIFETIMEBOUND {
     return _connections;
   }
-  std::vector<Path> &connections() TINYUSDZ_LIFETIMEBOUND {
+  std::vector<Path> &connections() LIGHTUSD_LIFETIMEBOUND {
     return _connections;
   }
 
@@ -174,4 +174,4 @@ struct XformOp {
   std::vector<Path> _connections;  // Connection targets for this xformOp
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

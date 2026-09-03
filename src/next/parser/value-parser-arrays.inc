@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - array value parsing helpers and optimized bracket-literal parser.
-// Included inside namespace tinyusdz::next.
+// LightUSD Next - array value parsing helpers and optimized bracket-literal parser.
+// Included inside namespace lightusd::next.
 
 // Helper to check if type stores float3-like data
 bool IsFloat3Like(TypeId type) {
@@ -806,7 +806,7 @@ bool ParseUsdaArrayElementCount(const char* data, size_t len,
   }
 }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 
 // Resolve the worker count from a ParseOptions::num_threads hint (forwarded via
 // Lexer::num_threads): 1 = serial, >1 = that many, <=0 = auto (min(hw, 8)). No
@@ -871,7 +871,7 @@ bool ParseNumericArrayParallel(const char* data, size_t len, int nt_hint,
   return true;
 }
 
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 // Parse a scalar numeric array, using the parallel path for large simple arrays
 // and falling back to the serial SliceParser otherwise.
@@ -891,7 +891,7 @@ template <class T, class ParseOne>
 bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
                                    int nt_hint, std::vector<T>* out,
                                    ParseOne parse_one) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (simple &&
       ParseNumericArrayParallel<T, 1>(data, len, nt_hint, out, parse_one)) {
     return true;
@@ -911,7 +911,7 @@ template <class T, uint32_t N, class ParseOne>
 bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
                                   int nt_hint, std::vector<T>* out,
                                   ParseOne parse_one) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   if (simple &&
       ParseNumericArrayParallel<T, N>(data, len, nt_hint, out, parse_one)) {
     return true;

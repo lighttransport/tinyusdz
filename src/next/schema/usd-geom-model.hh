@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 enum ModelCardFace : uint32_t {
@@ -43,4 +43,4 @@ uint32_t ComputeModelCardFaceMask(const Stage& stage, const UsdPrim& prim,
                                   char up_axis, double time = 0.0);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -3,8 +3,8 @@
 
 Searches for the asset corpus in (first wins):
 
-* $USD_ASSETS_ROOT / $TINYUSDZ_USD_ASSETS_ROOT / $TINYUSDZ_TEST_ASSETS
-* /mnt/disk1/data/usd, /mnt/nvme02/work/tinyusdz-assets[/full_assets],
+* $USD_ASSETS_ROOT / $LIGHTUSD_USD_ASSETS_ROOT / $LIGHTUSD_TEST_ASSETS
+* /mnt/disk1/data/usd, /mnt/nvme02/work/lightusd-assets[/full_assets],
   /mnt/nvme02/work/lightusd-assets, ./usd-assets, ../usd-assets
 
 Tests are *skipped* when no corpus is found. When found they enumerate
@@ -22,21 +22,21 @@ except ImportError:
     resource = None
 import pytest
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 
 np = pytest.importorskip("numpy")
 
 
 def _find_usd_assets_root():
-    for env in ("USD_ASSETS_ROOT", "TINYUSDZ_USD_ASSETS_ROOT", "TINYUSDZ_TEST_ASSETS"):
+    for env in ("USD_ASSETS_ROOT", "LIGHTUSD_USD_ASSETS_ROOT", "LIGHTUSD_TEST_ASSETS"):
         v = os.environ.get(env)
         if v and pathlib.Path(v).is_dir():
             return pathlib.Path(v)
     candidates = [
         pathlib.Path("/mnt/disk1/data/usd"),
-        pathlib.Path("/mnt/nvme02/work/tinyusdz-assets/full_assets"),
-        pathlib.Path("/mnt/nvme02/work/tinyusdz-assets"),
+        pathlib.Path("/mnt/nvme02/work/lightusd-assets/full_assets"),
+        pathlib.Path("/mnt/nvme02/work/lightusd-assets"),
         pathlib.Path("/mnt/nvme02/work/lightusd-assets"),
         pathlib.Path(__file__).resolve().parents[2] / "usd-assets",
         pathlib.Path(__file__).resolve().parents[3] / "usd-assets",
@@ -52,10 +52,10 @@ def _find_usd_assets_root():
 
 USD_ROOT = _find_usd_assets_root()
 
-# How many files to exercise (override via TINYUSDZ_USD_ASSETS_CAP)
-CAP = int(os.environ.get("TINYUSDZ_USD_ASSETS_CAP", "50"))
+# How many files to exercise (override via LIGHTUSD_USD_ASSETS_CAP)
+CAP = int(os.environ.get("LIGHTUSD_USD_ASSETS_CAP", "50"))
 # Substring filter (e.g. Kitchen)
-FILTER = os.environ.get("TINYUSDZ_USD_ASSETS_FILTER", "")
+FILTER = os.environ.get("LIGHTUSD_USD_ASSETS_FILTER", "")
 
 
 def _enumerate(limit=CAP):
@@ -115,8 +115,8 @@ def test_usd_assets_load_no_crash():
     failed = []
     for f in files:
         try:
-            st = tinyusdz.load(str(f))
-        except tinyusdz.UsdError as e:
+            st = lightusd.load(str(f))
+        except lightusd.UsdError as e:
             # Expected for some unsupported or intentionally broken assets
             print(f"[usd-assets] UsdError {f.name}: {e}")
             continue
@@ -166,7 +166,7 @@ def test_usd_assets_specific_kitchen_set():
     if target is None:
         pytest.skip("Kitchen_set/Sponza not in corpus")
     t0 = time.perf_counter()
-    st = tinyusdz.load(str(target))
+    st = lightusd.load(str(target))
     t_load = time.perf_counter() - t0
     print(f"[usd-assets:target] {target} load {t_load:.2f}s prims={st.stats['prim_count']} rss={_rss_mb():.1f} MiB")
     # Should have at least one mesh
@@ -190,7 +190,7 @@ def test_usd_assets_save_roundtrip_tmp(tmp_path):
     Uses a synthetic stage to avoid multi-GB corpus exports that exceed the
     default memory budget.
     """
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     m = st.define_prim("/M", "Mesh")
     pts = np.zeros((3, 3), np.float32)
     m.set("points", pts, type="point3f[]")
@@ -200,9 +200,9 @@ def test_usd_assets_save_roundtrip_tmp(tmp_path):
     ref_pts = pts.copy()
     blob = st.export_usdc()
     assert blob[:8] == b"PXR-USDC"
-    st2 = tinyusdz.load_bytes(blob)
+    st2 = lightusd.load_bytes(blob)
     assert st2.stats["prim_count"] == st.stats["prim_count"]
     assert np.allclose(np.asarray(st2.prim_at(ref_path)["points"]), ref_pts)
     txt = st.export_usda()
-    st3 = tinyusdz.loads(txt)
+    st3 = lightusd.loads(txt)
     assert st3.stats["prim_count"] == st.stats["prim_count"]

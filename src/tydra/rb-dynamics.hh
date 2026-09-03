@@ -9,7 +9,7 @@
 
 #include <string>
 
-namespace tinyusdz {
+namespace lightusd {
 
 class Stage;
 
@@ -59,4 +59,4 @@ bool SyncStageToPhysWorld(const Stage &stage, TydraPhysWorld *world,
 void FreePhysWorld(TydraPhysWorld *world);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

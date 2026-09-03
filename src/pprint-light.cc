@@ -9,7 +9,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 template<typename LightT>
 static std::string print_light_common_attrs(const LightT& light, uint32_t indent) {
@@ -207,4 +207,4 @@ std::string to_string(const PluginLightFilter &filter, const uint32_t indent,
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

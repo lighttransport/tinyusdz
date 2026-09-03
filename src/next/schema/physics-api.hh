@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdPhysics Applied API Schemas
+// LightUSD Next - UsdPhysics Applied API Schemas
 // RigidBodyAPI, CollisionAPI, MaterialAPI, MeshCollisionAPI,
 // MassAPI, FilteredPairsAPI, ArticulationRootAPI, DriveAPI, LimitAPI
 
@@ -14,7 +14,7 @@
 #include <vector>
 #include <map>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -152,4 +152,4 @@ bool GetPhysicsLimitData(const UsdPrim& prim, const std::string& dof,
                           PhysicsLimitData* out);
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

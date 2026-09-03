@@ -1,4 +1,4 @@
-# PCP: Prim Cache Population — OpenUSD, AOUSD, and the tinyusdz DAG Engine
+# PCP: Prim Cache Population — OpenUSD, AOUSD, and the lightusd DAG Engine
 
 **PCP** ("Prim Cache Population") is the name of OpenUSD's composition engine —
 the subsystem that implements the layering-and-referencing semantics of USD and
@@ -7,26 +7,26 @@ such as `UsdStage`. The name is historical; in the OpenUSD module docs PCP is
 introduced as *"Prim Cache Population … the behavior informally referred to as
 Layering & Referencing"* (`pxr/usd/pcp/overview.dox`).
 
-This document is the canonical PCP reference for tinyusdz. It covers three things
+This document is the canonical PCP reference for lightusd. It covers three things
 that describe the same composition model from three angles:
 
 1. **The AOUSD composition model** — what the *Alliance for OpenUSD Core
    Specification v1.0.1* (Section 10) requires of any conforming implementation.
 2. **OpenUSD's PCP implementation** — how the reference engine in
    `pxr/usd/pcp` actually builds the per-prim composition graph.
-3. **tinyusdz's DAG engine** (`tinyusdz::composition_graph`) — a parallel
+3. **lightusd's DAG engine** (`lightusd::composition_graph`) — a parallel
    implementation that deliberately mirrors PCP's data model and algorithm. Its
    full API reference is preserved below, verified against
    `src/composition-graph.hh`.
 
-> **Two composition code paths in tinyusdz.** tinyusdz has two implementations:
+> **Two composition code paths in lightusd.** lightusd has two implementations:
 > 1. The **iterative layer-flattening** pipeline (`CompositeAllArcs()` in
 >    `src/composition.cc`) — the default, production path. See
 >    [composition.md](composition.md) for the conceptual overview, LIVRPS
 >    ordering, the LIVRPS-correctness analysis, instancing, and variants.
 > 2. The **DAG engine** documented in the last half of this file
 >    (`src/composition-graph.{hh,cc}`, namespace
->    `tinyusdz::composition_graph`) — the PCP-style code path that builds
+>    `lightusd::composition_graph`) — the PCP-style code path that builds
 >    `PrimIndex` graphs, then lowers them back to `PrimSpec`/`Stage` via the
 >    same `composition-reconstruct.cc` pipeline.
 
@@ -36,12 +36,12 @@ file for the PCP engine model (OpenUSD + AOUSD) and the DAG-engine API.
 
 ---
 
-## PCP ↔ AOUSD ↔ tinyusdz correspondence
+## PCP ↔ AOUSD ↔ lightusd correspondence
 
 The single most useful map in this document: each composition concept across the
 three systems. Use it to jump between a symbol you know and its counterpart.
 
-| Concept | OpenUSD PCP (symbol · header) | AOUSD § | tinyusdz `composition_graph` |
+| Concept | OpenUSD PCP (symbol · header) | AOUSD § | lightusd `composition_graph` |
 |---|---|---|---|
 | Composition cache | `PcpCache` · `cache.h` | §10.1 | `composition_graph::CompositionGraph` (eager) · `pcp::Cache` (lazy + cached, `src/pcp/cache.hh`) |
 | Per-prim composition graph | `PcpPrimIndex` · `primIndex.h` | §10 | `PrimIndex` |
@@ -90,7 +90,7 @@ operators … and providing a 'composed' view of a given prim"*).
 ## The AOUSD Composition Model
 
 AOUSD Core Spec v1.0.1 **Section 10 (Composition)** is the contract both PCP and
-tinyusdz implement. It defines the composition operators (§10.3), the strength
+lightusd implement. It defines the composition operators (§10.3), the strength
 ordering / LIVERPS mnemonic (§10.4), namespace path translation (§10.5), and
 error behavior (§10.6). The input to the algorithm is a *root layer*, a *prim
 path*, and a flag for *whether payloads are included*; the output is a
@@ -162,7 +162,7 @@ The spec names rule 3's ordering with the **LIVERPS** mnemonic (pronounced
 
 > **L**ocal, **I**nherits, **V**ariants, **R**elocates, **R**eferences, **P**ayloads, **S**pecializes
 
-> **LIVERPS vs. LIVRPS.** Older OpenUSD documentation and tinyusdz's
+> **LIVERPS vs. LIVRPS.** Older OpenUSD documentation and lightusd's
 > [composition.md](composition.md#the-livrps-composition-ordering) use the
 > six-letter **LIVRPS** form (Local, Inherits, Variants, References, Payloads,
 > Specializes), which omits Relocates from the acronym but still places it at the
@@ -208,8 +208,8 @@ errors are first-class outputs (see *Error Types* below), not exceptions.
 
 ## OpenUSD's PCP Implementation
 
-This section is the deep dive into `pxr/usd/pcp`. tinyusdz's DAG engine mirrors
-it; the next major section documents the tinyusdz side.
+This section is the deep dive into `pxr/usd/pcp`. lightusd's DAG engine mirrors
+it; the next major section documents the lightusd side.
 
 ### Data Model
 
@@ -452,7 +452,7 @@ Path translation across the whole index is exposed by
 with its originating node), built by `PcpBuildPropertyIndex()`, which computes /
 reuses the owning prim index. AOUSD §11.3.2 defines the matching "Ordered
 Property Children" rule (merge `propertyChildren`, sort by path element order,
-apply the strongest authored `propertyOrder`). **tinyusdz's DAG engine has no
+apply the strongest authored `propertyOrder`). **lightusd's DAG engine has no
 separate property index** — property opinions are resolved later in
 reconstruction / value resolution.
 
@@ -482,7 +482,7 @@ It is up to the implementation how to model the **shared representation** of
 instanced prims sharing the same arc."*
 
 > **Terminology.** The AOUSD spec deliberately says **"shared representation"** and
-> avoids "prototype"/"master". OpenUSD and tinyusdz both use **"prototype"** for
+> avoids "prototype"/"master". OpenUSD and lightusd both use **"prototype"** for
 > the concrete shared object. The composition arcs that qualify a prim for
 > instancing are `references`, `variantSets`, `payload`, `inheritPaths`, or
 > `specializes`.
@@ -518,7 +518,7 @@ PCP records, for every cached index, the sites it depends on, so an edit trigger
   apply it (invalidate caches) — with a `PcpLifeboat` retaining referenced layers
   until clients re-pull.
 
-**tinyusdz's `composition_graph::CompositionGraph` has no equivalent** — it composes
+**lightusd's `composition_graph::CompositionGraph` has no equivalent** — it composes
 once and recomposes the affected prim when a payload is loaded or unloaded. The
 **`pcp::Cache`** engine (below) adds the cached/lazy counterpart: a per-prim result
 cache, a site→index reverse-dependency map, and an explicit `Invalidate(path)` that
@@ -551,9 +551,9 @@ Errors are first-class outputs: each computation keeps `GetLocalErrors()`, and a
 
 ---
 
-## The tinyusdz DAG Engine (`composition_graph`)
+## The lightusd DAG Engine (`composition_graph`)
 
-The rest of this document is the API reference for tinyusdz's DAG composition
+The rest of this document is the API reference for lightusd's DAG composition
 engine — the PCP-style code path that builds a per-prim composition graph
 (`PrimIndex`) preserving opinion provenance, supports lazy payload loading, and
 detects instances during composition. It deliberately mirrors the OpenUSD design
@@ -563,7 +563,7 @@ described above; cross-references to the matching PCP symbols are noted inline.
 
 **Header**: `src/composition-graph.hh` ·
 **Implementation**: `src/composition-graph.cc` ·
-**Namespace**: `tinyusdz::composition_graph` (aliased at `tinyusdz::CompositionGraph`)
+**Namespace**: `lightusd::composition_graph` (aliased at `lightusd::CompositionGraph`)
 
 ### Overview
 
@@ -578,7 +578,7 @@ The engine implements AOUSD Core Spec Section 10 (Composition):
 Memory layout is deliberately compact: nodes are 40-byte `CompNode` structs
 stored in a contiguous pool and linked by `uint16_t` indices; paths, layer
 stacks, and namespace-mapping expressions are interned in shared tables owned
-by the `CompositionGraph`. (This is the tinyusdz counterpart to PCP's
+by the `CompositionGraph`. (This is the lightusd counterpart to PCP's
 copy-on-write `PcpPrimIndex_Graph`.)
 
 ### Arc types and ordering
@@ -606,7 +606,7 @@ AOUSD LIVERPS sequence. See
 strength semantics.
 
 Tasks are processed in a separate priority order that drives graph construction
-— the tinyusdz analogue of PCP's
+— the lightusd analogue of PCP's
 [`Task::Type`](#the-build-algorithm-pcp_primindexer-task-queue):
 
 ```cpp
@@ -625,7 +625,7 @@ enum class TaskType : uint8_t {
 ```
 
 > Unlike PCP's `Task::Type` (a `1<<n` *flag* enum carrying both ancestral and
-> dynamic-payload variants), tinyusdz's `TaskType` is a small contiguous enum and
+> dynamic-payload variants), lightusd's `TaskType` is a small contiguous enum and
 > handles ancestral/dynamic cases within the builder rather than as distinct task
 > kinds.
 
@@ -634,7 +634,7 @@ enum class TaskType : uint8_t {
 A single node in a prim's composition DAG (`<= 40` bytes, enforced by
 `static_assert`). Children form a singly-linked sibling list in strength order
 (strongest first); links are `uint16_t` indices into the node pool. This is the
-tinyusdz counterpart to PCP's [`PcpNodeRef`/`_Node`](#data-model).
+lightusd counterpart to PCP's [`PcpNodeRef`/`_Node`](#data-model).
 
 ```cpp
 struct CompNode {
@@ -757,7 +757,7 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 ```
 
 > The DAG engine's `InstanceKey` is distinct from the `Stage`/`PrimSpec`-level
-> `tinyusdz::InstanceKey` in `src/core/instance-key.hh` used by
+> `lightusd::InstanceKey` in `src/core/instance-key.hh` used by
 > `Stage::BuildInstancePrototypes()`. Both are 128-bit hashes of the same
 > structural inputs (type name + composition arcs + variant selections); the
 > core one uses SpookyHash. See [composition.md](composition.md#instancing).
@@ -765,7 +765,7 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 ### DeferredPayloadInfo
 
 Context retained for a payload skipped during initial composition so it can be
-loaded later — the tinyusdz analogue of PCP's
+loaded later — the lightusd analogue of PCP's
 [payload inclusion set](#payloads-and-dynamic-payloads):
 
 ```cpp
@@ -794,7 +794,7 @@ struct CompositionGraphOptions {
 };
 ```
 
-`payload_policy` is the tinyusdz counterpart to PCP's payload predicate /
+`payload_policy` is the lightusd counterpart to PCP's payload predicate /
 inclusion set.
 
 ### CompositionGraph
@@ -843,7 +843,7 @@ class CompositionGraph {
 
 `CompositionGraph::Compose()` builds each `PrimIndex` with an internal
 `PrimIndexBuilder` driven by a `std::priority_queue<CompositionTask>` — the
-tinyusdz analogue of PCP's
+lightusd analogue of PCP's
 [`Pcp_PrimIndexer`](#the-build-algorithm-pcp_primindexer-task-queue):
 
 ```cpp
@@ -871,7 +871,7 @@ culls inert nodes. This is the DAG-engine analogue of the phase-by-phase flow in
 #include "composition-graph.hh"
 #include "composition.hh"   // for CompositeSublayers
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 // 1) Flatten sublayers (L) into the root layer first.
 Layer root = /* loaded + CompositeSublayers(...) */;
@@ -917,13 +917,13 @@ correctness analysis, instancing, and variants, see
 
 ---
 
-## The tinyusdz Composition Cache (`pcp::Cache`)
+## The lightusd Composition Cache (`pcp::Cache`)
 
-`tinyusdz::pcp::Cache` (`src/pcp/cache.hh`, namespace `tinyusdz::pcp`) is the
+`lightusd::pcp::Cache` (`src/pcp/cache.hh`, namespace `lightusd::pcp`) is the
 cached, lazy, partial-composition counterpart to OpenUSD's `PcpCache`. It is a
 thin layer *on top of* the `composition_graph` engine — it reuses `PrimIndex`,
 `CompNode`, and `PrimIndexBuilder` unchanged — and adds the four things the eager
-`CompositionGraph` lacks. It is the closest tinyusdz analogue to `PcpCache`'s
+`CompositionGraph` lacks. It is the closest lightusd analogue to `PcpCache`'s
 "compute on demand and remember" model.
 
 **What it adds over `CompositionGraph`:**
@@ -942,7 +942,7 @@ thin layer *on top of* the `composition_graph` engine — it reuses `PrimIndex`,
    that read a site at/under `path`; `InvalidateLayer(id)` does the same per layer.
 4. **Threading.** Single-threaded by default (and the only path on wasm).
    `PrewarmPrimIndices()` / `BuildStage()` optionally build independent prim indices
-   in parallel when `CacheOptions::num_threads != 1` and `TINYUSDZ_ENABLE_THREAD` is
+   in parallel when `CacheOptions::num_threads != 1` and `LIGHTUSD_ENABLE_THREAD` is
    compiled in — each worker builds into its own context (no shared mutable state),
    with only the `LayerRegistry` serialized, then a deterministic merge folds the
    results in input order so single- and multi-threaded runs are identical.
@@ -956,7 +956,7 @@ The whole `Cache` lives behind a heap-pinned `Impl` (pimpl) so it is cheaply mov
 without disturbing the cached indices' internal pointers.
 
 The result cache, the reverse-dependency map, and the `LayerRegistry` use the
-in-tree open-addressing robin-hood map `tinyusdz::HashMap` (`src/tiny-hashmap.hh`)
+in-tree open-addressing robin-hood map `lightusd::HashMap` (`src/tiny-hashmap.hh`)
 rather than `std::unordered_map` — exceptions-free, and its `find()` is move-safe
 (it guards an empty table before masking). Thread-safety is provided externally
 where needed: `LayerRegistry` serializes its load path with a mutex; the per-prim
@@ -966,7 +966,7 @@ contexts and a single-threaded barrier merges the results).
 **API sketch** (`src/pcp/cache.hh`):
 
 ```cpp
-using namespace tinyusdz;
+using namespace lightusd;
 
 // CompositeSublayers (the L phase) is run internally by Open().
 auto r = pcp::Cache::Open(resolver, root_layer, pcp::CacheOptions{});
@@ -990,13 +990,13 @@ cache.BuildStage(&stage, &warn, &err);
 **Scope (first cut).** Lazy + caches + explicit invalidate. There is no
 `PcpChanges`-style processor that *diffs* arbitrary scene edits, no separate
 property index, and instancing detection is left to the eager path / `Stage`-level
-`BuildInstancePrototypes()`. Built behind the `TINYUSDZ_WITH_PCP` CMake option (ON).
+`BuildInstancePrototypes()`. Built behind the `LIGHTUSD_WITH_PCP` CMake option (ON).
 
 ---
 
-## PCP ↔ tinyusdz: Where They Diverge
+## PCP ↔ lightusd: Where They Diverge
 
-The two engines share a data model, but the tinyusdz DAG engine is intentionally
+The two engines share a data model, but the lightusd DAG engine is intentionally
 narrower than OpenUSD PCP:
 
 - **No full `PcpChanges` edit-diffing.** `CompositionGraph` composes once, and
@@ -1013,11 +1013,11 @@ narrower than OpenUSD PCP:
   (composition.md) is the default; the DAG engine is opt-in/parallel and exists
   for opinion introspection, lazy payloads, and instance detection.
 
-For a per-phase, LIVRPS-correctness comparison of tinyusdz against OpenUSD PCP,
+For a per-phase, LIVRPS-correctness comparison of lightusd against OpenUSD PCP,
 including the relocate-positioning and specializes-nesting caveats, see the
 comparison table and correctness analysis in
 [composition.md](composition.md#comparison-table) and
-[composition.md](composition.md#livrps-correctness-analysis-for-tinyusdz).
+[composition.md](composition.md#livrps-correctness-analysis-for-lightusd).
 
 ---
 
@@ -1038,7 +1038,7 @@ comparison table and correctness analysis in
 - `errors.h` — `PcpErrorType` and error classes.
 - `changes.h`, `dependencies.h`, `dependency.h` — change processing and dependency tracking.
 
-### tinyusdz source
+### lightusd source
 
 - `src/composition-graph.hh` / `.cc` — this (eager) engine; also `CompositionContext` + `PrimIndexBuilder` reused by `pcp::Cache`.
 - `src/pcp/cache.hh` / `.cc` — `pcp::Cache`, the cached/lazy composition engine (+ `cache-impl.hh`, `cache-parallel.cc`).
@@ -1055,16 +1055,16 @@ comparison table and correctness analysis in
 
 ### Related docs
 
-- [composition.md](composition.md) — the default flattening pipeline, the LIVRPS table, the LIVRPS-correctness analysis, the OpenUSD-vs-tinyusdz comparison table, instancing examples, and variants.
+- [composition.md](composition.md) — the default flattening pipeline, the LIVRPS table, the LIVRPS-correctness analysis, the OpenUSD-vs-lightusd comparison table, instancing examples, and variants.
 
 ---
 
-## tinyusdz::next::pcp — native composition for the `next` module
+## lightusd::next::pcp — native composition for the `next` module
 
 The `next` module (`src/next/`) is a standalone, low-dependency rewrite of
-tinyusdz (runtime type dispatch, flat index-based storage, SBO `Value`). It does
+lightusd (runtime type dispatch, flat index-based storage, SBO `Value`). It does
 **not** link the main library, so the main `pcp::Cache` (built on
-`tinyusdz::Layer` / `composition-graph.cc`) cannot be reused directly. Instead,
+`lightusd::Layer` / `composition-graph.cc`) cannot be reused directly. Instead,
 `src/next/pcp/` is a **native, standalone re-implementation of the same PCP
 design** on `next`'s own types (C++14, only `next/` + STL + vendored
 `nonstd/expected`).
@@ -1117,7 +1117,7 @@ Strength order `Local > Inherit > Variant > Reference > Payload > Specialize`:
 
 ### Threading
 
-Built with `-DTINYUSDZ_NEXT_ENABLE_THREAD=ON`:
+Built with `-DLIGHTUSD_NEXT_ENABLE_THREAD=ON`:
 
 - The `LayerRegistry` is thread-safe and serializes the same-asset resolve + parse
   + publish path, so a referenced/payload/sublayer file is parsed exactly once.
@@ -1158,7 +1158,7 @@ builds are sequential and zero-overhead — the parallel path and lock macro com
 
 ### Tests
 
-`tests/next/test_pcp.cc` (built with `-DTINYUSDZ_NEXT_BUILD_TESTS=ON`) covers each
+`tests/next/test_pcp.cc` (built with `-DLIGHTUSD_NEXT_BUILD_TESTS=ON`) covers each
 arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
 cross-source variants, implied class propagation (incl. intermediate stacks),
 sublayer stack composition/cycle/depth errors, node-overflow rejection, the parallel

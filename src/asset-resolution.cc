@@ -13,7 +13,7 @@
 #include "logger.hh"
 #include "tiny-format.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::string AssetResolutionResolver::search_paths_str() const {
   std::string str;
@@ -91,7 +91,7 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
 
 #if defined(__EMSCRIPTEN__) || defined(__wasi__)
   TUSDZ_LOG_E("Failed to find asssetPath: " << assetPath);
-  
+
   return false;
 #else
   // default fallback: File-based
@@ -206,7 +206,7 @@ std::string AssetResolutionResolver::resolve_literal(
     //DCOUT("cwd = " << _current_working_path);
     //DCOUT("search_paths = " << _search_paths);
     //DCOUT("assetPath = " << assetPath);
-    
+
 #if defined(__EMSCRIPTEN__) || defined(__wasi__)
     TUSDZ_LOG_E("Failed to resolve asssetPath: " << assetPath);
 #else
@@ -336,7 +336,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 
       DCOUT("asset_size: " << sz);
 
-      tinyusdz::Asset asset;
+      lightusd::Asset asset;
       asset.resize(size_t(sz));
 
       uint64_t read_size{0};
@@ -400,7 +400,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 
       DCOUT("asset_size: " << sz);
 
-      tinyusdz::Asset asset;
+      lightusd::Asset asset;
       asset.resize(size_t(sz));
 
       uint64_t read_size{0};
@@ -466,4 +466,4 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
 #endif
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

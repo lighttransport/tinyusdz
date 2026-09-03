@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Property Index
+// LightUSD Next - Property Index
 // Fast O(1) property lookup using string interning and indexed storage
 
 #pragma once
@@ -12,13 +12,13 @@
 #include <vector>
 #include <deque>
 #include <unordered_map>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <memory>
 #include <shared_mutex>
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Interned property name handle
@@ -85,7 +85,7 @@ public:
 
   /// Get total count of interned names
   size_t size() const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
     return names_.size();
@@ -109,7 +109,7 @@ public:
   /// misses the snapshot falls back to the locked path, so a stale snapshot is
   /// never wrong, only incomplete.
   ///
-  /// No-op when built without TINYUSDZ_ENABLE_THREAD.
+  /// No-op when built without LIGHTUSD_ENABLE_THREAD.
   void freeze();
   void unfreeze();
 
@@ -142,7 +142,7 @@ private:
   std::deque<std::string> names_;
   std::unordered_map<std::string, uint32_t, PropNameHash, PropNameEqual>
       name_to_id_;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
   // lookup takes a shared lock, the rare new-name insert an exclusive one.
@@ -253,4 +253,4 @@ private:
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

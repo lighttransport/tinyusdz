@@ -1,6 +1,6 @@
 # CI / Release Procedure
 
-Version-bump, tagging, and publish procedure for TinyUSDZ.
+Version-bump, tagging, and publish procedure for LightUSD.
 
 > Workflow-level detail (the `wheels.yml` / `wasmPublish.yml` pipeline
 > internals, build matrix, publish gates, and local verification commands)
@@ -11,9 +11,9 @@ Version-bump, tagging, and publish procedure for TinyUSDZ.
 
 | Component | File | How version is set |
 |---|---|---|
-| C++ library (compile-time constants) | `src/tinyusdz.hh` (the `version_major/minor/micro/rev` constants near line 51) | Hand-edit |
-| Python wheel (`tinyusdz` on PyPI) | derived from git tag via `setuptools_scm` (config in `pyproject.toml` `[tool.setuptools_scm]`; written to `python/tinyusdz/_version.py` at build time) | Automatic from tag |
-| NPM package (`tinyusdz` on npmjs.org) | `web/npm/package.json` `"version"` (source-of-truth) and `web/js/package.json` `"version"` | Hand-edit; workflow can override via `release_version` input |
+| C++ library (compile-time constants) | `src/lightusd.hh` (the `version_major/minor/micro/rev` constants near line 51) | Hand-edit |
+| Python wheel (`lightusd` on PyPI) | derived from git tag via `setuptools_scm` (config in `pyproject.toml` `[tool.setuptools_scm]`; written to `python/lightusd/_version.py` at build time) | Automatic from tag |
+| NPM package (`lightusd` on npmjs.org) | `web/npm/package.json` `"version"` (source-of-truth) and `web/js/package.json` `"version"` | Hand-edit; workflow can override via `release_version` input |
 
 There is no `CHANGELOG.md` / release-notes file in the repo. GitHub Release notes are written on the GitHub UI when cutting the release.
 
@@ -23,7 +23,7 @@ Work on the `release` branch for stable releases (PRs target `release`, see `AGE
 
 ### 1a. C++ version constants
 
-Edit `src/tinyusdz.hh`:
+Edit `src/lightusd.hh`:
 
 ```cpp
 constexpr int version_major = 0;
@@ -50,7 +50,7 @@ Do **not** edit any file. `setuptools_scm` derives the Python wheel version from
 ```toml
 dynamic = ["version"]
 [tool.setuptools_scm]
-version_file = "python/tinyusdz/_version.py"
+version_file = "python/lightusd/_version.py"
 ```
 
 ### 1d. Commit
@@ -58,8 +58,8 @@ version_file = "python/tinyusdz/_version.py"
 ```bash
 git checkout release            # or: git checkout dev   (for RC tags)
 git pull
-# edit src/tinyusdz.hh, web/npm/package.json, web/js/package.json
-git add src/tinyusdz.hh web/npm/package.json web/js/package.json
+# edit src/lightusd.hh, web/npm/package.json, web/js/package.json
+git add src/lightusd.hh web/npm/package.json web/js/package.json
 git commit -m "Bump version to x.y.z"
 git push origin release         # or: git push origin dev
 ```
@@ -68,7 +68,7 @@ git push origin release         # or: git push origin dev
 
 ```bash
 # Native build + tests
-cmake -S . -B build -DTINYUSDZ_BUILD_TESTS=ON
+cmake -S . -B build -DLIGHTUSD_BUILD_TESTS=ON
 cmake --build build -j16
 cd build && ctest --output-on-failure && cd ..
 
@@ -101,11 +101,11 @@ What this triggers in `wheels.yml`:
 3. `publish` job (only on `push` of `refs/tags/v*`):
    - Uses **PyPI Trusted Publishing (OIDC)** — no API token in repo secrets.
    - The pypi.org project must have a matching publisher registered:
-     - owner: `lighttransport`, repo: `tinyusdz`, workflow: `wheels.yml`, environment: `pypi`.
+     - owner: `lighttransport`, repo: `lightusd`, workflow: `wheels.yml`, environment: `pypi`.
    - GitHub environment `pypi` must exist on the repo with `id-token: write` allowed.
    - Emits PEP 740 attestations.
 
-Watch the run at: https://github.com/lighttransport/tinyusdz/actions/workflows/wheels.yml
+Watch the run at: https://github.com/lighttransport/lightusd/actions/workflows/wheels.yml
 
 If the publish step fails after wheels build successfully, wheels are kept as workflow artifacts — re-running just the `publish` job is safe (PyPI rejects duplicates).
 
@@ -116,10 +116,10 @@ The `v*.*.*` tag pattern matches pre-release tags too (`v1.0.0-rc4`). The
 normalizes the hyphenated Git tag to PEP 440 form, so `v1.0.0-rc4` is published
 to PyPI as `1.0.0rc4`. To publish an RC to both PyPI and npm:
 
-1. Set `version_rev = "rc4"` in `src/tinyusdz.hh` (cosmetic; C++ side only).
+1. Set `version_rev = "rc4"` in `src/lightusd.hh` (cosmetic; C++ side only).
 2. Set `"version": "1.0.0-rc4"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
 3. Push tag `v1.0.0-rc4` — by convention RC tags are cut from `dev`, not `release`. Stable tags (`vX.Y.Z` with no suffix) still come from `release`.
-4. After the trusted-publishing workflow succeeds, install it with `pip install --pre tinyusdz==1.0.0rc4`.
+4. After the trusted-publishing workflow succeeds, install it with `pip install --pre lightusd==1.0.0rc4`.
 
 Use the hyphenated SemVer form (`1.0.0-rc4`) for Git and npm. Do not manually
 strip the hyphen for Python; `setuptools_scm` performs the PEP 440 normalization.
@@ -143,7 +143,7 @@ gh workflow run wasmPublish.yml --ref dev \
 Inputs:
 
 - `release_version` — semver, e.g. `0.9.9` or `0.9.9-rc1` (rewrites the staged `package.json`; should match what you committed in 1b).
-- `npm_tag` — npm dist-tag, e.g. `latest` for a real release, `preview` / `next` / `rc` for pre-releases. **Default is `preview`** — change it to `latest` for stable releases. Verify after publish: `npm view tinyusdz dist-tags`.
+- `npm_tag` — npm dist-tag, e.g. `latest` for a real release, `preview` / `next` / `rc` for pre-releases. **Default is `preview`** — change it to `latest` for stable releases. Verify after publish: `npm view lightusd dist-tags`.
 
 The job:
 
@@ -153,7 +153,7 @@ The job:
 4. `npm run validate` (runs `web/npm/scripts/validate-package.mjs`).
 5. `npm publish --provenance --access public --tag <npm_tag>` from `web/npm/dist`.
 
-Publishing requires npm provenance (OIDC, `id-token: write`) — the npmjs `tinyusdz` package must trust this workflow. No npm token in repo secrets.
+Publishing requires npm provenance (OIDC, `id-token: write`) — the npmjs `lightusd` package must trust this workflow. No npm token in repo secrets.
 
 The npm staging scripts live in `web/npm/`:
 
@@ -191,13 +191,13 @@ Or via the GitHub UI on the tag page. The release-notes body is hand-written (no
 
 ## 6. Post-release
 
-- Bump `version_micro` (or `version_minor`) in `src/tinyusdz.hh` on the `dev` branch to the next pre-release (e.g. `0.9.3` with `version_rev = ""`).
+- Bump `version_micro` (or `version_minor`) in `src/lightusd.hh` on the `dev` branch to the next pre-release (e.g. `0.9.3` with `version_rev = ""`).
 - Optionally bump `web/npm/package.json` + `web/js/package.json` to a `-dev` version to make accidental publishes of intermediate builds easy to spot.
 
 ## Summary: files touched per release
 
 ```
-src/tinyusdz.hh              # C++ version constants
+src/lightusd.hh              # C++ version constants
 web/npm/package.json         # npm package version
 web/js/package.json          # JS module version (keep in sync with web/npm)
 ```
@@ -206,7 +206,7 @@ Files **not** touched by a version bump (handled automatically):
 
 ```
 pyproject.toml               # dynamic version via setuptools_scm
-python/tinyusdz/_version.py  # generated at build time
+python/lightusd/_version.py  # generated at build time
 CMakeLists.txt               # no hardcoded version
 ```
 
@@ -214,5 +214,5 @@ CMakeLists.txt               # no hardcoded version
 
 | Workflow file | Trigger | Publishes to | Auth |
 |---|---|---|---|
-| `.github/workflows/wheels.yml` | push tag `v*.*.*` (or `workflow_dispatch`) | PyPI `tinyusdz` | OIDC trusted publisher (env `pypi`) |
-| `.github/workflows/wasmPublish.yml` | `workflow_dispatch` only | npmjs `tinyusdz` | OIDC provenance |
+| `.github/workflows/wheels.yml` | push tag `v*.*.*` (or `workflow_dispatch`) | PyPI `lightusd` | OIDC trusted publisher (env `pypi`) |
+| `.github/workflows/wasmPublish.yml` | `workflow_dispatch` only | npmjs `lightusd` | OIDC provenance |

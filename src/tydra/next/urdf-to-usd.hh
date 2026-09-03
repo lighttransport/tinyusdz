@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 class Stage;
 }  // namespace next
@@ -45,17 +45,17 @@ struct URDFMeshBuffer {
 /// the legacy converter.
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
-    ::tinyusdz::next::Stage *stage,
+    ::lightusd::next::Stage *stage,
     std::string *warn = nullptr,
     std::string *err = nullptr);
 
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
-    ::tinyusdz::next::Stage *stage,
+    ::lightusd::next::Stage *stage,
     std::string *warn = nullptr,
     std::string *err = nullptr);
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -11,8 +11,8 @@ USD skeletal animation extraction and playback using Three.js SkinnedMesh.
 ## Pipeline
 
 ```
-USD File → TinyUSDZLoader (WASM parse) → usd_scene
-  → TinyUSDZLoaderUtils.buildThreeNode() → Three.js scene hierarchy
+USD File → LightUSDLoader (WASM parse) → usd_scene
+  → LightUSDLoaderUtils.buildThreeNode() → Three.js scene hierarchy
   → USDSkeletonData.buildSkeletonDataFromUSD() → bone maps
   → USDSceneSkinningPipeline.applyUSDSceneSkinningPipeline() → SkinnedMesh binding
   → USDAnimationConverter → AnimationClips
@@ -20,7 +20,7 @@ USD File → TinyUSDZLoader (WASM parse) → usd_scene
   → ExtendedSkinning.applyExtendedSkinningIfNeeded() → >4 bone support
 ```
 
-## Pipeline Modules (`src/tinyusdz/`)
+## Pipeline Modules (`src/lightusd/`)
 
 | Module | Purpose |
 |--------|---------|
@@ -33,7 +33,7 @@ USD File → TinyUSDZLoader (WASM parse) → usd_scene
 
 ## Key Design Decisions
 
-**Preserve full scene graph**: TinyUSDZ preserves all xformOps on all nodes including skinned meshes. Three.js world-space `bind()` handles the transform math correctly (see `doc/skinning.md` for the full derivation).
+**Preserve full scene graph**: LightUSD preserves all xformOps on all nodes including skinned meshes. Three.js world-space `bind()` handles the transform math correctly (see `doc/skinning.md` for the full derivation).
 
 **bind() without custom args**: `mesh.bind(skeleton)` is called without passing boneInverses or bindMatrix. Three.js internally computes `boneInverses = inv(bone.matrixWorld)` and `bindMatrix = mesh.matrixWorld`, both in world space. Passing USD-space boneInverses would mix coordinate spaces.
 

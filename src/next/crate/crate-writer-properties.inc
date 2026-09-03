@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - CrateWriter::Impl property/spec emission helpers.
+// LightUSD Next - CrateWriter::Impl property/spec emission helpers.
 // Included inside CrateWriter::Impl private section.
 
   // Build an explicit PathListOp value_data_ block for relationship/connection

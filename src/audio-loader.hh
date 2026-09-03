@@ -1,16 +1,16 @@
 // Simple audio loader
-// supported file format: WAV, MP3  
+// supported file format: WAV, MP3
 #pragma once
 
 #include <cstddef>
 #include <string>
 #include <vector>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 #include "nonstd/expected.hpp"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace audio {
 
 struct AudioResult {
@@ -33,4 +33,4 @@ nonstd::expected<AudioResult, std::string> LoadAudioFromFile(const std::string &
 nonstd::expected<AudioResult, std::string> LoadAudioFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
 
 } // namespace audio
-} // namespace tinyusdz
+} // namespace lightusd

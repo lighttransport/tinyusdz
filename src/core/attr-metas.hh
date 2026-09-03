@@ -13,7 +13,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Metadata for Property(Relationship and Attribute)
 // Uses Dictionary-based storage via MetadataBase for memory efficiency.
@@ -119,7 +119,7 @@ struct AttrMetas : public MetadataBase {
   //
   std::vector<value::StringData> stringData;
 
-  // Unregistered (unknown-to-tinyusdz) property metadata, preserved verbatim as
+  // Unregistered (unknown-to-lightusd) property metadata, preserved verbatim as
   // the raw USDA text of the value (quotes included for string values), keyed by
   // the metadatum name. OpenUSD preserves such opinions (SdfUnregisteredValue);
   // dropping them silently loses authored data. Mirrors PrimMeta::unregisteredMetas.
@@ -152,4 +152,4 @@ using AttrMeta = AttrMetas;
 
 using PropMetas = AttrMetas;
 
-}  // namespace tinyusdz
+}  // namespace lightusd

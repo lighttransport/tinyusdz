@@ -10,7 +10,7 @@
 #include "composition.hh"
 #include "mesh_build.hh"
 #include "skinning.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data-converter.hh"
 
 namespace tusdview {
@@ -39,7 +39,7 @@ bool Cancelled(LoadControl* ctrl) { return ctrl && ctrl->cancel.load(); }
 
 // True when the layer carries no composition arcs, so plain LayerToStage (or
 // the legacy direct Stage load) yields the same result as full composition.
-bool LayerHasCompositionArcs(const tinyusdz::Layer& layer) {
+bool LayerHasCompositionArcs(const lightusd::Layer& layer) {
   return !layer.metas().subLayers.empty() ||
          layer.check_unresolved_references() ||
          layer.check_unresolved_payload() || layer.check_unresolved_inherits() ||
@@ -51,9 +51,9 @@ bool LayerHasCompositionArcs(const tinyusdz::Layer& layer) {
 // payload policy in `opts`. Deferred payloads are appended to `deferred`.
 // Pattern follows ComposeLayerToFixedPoint() in src/usdz-convert.cc, plus the
 // PayloadCompositionOptions::load_policy hook for lazy payloads.
-bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
-                         tinyusdz::Layer&& src, const LoadOptions& opts,
-                         tinyusdz::Layer* composed,
+bool ComposeToFixedPoint(lightusd::AssetResolutionResolver& resolver,
+                         lightusd::Layer&& src, const LoadOptions& opts,
+                         lightusd::Layer* composed,
                          std::vector<DeferredArc>* deferred,
                          std::string* warn, std::string* err,
                          LoadControl* ctrl) {
@@ -63,12 +63,12 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
       (opts.payloadPolicy == PayloadPolicy::Whitelist) ? &opts.payloadWhitelist
                                                        : nullptr;
 
-  tinyusdz::PayloadCompositionOptions pl_opts;
+  lightusd::PayloadCompositionOptions pl_opts;
   pl_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
   if (opts.payloadPolicy != PayloadPolicy::LoadAll) {
     pl_opts.load_policy = [whitelist, deferred](
-                              const tinyusdz::Path& prim_path,
-                              const tinyusdz::Payload& payload) -> bool {
+                              const lightusd::Path& prim_path,
+                              const lightusd::Payload& payload) -> bool {
       const std::string p = prim_path.full_path_name();
       if (whitelist && whitelist->count(p)) {
         return true;
@@ -78,12 +78,12 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
     };
   }
 
-  tinyusdz::ReferencesCompositionOptions ref_opts;
+  lightusd::ReferencesCompositionOptions ref_opts;
   ref_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
   if (opts.deferReferences) {
     ref_opts.load_policy = [whitelist, deferred](
-                               const tinyusdz::Path& prim_path,
-                               const tinyusdz::Reference& reference) -> bool {
+                               const lightusd::Path& prim_path,
+                               const lightusd::Reference& reference) -> bool {
       const std::string p = prim_path.full_path_name();
       if (whitelist && whitelist->count(p)) {
         return true;
@@ -93,7 +93,7 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
     };
   }
 
-  tinyusdz::Layer work = std::move(src);
+  lightusd::Layer work = std::move(src);
 
   constexpr int kMaxIteration = 64;
   for (int i = 0; i < kMaxIteration; i++) {
@@ -106,8 +106,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
 
     if (work.check_unresolved_references()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeReferences(resolver, work, &tmp, warn, err,
+      lightusd::Layer tmp;
+      if (!lightusd::CompositeReferences(resolver, work, &tmp, warn, err,
                                          ref_opts)) {
         return false;
       }
@@ -116,8 +116,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
 
     if (work.check_unresolved_payload()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositePayload(resolver, work, &tmp, warn, err,
+      lightusd::Layer tmp;
+      if (!lightusd::CompositePayload(resolver, work, &tmp, warn, err,
                                       pl_opts)) {
         return false;
       }
@@ -126,8 +126,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
 
     if (work.check_unresolved_inherits()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeInherits(work, &tmp, warn, err)) {
+      lightusd::Layer tmp;
+      if (!lightusd::CompositeInherits(work, &tmp, warn, err)) {
         return false;
       }
       work = std::move(tmp);
@@ -144,8 +144,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
       const bool arcs_settled = !work.check_unresolved_references() &&
                                 !work.check_unresolved_payload();
       if (arcs_settled) {
-        tinyusdz::Layer tmp;
-        if (!tinyusdz::CompositeVariant(work, &tmp, warn, err)) {
+        lightusd::Layer tmp;
+        if (!lightusd::CompositeVariant(work, &tmp, warn, err)) {
           return false;
         }
         work = std::move(tmp);
@@ -155,8 +155,8 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
 
     if (work.check_unresolved_specializes()) {
       has_unresolved = true;
-      tinyusdz::Layer tmp;
-      if (!tinyusdz::CompositeSpecializes(work, &tmp, warn, err)) {
+      lightusd::Layer tmp;
+      if (!lightusd::CompositeSpecializes(work, &tmp, warn, err)) {
         return false;
       }
       work = std::move(tmp);
@@ -178,29 +178,29 @@ bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver& resolver,
 // given payload policy, refreshing comp.deferred/loadedPayloads.
 bool ComposeStage(const LoadOptions& opts, LoadedScene* out,
                   LoadControl* ctrl) {
-  tinyusdz::AssetResolutionResolver resolver;
+  lightusd::AssetResolutionResolver resolver;
   resolver.set_search_paths(out->comp.searchPaths);
   if (out->comp.usdzAsset &&
-      !tinyusdz::SetupUSDZAssetResolution(resolver, out->comp.usdzAsset.get())) {
+      !lightusd::SetupUSDZAssetResolution(resolver, out->comp.usdzAsset.get())) {
     out->err += "Failed to configure USDZ composition asset resolution.\n";
     return false;
   }
 
-  tinyusdz::Layer work = *out->comp.rootLayer;  // compose from a copy
+  lightusd::Layer work = *out->comp.rootLayer;  // compose from a copy
 
   // Apply variant selection overrides before composition.
   if (!opts.variantOverrides.empty()) {
-    tinyusdz::VariantSelectorMap vsmap;
+    lightusd::VariantSelectorMap vsmap;
     for (const auto& [primPath, selections] : opts.variantOverrides) {
-      tinyusdz::Path path(primPath, "");
-      tinyusdz::VariantSelector sel;
+      lightusd::Path path(primPath, "");
+      lightusd::VariantSelector sel;
       sel.selection = selections.empty() ? "" : selections.begin()->second;
       sel.vsmap = selections;
       vsmap[path] = sel;
     }
-    tinyusdz::Layer variantLayer;
+    lightusd::Layer variantLayer;
     std::string vwarn, verr;
-    if (tinyusdz::ApplyVariantSelector(work, vsmap, &variantLayer, &vwarn, &verr)) {
+    if (lightusd::ApplyVariantSelector(work, vsmap, &variantLayer, &vwarn, &verr)) {
       work = std::move(variantLayer);
       if (!vwarn.empty()) out->warn += vwarn;
     } else {
@@ -209,7 +209,7 @@ bool ComposeStage(const LoadOptions& opts, LoadedScene* out,
   }
 
   out->comp.deferred.clear();
-  tinyusdz::Layer composed;
+  lightusd::Layer composed;
   if (!ComposeToFixedPoint(resolver, std::move(work), opts, &composed,
                            &out->comp.deferred, &out->warn, &out->err, ctrl)) {
     return false;
@@ -219,37 +219,37 @@ bool ComposeStage(const LoadOptions& opts, LoadedScene* out,
                                  : std::set<std::string>{};
   out->comp.composed = true;
 
-  return tinyusdz::LayerToStage(std::move(composed), &out->stage, &out->warn,
+  return lightusd::LayerToStage(std::move(composed), &out->stage, &out->warn,
                                 &out->err);
 }
 
 // Acquire `out->stage` without composition: mmap zero-copy load of the root
 // layer only (legacy path; also used for .usdz).
 bool LoadStageDirect(const std::string& path, LoadedScene* out) {
-  tinyusdz::USDLoadOptions opts;
+  lightusd::USDLoadOptions opts;
   opts.mmap_zero_copy = true;
 
-  auto mh = std::shared_ptr<tinyusdz::io::MMapFileHandle>(
-      new tinyusdz::io::MMapFileHandle(),
-      [](tinyusdz::io::MMapFileHandle* h) {
+  auto mh = std::shared_ptr<lightusd::io::MMapFileHandle>(
+      new lightusd::io::MMapFileHandle(),
+      [](lightusd::io::MMapFileHandle* h) {
         std::string e;
-        tinyusdz::io::UnmapFile(*h, &e);
+        lightusd::io::UnmapFile(*h, &e);
         delete h;
       });
   std::string merr;
-  const bool mapped = tinyusdz::io::MMapFile(path, mh.get(), /*writable=*/false, &merr) &&
+  const bool mapped = lightusd::io::MMapFile(path, mh.get(), /*writable=*/false, &merr) &&
                       mh->addr && mh->size > 0;
 
   bool ok = false;
   if (mapped) {
     out->mmap = mh;  // keep the mapping alive alongside the Stage
-    ok = tinyusdz::LoadUSDFromMemory(mh->addr, static_cast<size_t>(mh->size), path,
+    ok = lightusd::LoadUSDFromMemory(mh->addr, static_cast<size_t>(mh->size), path,
                                      &out->stage, &out->warn, &out->err, opts);
   } else {
     // Fall back to a regular (copying) file load. Disable zero-copy: it requires
     // a persistent mapping which we don't have on this path.
     opts.mmap_zero_copy = false;
-    ok = tinyusdz::LoadUSDFromFile(path, &out->stage, &out->warn, &out->err, opts);
+    ok = lightusd::LoadUSDFromFile(path, &out->stage, &out->warn, &out->err, opts);
   }
   if (!ok && out->err.empty()) {
     out->err = "Failed to load USD file: " + path;
@@ -263,16 +263,16 @@ bool LoadStageDirect(const std::string& path, LoadedScene* out) {
 // retains the post-sublayer layer in out->comp for later payload recompose.
 bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
                        LoadedScene* out, LoadControl* ctrl) {
-  tinyusdz::Layer root;
+  lightusd::Layer root;
   bool rootOk = false;
   if (HasUsdzExtension(path)) {
-    out->comp.usdzAsset = std::make_shared<tinyusdz::USDZAsset>();
+    out->comp.usdzAsset = std::make_shared<lightusd::USDZAsset>();
     constexpr size_t kMiB = 1024u * 1024u;
     const size_t maxArchiveMb = opts.maxMemoryBytes == 0
                                     ? 16384u
                                     : opts.maxMemoryBytes / kMiB +
                                           (opts.maxMemoryBytes % kMiB != 0);
-    rootOk = tinyusdz::ReadUSDZAssetInfoFromFile(
+    rootOk = lightusd::ReadUSDZAssetInfoFromFile(
         path, out->comp.usdzAsset.get(), &out->warn, &out->err,
         std::max<size_t>(maxArchiveMb, 1u));
     if (rootOk) {
@@ -285,13 +285,13 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
         rootOk = false;
       } else {
         const uint8_t* bytes = out->comp.usdzAsset->data.data();
-        rootOk = tinyusdz::LoadLayerFromMemory(
+        rootOk = lightusd::LoadLayerFromMemory(
             bytes + it->second.first, it->second.second - it->second.first,
             out->comp.usdzAsset->root_asset_name, &root, &out->warn, &out->err);
       }
     }
   } else {
-    rootOk = tinyusdz::LoadLayerFromFile(path, &root, &out->warn, &out->err);
+    rootOk = lightusd::LoadLayerFromFile(path, &root, &out->warn, &out->err);
   }
   if (!rootOk) {
     if (out->err.empty()) {
@@ -320,26 +320,26 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
 
   out->comp.searchPaths = {DirName(path)};
 
-  tinyusdz::AssetResolutionResolver resolver;
+  lightusd::AssetResolutionResolver resolver;
   resolver.set_search_paths(out->comp.searchPaths);
   if (out->comp.usdzAsset) {
-    tinyusdz::SetupUSDZAssetResolution(resolver, out->comp.usdzAsset.get());
+    lightusd::SetupUSDZAssetResolution(resolver, out->comp.usdzAsset.get());
   }
 
   // Flatten sublayers first, then snapshot: payload recompose restarts from
   // this layer (CompositePayload strips payload metadata even for deferred
   // arcs, so the composed result alone cannot load payloads later).
   if (!root.metas().subLayers.empty()) {
-    tinyusdz::SublayersCompositionOptions sl_opts;
+    lightusd::SublayersCompositionOptions sl_opts;
     sl_opts.allow_parent_relative_paths = opts.allowParentRelativePaths;
-    tinyusdz::Layer tmp;
-    if (!tinyusdz::CompositeSublayers(resolver, root, &tmp, &out->warn,
+    lightusd::Layer tmp;
+    if (!lightusd::CompositeSublayers(resolver, root, &tmp, &out->warn,
                                       &out->err, sl_opts)) {
       return false;
     }
     root = std::move(tmp);
   }
-  out->comp.rootLayer = std::make_shared<tinyusdz::Layer>(std::move(root));
+  out->comp.rootLayer = std::make_shared<lightusd::Layer>(std::move(root));
 
   return ComposeStage(opts, out, ctrl);
 }
@@ -350,19 +350,19 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
 // full RenderScene to `render`. `timecode` selects the evaluation time (NaN =
 // static default). `loadTextures=false` skips texture image decode (used by
 // playback re-evaluation, which keeps the initial load's textures).
-bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
+bool ConvertStageToSceneImpl(const lightusd::Stage& stage,
                              const std::string& path,
-                             const std::shared_ptr<tinyusdz::io::MMapFileHandle>& mmap,
-                             const std::shared_ptr<tinyusdz::USDZAsset>& retainedUsdzAsset,
+                             const std::shared_ptr<lightusd::io::MMapFileHandle>& mmap,
+                             const std::shared_ptr<lightusd::USDZAsset>& retainedUsdzAsset,
                              double timecode, bool rtPath, bool loadTextures,
                              const TextureRuntimeOptions& textureOptions,
                              int subdivisionLevel,
                              const std::map<std::string, int>& subdivisionPrimLevels,
                              bool allowParentRelativePaths,
-                             tinyusdz::tydra::RenderScene* render, DrawScene* draw,
+                             lightusd::tydra::RenderScene* render, DrawScene* draw,
                              std::string* warn, std::string* err,
                              LoadControl* ctrl) {
-  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::tydra::RenderSceneConverterEnv env(stage);
   env.usd_filename = path;
   env.set_search_paths({DirName(path)});
   // Honor the caller's parent-relative-path policy for texture/light asset
@@ -382,24 +382,24 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // .usdz would load. Composed packages reuse their retained shared backing;
   // direct loads use a temporary map backed by the live mmap or a local copy.
   // In every case the asset outlives the synchronous conversion below.
-  tinyusdz::USDZAsset usdzAsset;
+  lightusd::USDZAsset usdzAsset;
   if (loadTextures && HasUsdzExtension(path)) {
     std::string uwarn, uerr;
-    const tinyusdz::USDZAsset* resolverAsset = retainedUsdzAsset.get();
+    const lightusd::USDZAsset* resolverAsset = retainedUsdzAsset.get();
     bool gotInfo = resolverAsset != nullptr;
     if (!gotInfo && mmap) {
       // Zero-copy: reference the mmap (kept alive by the caller through the
       // conversion below).
-      gotInfo = tinyusdz::ReadUSDZAssetInfoFromMemory(
+      gotInfo = lightusd::ReadUSDZAssetInfoFromMemory(
           mmap->addr, static_cast<size_t>(mmap->size),
           /*asset_on_memory=*/true, &usdzAsset, &uwarn, &uerr);
       resolverAsset = gotInfo ? &usdzAsset : nullptr;
     } else if (!gotInfo) {
-      gotInfo = tinyusdz::ReadUSDZAssetInfoFromFile(path, &usdzAsset, &uwarn, &uerr);
+      gotInfo = lightusd::ReadUSDZAssetInfoFromFile(path, &usdzAsset, &uwarn, &uerr);
       resolverAsset = gotInfo ? &usdzAsset : nullptr;
     }
     if (gotInfo) {
-      if (!tinyusdz::SetupUSDZAssetResolution(env.asset_resolver, resolverAsset)) {
+      if (!lightusd::SetupUSDZAssetResolution(env.asset_resolver, resolverAsset)) {
         *warn += "Failed to set up USDZ asset resolution; embedded textures "
                  "may not load.\n";
       }
@@ -420,9 +420,9 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // but tangents/binormals are preserved in DrawMeshCPU for the later material
   // evaluator (normal maps, anisotropy, MaterialX tangent inputs).
   mc.normal_storage =
-      tinyusdz::tydra::MeshConverterConfig::NormalStorageFormat::Float3;
+      lightusd::tydra::MeshConverterConfig::NormalStorageFormat::Float3;
   mc.tangent_storage =
-      tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::Float3;
+      lightusd::tydra::MeshConverterConfig::TangentStorageFormat::Float3;
   mc.compute_tangents_and_binormals = true;
   mc.compute_tangents_only_with_normal_map = true;
   // Expose secondary UV sets (e.g. primvars:st1) for the multi-UV debug AOV even
@@ -460,14 +460,14 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   matc.assign_default_material = true;
 
   // RenderSceneConverter is non-copyable / non-movable: keep it local.
-  tinyusdz::tydra::RenderSceneConverter converter;
+  lightusd::tydra::RenderSceneConverter converter;
 
   // Cancellation + progress + conversion time budget (worker-thread friendly).
   bool budgetHit = false;
   if (ctrl) {
     const auto start = std::chrono::steady_clock::now();
     converter.SetDetailedProgressCallback(
-        [ctrl, start, &budgetHit](const tinyusdz::tydra::DetailedProgressInfo& info,
+        [ctrl, start, &budgetHit](const lightusd::tydra::DetailedProgressInfo& info,
                                    void*) -> bool {
           ctrl->stage.store(static_cast<int>(info.stage));
           ctrl->meshesDone.store(static_cast<long long>(info.meshes_processed));
@@ -653,7 +653,7 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
   // points in place). The rest cache stores a pre-deform copy keyed by timecode:
   // a same-timecode hit (e.g. dragging a blendshape weight while paused) reuses it
   // and skips the heavy ConvertStageToSceneImpl.
-  tinyusdz::tydra::RenderScene scratch;
+  lightusd::tydra::RenderScene scratch;
   const bool cacheHit =
       restCache && restCache->valid && restCache->timecode == timecode;
   if (cacheHit) {

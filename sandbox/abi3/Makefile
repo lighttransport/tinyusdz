@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache 2.0
 #
-# Makefile for TinyUSDZ ABI3 binding
+# Makefile for LightUSD ABI3 binding
 
 .PHONY: all build install clean test examples env help
 
@@ -89,7 +89,7 @@ distclean: clean
 
 # Help
 help:
-	@echo "TinyUSDZ ABI3 Binding - Available targets:"
+	@echo "LightUSD ABI3 Binding - Available targets:"
 	@echo ""
 	@echo "  make env           - Create virtual environment with uv"
 	@echo "  make deps          - Install dependencies with uv"

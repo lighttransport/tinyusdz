@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { showLoader, hideLoader } from '../tusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
 function escapeHTML(v) { return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 function $id(i) { return document.getElementById(i); }
@@ -133,11 +133,11 @@ let loader = null;
 
 async function ensureLoader() {
   if (loader) return loader;
-  loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    showLoader('Loading TinyUSDZ WASM...', document.getElementById('viewport'));
+  loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
+    showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
   await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
     hideLoader();
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
 }
 
@@ -183,8 +183,8 @@ async function loadScene(side, url, label) {
   });
 
   view.world.clear();
-  const mat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
+  const mat = LightUSDLoaderUtils.createDefaultMaterial();
+  const threeNode = await LightUSDLoaderUtils.buildThreeNode(
     sceneData.getDefaultRootNode(), mat, sceneData, {
       preferredMaterialType: 'usdpreviewsurface',
       textureCache: new Map(),

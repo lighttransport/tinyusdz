@@ -17,7 +17,7 @@
 #include "tsd-internal.hh"
 #include "tsd-kernel.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tsd {
 
 void LoopRefineValues(const Topology &topo, const uint32_t *parent_fvi,
@@ -42,4 +42,4 @@ void LoopRefineValues(const Topology &topo, const uint32_t *parent_fvi,
 }
 
 }  // namespace tsd
-}  // namespace tinyusdz
+}  // namespace lightusd

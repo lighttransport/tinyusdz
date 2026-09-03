@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-#include "next/tinyusdz-next.hh"
+#include "next/lightusd-next.hh"
 #include "tydra/next/render-converter.hh"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
@@ -15,11 +15,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   std::string source("#usda 1.0\n");
   source.append(reinterpret_cast<const char*>(data), size);
-  tinyusdz::next::LoadResult loaded =
-      tinyusdz::next::LoadUSDAFromString(source);
+  lightusd::next::LoadResult loaded =
+      lightusd::next::LoadUSDAFromString(source);
   if (!loaded.success) return 0;
 
-  tinyusdz::tydra::next::ConverterConfig config;
+  lightusd::tydra::next::ConverterConfig config;
   config.max_render_depth = 64;
   config.max_render_records = 4096;
   config.mesh.sphere_subdivisions = 1;
@@ -27,7 +27,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   config.material.load_textures = false;
   config.animation.enabled = false;
   config.animation.bake_value_clips = false;
-  tinyusdz::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::next::RenderSceneConverter converter(config);
   (void)converter.Convert(loaded.stage);
   return 0;
 }

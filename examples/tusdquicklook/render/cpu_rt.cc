@@ -4,7 +4,7 @@
 //
 // Structure:
 //   * one BLAS per QlMesh, built with lrt_tri_scene_build_indexed (the
-//     tinyusdz-local indexed build, which keeps the indexed data instead of
+//     lightusd-local indexed build, which keeps the indexed data instead of
 //     materializing a 9-float-per-triangle vertex soup)
 //   * a TLAS with identity transforms, instance_id = mesh index, so a hit
 //     reports (mesh, triangle) directly and geometry appended during a

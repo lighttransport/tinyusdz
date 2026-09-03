@@ -12,8 +12,8 @@
 #include <thread>
 #include <vector>
 
-using namespace tinyusdz;
-using namespace tinyusdz_test;
+using namespace lightusd;
+using namespace lightusd_test;
 
 // Test data structure
 struct TestData {

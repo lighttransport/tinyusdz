@@ -3,7 +3,7 @@
 Build and run instructions for the ASan and TSan configurations, the known
 i386 ASan limit for `tusdcat`, and the environment traps that make TSan fail
 *before your code even runs* — both produce cryptic startup errors that look
-like bugs in tinyusdz but are not.
+like bugs in lightusd but are not.
 
 ## AddressSanitizer (ASan)
 
@@ -15,8 +15,8 @@ Use `SANITIZE_ADDRESS` when configuring CMake:
 cmake -S . -B build_asan -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DSANITIZE_ADDRESS=1 \
-  -DTINYUSDZ_BUILD_TESTS=ON \
-  -DTINYUSDZ_BUILD_EXAMPLES=ON
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build_asan
 ctest --test-dir build_asan --output-on-failure
 ```
@@ -30,9 +30,9 @@ cmake -S . -B build_clang21_m32_asan -G Ninja \
   -DCMAKE_CXX_COMPILER=/usr/bin/clang++-21 \
   -DCMAKE_BUILD_TYPE=Debug \
   -DSANITIZE_ADDRESS=1 \
-  -DTINYUSDZ_BUILD_TESTS=ON \
-  -DTINYUSDZ_BUILD_EXAMPLES=ON
-cmake --build build_clang21_m32_asan --target tusdcat unit-test-tinyusdz
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_EXAMPLES=ON
+cmake --build build_clang21_m32_asan --target tusdcat unit-test-lightusd
 ```
 
 ### Known i386 `tusdcat` Limit
@@ -47,7 +47,7 @@ bytes of InternalMmapVector
 ERROR: Failed to mmap
 ```
 
-This is not a single large TinyUSDZ allocation, and it is not specific to GCC
+This is not a single large LightUSD allocation, and it is not specific to GCC
 libasan. The same failure reproduces with clang-21/compiler-rt ASan. Debugging
 showed the primary allocation failure was a normal 4 KiB libc stdout buffer
 allocation reached from `print_help()`. The larger `InternalMmapVector` failure
@@ -93,7 +93,7 @@ The supported coverage split is:
 
 - Use full ASan `tusdcat` validation on 64-bit builds.
 - Use 32-bit non-ASan builds for i386 tool coverage.
-- Use 32-bit ASan builds for smaller tests such as `unit-test-tinyusdz` and
+- Use 32-bit ASan builds for smaller tests such as `unit-test-lightusd` and
   parser-focused executables.
 
 `CMakeLists.txt` skips the `tusdcat` end-to-end validation tests when both
@@ -122,18 +122,18 @@ cmake -B build_tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       -DCMAKE_CXX_FLAGS=-fsanitize=thread \
       -DCMAKE_C_FLAGS=-fsanitize=thread \
       -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread \
-      -DTINYUSDZ_ENABLE_THREAD=ON \
-      -DTINYUSDZ_BUILD_EXAMPLES=ON -DTINYUSDZ_WITH_TYDRA=ON
+      -DLIGHTUSD_ENABLE_THREAD=ON \
+      -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON
 cmake --build build_tsan -j
 ```
 
 Notes:
 
-- `TINYUSDZ_ENABLE_THREAD=ON` is required — it enables the parallel code
+- `LIGHTUSD_ENABLE_THREAD=ON` is required — it enables the parallel code
   paths TSan is supposed to check (parallel USDC ReconstructStage, parallel
   stage→specs crate conversion, parallel LayerToStage, parallel tydra mesh /
   animation conversion).
-- Do NOT combine with `TINYUSDZ_WITH_TCMALLOC` (jemalloc/tcmalloc link):
+- Do NOT combine with `LIGHTUSD_WITH_TCMALLOC` (jemalloc/tcmalloc link):
   sanitizers must own the allocator.
 - `src/imageproc/simd.cc` self-disables its `target_clones`
   multi-versioning under TSan — ifunc resolvers run before the TSan runtime

@@ -22,7 +22,7 @@
 
 namespace {
 
-namespace tydra = tinyusdz::tydra;
+namespace tydra = lightusd::tydra;
 
 int g_fail = 0;
 
@@ -437,7 +437,7 @@ void TestKeepCompressedKtx2() {
 
   // Core loader: KTX2 -> RGBA8.
   {
-    auto r = tinyusdz::image::LoadImageFromMemory(ktx.data(), ktx.size(),
+    auto r = lightusd::image::LoadImageFromMemory(ktx.data(), ktx.size(),
                                                   "mem://uni.ktx2");
     CHECK(bool(r));
     if (r) {

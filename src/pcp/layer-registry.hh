@@ -3,7 +3,7 @@
 //
 // layer-registry.hh - Parse-once, resolved-path-keyed Layer cache.
 //
-// Part of the tinyusdz::pcp cached composition engine. A referenced, sublayer,
+// Part of the lightusd::pcp cached composition engine. A referenced, sublayer,
 // or payload asset is resolved and parsed exactly once and then shared across
 // every prim that needs it -- the single biggest efficiency win the eager
 // CompositionGraph lacks (it re-parses each file per use).
@@ -13,7 +13,7 @@
 #include <memory>
 #include <string>
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
 #include <mutex>
 #endif
 
@@ -21,7 +21,7 @@
 #include "layer.hh"
 #include "tiny-hashmap.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pcp {
 
 /// Caches parsed Layers keyed by their RESOLVED asset path, so the same file
@@ -64,7 +64,7 @@ class LayerRegistry {
   /// Total number of actual parses performed (cache misses). Used by tests to
   /// assert parse-once behavior.
   size_t parse_count() const {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
     std::lock_guard<std::mutex> lock(*_mu);
 #endif
     return _parse_count;
@@ -74,11 +74,11 @@ class LayerRegistry {
   HashMap<std::string, std::shared_ptr<Layer>> _by_resolved;
   size_t _parse_count{0};
 
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   // Heap-allocated so LayerRegistry (hence pcp::Cache) stays movable.
   std::unique_ptr<std::mutex> _mu;
 #endif
 };
 
 }  // namespace pcp
-}  // namespace tinyusdz
+}  // namespace lightusd

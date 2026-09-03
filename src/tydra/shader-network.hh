@@ -11,7 +11,7 @@
 ///
 /// Key features:
 /// - Shader attribute connection resolution
-/// - Material binding evaluation  
+/// - Material binding evaluation
 /// - UsdPreviewSurface parameter extraction
 /// - Texture coordinate and primvar evaluation
 /// - Shader network traversal and evaluation
@@ -35,7 +35,7 @@
 #include "nonstd/expected.hpp"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // forward decl of prim-types.hh
 class Path;
@@ -94,7 +94,7 @@ bool EvaluateShaderAttribute(
   const value::TimeCode timeCode = value::TimeCode::Default());
 
 extern template bool EvaluateShaderAttribute(const Stage &stage, const Shader &shader, const std::string &attr_name, value::token * out_val, std::string *err, const value::TimeCode timeCode);
- 
+
 // Currently float2 only
 //std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
 
@@ -137,7 +137,7 @@ bool GetBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
@@ -159,7 +159,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Prim &prim,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
@@ -171,7 +171,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
@@ -182,7 +182,7 @@ bool GetDirectlyBoundMaterial(
   const Layer& layer,
   const PrimSpec &ps,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
@@ -193,7 +193,7 @@ bool GetDirectlyBoundMaterial(
   const Layer& layer,
   const Path &abs_path,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
@@ -216,7 +216,7 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &stage,
   const Prim &prim,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
@@ -227,9 +227,9 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  Path *materialPath, 
+  Path *materialPath,
   const Material **material,
   std::string *err);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

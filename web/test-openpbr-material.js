@@ -1,11 +1,11 @@
 // Test script for OpenPBR material serialization
 // This demonstrates how to use the new getMaterial method with JSON and XML formats
 
-// Assuming the TinyUSDZ module is loaded as Module
+// Assuming the LightUSD module is loaded as Module
 
 async function testOpenPBRSerialization() {
   // Create loader instance
-  const loader = new Module.TinyUSDZLoaderNative();
+  const loader = new Module.LightUSDLoaderNative();
 
   // Load a USD file with OpenPBR materials
   // (replace with actual USD binary data)
@@ -161,6 +161,6 @@ function applyOpenPBRMaterialToThreeJS(loader, materialId, threeMesh) {
 }
 
 // Run the test
-if (typeof Module !== 'undefined' && Module.TinyUSDZLoaderNative) {
+if (typeof Module !== 'undefined' && Module.LightUSDLoaderNative) {
   testOpenPBRSerialization().catch(console.error);
 }

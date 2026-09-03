@@ -25,7 +25,7 @@
 #include "usdShade.hh"
 #include "usdSkel.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 /// Template type alias for enum handler functions
 template <typename EnumTy>
@@ -161,4 +161,4 @@ nonstd::optional<std::pair<APISchemas::APIName, std::string>>
 APISchemaNameWithInstanceOpt(const std::string &tok);
 
 }  // namespace enum_handler
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -1,4 +1,4 @@
-# TinyUSDZ JS/WASM module development(for developer)
+# LightUSD JS/WASM module development(for developer)
 
 ## Requrements
 
@@ -38,19 +38,19 @@ $ bun run dev
 
 ## Memory Limit Configuration
 
-TinyUSDZLoader now supports memory limit configuration to prevent memory exhaustion attacks when loading potentially malicious USD files.
+LightUSDLoader now supports memory limit configuration to prevent memory exhaustion attacks when loading potentially malicious USD files.
 
 ### Usage
 
 ```javascript
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
 // Option 1: Set memory limit in constructor
 // (Default: 2GB for WASM32, 8GB for WASM64)
-const loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+const loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
 
 // Option 2: Set memory limit after creation
-const loader2 = new TinyUSDZLoader();
+const loader2 = new LightUSDLoader();
 loader2.setMaxMemoryLimitMB(1024); // Set 1GB limit
 
 // Option 3: Override memory limit for specific load operations
@@ -72,14 +72,14 @@ console.log(`Native default memory limit: ${defaultLimit} MB`);
 
 ## Progress Callback (Three.js GLTFLoader Compatible)
 
-TinyUSDZLoader supports progress callbacks compatible with Three.js GLTFLoader pattern. Progress is reported during download, parsing, and scene building phases.
+LightUSDLoader supports progress callbacks compatible with Three.js GLTFLoader pattern. Progress is reported during download, parsing, and scene building phases.
 
 ### Basic Usage (GLTFLoader style)
 
 ```javascript
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
-const loader = new TinyUSDZLoader();
+const loader = new LightUSDLoader();
 await loader.init();
 
 // Standard Three.js loader pattern
@@ -110,10 +110,10 @@ loader.load(
 For complete progress reporting including Three.js scene building:
 
 ```javascript
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
-const loader = new TinyUSDZLoader();
+const loader = new LightUSDLoader();
 await loader.init();
 
 loader.loadWithFullProgress(
@@ -138,7 +138,7 @@ loader.loadWithFullProgress(
     // options
     {
         buildScene: true,
-        sceneBuilder: TinyUSDZLoaderUtils.buildThreeNode.bind(TinyUSDZLoaderUtils),
+        sceneBuilder: LightUSDLoaderUtils.buildThreeNode.bind(LightUSDLoaderUtils),
         sceneBuilderOptions: {
             envMap: myEnvironmentMap,
             envMapIntensity: 1.0
@@ -152,10 +152,10 @@ loader.loadWithFullProgress(
 When building Three.js scene graphs separately:
 
 ```javascript
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
 // Build with progress callback
-const scene = await TinyUSDZLoaderUtils.buildThreeNode(
+const scene = await LightUSDLoaderUtils.buildThreeNode(
     usd.getNode(0),  // root node
     null,            // default material
     usd,             // USD scene
@@ -190,19 +190,19 @@ const result = await loader.loadWithFullProgressAsync(url, onProgress, options);
 
 ## Material Conversion
 
-TinyUSDZ supports both UsdPreviewSurface and OpenPBR (MaterialX) materials, with conversion to Three.js `MeshPhysicalMaterial`.
+LightUSD supports both UsdPreviewSurface and OpenPBR (MaterialX) materials, with conversion to Three.js `MeshPhysicalMaterial`.
 
 For detailed MaterialX documentation (OpenPBR parameter mappings, color space support, Blender export mapping, NodeGraph traversal, etc.), see [doc/materialx.md](../../doc/materialx.md).
 
 ### Quick Start
 
 ```javascript
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 
 const materialData = usdScene.getMaterial(materialId, 'json');
 
 // Smart conversion (auto-selects best material type)
-const material = await TinyUSDZLoaderUtils.convertMaterial(materialData, usdScene, {
+const material = await LightUSDLoaderUtils.convertMaterial(materialData, usdScene, {
     preferredMaterialType: 'auto',  // 'auto' | 'openpbr' | 'usdpreviewsurface'
     envMap: myEnvironmentMap,
     envMapIntensity: 1.0
@@ -211,7 +211,7 @@ const material = await TinyUSDZLoaderUtils.convertMaterial(materialData, usdScen
 
 ## UsdLux Light Support
 
-TinyUSDZ supports USD lighting (UsdLux) with conversion to Three.js lights (SphereLight, DistantLight, RectLight, DiskLight, CylinderLight, DomeLight). See the `usdlux.html` demo and `cli/dump-usdlux-cli.js` for usage examples.
+LightUSD supports USD lighting (UsdLux) with conversion to Three.js lights (SphereLight, DistantLight, RectLight, DiskLight, CylinderLight, DomeLight). See the `usdlux.html` demo and `cli/dump-usdlux-cli.js` for usage examples.
 
 ## Demo Pages
 
@@ -258,12 +258,12 @@ npm run dev:progress-offscreen # progress-offscreenwebgl.html
 ```
 
 Starting any Vite development command incrementally builds the local legacy
-and next WASM modules into `src/tinyusdz`. This requires Emscripten
-(`emcmake`), CMake, and Ninja. The generated `tinyusdz*.js` and
-`tinyusdz*.wasm` files are build artifacts and are not committed.
+and next WASM modules into `src/lightusd`. This requires Emscripten
+(`emcmake`), CMake, and Ninja. The generated `lightusd*.js` and
+`lightusd*.wasm` files are build artifacts and are not committed.
 
 The generated modules are build artifacts and are not committed. The
-published `TinyUSDZLoader` is next-first; demos and CLIs that need legacy
+published `LightUSDLoader` is next-first; demos and CLIs that need legacy
 behavior pass `backend: 'legacy'` explicitly.
 
 Experimental (WebGPU/WebGL2):

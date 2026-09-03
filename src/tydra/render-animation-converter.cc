@@ -27,7 +27,7 @@
 #include "attribute-eval.hh"
 
 // Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
-#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+#ifdef LIGHTUSD_USE_TIMESAMPLES_SOA
 #define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
   { \
     const auto &_times = (ts).get_times(); \
@@ -60,7 +60,7 @@
 
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -767,7 +767,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
   return !anim_out->channels.empty();
 }
 
-bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const lightusd::GeomMesh &mesh,
                        int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
 
@@ -945,4 +945,4 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -17,16 +17,16 @@
 #endif
 #endif
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
 #endif
 
 #include "usdc-reader-impl.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 namespace {}
@@ -141,7 +141,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   _prim_table.reset(_nodes->size());
 
   bool ret = false;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Parallel reconstruction: disabled with mmap zero-copy (the deferred-array
   // handoff uses single-slot reader state) and when a single thread is
   // requested.
@@ -224,7 +224,7 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
   _prim_table.reset(_nodes->size());
 
   bool ret = false;
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   // Parallel reconstruction: same gate as the Stage path (disabled with mmap
   // zero-copy — the deferred-array handoff uses single-slot reader state —
   // and when a single thread is requested or the layer is small).
@@ -252,7 +252,7 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
 }
 
 bool USDCReader::Impl::ReadUSDC() {
-  TINYUSDZ_PROFILE_FUNCTION("usdc-reader");
+  LIGHTUSD_PROFILE_FUNCTION("usdc-reader");
   if (crate_reader) {
     delete crate_reader;
   }
@@ -284,7 +284,7 @@ bool USDCReader::Impl::ReadUSDC() {
   _err.clear();
 
   {
-    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadBootStrap");
+    LIGHTUSD_PROFILE_SCOPE("usdc-reader", "ReadBootStrap");
     if (!crate_reader->ReadBootStrap()) {
       _warn = crate_reader->GetWarning();
       _err = crate_reader->GetError();
@@ -293,7 +293,7 @@ bool USDCReader::Impl::ReadUSDC() {
   }
 
   {
-    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadTOC");
+    LIGHTUSD_PROFILE_SCOPE("usdc-reader", "ReadTOC");
     if (!crate_reader->ReadTOC()) {
       _warn = crate_reader->GetWarning();
       _err = crate_reader->GetError();
@@ -304,7 +304,7 @@ bool USDCReader::Impl::ReadUSDC() {
   // Read known sections
 
   {
-    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadTokens");
+    LIGHTUSD_PROFILE_SCOPE("usdc-reader", "ReadTokens");
     if (!crate_reader->ReadTokens()) {
       _warn = crate_reader->GetWarning();
       _err = crate_reader->GetError();
@@ -313,7 +313,7 @@ bool USDCReader::Impl::ReadUSDC() {
   }
 
   {
-    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadStrings");
+    LIGHTUSD_PROFILE_SCOPE("usdc-reader", "ReadStrings");
     if (!crate_reader->ReadStrings()) {
       _warn = crate_reader->GetWarning();
       _err = crate_reader->GetError();
@@ -448,11 +448,11 @@ USDCMemoryUsageReport USDCReader::GetMemoryUsageReport() const {
 }
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#else  // TINYUSDZ_DISABLE_MODULE_USDC_READER
+#else  // LIGHTUSD_DISABLE_MODULE_USDC_READER
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 //
@@ -497,6 +497,6 @@ USDCMemoryUsageReport USDCReader::GetMemoryUsageReport() const {
 }
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // TINYUSDZ_DISABLE_MODULE_USDC_READER
+#endif  // LIGHTUSD_DISABLE_MODULE_USDC_READER

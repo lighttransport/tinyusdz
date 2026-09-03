@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace mtlx {
 
 // XMLNode implementation
@@ -105,12 +105,12 @@ XMLNodePtr XMLNode::FindNode(const std::string& path) const {
   if (path.empty()) {
     return nullptr;
   }
-  
+
   // Split path by '/'
   size_t pos = path.find('/');
   std::string first = (pos == std::string::npos) ? path : path.substr(0, pos);
   std::string rest = (pos == std::string::npos) ? "" : path.substr(pos + 1);
-  
+
   // Find child with matching name
   for (const auto& child : children_) {
     if (child && child->GetName() == first) {
@@ -121,22 +121,22 @@ XMLNodePtr XMLNode::FindNode(const std::string& path) const {
       }
     }
   }
-  
+
   return nullptr;
 }
 
 std::vector<XMLNodePtr> XMLNode::FindNodes(const std::string& path) const {
   std::vector<XMLNodePtr> result;
-  
+
   if (path.empty()) {
     return result;
   }
-  
+
   // Split path by '/'
   size_t pos = path.find('/');
   std::string first = (pos == std::string::npos) ? path : path.substr(0, pos);
   std::string rest = (pos == std::string::npos) ? "" : path.substr(pos + 1);
-  
+
   // Find all children with matching name
   for (const auto& child : children_) {
     if (child && child->GetName() == first) {
@@ -148,7 +148,7 @@ std::vector<XMLNodePtr> XMLNode::FindNodes(const std::string& path) const {
       }
     }
   }
-  
+
   return result;
 }
 
@@ -160,12 +160,12 @@ bool XMLDocument::ParseString(const std::string& xml_string) {
 
 bool XMLDocument::ParseMemory(const char* data, size_t size) {
   XMLTokenizer tokenizer;
-  
+
   if (!tokenizer.Initialize(data, size)) {
     error_ = "Failed to initialize tokenizer: " + tokenizer.GetError();
     return false;
   }
-  
+
   // Skip any processing instructions at the beginning
   Token token;
   while (tokenizer.NextToken(token)) {
@@ -175,36 +175,36 @@ bool XMLDocument::ParseMemory(const char* data, size_t size) {
     } else if (token.type == TokenType::StartTag) {
       // Found root element
       root_ = std::make_shared<XMLNode>(token.name);
-      
+
       // Parse attributes of root element
       if (!ParseAttributes(tokenizer, root_)) {
         return false;
       }
-      
+
       // Parse children
       current_depth_ = 1;
       if (!ParseNode(tokenizer, root_)) {
         return false;
       }
-      
+
       break;
     } else if (token.type == TokenType::EndOfDocument) {
       error_ = "No root element found";
       return false;
     }
   }
-  
+
   if (!root_) {
     error_ = "Failed to parse root element";
     return false;
   }
-  
+
   return true;
 }
 
 bool XMLDocument::ParseAttributes(XMLTokenizer& tokenizer, XMLNodePtr node) {
   Token token;
-  
+
   while (tokenizer.NextToken(token)) {
     if (token.type == TokenType::Attribute) {
       node->SetAttribute(token.name, token.value);
@@ -217,7 +217,7 @@ bool XMLDocument::ParseAttributes(XMLTokenizer& tokenizer, XMLNodePtr node) {
       break;
     }
   }
-  
+
   return true;
 }
 
@@ -226,10 +226,10 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
     error_ = "Maximum nesting depth exceeded";
     return false;
   }
-  
+
   Token token;
   std::string accumulated_text;
-  
+
   while (tokenizer.NextToken(token)) {
     switch (token.type) {
       case TokenType::StartTag: {
@@ -243,11 +243,11 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
           }
           accumulated_text.clear();
         }
-        
+
         // Create new child node
         auto child = std::make_shared<XMLNode>(token.name);
         parent->AddChild(child);
-        
+
         // Parse attributes
         bool self_closing = false;
         Token attr_token;
@@ -267,12 +267,12 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
               // This is a nested child, parse recursively
               auto nested = std::make_shared<XMLNode>(attr_token.name);
               child->AddChild(nested);
-              
+
               // Parse nested attributes
               if (!ParseAttributes(tokenizer, nested)) {
                 return false;
               }
-              
+
               // Parse nested children
               current_depth_++;
               if (!ParseNode(tokenizer, nested)) {
@@ -282,7 +282,7 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
             } else if (attr_token.type == TokenType::EndTag) {
               // This ends the child element
               if (attr_token.name != child->GetName()) {
-                error_ = "Mismatched end tag: expected </" + child->GetName() + 
+                error_ = "Mismatched end tag: expected </" + child->GetName() +
                         "> but got </" + attr_token.name + ">";
                 return false;
               }
@@ -291,7 +291,7 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
             break;
           }
         }
-        
+
         if (!self_closing) {
           // Parse children recursively
           current_depth_++;
@@ -302,7 +302,7 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
         }
         break;
       }
-      
+
       case TokenType::EndTag:
         // Save any accumulated text first
         if (!accumulated_text.empty()) {
@@ -313,34 +313,34 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
             parent->SetText(accumulated_text.substr(start, end - start + 1));
           }
         }
-        
+
         if (token.name != parent->GetName()) {
-          error_ = "Mismatched end tag: expected </" + parent->GetName() + 
+          error_ = "Mismatched end tag: expected </" + parent->GetName() +
                   "> but got </" + token.name + ">";
           return false;
         }
         return true;
-      
+
       case TokenType::Text:
       case TokenType::CDATA:
         accumulated_text += token.value;
         break;
-      
+
       case TokenType::Comment:
         // Ignore comments
         break;
-      
+
       case TokenType::EndOfDocument:
         // Unexpected end of document
         error_ = "Unexpected end of document while parsing <" + parent->GetName() + ">";
         return false;
-      
+
       default:
         error_ = "Unexpected token type";
         return false;
     }
   }
-  
+
   return true;
 }
 
@@ -365,25 +365,25 @@ bool MaterialXParser::Parse(const std::string& xml_string) {
     error_ = document_.GetError();
     return false;
   }
-  
+
   // Check if root is materialx
   auto root = document_.GetRoot();
   if (!root || root->GetName() != "materialx") {
     error_ = "Root element must be <materialx>";
     return false;
   }
-  
+
   // Validate version
   std::string version = root->GetAttribute("version");
   if (version.empty()) {
     error_ = "Missing version attribute in <materialx>";
     return false;
   }
-  
+
   if (!ValidateVersion(version)) {
     warning_ = "Unknown MaterialX version: " + version;
   }
-  
+
   return true;
 }
 
@@ -393,11 +393,11 @@ bool MaterialXParser::ParseFile(const std::string& filename) {
     error_ = "Failed to open file: " + filename;
     return false;
   }
-  
+
   // Read file content
   std::stringstream buffer;
   buffer << file.rdbuf();
-  
+
   return Parse(buffer.str());
 }
 
@@ -407,7 +407,7 @@ bool MaterialXParser::Validate() {
     error_ = "No document to validate";
     return false;
   }
-  
+
   // Validate all nodes recursively
   return ValidateNode(root);
 }
@@ -441,47 +441,47 @@ bool MaterialXParser::ValidateVersion(const std::string& version) {
   static const std::vector<std::string> supported_versions = {
     "1.38", "1.37", "1.36"
   };
-  
-  return std::find(supported_versions.begin(), supported_versions.end(), version) != 
+
+  return std::find(supported_versions.begin(), supported_versions.end(), version) !=
          supported_versions.end();
 }
 
 bool MaterialXParser::ValidateNode(XMLNodePtr node) {
   if (!node) return false;
-  
+
   const std::string& name = node->GetName();
-  
+
   // Validate known MaterialX elements
   static const std::vector<std::string> valid_elements = {
     "materialx", "nodegraph", "node", "input", "output", "token",
     "variant", "variantset", "variantassign", "visibility",
-    "collection", "geom", "material", "surfacematerial", 
+    "collection", "geom", "material", "surfacematerial",
     "volumematerial", "look", "property", "propertyset",
     "propertyassign", "materialassign", "geominfo", "geomprop",
     "implementation", "nodeDef", "typedef", "member", "unit",
     "unitdef", "unittypedef", "targetdef", "attributedef"
   };
-  
-  bool valid = std::find(valid_elements.begin(), valid_elements.end(), name) != 
+
+  bool valid = std::find(valid_elements.begin(), valid_elements.end(), name) !=
                valid_elements.end();
-  
+
   if (!valid) {
     warning_ += "Unknown element: <" + name + ">\n";
   }
-  
+
   // Validate type attribute if present
   std::string type = node->GetAttribute("type");
   if (!type.empty() && !ValidateType(type)) {
     warning_ += "Unknown type: " + type + " in <" + name + ">\n";
   }
-  
+
   // Validate children recursively
   for (const auto& child : node->GetChildren()) {
     if (!ValidateNode(child)) {
       return false;
     }
   }
-  
+
   return true;
 }
 
@@ -495,10 +495,10 @@ bool MaterialXParser::ValidateType(const std::string& type_name) {
     "surfaceshader", "displacementshader", "volumeshader",
     "lightshader", "geomname", "geomnamearray"
   };
-  
-  return std::find(valid_types.begin(), valid_types.end(), type_name) != 
+
+  return std::find(valid_types.begin(), valid_types.end(), type_name) !=
          valid_types.end();
 }
 
 } // namespace mtlx
-} // namespace tinyusdz
+} // namespace lightusd

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// URDF/MJCF -> USD Physics + MuJoCo + Newton export tester for TinyUSDZ WASM.
+// URDF/MJCF -> USD Physics + MuJoCo + Newton export tester for LightUSD WASM.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,15 +9,15 @@ import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from '../src/tinyusdz/TinyUSDZLoaderUtils.js';
-import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from '../src/lightusd/LightUSDLoaderUtils.js';
+import LightUSDFactory from '../src/lightusd/lightusd.js';
 
 const SUPPORTED_FORMATS = new Set(['usda', 'usdc', 'usdz', 'all']);
 const USD_MESH_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
 
 const SAMPLE_URDF = `<?xml version="1.0"?>
-<robot name="TinyUSDZSampleRobot">
+<robot name="LightUSDSampleRobot">
   <link name="base_link">
     <inertial>
       <origin xyz="0 0 0"/>
@@ -723,9 +723,9 @@ let usdMeshLoader = null;
 
 async function ensureUSDMeshLoader() {
   if (!usdMeshLoader) {
-    usdMeshLoader = new TinyUSDZLoader();
+    usdMeshLoader = new LightUSDLoader();
     await usdMeshLoader.init({ useZstdCompressedWasm: false, useMemory64: false });
-    TinyUSDZLoaderUtils.setTinyUSDZ(usdMeshLoader.native_);
+    LightUSDLoaderUtils.setLightUSD(usdMeshLoader.native_);
   }
   return usdMeshLoader;
 }
@@ -739,8 +739,8 @@ async function loadUSDObject(resolvedAsset) {
     path.basename(resolvedAsset.path)
   );
   const rootNode = sceneData.getDefaultRootNode();
-  const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
-  return TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
+  const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
+  return LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
     overrideMaterial: false
   });
 }
@@ -2570,8 +2570,8 @@ async function main() {
     fs.writeFileSync(opts.dumpJson, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   }
 
-  const tinyusdz = await TinyUSDZFactory();
-  const native = new tinyusdz.TinyUSDZLoaderNative();
+  const lightusd = await LightUSDFactory();
+  const native = new lightusd.LightUSDLoaderNative();
   let payloadJSON;
   try {
     payloadJSON = JSON.stringify(payload);

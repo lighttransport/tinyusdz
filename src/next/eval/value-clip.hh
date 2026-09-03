@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct ValueClipSet {
@@ -74,4 +74,4 @@ bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
                               ValueClipStageCache* stage_cache = nullptr);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

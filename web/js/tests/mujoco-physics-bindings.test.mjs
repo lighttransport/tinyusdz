@@ -4,8 +4,8 @@ import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
-const defaultCache = path.resolve(testDir, '../../../.cache/tinyusdz-verification');
-const cacheDir = path.resolve(process.env.TINYUSDZ_VERIFY_CACHE || defaultCache);
+const defaultCache = path.resolve(testDir, '../../../.cache/lightusd-verification');
+const cacheDir = path.resolve(process.env.LIGHTUSD_VERIFY_CACHE || defaultCache);
 const distDir = path.resolve(process.env.MUJOCO_WASM_DIR ||
   path.join(cacheDir, 'mujoco/wasm/dist'));
 const modulePath = path.join(distDir, 'mujoco_physics.js');

@@ -1,6 +1,6 @@
 #pragma once
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace minijson {
 class Value;
@@ -8,4 +8,4 @@ class Value;
 
 using json = minijson::Value;
 
-} // namespace tinyusdz
+} // namespace lightusd

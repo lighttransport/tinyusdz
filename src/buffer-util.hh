@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 
 ///
 /// Buffer class to replace std::vector<uint8_t> with manual memory management
@@ -753,4 +753,4 @@ class BufferView {
   size_t size_;
 };
 
-}  // namespace tinyusdz
+}  // namespace lightusd

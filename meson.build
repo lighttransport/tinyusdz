@@ -1,7 +1,7 @@
-# TinyUSDZ Meson build
+# LightUSD Meson build
 # Source list synchronized with CMakeLists.txt
 
-project('tinyusdz', ['c', 'cpp'],
+project('lightusd', ['c', 'cpp'],
   version: '1.0.0-rc3',
   default_options: [
     'cpp_std=c++17',
@@ -51,107 +51,107 @@ endif
 # Compile definitions
 # ============================================================================
 
-tinyusdz_defines = []
+lightusd_defines = []
 
 if opt_json
-  tinyusdz_defines += '-DTINYUSDZ_WITH_JSON'
+  lightusd_defines += '-DLIGHTUSD_WITH_JSON'
 endif
 if opt_usdmtlx
-  tinyusdz_defines += '-DTINYUSDZ_USE_USDMTLX'
+  lightusd_defines += '-DLIGHTUSD_USE_USDMTLX'
 endif
 if opt_usdobj
-  tinyusdz_defines += '-DTINYUSDZ_USE_USDOBJ'
+  lightusd_defines += '-DLIGHTUSD_USE_USDOBJ'
 endif
 if opt_usdvox
-  tinyusdz_defines += '-DTINYUSDZ_USE_USDVOX'
+  lightusd_defines += '-DLIGHTUSD_USE_USDVOX'
 endif
 if opt_usdfbx
-  tinyusdz_defines += '-DTINYUSDZ_USE_USDFBX'
+  lightusd_defines += '-DLIGHTUSD_USE_USDFBX'
 endif
 if opt_exr
-  tinyusdz_defines += '-DTINYUSDZ_WITH_EXR'
+  lightusd_defines += '-DLIGHTUSD_WITH_EXR'
 endif
 if opt_colorio
-  tinyusdz_defines += '-DTINYUSDZ_WITH_COLORIO'
+  lightusd_defines += '-DLIGHTUSD_WITH_COLORIO'
 endif
 if opt_audio
-  tinyusdz_defines += '-DTINYUSDZ_WITH_AUDIO'
+  lightusd_defines += '-DLIGHTUSD_WITH_AUDIO'
 endif
 if opt_alac_audio
-  tinyusdz_defines += '-DTINYUSDZ_WITH_ALAC_AUDIO'
+  lightusd_defines += '-DLIGHTUSD_WITH_ALAC_AUDIO'
 endif
 if opt_tydra
-  tinyusdz_defines += '-DTINYUSDZ_WITH_TYDRA'
+  lightusd_defines += '-DLIGHTUSD_WITH_TYDRA'
 endif
 if opt_zstd
-  tinyusdz_defines += '-DTINYUSDZ_WITH_ZSTD_COMPRESSION'
+  lightusd_defines += '-DLIGHTUSD_WITH_ZSTD_COMPRESSION'
 endif
 if opt_meshopt
-  tinyusdz_defines += '-DTINYUSDZ_WITH_MESHOPT'
+  lightusd_defines += '-DLIGHTUSD_WITH_MESHOPT'
 endif
 if opt_geogram
-  tinyusdz_defines += ['-DTINYUSDZ_WITH_GEOGRAM', '-DGEO_STATIC_LIBS', '-DGEOGRAM_WITH_LEGACY_NUMERICS']
+  lightusd_defines += ['-DLIGHTUSD_WITH_GEOGRAM', '-DGEO_STATIC_LIBS', '-DGEOGRAM_WITH_LEGACY_NUMERICS']
 endif
 if opt_wamr
-  tinyusdz_defines += '-DTINYUSDZ_WITH_WAMR'
+  lightusd_defines += '-DLIGHTUSD_WITH_WAMR'
   if host_machine.system() == 'windows'
-    tinyusdz_defines += '-DBH_PLATFORM_WINDOWS=1'
+    lightusd_defines += '-DBH_PLATFORM_WINDOWS=1'
   else
-    tinyusdz_defines += '-DBH_PLATFORM_LINUX=1'
+    lightusd_defines += '-DBH_PLATFORM_LINUX=1'
   endif
 endif
 if opt_mcp_server
-  tinyusdz_defines += ['-DTINYUSDZ_WITH_MCP_SERVER', '-DOPENSSL_API_3_0']
+  lightusd_defines += ['-DLIGHTUSD_WITH_MCP_SERVER', '-DOPENSSL_API_3_0']
 endif
 if opt_qjs
-  tinyusdz_defines += '-DTINYUSDZ_WITH_QJS'
+  lightusd_defines += '-DLIGHTUSD_WITH_QJS'
 endif
 if opt_remotery
-  tinyusdz_defines += '-DRMT_ENABLED=1'
+  lightusd_defines += '-DRMT_ENABLED=1'
   if host_machine.system() == 'windows'
-    tinyusdz_defines += '-DRMT_USE_D3D11=0'
+    lightusd_defines += '-DRMT_USE_D3D11=0'
   elif host_machine.system() == 'darwin'
-    tinyusdz_defines += '-DRMT_USE_METAL=0'
+    lightusd_defines += '-DRMT_USE_METAL=0'
   elif host_machine.system() == 'linux'
-    tinyusdz_defines += '-DRMT_USE_OPENGL=0'
+    lightusd_defines += '-DRMT_USE_OPENGL=0'
   endif
 endif
 if opt_production_build
-  tinyusdz_defines += '-DTINYUSDZ_PRODUCTION_BUILD'
+  lightusd_defines += '-DLIGHTUSD_PRODUCTION_BUILD'
 endif
 if opt_debug_print
-  tinyusdz_defines += '-DTINYUSDZ_DEBUG_PRINT'
+  lightusd_defines += '-DLIGHTUSD_DEBUG_PRINT'
 endif
 if not get_option('builtin_image_loader')
-  tinyusdz_defines += '-DTINYUSDZ_NO_BUILTIN_IMAGE_LOADER'
+  lightusd_defines += '-DLIGHTUSD_NO_BUILTIN_IMAGE_LOADER'
 endif
 
 # Inverted module flags
 if not get_option('module_usda_reader')
-  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDA_READER'
+  lightusd_defines += '-DLIGHTUSD_DISABLE_MODULE_USDA_READER'
 endif
 if not get_option('module_usda_writer')
-  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDA_WRITER'
+  lightusd_defines += '-DLIGHTUSD_DISABLE_MODULE_USDA_WRITER'
 endif
 if not get_option('module_usdc_reader')
-  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDC_READER'
+  lightusd_defines += '-DLIGHTUSD_DISABLE_MODULE_USDC_READER'
 endif
 if not get_option('module_usdc_writer')
-  tinyusdz_defines += '-DTINYUSDZ_DISABLE_MODULE_USDC_WRITER'
+  lightusd_defines += '-DLIGHTUSD_DISABLE_MODULE_USDC_WRITER'
 endif
 
 # ============================================================================
 # Core sources (always compiled)
 # ============================================================================
 
-tinyusdz_sources = files(
+lightusd_sources = files(
   # Crate path utilities (path sorting / tree encoding for the USDC writer).
   # Formerly the sandbox/path-sort-and-encode-crate subproject; now part of the lib.
   'src/crate-path-utils/path_sort.cc',
   'src/crate-path-utils/tree_encode.cc',
   'src/arg-parser.cc',
   'src/asset-resolution.cc',
-  'src/tinyusdz.cc',
+  'src/lightusd.cc',
   'src/xform.cc',
   'src/performance.cc',
   'src/ascii-parser.cc',
@@ -278,7 +278,7 @@ tinyusdz_sources = files(
 # Dependency sources (always compiled)
 # ============================================================================
 
-tinyusdz_dep_sources = files(
+lightusd_dep_sources = files(
   'src/integerCoding.cpp',
   'src/lz4-compression.cc',
   'src/lz4/lz4.c',
@@ -290,7 +290,7 @@ tinyusdz_dep_sources = files(
 
 # -- Tydra --
 if opt_tydra
-  tinyusdz_sources += files(
+  lightusd_sources += files(
     'src/tydra/facial.cc',
     'src/tydra/prim-apply.cc',
     'src/tydra/scene-access.cc',
@@ -331,53 +331,53 @@ if opt_tydra
     'src/tydra/js-script.cc',
     'src/tydra/threejs-exporter.cc',
   )
-  tinyusdz_dep_sources += files('src/external/mikktspace/mikktspace.c')
+  lightusd_dep_sources += files('src/external/mikktspace/mikktspace.c')
 
   if opt_wamr
-    tinyusdz_sources += files('src/tydra/wasm-runtime.cc')
+    lightusd_sources += files('src/tydra/wasm-runtime.cc')
   endif
 endif
 
 # -- pxr compat API --
 if opt_pxr_compat_api
-  tinyusdz_sources += files('src/pxr-compat.cc')
+  lightusd_sources += files('src/pxr-compat.cc')
 endif
 
 # -- usdMtlx (pugixml) --
 if opt_usdmtlx
-  tinyusdz_dep_sources += files('src/external/pugixml.cpp')
+  lightusd_dep_sources += files('src/external/pugixml.cpp')
 endif
 
 # -- JSON --
 if opt_json
-  tinyusdz_sources += files(
+  lightusd_sources += files(
     'src/json-to-usd.cc',
     'src/usd-to-json.cc',
     'src/json-writer.cc',
     'src/json-util.cc',
   )
-  tinyusdz_dep_sources += files('src/external/yyjson.c')
+  lightusd_dep_sources += files('src/external/yyjson.c')
 endif
 
 # -- usdFbx --
 if opt_usdfbx
-  tinyusdz_sources += files('src/usdFbx.cc')
-  tinyusdz_dep_sources += files('src/external/OpenFBX/src/ofbx.cpp')
+  lightusd_sources += files('src/usdFbx.cc')
+  lightusd_dep_sources += files('src/external/OpenFBX/src/ofbx.cpp')
 endif
 
 # -- usdObj --
 if opt_usdobj
-  tinyusdz_dep_sources += files('src/external/tiny_obj_loader.cc')
+  lightusd_dep_sources += files('src/external/tiny_obj_loader.cc')
 endif
 
 # -- usdVox --
 if opt_usdvox
-  tinyusdz_sources += files('src/usdVox.cc')
+  lightusd_sources += files('src/usdVox.cc')
 endif
 
 # -- ALAC audio --
 if opt_alac_audio
-  tinyusdz_dep_sources += files(
+  lightusd_dep_sources += files(
     'src/external/alac/codec/EndianPortable.c',
     'src/external/alac/codec/ALACBitUtilities.c',
     'src/external/alac/codec/ALACDecoder.cpp',
@@ -393,12 +393,12 @@ endif
 
 # -- MCP server --
 if opt_mcp_server
-  tinyusdz_dep_sources += files('src/external/civetweb/civetweb.c')
+  lightusd_dep_sources += files('src/external/civetweb/civetweb.c')
 endif
 
 # -- QuickJS --
 if opt_qjs
-  tinyusdz_dep_sources += files(
+  lightusd_dep_sources += files(
     'src/external/quickjs-ng/cutils.c',
     'src/external/quickjs-ng/libregexp.c',
     'src/external/quickjs-ng/libunicode.c',
@@ -409,7 +409,7 @@ endif
 
 # -- meshoptimizer --
 if opt_meshopt
-  tinyusdz_dep_sources += files(
+  lightusd_dep_sources += files(
     'src/external/meshoptimizer/allocator.cpp',
     'src/external/meshoptimizer/clusterizer.cpp',
     'src/external/meshoptimizer/indexanalyzer.cpp',
@@ -431,12 +431,12 @@ endif
 
 # -- Remotery --
 if opt_remotery
-  tinyusdz_dep_sources += files('src/external/Remotery/Remotery.c')
+  lightusd_dep_sources += files('src/external/Remotery/Remotery.c')
 endif
 
 # -- Geogram --
 if opt_geogram
-  tinyusdz_dep_sources += files(
+  lightusd_dep_sources += files(
     'src/external/geogram/geogram/third_party/triangle/triangle.c',
   )
 endif
@@ -446,13 +446,13 @@ endif
 # ============================================================================
 
 extra_link_libs = []
-tinyusdz_inc = include_directories('src')
+lightusd_inc = include_directories('src')
 
 # -- fpng (needs FPNG_NO_SSE=1) --
 if opt_builtin_image_loader
-  fpng_lib = static_library('tinyusdz_fpng',
+  fpng_lib = static_library('lightusd_fpng',
     'src/external/fpng.cpp',
-    include_directories: tinyusdz_inc,
+    include_directories: lightusd_inc,
     cpp_args: ['-DFPNG_NO_SSE=1'],
     pic: true,
   )
@@ -461,16 +461,16 @@ endif
 
 # -- zstd (needs ZSTD_DISABLE_ASM=1, suppress warnings) --
 if opt_zstd and not opt_system_zstd
-  zstd_lib = static_library('tinyusdz_zstd',
+  zstd_lib = static_library('lightusd_zstd',
     'src/external/zstd.c',
-    include_directories: tinyusdz_inc,
+    include_directories: lightusd_inc,
     c_args: ['-DZSTD_DISABLE_ASM=1', '-w'],
     pic: true,
   )
   extra_link_libs += zstd_lib
-  tinyusdz_dep_sources += files('src/zstd-compression.cc')
+  lightusd_dep_sources += files('src/zstd-compression.cc')
 elif opt_zstd and opt_system_zstd
-  tinyusdz_dep_sources += files('src/zstd-compression.cc')
+  lightusd_dep_sources += files('src/zstd-compression.cc')
 endif
 
 # -- EXR (tinyexr) --
@@ -482,12 +482,12 @@ if opt_exr
     exr_c_args += ['-DTINYEXR_V3_HAS_DEFLATE=1', '-DTINYEXR_V3_NO_MINIZ=1']
     exr_cpp_args += ['-DTINYEXR_USE_MINIZ=0']
   endif
-  exr_inc = [tinyusdz_inc]
+  exr_inc = [lightusd_inc]
   if not opt_system_zlib
     exr_inc += include_directories('src/external')
   endif
 
-  exr_lib = static_library('tinyusdz_exr',
+  exr_lib = static_library('lightusd_exr',
     'src/external/tinyexr_c_impl.c',
     'src/external/tinyexr.cc',
     include_directories: exr_inc,
@@ -500,9 +500,9 @@ endif
 
 # -- miniz (for EXR/TIFF when not using system zlib) --
 if (opt_exr or get_option('usdmtlx')) and not opt_system_zlib
-  miniz_lib = static_library('tinyusdz_miniz',
+  miniz_lib = static_library('lightusd_miniz',
     'src/external/miniz.c',
-    include_directories: tinyusdz_inc,
+    include_directories: lightusd_inc,
     c_args: ['-D_LARGEFILE64_SOURCE=1'],
     pic: true,
   )
@@ -513,7 +513,7 @@ endif
 # tinysubdiv (tsd) sources — dependency-free subdivision surfaces, always built
 # ============================================================================
 
-tinyusdz_sources += files(
+lightusd_sources += files(
   'src/tsd/tsd-validate.cc',
   'src/tsd/tsd-topology.cc',
   'src/tsd/tsd-bilinear.cc',
@@ -522,7 +522,7 @@ tinyusdz_sources += files(
   'src/tsd/tsd-fvar.cc',
   'src/tsd/tsd-refine.cc',
   'src/tsd/tsd-limit.cc',
-  'src/tsd/tsd-tinyusdz.cc',
+  'src/tsd/tsd-lightusd.cc',
 )
 
 # ============================================================================
@@ -581,7 +581,7 @@ if opt_wamr
     wamr_c_args += '-DBH_PLATFORM_LINUX=1'
   endif
 
-  wamr_lib = static_library('tinyusdz_wamr',
+  wamr_lib = static_library('lightusd_wamr',
     wamr_sources,
     include_directories: wamr_inc_dirs,
     c_args: wamr_c_args,
@@ -623,7 +623,7 @@ endif
 # Main static library
 # ============================================================================
 
-all_inc = [tinyusdz_inc] + wamr_inc
+all_inc = [lightusd_inc] + wamr_inc
 if opt_geogram
   all_inc += include_directories('src/external/geogram')
 endif
@@ -631,12 +631,12 @@ if opt_remotery
   all_inc += include_directories('src/external/Remotery')
 endif
 
-tinyusdz_static = static_library('tinyusdz_static',
-  tinyusdz_sources + tinyusdz_dep_sources,
+lightusd_static = static_library('lightusd_static',
+  lightusd_sources + lightusd_dep_sources,
   include_directories: all_inc,
   dependencies: ext_deps,
-  cpp_args: tinyusdz_defines,
-  c_args: tinyusdz_defines,
+  cpp_args: lightusd_defines,
+  c_args: lightusd_defines,
   link_with: extra_link_libs,
   pic: true,
 )
@@ -646,10 +646,10 @@ tinyusdz_static = static_library('tinyusdz_static',
 # ============================================================================
 
 if opt_shared_lib
-  shared_defines = tinyusdz_defines + ['-DTINYUSDZ_COMPILE_LIBRARY', '-DTINYUSDZ_SHARED_LIBRARY']
+  shared_defines = lightusd_defines + ['-DLIGHTUSD_COMPILE_LIBRARY', '-DLIGHTUSD_SHARED_LIBRARY']
 
-  tinyusdz_shared = shared_library('tinyusdz',
-    tinyusdz_sources + tinyusdz_dep_sources,
+  lightusd_shared = shared_library('lightusd',
+    lightusd_sources + lightusd_dep_sources,
     include_directories: all_inc,
     dependencies: ext_deps,
     cpp_args: shared_defines,
@@ -662,7 +662,7 @@ endif
 # Declare dependency for subproject consumers
 # ============================================================================
 
-tinyusdz_dep = declare_dependency(
-  link_with: tinyusdz_static,
-  include_directories: tinyusdz_inc,
+lightusd_dep = declare_dependency(
+  link_with: lightusd_static,
+  include_directories: lightusd_inc,
 )

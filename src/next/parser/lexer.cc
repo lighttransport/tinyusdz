@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Lexer implementation
+// LightUSD Next - Lexer implementation
 
 #include "lexer.hh"
 #include "../prim/identifier.hh"
@@ -12,7 +12,7 @@
 #include <cstring>
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -785,4 +785,4 @@ const char* TokenTypeName(TokenType type) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

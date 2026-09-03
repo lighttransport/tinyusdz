@@ -38,7 +38,7 @@
 #include "core/prim.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "safe-arithmetic.hh"
@@ -66,7 +66,7 @@
 
 #include "tydra/render-data-material-internal.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -1812,4 +1812,4 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
 
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

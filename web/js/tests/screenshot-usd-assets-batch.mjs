@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Batch screenshotter for usd-wg/assets test_assets through TinyUSDZ WebGL.
+// Batch screenshotter for usd-wg/assets test_assets through LightUSD WebGL.
 //
 // Run from web/js:
 //   xvfb-run -a node tests/screenshot-usd-assets-batch.mjs --hw

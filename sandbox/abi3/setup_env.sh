@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache 2.0
 #
-# Setup Python environment for TinyUSDZ ABI3 binding using uv
+# Setup Python environment for LightUSD ABI3 binding using uv
 #
 # This script:
 # 1. Checks for uv installation
@@ -13,7 +13,7 @@
 set -e  # Exit on error
 
 echo "========================================"
-echo "TinyUSDZ ABI3 - Environment Setup"
+echo "LightUSD ABI3 - Environment Setup"
 echo "========================================"
 echo
 
@@ -93,7 +93,7 @@ fi
 # Check if module can be imported
 echo
 echo "Testing module import..."
-python -c "import tinyusdz_abi3; print('✓ Module import successful')" || {
+python -c "import lightusd_abi3; print('✓ Module import successful')" || {
     echo "✗ Module import failed"
     exit 1
 }

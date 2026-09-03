@@ -44,7 +44,7 @@
 #include "tydra/next/chunked-array.hh"
 #include "tydra/next/resource-budget.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace next {
 
@@ -77,10 +77,10 @@ class MemBudget {
     } else {
       size_t avail = AvailableSystemMemory();
       const uint64_t target_capacity =
-          avail ? std::min<uint64_t>(avail, tinyusdz::tydra::next::GiB(32))
-                : tinyusdz::tydra::next::GiB(32);
+          avail ? std::min<uint64_t>(avail, lightusd::tydra::next::GiB(32))
+                : lightusd::tydra::next::GiB(32);
       cap_ = static_cast<size_t>(
-          tinyusdz::tydra::next::ComputeResourceBudget(target_capacity, 0)
+          lightusd::tydra::next::ComputeResourceBudget(target_capacity, 0)
               .host_limit);
     }
     base_.store(0);
@@ -95,7 +95,7 @@ class MemBudget {
     uint64_t avail = AvailableSystemMemory();
     if (avail) {
       const uint64_t host_limit =
-          tinyusdz::tydra::next::ComputeResourceBudget(avail, 0).host_limit;
+          lightusd::tydra::next::ComputeResourceBudget(avail, 0).host_limit;
       if (host_limit) cap_bytes = std::min<uint64_t>(cap_bytes, host_limit);
     }
 #if SIZE_MAX < UINT64_MAX
@@ -371,4 +371,4 @@ struct PoolAlloc {
 
 }  // namespace next
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

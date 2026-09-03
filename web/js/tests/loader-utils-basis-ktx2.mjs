@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { TinyUSDZLoaderUtils } from '../src/tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoaderUtils } from '../src/lightusd/LightUSDLoaderUtils.js';
 
-const savedLoader = TinyUSDZLoaderUtils._ktx2Loader;
-const savedOwnsLoader = TinyUSDZLoaderUtils._ownsKTX2Loader;
+const savedLoader = LightUSDLoaderUtils._ktx2Loader;
+const savedOwnsLoader = LightUSDLoaderUtils._ownsKTX2Loader;
 const calls = [];
 
 function compressedTexture(tag) {
@@ -58,7 +58,7 @@ function ktx2Header(vkFormat, colorModel, supercompression = 0) {
 }
 
 try {
-  TinyUSDZLoaderUtils.setKTX2Loader({
+  LightUSDLoaderUtils.setKTX2Loader({
     loadAsync(uri) {
       calls.push(['load', uri]);
       return Promise.resolve(compressedTexture(3));
@@ -69,7 +69,7 @@ try {
     }
   });
 
-  const external = await TinyUSDZLoaderUtils.getTextureFromUSD(scene({
+  const external = await LightUSDLoaderUtils.getTextureFromUSD(scene({
     uri: '/textures/material.ktx2?rev=1',
     bufferId: -1,
     decoded: false
@@ -79,9 +79,9 @@ try {
   assert.equal(external.wrapT, THREE.ClampToEdgeWrapping);
 
   const identifier = ktx2Header(158, 162);
-  assert.equal(TinyUSDZLoaderUtils.classifyKTX2Image({data: identifier}).kind,
+  assert.equal(LightUSDLoaderUtils.classifyKTX2Image({data: identifier}).kind,
     'standard');
-  const embedded = await TinyUSDZLoaderUtils.getTextureFromUSD(scene({
+  const embedded = await LightUSDLoaderUtils.getTextureFromUSD(scene({
     uri: '',
     bufferId: 7,
     decoded: false,
@@ -90,9 +90,9 @@ try {
   assert.equal(embedded.isCompressedTexture, true);
 
   const basis = ktx2Header(0, 166, 2);
-  assert.equal(TinyUSDZLoaderUtils.classifyKTX2Image({data: basis}).kind,
+  assert.equal(LightUSDLoaderUtils.classifyKTX2Image({data: basis}).kind,
     'basis');
-  const embeddedBasis = await TinyUSDZLoaderUtils.getTextureFromUSD(scene({
+  const embeddedBasis = await LightUSDLoaderUtils.getTextureFromUSD(scene({
     uri: '',
     bufferId: 8,
     decoded: false,
@@ -101,10 +101,10 @@ try {
   assert.equal(embeddedBasis.isCompressedTexture, true);
 
   const privateUni = ktx2Header(0, 0, 2);
-  assert.equal(TinyUSDZLoaderUtils.classifyKTX2Image({data: privateUni}).kind,
+  assert.equal(LightUSDLoaderUtils.classifyKTX2Image({data: privateUni}).kind,
     'private-uni');
   await assert.rejects(
-    TinyUSDZLoaderUtils.getTextureFromUSD(scene({
+    LightUSDLoaderUtils.getTextureFromUSD(scene({
       uri: '',
       bufferId: 9,
       decoded: false,
@@ -119,9 +119,9 @@ try {
     ['parse', basis.byteLength]
   ]);
 
-  TinyUSDZLoaderUtils.setKTX2Loader(null);
+  LightUSDLoaderUtils.setKTX2Loader(null);
   await assert.rejects(
-    TinyUSDZLoaderUtils.getTextureFromUSD(scene({
+    LightUSDLoaderUtils.getTextureFromUSD(scene({
       uri: 'unavailable.ktx2',
       bufferId: -1,
       decoded: false
@@ -130,8 +130,8 @@ try {
       error?.extension === 'ktx2'
   );
 } finally {
-  TinyUSDZLoaderUtils._ktx2Loader = savedLoader;
-  TinyUSDZLoaderUtils._ownsKTX2Loader = savedOwnsLoader;
+  LightUSDLoaderUtils._ktx2Loader = savedLoader;
+  LightUSDLoaderUtils._ownsKTX2Loader = savedOwnsLoader;
 }
 
 console.log('loader-utils Basis KTX2: PASS');

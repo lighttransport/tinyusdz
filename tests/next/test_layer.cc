@@ -6,7 +6,7 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #include <vector>
 #endif
@@ -15,9 +15,9 @@
 #include "next/layer/prim-spec.hh"
 #include "next/layer/property-index.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 void test_frozen_string_view_lookup_is_safe() {
   PropNameTable& table = GetPropNameTable();
   table.freeze();
@@ -588,7 +588,7 @@ int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
   test_prop_name_table();
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   test_frozen_string_view_lookup_is_safe();
 #endif
   test_prop_index();

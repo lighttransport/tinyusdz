@@ -22,7 +22,7 @@ function getMimeType(filename) {
   return mimeTypes[ext] || 'application/octet-stream';
 }
 
-const assetFolder = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry";
+const assetFolder = "/mnt/n/data/lightusd/mcp/african_slate_quarry";
 const url = "http://localhost:8085/mcp";
 
 const descFilename = path.join(assetFolder, "asset-descriptions.json")
@@ -82,12 +82,12 @@ for (const [key, value] of Object.entries(descriptions)) {
   const filename = value.usd_filename;
   const description = value.description;
   const preview = value.screenshot_filename;
-  
+
   // Read geometry parameters from value, with defaults if not specified
   const pivot_position = value.pivot_position || [0.0, 0.0, 0.0];
   const bmin = value.bmin || [-1.0, -1.0, -1.0];
   const bmax = value.bmax || [1.0, 1.0, 1.0];
-  
+
   assert(filename)
   assert(description)
   console.log(`filename: ${filename}, desc: ${description}`);

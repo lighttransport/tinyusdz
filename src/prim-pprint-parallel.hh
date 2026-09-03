@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>
 #include <atomic>
 #include "task-queue.hh"
@@ -19,14 +19,14 @@
 #include "stage.hh"
 #include "layer.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Forward declarations
 template <size_t ChunkSize, size_t Alignment> class ChunkedStreamWriter;
 
 namespace prim {
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 
 ///
 /// Configuration for parallel printing
@@ -128,7 +128,7 @@ void print_primspecs_parallel(
     uint32_t indent,
     const ParallelPrintConfig& config = ParallelPrintConfig());
 
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

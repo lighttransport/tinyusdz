@@ -1,6 +1,6 @@
 # WASM Debug Mode with Source Maps
 
-This document explains how to build TinyUSDZ WASM with source maps for better debugging.
+This document explains how to build LightUSD WASM with source maps for better debugging.
 
 ## Quick Start
 
@@ -11,14 +11,14 @@ cd build_debug_sourcemap
 make -j8
 
 # The output will include:
-# - js/src/tinyusdz/tinyusdz.js
-# - js/src/tinyusdz/tinyusdz.wasm
-# - js/src/tinyusdz/tinyusdz.wasm.map  (source map)
+# - js/src/lightusd/lightusd.js
+# - js/src/lightusd/lightusd.wasm
+# - js/src/lightusd/lightusd.wasm.map  (source map)
 ```
 
 ## What You Get
 
-When building with `-DTINYUSDZ_WASM_DEBUG=ON`, you get:
+When building with `-DLIGHTUSD_WASM_DEBUG=ON`, you get:
 
 1. **Source Maps** (`-gsource-map`)
    - Maps WASM code back to C++ source files
@@ -66,15 +66,15 @@ cd build_debug_sourcemap
 
 emcmake cmake .. \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DTINYUSDZ_WASM_DEBUG=ON
+  -DLIGHTUSD_WASM_DEBUG=ON
 
 make -j8
 ```
 
 ## CMake Options
 
-- `TINYUSDZ_WASM_DEBUG=ON` - Enable source maps and enhanced debugging
-- `TINYUSDZ_WASM64=ON` - Use WASM64/Memory64 (optional, requires newer browsers)
+- `LIGHTUSD_WASM_DEBUG=ON` - Enable source maps and enhanced debugging
+- `LIGHTUSD_WASM64=ON` - Use WASM64/Memory64 (optional, requires newer browsers)
 
 ## File Size Impact
 

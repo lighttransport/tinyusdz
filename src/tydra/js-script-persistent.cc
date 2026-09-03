@@ -1,11 +1,11 @@
 #include "js-script.hh"
 #include "value-to-json.hh"
 
-#include "../tinyusdz.hh"
+#include "../lightusd.hh"
 #include "../stage.hh"
 #include "../pprint-enum.hh"
 
-#if defined(TINYUSDZ_WITH_QJS)
+#if defined(LIGHTUSD_WITH_QJS)
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -44,7 +44,7 @@
 
 #include "mcp-tools-diff.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -86,7 +86,7 @@ static Stage *g_js_stage = nullptr;
 static mcp::DiffSession *g_js_diff = nullptr;
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.stage.info()
+// JS function: lightusd.stage.info()
 // ---------------------------------------------------------------------------
 static JSValue js_stage_info(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv, int magic,
@@ -98,7 +98,7 @@ static JSValue js_stage_info(JSContext *ctx, JSValueConst this_val,
 
   nlohmann::json info;
   const auto &metas = g_js_stage->metas();
-  info["upAxis"] = tinyusdz::to_string(metas.upAxis.get_value());
+  info["upAxis"] = lightusd::to_string(metas.upAxis.get_value());
   info["defaultPrim"] = metas.defaultPrim.str();
   info["metersPerUnit"] = metas.metersPerUnit.get_value();
   info["timeCodesPerSecond"] = metas.timeCodesPerSecond.get_value();
@@ -145,7 +145,7 @@ static void PrimToJSJSON(const Prim &prim, nlohmann::json &j, int max_depth) {
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.prim.list(path, opts?)
+// JS function: lightusd.prim.list(path, opts?)
 // ---------------------------------------------------------------------------
 static JSValue js_prim_list(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv, int magic,
@@ -183,7 +183,7 @@ static JSValue js_prim_list(JSContext *ctx, JSValueConst this_val,
     return JSONToJSValue(ctx, wrap);
   }
 
-  tinyusdz::Path path(path_str, "");
+  lightusd::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
@@ -202,7 +202,7 @@ static JSValue js_prim_list(JSContext *ctx, JSValueConst this_val,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.prim.get(path)
+// JS function: lightusd.prim.get(path)
 // ---------------------------------------------------------------------------
 static JSValue js_prim_get(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv, int magic,
@@ -220,7 +220,7 @@ static JSValue js_prim_get(JSContext *ctx, JSValueConst this_val,
   std::string path_str(s);
   JS_FreeCString(ctx, s);
 
-  tinyusdz::Path path(path_str, "");
+  lightusd::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
@@ -260,7 +260,7 @@ static JSValue js_prim_get(JSContext *ctx, JSValueConst this_val,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.stage.exportToString()
+// JS function: lightusd.stage.exportToString()
 // ---------------------------------------------------------------------------
 static JSValue js_stage_export(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv, int magic,
@@ -275,7 +275,7 @@ static JSValue js_stage_export(JSContext *ctx, JSValueConst this_val,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.prim.listChildren(path)
+// JS function: lightusd.prim.listChildren(path)
 // ---------------------------------------------------------------------------
 static JSValue js_prim_listChildren(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv, int magic,
@@ -307,7 +307,7 @@ static JSValue js_prim_listChildren(JSContext *ctx, JSValueConst this_val,
     return JSONToJSValue(ctx, wrap);
   }
 
-  tinyusdz::Path path(path_str, "");
+  lightusd::Path path(path_str, "");
   if (!path.is_valid()) {
     return JS_ThrowTypeError(ctx, "Invalid path: %s", path_str.c_str());
   }
@@ -333,7 +333,7 @@ static JSValue js_prim_listChildren(JSContext *ctx, JSValueConst this_val,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.query.findAllByType(typeName)
+// JS function: lightusd.query.findAllByType(typeName)
 // ---------------------------------------------------------------------------
 static void CollectPrimsByType(const Prim &prim, const std::string &type_name,
                                std::vector<std::string> &results) {
@@ -392,7 +392,7 @@ static void RegisterObject(JSContext *ctx, JSValue parent, const char *name,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.diff.summary()
+// JS function: lightusd.diff.summary()
 // ---------------------------------------------------------------------------
 static JSValue js_diff_summary(JSContext *ctx, JSValueConst this_val, int argc,
                                JSValueConst *argv, int magic,
@@ -407,7 +407,7 @@ static JSValue js_diff_summary(JSContext *ctx, JSValueConst this_val, int argc,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.diff.paths(filter?)
+// JS function: lightusd.diff.paths(filter?)
 // ---------------------------------------------------------------------------
 static JSValue js_diff_paths(JSContext *ctx, JSValueConst this_val, int argc,
                              JSValueConst *argv, int magic,
@@ -427,7 +427,7 @@ static JSValue js_diff_paths(JSContext *ctx, JSValueConst this_val, int argc,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.diff.prim(path)
+// JS function: lightusd.diff.prim(path)
 // ---------------------------------------------------------------------------
 static JSValue js_diff_prim(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv, int magic,
@@ -450,7 +450,7 @@ static JSValue js_diff_prim(JSContext *ctx, JSValueConst this_val, int argc,
 }
 
 // ---------------------------------------------------------------------------
-// JS function: tinyusdz.diff.tree({path?, depth?})
+// JS function: lightusd.diff.tree({path?, depth?})
 // ---------------------------------------------------------------------------
 static JSValue js_diff_tree(JSContext *ctx, JSValueConst this_val, int argc,
                             JSValueConst *argv, int magic,
@@ -580,35 +580,35 @@ bool RegisterUSDModule(JSEngineState &engine, Stage *stage,
   JSContext *ctx = static_cast<JSContext *>(engine.context);
   g_js_stage = stage;
 
-  // Create the tinyusdz namespace
+  // Create the lightusd namespace
   JSValue global = JS_GetGlobalObject(ctx);
-  JSValue tinyusdz = JS_NewObject(ctx);
+  JSValue lightusd = JS_NewObject(ctx);
 
   // --- stage sub-module ---
   JSValue stage_mod = JS_NewObject(ctx);
   RegisterFunction(ctx, stage_mod, "info", js_stage_info, 0);
   RegisterFunction(ctx, stage_mod, "exportToString", js_stage_export, 0);
-  RegisterObject(ctx, tinyusdz, "stage", stage_mod);
+  RegisterObject(ctx, lightusd, "stage", stage_mod);
 
   // --- prim sub-module ---
   JSValue prim_mod = JS_NewObject(ctx);
   RegisterFunction(ctx, prim_mod, "list", js_prim_list, 2);
   RegisterFunction(ctx, prim_mod, "get", js_prim_get, 1);
   RegisterFunction(ctx, prim_mod, "listChildren", js_prim_listChildren, 1);
-  RegisterObject(ctx, tinyusdz, "prim", prim_mod);
+  RegisterObject(ctx, lightusd, "prim", prim_mod);
 
   // --- query sub-module ---
   JSValue query_mod = JS_NewObject(ctx);
   RegisterFunction(ctx, query_mod, "findAllByType", js_query_findAllByType, 1);
-  RegisterObject(ctx, tinyusdz, "query", query_mod);
+  RegisterObject(ctx, lightusd, "query", query_mod);
 
   // --- value helper ---
   JSValue value_mod = JS_NewObject(ctx);
   // value.create will be a JS function that wraps values
-  RegisterObject(ctx, tinyusdz, "value", value_mod);
+  RegisterObject(ctx, lightusd, "value", value_mod);
 
   // Set the module
-  JS_SetPropertyStr(ctx, global, "tinyusdz", tinyusdz);
+  JS_SetPropertyStr(ctx, global, "lightusd", lightusd);
   JS_FreeValue(ctx, global);
 
   return true;
@@ -617,8 +617,8 @@ bool RegisterUSDModule(JSEngineState &engine, Stage *stage,
 // ===========================================================================
 // Public: RegisterDiffModule
 // ===========================================================================
-// Attach a `tinyusdz.diff.{summary,paths,prim}` submodule bound to `diff`.
-// Creates the `tinyusdz` global if it does not already exist (e.g. a diff-only
+// Attach a `lightusd.diff.{summary,paths,prim}` submodule bound to `diff`.
+// Creates the `lightusd` global if it does not already exist (e.g. a diff-only
 // session with no stage), otherwise augments it in place.
 bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
                         std::string &err) {
@@ -631,10 +631,10 @@ bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
   g_js_diff = diff;
 
   JSValue global = JS_GetGlobalObject(ctx);
-  JSValue tinyusdz = JS_GetPropertyStr(ctx, global, "tinyusdz");
-  const bool created = JS_IsUndefined(tinyusdz);
+  JSValue lightusd = JS_GetPropertyStr(ctx, global, "lightusd");
+  const bool created = JS_IsUndefined(lightusd);
   if (created) {
-    tinyusdz = JS_NewObject(ctx);
+    lightusd = JS_NewObject(ctx);
   }
 
   JSValue diff_mod = JS_NewObject(ctx);
@@ -642,15 +642,15 @@ bool RegisterDiffModule(JSEngineState &engine, mcp::DiffSession *diff,
   RegisterFunction(ctx, diff_mod, "paths", js_diff_paths, 1);
   RegisterFunction(ctx, diff_mod, "prim", js_diff_prim, 1);
   RegisterFunction(ctx, diff_mod, "tree", js_diff_tree, 1);
-  RegisterObject(ctx, tinyusdz, "diff", diff_mod);
+  RegisterObject(ctx, lightusd, "diff", diff_mod);
 
   if (created) {
-    // Transfers our `tinyusdz` reference to the global.
-    JS_SetPropertyStr(ctx, global, "tinyusdz", tinyusdz);
+    // Transfers our `lightusd` reference to the global.
+    JS_SetPropertyStr(ctx, global, "lightusd", lightusd);
   } else {
     // We augmented the existing global object in place; release our extra ref
     // obtained from JS_GetPropertyStr.
-    JS_FreeValue(ctx, tinyusdz);
+    JS_FreeValue(ctx, lightusd);
   }
   JS_FreeValue(ctx, global);
 
@@ -695,16 +695,16 @@ bool RunJSScript(JSEngineState &engine, const std::string &js_code,
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 
-#else // !TINYUSDZ_WITH_QJS
+#else // !LIGHTUSD_WITH_QJS
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 bool InitJSEngine(JSEngineState &engine, std::string &err) {
   (void)engine;
-  err = "JavaScript (QuickJS) not enabled. Build with -DTINYUSDZ_WITH_QJS=ON";
+  err = "JavaScript (QuickJS) not enabled. Build with -DLIGHTUSD_WITH_QJS=ON";
   return false;
 }
 
@@ -735,6 +735,6 @@ bool RunJSScript(JSEngineState &engine, const std::string &js_code,
 }
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 
-#endif // TINYUSDZ_WITH_QJS
+#endif // LIGHTUSD_WITH_QJS

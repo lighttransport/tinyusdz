@@ -3,12 +3,12 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 
 ///
-/// @file usdShade.hh  
+/// @file usdShade.hh
 /// @brief USD Shading schema definitions
 ///
 /// Implements material and shader primitives following USD's UsdShade schema.
 /// Includes Material, Shader, and supporting classes for building shading
-/// networks. TinyUSDZ also implements some UsdImaging utilities here.
+/// networks. LightUSD also implements some UsdImaging utilities here.
 ///
 /// Key classes:
 /// - Material: Material binding and organization
@@ -42,7 +42,7 @@
 #include "core/material-binding.hh" // MaterialBinding (for DEFINE_TYPE_TRAIT)
 #include "core/variant-types.hh"    // VariantSet
 
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
@@ -69,7 +69,7 @@ constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 constexpr auto kOpenPBRSurface = "OpenPBRSurface";
 
 // In OpenUSD, UsdShadeShader/Material/NodeGraph inherit from UsdTyped (not Prim).
-// TinyUSDZ uses a separate UsdShadePrim base to hold common fields (name, meta, props).
+// LightUSD uses a separate UsdShadePrim base to hold common fields (name, meta, props).
 struct UsdShadePrim {
   std::string name;
   Specifier spec{Specifier::Def};
@@ -78,8 +78,8 @@ struct UsdShadePrim {
 
   PrimMeta meta;
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
 
   // Check if `key` exists in `sdrMetadata` metadatum.
   // Return false when `key` is not found in `sdrMetadata`, or corrensponding item is not a string type.
@@ -102,10 +102,10 @@ struct UsdShadePrim {
   // Custom properties
   std::map<std::string, Property> props;
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -279,7 +279,7 @@ struct UsdUVTexture : ShaderNode {
 // $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
 
 struct UsdPreviewSurface : ShaderNode {
-  
+
   // From 2.6
   // NOTE: When opacityThreshold is non-zero, opacityMode is ignored.
   enum class OpacityMode {
@@ -359,7 +359,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f}; // "inputs:base_metalness"
   TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f}; // "inputs:base_diffuse_roughness"
 
-  // Specular properties  
+  // Specular properties
   TypedAttributeWithFallback<Animatable<float>> specular_weight{1.0f}; // "inputs:specular_weight"
   TypedAttributeWithFallback<Animatable<value::color3f>> specular_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:specular_color"
   TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.3f}; // "inputs:specular_roughness"
@@ -517,4 +517,4 @@ struct TypeTraits<UsdUVTexture::SourceColorSpace> {
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

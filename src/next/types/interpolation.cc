@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Time Sample Interpolation Implementation
+// LightUSD Next - Time Sample Interpolation Implementation
 
 #include "interpolation.hh"
 #include "../crate/crate-format.hh"
@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 bool TimeInterpolator::IsLinearInterpolatable(TypeId type) {
@@ -665,4 +665,4 @@ SampleResult TimeInterpolator::Interpolate(
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

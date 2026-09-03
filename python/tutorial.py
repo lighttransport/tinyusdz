@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""tinyusdz end-to-end tutorial: author -> save -> load -> inspect -> render.
+"""lightusd end-to-end tutorial: author -> save -> load -> inspect -> render.
 
 Run:  python python/tutorial.py [output_dir]
 """
@@ -7,8 +7,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-import tinyusdz
-from tinyusdz import tydra
+import lightusd
+from lightusd import tydra
 
 try:
     import numpy as np
@@ -17,7 +17,7 @@ except ImportError:
 
 
 def author(out_dir: Path) -> Path:
-    st = tinyusdz.Stage.create()
+    st = lightusd.Stage.create()
     st.up_axis = "Y"
     st.meters_per_unit = 1.0
 
@@ -61,8 +61,8 @@ def author(out_dir: Path) -> Path:
     return out
 
 
-def inspect(path: Path) -> tinyusdz.Stage:
-    stage = tinyusdz.load(path)
+def inspect(path: Path) -> lightusd.Stage:
+    stage = lightusd.load(path)
     print(f"loaded {path}: {stage}")
     for prim in stage:
         print(f"  {prim.path:24} {prim.type_name}")
@@ -80,7 +80,7 @@ def inspect(path: Path) -> tinyusdz.Stage:
     return stage
 
 
-def render(stage: tinyusdz.Stage) -> None:
+def render(stage: lightusd.Stage) -> None:
     scene = tydra.to_render_scene(stage, triangulate=True)
     print(scene)
     for mesh in scene.meshes:

@@ -10,8 +10,8 @@ holds a **bounded memory budget**, and it degrades — rather than dies — on f
 too large to preview.
 
 ```
-cmake -B build -DTINYUSDZ_BUILD_EXAMPLES=ON -DTINYUSDZ_WITH_TYDRA=ON \
-               -DTINYUSDZ_BUILD_QUICKLOOK=ON
+cmake -B build -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
+               -DLIGHTUSD_BUILD_QUICKLOOK=ON
 cmake --build build --target tusdquicklook -j16
 
 ./build/tusdquicklook ~/assets            # browse a folder
@@ -38,17 +38,17 @@ because the event loop treats a moving camera as work and would otherwise never
 go idle. Smoothing is forced off under `--screenshot` and by `--no-smoothing`,
 so headless output can never depend on how many frames happened to elapse.
 
-`TINYUSDZ_BUILD_QUICKLOOK` is independent of `TINYUSDZ_BUILD_GUI_VIEWER`: this
+`LIGHTUSD_BUILD_QUICKLOOK` is independent of `LIGHTUSD_BUILD_GUI_VIEWER`: this
 target shares no code with tusdview and pulls in no window-system or GPU
 dependency.
 
-**One caveat to that independence.** `TINYUSDZ_BUILD_QUICKLOOK=ON` force-sets
-`TINYUSDZ_WITH_TEXTOOLS=OFF` (top-level `CMakeLists.txt`) to keep this target
+**One caveat to that independence.** `LIGHTUSD_BUILD_QUICKLOOK=ON` force-sets
+`LIGHTUSD_WITH_TEXTOOLS=OFF` (top-level `CMakeLists.txt`) to keep this target
 lean — but textools also supplies tusdview's envmap/IBL path, so enabling
 quicklook silently costs *tusdview* its dome lighting, and
 `tusdview-dome-orientation` fails. Build both with
-`-DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON`. Note that the `FORCE` writes the
-cache, so an existing build directory also needs `-DTINYUSDZ_WITH_TEXTOOLS=ON`
+`-DLIGHTUSD_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON`. Note that the `FORCE` writes the
+cache, so an existing build directory also needs `-DLIGHTUSD_WITH_TEXTOOLS=ON`
 to clear the stale value.
 
 ## What it is built on
@@ -58,7 +58,7 @@ to clear the stale value.
 | **lightui** (`examples/common/lightui`) | Software-rendered C99 UI. Its X11 backend `dlopen`s libX11 with its own minimal ABI declarations, so there is no build-time or link-time X dependency — only `libdl`. That property is what makes the app portable and minimal; preserve it. |
 | **`src/next`** (`next::StageSession`) | Lazy USD loading with progress/preview callbacks that can **abort mid-composition**. The budget is enforced from inside those callbacks, so a stage that would bust the cap is never fully built first. |
 | **`src/tydra/next`** (`ConvertToSink`) | Streaming conversion keeps one geometry prim live at a time, and `SelectGeometry` lets us decide `Full`/`Proxy`/`Skip` **per mesh** against the running budget. |
-| **lightrt** (`src/external/lightrt`) | CPU BVH kernel. Uses the tinyusdz-local `lrt_tri_scene_build_indexed`, which keeps indexed data instead of materializing a vertex soup. |
+| **lightrt** (`src/external/lightrt`) | CPU BVH kernel. Uses the lightusd-local `lrt_tri_scene_build_indexed`, which keeps indexed data instead of materializing a vertex soup. |
 | **`src/tydra/next/mem-budget.hh`** | Tracking allocator + process cap, shared with `tools/tusdrender`. |
 
 ## Memory budget
@@ -245,7 +245,7 @@ invisible to `--screenshot`:
 
 - `lui_window_create` hung forever with no window manager (upstream lightui
   waited for a `ConfigureNotify` that a bare X server never sends). Patched in
-  the vendored copy — see `examples/common/lightui/README.tinyusdz.md`.
+  the vendored copy — see `examples/common/lightui/README.lightusd.md`.
 - the event loop blocked in `wait_event` before painting its first frame, so
   the window stayed blank until the user moved the mouse.
 - `lui_event_t::clicks` was hardcoded to 1 in the X11 backend, so no

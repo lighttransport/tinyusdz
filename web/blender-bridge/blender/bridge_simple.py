@@ -11,7 +11,7 @@ import bpy
 import sys
 
 # Register as persistent module so state survives between MCP calls
-_MODULE_NAME = 'tinyusdz_bridge'
+_MODULE_NAME = 'lightusd_bridge'
 if _MODULE_NAME not in sys.modules:
     import types
     sys.modules[_MODULE_NAME] = types.ModuleType(_MODULE_NAME)
@@ -784,7 +784,7 @@ builtins.bridge_refresh_subscriptions = bridge_refresh_subscriptions
 
 # Print usage
 print("""
-TinyUSDZ Bridge - Event-Driven (Lightweight)
+LightUSD Bridge - Event-Driven (Lightweight)
 ============================================
 Commands:
   bridge_connect()              - Connect to server

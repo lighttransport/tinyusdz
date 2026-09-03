@@ -5,7 +5,7 @@
 )
 
 # Mesh-as-collider convention used by lightgeom `export_usdz.py` and
-# tinyusdz `urdf-to-usd`, mirroring NVIDIA / Newton's
+# lightusd `urdf-to-usd`, mirroring NVIDIA / Newton's
 # `mujoco-usd-converter`:
 #
 #   * One UsdGeom.Mesh per source geom (no `visual_*` / `collision_*`

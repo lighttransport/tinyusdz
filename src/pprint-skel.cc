@@ -9,7 +9,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 std::string to_string(const SkelRoot &root, const uint32_t indent,
                       bool closing_brace) {
@@ -160,4 +160,4 @@ std::string to_string(const BlendShape &prim, const uint32_t indent,
   return ss.str();
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

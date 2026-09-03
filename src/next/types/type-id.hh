@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Type ID definitions
+// LightUSD Next - Type ID definitions
 // Standalone header with no dependencies beyond C++14 standard library
 
 #pragma once
@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <cstddef>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Core type identifier enum
@@ -181,4 +181,4 @@ TypeId GetComponentType(TypeId id);
 size_t GetComponentCount(TypeId id);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

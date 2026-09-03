@@ -1,4 +1,4 @@
-set(TEST_TARGET_NAME unit-test-tinyusdz)
+set(TEST_TARGET_NAME unit-test-lightusd)
 
 set(TEST_SOURCES
 	unit-main.cc
@@ -86,7 +86,7 @@ set(TEST_SOURCES
 	unit-rb-dynamics.cc
     )
 
-if (TINYUSDZ_WITH_PXR_COMPAT_API)
+if (LIGHTUSD_WITH_PXR_COMPAT_API)
     list(APPEND TEST_SOURCES unit-pxr-compat-api.cc)
 endif ()
 
@@ -112,7 +112,7 @@ endif()
 # false negatives), only this multithreaded test remains broken — a
 # real concurrency bug in TaskQueue's 64-bit atomic ops on i386 that
 # needs a separate investigation. 64-bit jobs still cover it.
-set(TEST_TINYUSDZ_32BIT_SKIP_LIST
+set(TEST_LIGHTUSD_32BIT_SKIP_LIST
   task_queue_multithreaded_test
 )
 
@@ -121,7 +121,7 @@ if (WIN32)
            WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>  )
 elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
   add_test(NAME ${TEST_TARGET_NAME}
-           COMMAND "${TEST_TARGET_NAME}" --skip ${TEST_TINYUSDZ_32BIT_SKIP_LIST}
+           COMMAND "${TEST_TARGET_NAME}" --skip ${TEST_LIGHTUSD_32BIT_SKIP_LIST}
            WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>)
 else ()
   add_test(NAME ${TEST_TARGET_NAME} COMMAND "${TEST_TARGET_NAME}"
@@ -131,9 +131,9 @@ endif ()
 # Unit tests run from the build tree, while their fixtures live in the source
 # tree. Pass the source root explicitly so out-of-tree ctest runs work too.
 set_tests_properties(${TEST_TARGET_NAME} PROPERTIES
-  ENVIRONMENT "TINYUSDZ_TEST_FIXTURE_DIR=${TINYUSDZ_TEST_FIXTURE_DIR}")
+  ENVIRONMENT "LIGHTUSD_TEST_FIXTURE_DIR=${LIGHTUSD_TEST_FIXTURE_DIR}")
 
-target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_static ${CMAKE_DL_LIBS})
+target_link_libraries(${TEST_TARGET_NAME} PRIVATE lightusd_static ${CMAKE_DL_LIBS})
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # Add crate-writer library and includes for dedup tests
@@ -146,17 +146,17 @@ set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${
 
 #
 # `next` schema unit tests (UsdSkel readers). A SEPARATE executable on purpose:
-# linking tinyusdz_next into unit-test-tinyusdz alongside tinyusdz_static makes
+# linking lightusd_next into unit-test-lightusd alongside lightusd_static makes
 # that binary's concurrency tests flaky (overlapping objects in the two static
 # libs), so these are isolated rather than destabilizing the 997 tests there.
 #
-if(TARGET tinyusdz_next)
+if(TARGET lightusd_next)
   set(NEXT_TEST_TARGET unit-test-next)
   add_executable(${NEXT_TEST_TARGET} unit-next-main.cc unit-next-usdskel.cc)
   if(WIN32 AND MSVC)
     target_compile_options(${NEXT_TEST_TARGET} PRIVATE /wd4005)
   endif()
-  target_link_libraries(${NEXT_TEST_TARGET} PRIVATE tinyusdz_next ${CMAKE_DL_LIBS})
+  target_link_libraries(${NEXT_TEST_TARGET} PRIVATE lightusd_next ${CMAKE_DL_LIBS})
   target_include_directories(${NEXT_TEST_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src
                                      ${CMAKE_CURRENT_SOURCE_DIR})
@@ -165,11 +165,11 @@ if(TARGET tinyusdz_next)
   add_test(NAME ${NEXT_TEST_TARGET} COMMAND ${NEXT_TEST_TARGET}
            WORKING_DIRECTORY $<TARGET_FILE_DIR:${NEXT_TEST_TARGET}>)
   set_tests_properties(${NEXT_TEST_TARGET} PROPERTIES
-    ENVIRONMENT "TINYUSDZ_TEST_FIXTURE_DIR=${TINYUSDZ_TEST_FIXTURE_DIR}")
+    ENVIRONMENT "LIGHTUSD_TEST_FIXTURE_DIR=${LIGHTUSD_TEST_FIXTURE_DIR}")
 endif()
 
-if (TINYUSDZ_WITH_PXR_COMPAT_API)
-  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TINYUSDZ_WITH_PXR_COMPAT_API")
+if (LIGHTUSD_WITH_PXR_COMPAT_API)
+  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "LIGHTUSD_WITH_PXR_COMPAT_API")
 
   # FIXME: support dll build
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")

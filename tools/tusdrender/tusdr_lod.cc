@@ -131,10 +131,10 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   const double time = opt->timecode;
 
   // 1) Compose the scene in proxy LOD (cheap: ~1.7 GiB for Caldera).
-  tinyusdz::next::Stage stage;
+  lightusd::next::Stage stage;
   std::string warn, err;
-  tinyusdz::next::pcp::CompositionOptions copts;  // authored (proxy) selections
-  if (!tinyusdz::next::LoadUSDComposed(opt->input, &stage, &warn, &err, &copts)) {
+  lightusd::next::pcp::CompositionOptions copts;  // authored (proxy) selections
+  if (!lightusd::next::LoadUSDComposed(opt->input, &stage, &warn, &err, &copts)) {
     std::cerr << "[lodStream] proxy compose failed: " << err << "\n";
     return false;
   }
@@ -150,7 +150,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   std::vector<MeshJobNext> jobs;
   for (const auto &root : stage.GetRootPrims()) {
     CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                               tinyusdz::Purpose::Default, time, opt->mask,
+                               lightusd::Purpose::Default, time, opt->mask,
                                &jobs);
   }
 
@@ -161,7 +161,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
     std::string dpath, dname;
     if (!DistrictOf(path, opt->lod_container, &dpath, &dname)) continue;
 
-    const tinyusdz::next::Value *val = job.prim.GetPropertyValue("points");
+    const lightusd::next::Value *val = job.prim.GetPropertyValue("points");
     if (!val) continue;
     const std::vector<float> *pts = val->as_float_array();
     if (!pts || pts->empty()) continue;
@@ -254,11 +254,11 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   const uint64_t host_capacity = host_avail > 0.0
                                      ? std::min<uint64_t>(
                                            static_cast<uint64_t>(host_avail),
-                                           tinyusdz::tydra::next::GiB(32))
-                                     : tinyusdz::tydra::next::GiB(32);
+                                           lightusd::tydra::next::GiB(32))
+                                     : lightusd::tydra::next::GiB(32);
   const double vram_total = gpu ? double(QueryDeviceLocalVRAMBytes()) : 0.0;
-  const tinyusdz::tydra::next::ResourceBudget automatic =
-      tinyusdz::tydra::next::ComputeResourceBudget(
+  const lightusd::tydra::next::ResourceBudget automatic =
+      lightusd::tydra::next::ComputeResourceBudget(
           host_capacity, static_cast<uint64_t>(vram_total));
   const double host_budget = opt->max_mem_gib > 0.0
                                  ? opt->max_mem_gib * kGiB

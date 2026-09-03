@@ -1,6 +1,6 @@
 # tusdview - OpenGL/Vulkan USD viewer example.
-# Configured from the top-level tinyusdz CMake, so PROJECT_SOURCE_DIR is the
-# tinyusdz repo root.
+# Configured from the top-level lightusd CMake, so PROJECT_SOURCE_DIR is the
+# lightusd repo root.
 
 set(EXAMPLE_TARGET "tusdview")
 set(COMMON_DIR ${PROJECT_SOURCE_DIR}/examples/common)
@@ -217,18 +217,18 @@ if(NOT MSVC)
       ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
 target_link_libraries(tusd_gpu_rt_common PUBLIC
-    ${TINYUSDZ_TARGET_STATIC}
+    ${LIGHTUSD_TARGET_STATIC}
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
   target_link_libraries(tusd_gpu_rt_common PUBLIC Threads::Threads)
 endif()
-if(TINYUSDZ_WITH_TEXTOOLS)
-  target_link_libraries(tusd_gpu_rt_common PUBLIC tinyusdz_textools)
+if(LIGHTUSD_WITH_TEXTOOLS)
+  target_link_libraries(tusd_gpu_rt_common PUBLIC lightusd_textools)
   target_compile_definitions(tusd_gpu_rt_common PRIVATE
       TUSDVIEW_WITH_TEXTOOLS=1)
-  if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
     target_compile_definitions(tusd_gpu_rt_common PRIVATE
-        TINYUSDZ_WITH_ZSTD_COMPRESSION)
+        LIGHTUSD_WITH_ZSTD_COMPRESSION)
   endif()
 endif()
 
@@ -272,12 +272,12 @@ function(tusdview_set_warning_flags target)
     if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
       list(APPEND _flags_list -Wno-switch-default)
     endif()
-    if(NOT TINYUSDZ_NO_WERROR)
+    if(NOT LIGHTUSD_NO_WERROR)
       list(APPEND _flags_list -Werror)
     endif()
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     set(_flags_list -Wall)
-    if(NOT TINYUSDZ_NO_WERROR)
+    if(NOT LIGHTUSD_NO_WERROR)
       list(APPEND _flags_list -Werror)
     endif()
   endif()
@@ -285,7 +285,7 @@ function(tusdview_set_warning_flags target)
       $<$<COMPILE_LANGUAGE:CXX>:${_flags_list}>)
 endfunction()
 
-if(TINYUSDZ_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS)
   add_executable(tusdview_ptex_atlas_test
       tests/ptex_atlas_test.cc
       ptex_atlas.cc
@@ -298,7 +298,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(tusdview_ptex_atlas_test PRIVATE
-      ${TINYUSDZ_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC})
 
   add_executable(tusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
@@ -349,7 +349,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(tusdview_openpbr_material_test PRIVATE
-      ${TINYUSDZ_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC})
   if(UNIX AND NOT APPLE)
     target_link_libraries(tusdview_openpbr_material_test PRIVATE Threads::Threads)
   endif()
@@ -378,7 +378,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(tusdview_lighting_test PRIVATE
-      ${TINYUSDZ_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC})
   if(UNIX AND NOT APPLE)
     target_link_libraries(tusdview_lighting_test PRIVATE Threads::Threads)
   endif()
@@ -403,7 +403,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(tusdview_geometry_primvar_test PRIVATE
-      ${TINYUSDZ_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC})
   if(UNIX AND NOT APPLE)
     target_link_libraries(tusdview_geometry_primvar_test PRIVATE Threads::Threads)
   endif()
@@ -428,7 +428,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(tusdview_texture_pipeline_test PRIVATE
-      ${TINYUSDZ_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC})
   if(UNIX AND NOT APPLE)
     target_link_libraries(tusdview_texture_pipeline_test PRIVATE Threads::Threads)
   endif()
@@ -486,7 +486,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external)
-  target_link_libraries(tusdview_preview_cache_test PRIVATE tinyusdz_next)
+  target_link_libraries(tusdview_preview_cache_test PRIVATE lightusd_next)
 
   add_executable(tusdview_texture_residency_policy_test
       tests/texture_residency_policy_test.cc
@@ -523,7 +523,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(tusdview_scene_safety_test PRIVATE
-      ${TINYUSDZ_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC})
   if(UNIX AND NOT APPLE)
     target_link_libraries(tusdview_scene_safety_test PRIVATE Threads::Threads)
   endif()
@@ -569,11 +569,11 @@ endif()
 
 # Vendored texture tools (tir/texcomp/texpipe/envmap). All calls are routed
 # through texture_tools.cc and guarded by TUSDVIEW_WITH_TEXTOOLS, so the app
-# builds unchanged when TINYUSDZ_WITH_TEXTOOLS=OFF. Applied to every target
+# builds unchanged when LIGHTUSD_WITH_TEXTOOLS=OFF. Applied to every target
 # that compiles mesh_build.cc / texture_tools.cc.
-if(TINYUSDZ_WITH_TEXTOOLS)
+if(LIGHTUSD_WITH_TEXTOOLS)
   set(TUSDVIEW_TEXTOOLS_CONSUMERS ${EXAMPLE_TARGET})
-  if(TINYUSDZ_BUILD_TESTS)
+  if(LIGHTUSD_BUILD_TESTS)
     list(APPEND TUSDVIEW_TEXTOOLS_CONSUMERS
         tusdview_lightrt_bridge_test
         tusdview_openpbr_material_test
@@ -582,13 +582,13 @@ if(TINYUSDZ_WITH_TEXTOOLS)
         tusdview_texture_pipeline_test)
   endif()
   foreach(tt_consumer IN LISTS TUSDVIEW_TEXTOOLS_CONSUMERS)
-    target_link_libraries(${tt_consumer} PRIVATE tinyusdz_textools)
+    target_link_libraries(${tt_consumer} PRIVATE lightusd_textools)
     target_compile_definitions(${tt_consumer} PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
     # Zstd-supercompressed KTX2 (scheme 2) is what usd-texcomp writes by default;
     # the core lib defines this PRIVATEly, so mesh_build.cc needs its own copy.
-    # ZSTD_decompress itself comes from tinyusdz_static (src/external/zstd.c).
-    if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
-      target_compile_definitions(${tt_consumer} PRIVATE TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    # ZSTD_decompress itself comes from lightusd_static (src/external/zstd.c).
+    if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
+      target_compile_definitions(${tt_consumer} PRIVATE LIGHTUSD_WITH_ZSTD_COMPRESSION)
     endif()
   endforeach()
 endif()
@@ -600,10 +600,10 @@ endif()
 target_compile_features(${EXAMPLE_TARGET} PRIVATE cxx_std_17)
 
 # tusdview uses no C++ RTTI and (outside the optional MCP server) no C++
-# exceptions; disable both to match the tinyusdz library build (TINYUSDZ_CXX_RTTI
+# exceptions; disable both to match the lightusd library build (LIGHTUSD_CXX_RTTI
 # / _EXCEPTIONS default Off). Scoped to C++ so vendored C sources (glad.c, cuew,
 # civetweb.c, ...) don't warn. The MCP server TUs re-enable exceptions below.
-if(NOT TINYUSDZ_CXX_RTTI)
+if(NOT LIGHTUSD_CXX_RTTI)
   if(MSVC)
     target_compile_options(${EXAMPLE_TARGET}
                            PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
@@ -612,7 +612,7 @@ if(NOT TINYUSDZ_CXX_RTTI)
                            PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
   endif()
 endif()
-if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+if(NOT LIGHTUSD_CXX_EXCEPTIONS)
   if(MSVC)
     target_compile_options(${EXAMPLE_TARGET}
                            PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
@@ -642,7 +642,7 @@ target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
 
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     tusd_gpu_rt_common
-    ${TINYUSDZ_TARGET_STATIC}
+    ${LIGHTUSD_TARGET_STATIC}
     glfw
     OpenGL::GL
     ${CMAKE_DL_LIBS})
@@ -651,8 +651,8 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
 # Mirrors tools/tusdrender/CMakeLists.txt: build the next libs on demand (with
 # the std::thread parallel-compose path forced on) and link them. Used by
 # next_scene_loader.cc (the --next OpenGL mesh preview).
-set(TINYUSDZ_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET tinyusdz_next)
+set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET lightusd_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
                    ${CMAKE_BINARY_DIR}/tusdview_next_build)
 endif()
@@ -660,7 +660,7 @@ if(NOT TARGET tydra_next)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next
                    ${CMAKE_BINARY_DIR}/tusdview_tydra_next_build)
 endif()
-target_link_libraries(${EXAMPLE_TARGET} PRIVATE tinyusdz_next tydra_next)
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_next tydra_next)
 
 # CPU RT (cpu/cpu_raytracer.cc): reuse the vendored lightrt_c BVH library
 # (src/external/lightrt/lightrt_c_tri.*) via the same CMake target
@@ -721,7 +721,7 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Embedded MCP (Model Context Protocol) server: stdio + HTTP transports.
-# Dependencies (nlohmann/json + civetweb) are vendored in tinyusdz/src/external,
+# Dependencies (nlohmann/json + civetweb) are vendored in lightusd/src/external,
 # so this defaults ON (no system packages needed).
 # ---------------------------------------------------------------------------
 # civetweb HTTP/WebSocket server. Shared by the WebSocket image-stream server
@@ -731,9 +731,9 @@ target_sources(${EXAMPLE_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
 
 # Runtime-generated index-only prototype LODs. Keep this viewer-private: the
-# core library's optional TINYUSDZ_WITH_MESHOPT setting remains unchanged.
+# core library's optional LIGHTUSD_WITH_MESHOPT setting remains unchanged.
 target_sources(${EXAMPLE_TARGET} PRIVATE prototype_lod.cc)
-if(NOT TINYUSDZ_WITH_MESHOPT)
+if(NOT LIGHTUSD_WITH_MESHOPT)
   target_sources(${EXAMPLE_TARGET} PRIVATE
       ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/allocator.cpp
       ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/simplifier.cpp
@@ -752,10 +752,10 @@ elseif(WIN32)
   endif()
 endif()
 # stream_server.cc uses nlohmann/json (needs exceptions when built -fno-exceptions).
-if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+if(NOT LIGHTUSD_CXX_EXCEPTIONS AND NOT MSVC)
   set_source_files_properties(stream/stream_server.cc
                               PROPERTIES COMPILE_OPTIONS "-fexceptions")
-elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+elseif(NOT LIGHTUSD_CXX_EXCEPTIONS AND MSVC)
   set_source_files_properties(stream/stream_server.cc
                               PROPERTIES COMPILE_OPTIONS "/EHsc")
 endif()
@@ -767,11 +767,11 @@ if(TUSDVIEW_ENABLE_MCP)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_HAVE_MCP=1)
   # The MCP server uses try/catch around JSON-RPC; it needs C++ exceptions even
   # when the rest of tusdview is built -fno-exceptions.
-  if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+  if(NOT LIGHTUSD_CXX_EXCEPTIONS AND NOT MSVC)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
         PROPERTIES COMPILE_OPTIONS "-fexceptions")
-  elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+  elseif(NOT LIGHTUSD_CXX_EXCEPTIONS AND MSVC)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
         PROPERTIES COMPILE_OPTIONS "/EHsc")
@@ -811,12 +811,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Wno-switch-default")
   endif()
-  if(NOT TINYUSDZ_NO_WERROR)
+  if(NOT LIGHTUSD_NO_WERROR)
     set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Werror")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   set(TUSDVIEW_CXX_FLAGS "-Wall")
-  if(NOT TINYUSDZ_NO_WERROR)
+  if(NOT LIGHTUSD_NO_WERROR)
     set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Werror")
   endif()
 endif()

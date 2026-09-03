@@ -16,7 +16,7 @@
 #include "prim-enums.hh"
 #include "value-types.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // Relationship(typeless property)
@@ -85,8 +85,8 @@ class Relationship {
 
   bool is_varying_authored() const { return _varying_authored; }
 
-  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
-  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
   size_t estimate_memory_usage() const;
 
@@ -184,20 +184,20 @@ class RelationshipProperty {
   }
 
   // TODO: Deprecate this direct access API to Relationship value?
-  const Relationship &relationship() const TINYUSDZ_LIFETIMEBOUND {
+  const Relationship &relationship() const LIGHTUSD_LIFETIMEBOUND {
     return _relationship;
   }
 
-  Relationship &relationship() TINYUSDZ_LIFETIMEBOUND { return _relationship; }
+  Relationship &relationship() LIGHTUSD_LIFETIMEBOUND { return _relationship; }
 
   bool has_value() const { return _relationship.has_value(); }
 
   bool is_blocked() const { return _relationship.is_blocked(); }
 
-  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND {
+  const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND {
     return _relationship.metas();
   }
-  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _relationship.metas(); }
+  AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _relationship.metas(); }
 
  private:
   bool _authored{false};
@@ -249,7 +249,7 @@ class TypedConnection {
     _authored = true;
   }
 
-  const std::vector<Path> &get_connections() const TINYUSDZ_LIFETIMEBOUND {
+  const std::vector<Path> &get_connections() const LIGHTUSD_LIFETIMEBOUND {
     return _targetPaths;
   }
 
@@ -259,8 +259,8 @@ class TypedConnection {
 
   bool is_blocked() const { return _blocked; }
 
-  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
-  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  const AttrMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() LIGHTUSD_LIFETIMEBOUND { return _metas; }
 
  private:
   std::vector<Path> _targetPaths;
@@ -281,4 +281,4 @@ DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 
 }  // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

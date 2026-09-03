@@ -16,7 +16,7 @@ constexpr int kJSONMaxParseDepth = 256;
 
 #include <limits>
 
-namespace tinyusdz {
+namespace lightusd {
 
 using json = minijson::Value;
 
@@ -52,12 +52,12 @@ struct JSONToUSDContext {
   std::vector<std::vector<uint8_t>> buffers;  // Raw buffer data
   std::vector<JSONBufferView> bufferViews;    // Buffer view information
   std::vector<JSONAccessor> accessors;        // Accessor information
-  
+
   // Parse buffer data from JSON
   bool ParseBuffers(const json& j, std::string* err = nullptr);
   bool ParseBufferViews(const json& j, std::string* err = nullptr);
   bool ParseAccessors(const json& j, std::string* err = nullptr);
-  
+
   // Get array data from accessor
   template<typename T>
   bool GetArrayFromAccessor(size_t accessorIndex, std::vector<T>* result, std::string* err = nullptr);
@@ -69,24 +69,24 @@ bool JSONToUSDContext::ParseBuffers(const json& j, std::string* err) {
     if (err) (*err) = "Buffers must be an array";
     return false;
   }
-  
+
   buffers.clear();
   buffers.reserve(j.size());
-  
+
   for (const auto& buffer_obj : j) {
     if (!buffer_obj.is_object() || !buffer_obj.contains("byteLength") || !buffer_obj.contains("uri")) {
       if (err) (*err) = "Invalid buffer object";
       return false;
     }
-    
+
     size_t byteLength = 0;
     if (!GetSizeT(buffer_obj["byteLength"], &byteLength, "buffer.byteLength", err)) {
       return false;
     }
     std::string uri = buffer_obj["uri"].get<std::string>();
-    
+
     std::vector<uint8_t> buffer_data;
-    
+
     if (uri.find("data:application/octet-stream;base64,") == 0) {
       // Embedded base64 data
       std::string base64_data = uri.substr(37);  // Skip "data:application/octet-stream;base64,"
@@ -122,10 +122,10 @@ bool JSONToUSDContext::ParseBuffers(const json& j, std::string* err) {
       if (err) (*err) = "External buffer files not yet supported";
       return false;
     }
-    
+
     buffers.push_back(std::move(buffer_data));
   }
-  
+
   return true;
 }
 
@@ -134,17 +134,17 @@ bool JSONToUSDContext::ParseBufferViews(const json& j, std::string* err) {
     if (err) (*err) = "BufferViews must be an array";
     return false;
   }
-  
+
   bufferViews.clear();
   bufferViews.reserve(j.size());
-  
+
   for (const auto& bufferView_obj : j) {
     if (!bufferView_obj.is_object() || !bufferView_obj.contains("buffer") ||
         !bufferView_obj.contains("byteOffset") || !bufferView_obj.contains("byteLength")) {
       if (err) (*err) = "Invalid bufferView object";
       return false;
     }
-    
+
     JSONBufferView bufferView;
     if (!GetSizeT(bufferView_obj["buffer"], &bufferView.buffer, "bufferView.buffer", err) ||
         !GetSizeT(bufferView_obj["byteOffset"], &bufferView.byteOffset, "bufferView.byteOffset", err) ||
@@ -152,16 +152,16 @@ bool JSONToUSDContext::ParseBufferViews(const json& j, std::string* err) {
       return false;
     }
     bufferView.byteStride = 0;
-    
+
     if (bufferView_obj.contains("byteStride")) {
       if (!GetSizeT(bufferView_obj["byteStride"], &bufferView.byteStride, "bufferView.byteStride", err)) {
         return false;
       }
     }
-    
+
     bufferViews.push_back(bufferView);
   }
-  
+
   return true;
 }
 
@@ -170,10 +170,10 @@ bool JSONToUSDContext::ParseAccessors(const json& j, std::string* err) {
     if (err) (*err) = "Accessors must be an array";
     return false;
   }
-  
+
   accessors.clear();
   accessors.reserve(j.size());
-  
+
   for (const auto& accessor_obj : j) {
     if (!accessor_obj.is_object() || !accessor_obj.contains("bufferView") ||
         !accessor_obj.contains("componentType") || !accessor_obj.contains("count") ||
@@ -181,7 +181,7 @@ bool JSONToUSDContext::ParseAccessors(const json& j, std::string* err) {
       if (err) (*err) = "Invalid accessor object";
       return false;
     }
-    
+
     JSONAccessor accessor;
     if (!GetSizeT(accessor_obj["bufferView"], &accessor.bufferView, "accessor.bufferView", err)) {
       return false;
@@ -192,16 +192,16 @@ bool JSONToUSDContext::ParseAccessors(const json& j, std::string* err) {
       return false;
     }
     accessor.type = accessor_obj["type"].get<std::string>();
-    
+
     if (accessor_obj.contains("byteOffset")) {
       if (!GetSizeT(accessor_obj["byteOffset"], &accessor.byteOffset, "accessor.byteOffset", err)) {
         return false;
       }
     }
-    
+
     accessors.push_back(accessor);
   }
-  
+
   return true;
 }
 
@@ -211,28 +211,28 @@ bool JSONToUSDContext::GetArrayFromAccessor(size_t accessorIndex, std::vector<T>
     if (err) (*err) = "Result pointer is null";
     return false;
   }
-  
+
   if (accessorIndex >= accessors.size()) {
     if (err) (*err) = "Accessor index out of range";
     return false;
   }
-  
+
   const auto& accessor = accessors[accessorIndex];
-  
+
   if (accessor.bufferView >= bufferViews.size()) {
     if (err) (*err) = "BufferView index out of range";
     return false;
   }
-  
+
   const auto& bufferView = bufferViews[accessor.bufferView];
-  
+
   if (bufferView.buffer >= buffers.size()) {
     if (err) (*err) = "Buffer index out of range";
     return false;
   }
-  
+
   const auto& buffer = buffers[bufferView.buffer];
-  
+
   // Calculate total byte size needed with overflow guards.
   size_t elementSize = sizeof(T);
   if (accessor.count > ((std::numeric_limits<size_t>::max)() / elementSize)) {
@@ -254,12 +254,12 @@ bool JSONToUSDContext::GetArrayFromAccessor(size_t accessorIndex, std::vector<T>
     if (err) (*err) = "Buffer access out of bounds";
     return false;
   }
-  
+
   // Extract data
   result->resize(accessor.count);
   const uint8_t* srcData = buffer.data() + data_offset;
   std::memcpy(result->data(), srcData, totalBytes);
-  
+
   return true;
 }
 
@@ -271,12 +271,12 @@ bool DeserializeArrayFromBase64(const std::string& base64_data, std::vector<T>* 
   if (!result) {
     return false;
   }
-  
+
   if (base64_data.empty()) {
     result->clear();
     return true;
   }
-  
+
   if (base64_data.size() > security_policy::kJSONMaxBase64InputChars) {
     return false;
   }
@@ -293,18 +293,18 @@ bool DeserializeArrayFromBase64(const std::string& base64_data, std::vector<T>* 
   if (decoded.empty()) {
     return false;
   }
-  
+
   // Check if the size is valid for type T
   if (decoded.size() % sizeof(T) != 0) {
     return false;
   }
-  
+
   size_t count = decoded.size() / sizeof(T);
   result->resize(count);
-  
+
   // Copy decoded bytes to result array
   std::memcpy(result->data(), decoded.data(), decoded.size());
-  
+
   return true;
 }
 
@@ -320,7 +320,7 @@ static bool DeserializeAttributeMetadata(const json& metadata_json, AttrMetas* m
   if (!metas || !metadata_json.is_object()) {
     return false;
   }
-  
+
   // Parse interpolation
   if (metadata_json.contains("interpolation") && metadata_json["interpolation"].is_string()) {
     std::string interp_str = metadata_json["interpolation"].get<std::string>();
@@ -358,10 +358,10 @@ static bool DeserializeAttributeMetadata(const json& metadata_json, AttrMetas* m
   if (metadata_json.contains("displayName") && metadata_json["displayName"].is_string()) {
     metas->set_displayName(metadata_json["displayName"].get<std::string>());
   }
-  
+
   // TODO: Parse customData (requires Dictionary support)
   // TODO: Parse sdrMetadata (requires Dictionary support)
-  
+
   return true;
 }
 
@@ -374,33 +374,33 @@ static bool ParseArrayFromJSON(const json& j, JSONToUSDContext* context, std::st
     }
     return false;
   }
-  
+
   if (!j.contains("count") || !j.contains("type")) {
     if (err) {
       (*err) = "Array object must contain 'count' and 'type' fields";
     }
     return false;
   }
-  
+
   if (!j["count"].is_number_unsigned()) {
     if (err) {
       (*err) = "'count' field must be a positive number";
     }
     return false;
   }
-  
+
   if (!j["type"].is_string()) {
     if (err) {
       (*err) = "'type' field must be a string";
     }
     return false;
   }
-  
+
   if (!GetSizeT(j["count"], count, "count", err)) {
     return false;
   }
   *type = j["type"].get<std::string>();
-  
+
   // Check for base64 mode
   if (j.contains("data")) {
     if (!j["data"].is_string()) {
@@ -413,7 +413,7 @@ static bool ParseArrayFromJSON(const json& j, JSONToUSDContext* context, std::st
     *accessor_index = SIZE_MAX;  // Invalid accessor index indicates base64 mode
     return true;
   }
-  
+
   // Check for accessor mode
   if (j.contains("accessor")) {
     if (!j["accessor"].is_number_unsigned()) {
@@ -422,21 +422,21 @@ static bool ParseArrayFromJSON(const json& j, JSONToUSDContext* context, std::st
       }
       return false;
     }
-    
+
     if (!context) {
       if (err) {
         (*err) = "Context required for accessor mode but not provided";
       }
       return false;
     }
-    
+
     if (!GetSizeT(j["accessor"], accessor_index, "accessor", err)) {
       return false;
     }
     base64_data->clear();  // No base64 data in accessor mode
     return true;
   }
-  
+
   if (err) {
     (*err) = "Array object must contain either 'data' (base64) or 'accessor' field";
   }
@@ -449,18 +449,18 @@ static bool ParseAndDeserializeArray(const json& array_json, JSONToUSDContext* c
                               const std::string& expected_type, std::vector<T>* result, std::string* err) {
   std::string base64_data, type;
   size_t accessor_index, count;
-  
+
   if (!ParseArrayFromJSON(array_json, context, &base64_data, &accessor_index, &count, &type, err)) {
     return false;
   }
-  
+
   if (type != expected_type) {
     if (err) {
       (*err) = "Unexpected array type: " + type + ", expected: " + expected_type;
     }
     return false;
   }
-  
+
   if (accessor_index == SIZE_MAX) {
     // Base64 mode
     if (!DeserializeArrayFromBase64(base64_data, result)) {
@@ -499,12 +499,12 @@ bool ParseAndDeserializeArrayWithMetadata(const json& array_json, JSONToUSDConte
     if (err) (*err) = "Array data must be an object";
     return false;
   }
-  
+
   // Parse array data (base64 or accessor)
   if (!ParseAndDeserializeArray(array_json, context, expected_type, result, err)) {
     return false;
   }
-  
+
   // Parse metadata if present
   if (array_json.contains("metadata") && metas) {
     if (!DeserializeAttributeMetadata(array_json["metadata"], metas, err)) {
@@ -514,7 +514,7 @@ bool ParseAndDeserializeArrayWithMetadata(const json& array_json, JSONToUSDConte
       }
     }
   }
-  
+
   return true;
 }
 
@@ -525,14 +525,14 @@ static bool ParsePoint3fArrayWithMetadata(const json& array_json, JSONToUSDConte
     if (err) (*err) = "Points array must be an object";
     return false;
   }
-  
+
   std::string base64_data, type;
   size_t accessor_index, count;
-  
+
   if (!ParseArrayFromJSON(array_json, context, &base64_data, &accessor_index, &count, &type, err)) {
     return false;
   }
-  
+
   if (type != "point3f[]") {
     if (err) (*err) = "Expected point3f[] type, got: " + type;
     return false;
@@ -542,10 +542,10 @@ static bool ParsePoint3fArrayWithMetadata(const json& array_json, JSONToUSDConte
     if (err) (*err) = "point3f count overflow";
     return false;
   }
-  
+
   std::vector<float> float_data;
   bool data_success = false;
-  
+
   if (accessor_index == SIZE_MAX) {
     // Base64 mode
     data_success = DeserializeFloatArrayFromBase64(base64_data, &float_data);
@@ -555,12 +555,12 @@ static bool ParsePoint3fArrayWithMetadata(const json& array_json, JSONToUSDConte
       data_success = context->GetArrayFromAccessor(accessor_index, &float_data, err);
     }
   }
-  
+
   if (!data_success || float_data.size() != count * 3) {
     if (err) (*err) = "Failed to parse points data or size mismatch";
     return false;
   }
-  
+
   result->reserve(count);
   for (size_t i = 0; i < count; ++i) {
     value::point3f pt;
@@ -569,12 +569,12 @@ static bool ParsePoint3fArrayWithMetadata(const json& array_json, JSONToUSDConte
     pt[2] = float_data[i * 3 + 2];
     result->push_back(pt);
   }
-  
+
   // Parse metadata if present
   if (array_json.contains("metadata") && metas) {
     DeserializeAttributeMetadata(array_json["metadata"], metas, err);
   }
-  
+
   return true;
 }
 
@@ -585,17 +585,17 @@ static bool ParseNormal3fArrayWithMetadata(const json& array_json, JSONToUSDCont
     if (err) (*err) = "Normals array must be an object";
     return false;
   }
-  
+
   std::vector<float> float_data;
   if (!ParseAndDeserializeArray(array_json, context, "normal3f[]", &float_data, err)) {
     return false;
   }
-  
+
   if (float_data.size() % 3 != 0) {
     if (err) (*err) = "Normal array size must be divisible by 3";
     return false;
   }
-  
+
   size_t count = float_data.size() / 3;
   result->reserve(count);
   for (size_t i = 0; i < count; ++i) {
@@ -605,12 +605,12 @@ static bool ParseNormal3fArrayWithMetadata(const json& array_json, JSONToUSDCont
     normal[2] = float_data[i * 3 + 2];
     result->push_back(normal);
   }
-  
+
   // Parse metadata if present
   if (array_json.contains("metadata") && metas) {
     DeserializeAttributeMetadata(array_json["metadata"], metas, err);
   }
-  
+
   return true;
 }
 
@@ -624,19 +624,19 @@ static bool JSONToGeomMesh(const json& j, GeomMesh* mesh, JSONToUSDContext* cont
     }
     return false;
   }
-  
+
   if (!j.is_object()) {
     if (err) {
       (*err) = "JSON must be an object";
     }
     return false;
   }
-  
+
   // Set name if present
   if (j.contains("name") && j["name"].is_string()) {
     mesh->name = j["name"].get<std::string>();
   }
-  
+
   // Parse points array with metadata
   if (j.contains("points")) {
     std::vector<value::point3f> points;
@@ -648,7 +648,7 @@ static bool JSONToGeomMesh(const json& j, GeomMesh* mesh, JSONToUSDContext* cont
       return false;
     }
   }
-  
+
   // Parse face vertex counts array
   if (j.contains("faceVertexCounts")) {
     std::vector<int> int_data;
@@ -661,7 +661,7 @@ static bool JSONToGeomMesh(const json& j, GeomMesh* mesh, JSONToUSDContext* cont
     }
   }
 
-  // Parse face vertex indices array  
+  // Parse face vertex indices array
   if (j.contains("faceVertexIndices")) {
     std::vector<int> int_data;
     if (ParseAndDeserializeArrayWithMetadata(j["faceVertexIndices"], context, "int[]", &int_data, &mesh->faceVertexIndices.metas(), err)) {
@@ -800,20 +800,20 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
 
   // Create context for buffer parsing if needed
   JSONToUSDContext context;
-  
+
   // Parse buffer data if present
   if (j.contains("buffers")) {
     if (!context.ParseBuffers(j["buffers"], err)) {
       return false;
     }
   }
-  
+
   if (j.contains("bufferViews")) {
     if (!context.ParseBufferViews(j["bufferViews"], err)) {
       return false;
     }
   }
-  
+
   if (j.contains("accessors")) {
     if (!context.ParseAccessors(j["accessors"], err)) {
       return false;
@@ -830,15 +830,15 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
   // Parse layer metadata
   if (j.contains("metas")) {
     json metas = j["metas"];
-    
+
     if (metas.contains("upAxis") && metas["upAxis"].is_string()) {
       std::string s = metas["upAxis"].get<std::string>();
       if (s == "X") {
-        layer.metas().upAxis = tinyusdz::Axis::X;
+        layer.metas().upAxis = lightusd::Axis::X;
       } else if (s == "Y") {
-        layer.metas().upAxis = tinyusdz::Axis::Y;
+        layer.metas().upAxis = lightusd::Axis::Y;
       } else if (s == "Z") {
-        layer.metas().upAxis = tinyusdz::Axis::Z;
+        layer.metas().upAxis = lightusd::Axis::Z;
       } else {
         if (err) {
           (*err) = "Unknown upAxis value: " + s;
@@ -846,47 +846,47 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
         return false;
       }
     }
-    
+
     if (metas.contains("defaultPrim") && metas["defaultPrim"].is_string()) {
       layer.metas().defaultPrim = value::token(metas["defaultPrim"].get<std::string>());
     }
-    
+
     if (metas.contains("metersPerUnit") && metas["metersPerUnit"].is_number()) {
       layer.metas().metersPerUnit = metas["metersPerUnit"].get<double>();
     }
-    
+
     if (metas.contains("timeCodesPerSecond") && metas["timeCodesPerSecond"].is_number()) {
       layer.metas().timeCodesPerSecond = metas["timeCodesPerSecond"].get<double>();
     }
-    
+
     if (metas.contains("framesPerSecond") && metas["framesPerSecond"].is_number()) {
       layer.metas().framesPerSecond = metas["framesPerSecond"].get<double>();
     }
-    
+
     if (metas.contains("startTimeCode") && metas["startTimeCode"].is_number()) {
       layer.metas().startTimeCode = metas["startTimeCode"].get<double>();
     }
-    
+
     if (metas.contains("endTimeCode") && metas["endTimeCode"].is_number()) {
       layer.metas().endTimeCode = metas["endTimeCode"].get<double>();
     }
-    
+
     if (metas.contains("kilogramsPerUnit") && metas["kilogramsPerUnit"].is_number()) {
       layer.metas().kilogramsPerUnit = metas["kilogramsPerUnit"].get<double>();
     }
-    
+
     if (metas.contains("doc") && metas["doc"].is_string()) {
       layer.metas().doc = metas["doc"].get<std::string>();
     }
-    
+
     if (metas.contains("comment") && metas["comment"].is_string()) {
       layer.metas().comment = metas["comment"].get<std::string>();
     }
-    
+
     if (metas.contains("autoPlay") && metas["autoPlay"].is_boolean()) {
       layer.metas().autoPlay = metas["autoPlay"].get<bool>();
     }
-    
+
     if (metas.contains("playbackMode") && metas["playbackMode"].is_string()) {
       std::string mode = metas["playbackMode"].get<std::string>();
       if (mode == "loop") {
@@ -895,7 +895,7 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
         layer.metas().playbackMode = LayerMetas::PlaybackMode::PlaybackModeNone;
       }
     }
-    
+
     if (metas.contains("primChildren") && metas["primChildren"].is_array()) {
       std::vector<std::string> children_strs;
       for (const auto& child : metas["primChildren"]) {
@@ -909,7 +909,7 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
       }
       layer.metas().primChildren = children_tokens;
     }
-    
+
     if (metas.contains("subLayers") && metas["subLayers"].is_array()) {
       for (const auto& subLayer : metas["subLayers"]) {
         if (subLayer.is_object() && subLayer.contains("assetPath") && subLayer["assetPath"].is_string()) {
@@ -920,20 +920,20 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
       }
     }
   }
-  
+
   // Parse primSpecs
   if (j.contains("primSpecs") && j["primSpecs"].is_object()) {
     const auto *prim_specs = j["primSpecs"].object_items();
     for (const auto &member : *prim_specs) {
       const std::string& prim_name = member.key;
       const json& prim_obj = member.value();
-      
+
       if (prim_obj.is_object()) {
         // For now, create basic PrimSpecs
         // TODO: Implement full PrimSpec parsing including geometry data
         PrimSpec primspec;
         primspec.name() = prim_name;
-        
+
         // Add basic type information if available
         if (prim_obj.contains("typeName") && prim_obj["typeName"].is_string()) {
           std::string type_name = prim_obj["typeName"].get<std::string>();
@@ -947,7 +947,7 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
             }
           }
         }
-        
+
         layer.primspecs()[prim_name] = primspec;
       }
     }
@@ -980,4 +980,4 @@ bool JSONToGeomMesh(const std::string &j_str, GeomMesh *mesh, std::string *warn,
   return detail::JSONToGeomMesh(j, mesh, nullptr, warn, err);
 }
 
-} // namespace tinyusdz
+} // namespace lightusd

@@ -23,7 +23,7 @@
 #include "core/model-scope.hh"       // Model, Scope (needed by downstream pprinter.hh)
 #include "value-pprint.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 class Layer;  // Forward declaration for operator<< below
 
@@ -88,17 +88,17 @@ std::string print_layeroffset(const LayerOffset &layeroffset,
 
 }  // namespace prim
 
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Visibility v);
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v);
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v);
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Visibility v);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Interpolation v);
+std::ostream &operator<<(std::ostream &ofs, const lightusd::Layer &layer);
 
 // StringData needs proper quoting for USDA output
 std::ostream &operator<<(std::ostream &ofs,
-                         const tinyusdz::value::StringData &v);
+                         const lightusd::value::StringData &v);
 
 }  // namespace std

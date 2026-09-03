@@ -1,6 +1,6 @@
 # USDC Crate Writer
 
-The TinyUSDZ USDC Crate Writer writes USD Stage data to binary USDC (Crate) format version 0.8.0. Status: experimental but functional with comprehensive test coverage.
+The LightUSD USDC Crate Writer writes USD Stage data to binary USDC (Crate) format version 0.8.0. Status: experimental but functional with comprehensive test coverage.
 
 > **Two crate writers in the current codebase.** This document primarily covers
 > the **classic** writer (`src/crate-writer*.cc`, driven by `Stage` via
@@ -104,7 +104,7 @@ back to backfill the count, keys, offsets, and `ValueRep`s
 
 ```bash
 # Enable debug output
-export TINYUSDZ_ENABLE_DCOUT=1
+export LIGHTUSD_ENABLE_DCOUT=1
 ./tusdcat input.usda -o output.usdc
 
 # Hex dump header
@@ -115,7 +115,7 @@ xxd -l 128 output.usdc
 
 # Crate Format Deduplication (pxrUSD Reference)
 
-Analysis of the deduplication system in OpenUSD v25.08 (`pxr/usd/sdf/crateFile.cpp`). This serves as reference for TinyUSDZ's crate writer implementation.
+Analysis of the deduplication system in OpenUSD v25.08 (`pxr/usd/sdf/crateFile.cpp`). This serves as reference for LightUSD's crate writer implementation.
 
 **Principle**: Write each unique value exactly once, reference by offset or index.
 
@@ -139,7 +139,7 @@ Written to dedicated sections: TOKENS, STRINGS, FIELDS, FIELDSETS, PATHS.
 
 **OpenUSD reference**: `_ValueHandler<T>` template deduplicates data values with separate dedup maps for scalars and arrays per concrete type, lazy allocation, cleared after write.
 
-**TinyUSDZ implementation**: out-of-line values (including TimeSamples) are deduplicated using NaN-aware hashing (`NanAwareHash` in `crate-writer.hh`). This follows the OpenUSD `TfHash` pattern where +0.0 and -0.0 are treated as identical (both canonicalized to zero bits before hashing). The hash function is XXH3_64bits (from xxHash v0.8.3), which is 1.1x–12.3x faster than FNV-1a depending on buffer size (see benchmark below). Collision verification uses NaN-aware byte equality (`buffers_equal`).
+**LightUSD implementation**: out-of-line values (including TimeSamples) are deduplicated using NaN-aware hashing (`NanAwareHash` in `crate-writer.hh`). This follows the OpenUSD `TfHash` pattern where +0.0 and -0.0 are treated as identical (both canonicalized to zero bits before hashing). The hash function is XXH3_64bits (from xxHash v0.8.3), which is 1.1x–12.3x faster than FNV-1a depending on buffer size (see benchmark below). Collision verification uses NaN-aware byte equality (`buffers_equal`).
 
 Dedup map type: `unordered_multimap<size_t, ValueDedupEntry>` keyed by XXH3 hash, with byte content stored for collision verification.
 
@@ -148,7 +148,7 @@ Non-float types (int, string, token, half): XXH3 on raw bytes directly.
 
 ### Value Classification
 
-TinyUSDZ inlining lives in `CrateWriter::TryInlineValue` (`crate-writer-inline.cc`). A `ValueRep` carries a 48-bit payload; a value is inlined iff it fits:
+LightUSD inlining lives in `CrateWriter::TryInlineValue` (`crate-writer-inline.cc`). A `ValueRep` carries a 48-bit payload; a value is inlined iff it fits:
 
 1. **Always inlined**: token / string / AssetPath (as their TOKENS/STRINGS index), bool, int32, uint32, half, float, and the `Specifier`/`Permission`/`Variability` enums.
 2. **Conditionally inlined**: int64 / uint64 — only when the value fits in 48 bits; otherwise written out-of-line.
@@ -193,7 +193,7 @@ the 48-bit ValueRep payload), see [Value Classification](#value-classification).
 
 This is the format OpenUSD calls "compressed floating point arrays" (crate
 version 0.6.0+). Reference: `_WritePossiblyCompressedArray<float/double/GfHalf>`
-in `pxr/usd/sdf/crateFile.cpp` (OpenUSD v25.08). The matching TinyUSDZ reader is
+in `pxr/usd/sdf/crateFile.cpp` (OpenUSD v25.08). The matching LightUSD reader is
 `ReadFloatArray`/`ReadDoubleArray`/`ReadHalfArray` in `src/crate-reader-arrays.cc`.
 
 #### When OpenUSD creates a compressed float/double array
@@ -245,9 +245,9 @@ If `count < 16` (even on the "compressed" path) or the ValueRep is not marked
 compressed, the payload is simply `uint64 count` followed by raw `T[count]` — no
 code byte.
 
-#### TinyUSDZ implementation (runtime option, default off)
+#### LightUSD implementation (runtime option, default off)
 
-TinyUSDZ writes float/double arrays **uncompressed by default**. The tagged
+LightUSD writes float/double arrays **uncompressed by default**. The tagged
 encoding above is implemented and toggled by a runtime writer option (no compile
 flag), so the default output is unchanged:
 
@@ -258,9 +258,9 @@ flag), so the default output is unchanged:
 | `tusdcat` CLI | `--compress-float-arrays` |
 
 ```cpp
-tinyusdz::USDWriteOptions wopts;
+lightusd::USDWriteOptions wopts;
 wopts.compress_float_arrays = true;  // default false
-tinyusdz::usdc::SaveAsUSDCToFile("out.usdc", stage, &warn, &err, wopts);
+lightusd::usdc::SaveAsUSDCToFile("out.usdc", stage, &warn, &err, wopts);
 ```
 ```bash
 tusdcat --compress-float-arrays input.usda -o out.usdc   # default: off
@@ -278,11 +278,11 @@ tusdcat --compress-float-arrays input.usda -o out.usdc   # default: off
   pattern** rather than `operator==`, so `-0.0` and `NaN` round-trip *exactly*
   through the `'t'` path (OpenUSD merges `±0.0` and explodes the LUT on `NaN`). The
   `'i'` path still collapses `-0.0 → +0.0`, identical to OpenUSD.
-- `half[]` arrays are left uncompressed by TinyUSDZ even with the option on (already
+- `half[]` arrays are left uncompressed by LightUSD even with the option on (already
   2 bytes/element; only `float[]`/`double[]` are handled).
 - Verified: `crate_writer_float_double_array_compression_roundtrip_test` runs every
   data pattern with the option both ON and OFF (`'i'`/`'t'`/raw, bit-exact) plus a
-  file-size-shrinks assertion; Pixar `usdcat` reads both `'i'` and `'t'` TinyUSDZ
+  file-size-shrinks assertion; Pixar `usdcat` reads both `'i'` and `'t'` LightUSD
   output with exact values.
 
 ## Performance
@@ -326,7 +326,7 @@ Separate attribute/connection/relationship specs and Variant/VariantSet authorin
 # `next` Crate Writer Performance & Remaining Opportunities
 
 Specific to `src/next/crate/`. Profiled on the public large scenes via
-`TINYUSDZ_NEXT_TIMING=1 build-next-release/next_usdcat -f -o out.usdc <root>`
+`LIGHTUSD_NEXT_TIMING=1 build-next-release/next_usdcat -f -o out.usdc <root>`
 (`--compose-threads N` / `--compose-threads-auto` control *composition* threads),
 write to a **seekable file**, not `/dev/null`
 — the crate writer seek-patches headers). `CrateWriteOptions::num_threads`

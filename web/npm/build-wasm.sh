@@ -44,20 +44,20 @@ build_target() {
   fi
 }
 
-build_target "${BUILD32_DIR}" -DTINYUSDZ_WASM_PRODUCT=legacy
-build_target "${BUILD64_DIR}" -DTINYUSDZ_WASM_PRODUCT=legacy -DTINYUSDZ_WASM64=1
-build_target "${BUILD_NEXT32_DIR}" -DTINYUSDZ_WASM_PRODUCT=next
-build_target "${BUILD_NEXT64_DIR}" -DTINYUSDZ_WASM_PRODUCT=next -DTINYUSDZ_WASM64=1
+build_target "${BUILD32_DIR}" -DLIGHTUSD_WASM_PRODUCT=legacy
+build_target "${BUILD64_DIR}" -DLIGHTUSD_WASM_PRODUCT=legacy -DLIGHTUSD_WASM64=1
+build_target "${BUILD_NEXT32_DIR}" -DLIGHTUSD_WASM_PRODUCT=next
+build_target "${BUILD_NEXT64_DIR}" -DLIGHTUSD_WASM_PRODUCT=next -DLIGHTUSD_WASM64=1
 
 cat <<EOF
 [build-wasm] Complete.
 [build-wasm] Expected outputs:
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz.js
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz.wasm
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_64.js
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_64.wasm
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next.js
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next.wasm
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next_64.js
-  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next_64.wasm
+  ${WEB_DIR}/js/src/lightusd/lightusd.js
+  ${WEB_DIR}/js/src/lightusd/lightusd.wasm
+  ${WEB_DIR}/js/src/lightusd/lightusd_64.js
+  ${WEB_DIR}/js/src/lightusd/lightusd_64.wasm
+  ${WEB_DIR}/js/src/lightusd/lightusd_next.js
+  ${WEB_DIR}/js/src/lightusd/lightusd_next.wasm
+  ${WEB_DIR}/js/src/lightusd/lightusd_next_64.js
+  ${WEB_DIR}/js/src/lightusd/lightusd_next_64.wasm
 EOF

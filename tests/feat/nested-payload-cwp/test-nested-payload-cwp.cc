@@ -31,12 +31,12 @@
 #include <string>
 #include <utility>
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "composition.hh"
 #include "asset-resolution.hh"
 #include "core/prim-spec.hh"
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

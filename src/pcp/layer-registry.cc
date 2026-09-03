@@ -8,13 +8,13 @@
 #include "composition.hh"  // CompositeSublayers
 #include "io-util.hh"      // io::GetBaseDir
 #include "security-policy.hh"
-#include "tinyusdz.hh"  // LoadLayerFromMemory
+#include "lightusd.hh"  // LoadLayerFromMemory
 
-namespace tinyusdz {
+namespace lightusd {
 namespace pcp {
 
 LayerRegistry::LayerRegistry()
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
     : _mu(new std::mutex())
 #endif
 {
@@ -24,7 +24,7 @@ const Layer *LayerRegistry::GetOrLoad(AssetResolutionResolver &resolver,
                                       const std::string &asset_path,
                                       const std::string &cwp,
                                       std::string *warn, std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   // Serialize the whole resolve+open+parse: this also protects the shared
   // resolver's working-path mutation against concurrent builds.
   std::lock_guard<std::mutex> lock(*_mu);
@@ -105,25 +105,25 @@ const Layer *LayerRegistry::GetOrLoad(AssetResolutionResolver &resolver,
 }
 
 void LayerRegistry::Drop(const std::string &resolved_path) {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   std::lock_guard<std::mutex> lock(*_mu);
 #endif
   _by_resolved.erase(resolved_path);
 }
 
 void LayerRegistry::Clear() {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   std::lock_guard<std::mutex> lock(*_mu);
 #endif
   _by_resolved.clear();
 }
 
 size_t LayerRegistry::size() const {
-#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
+#if defined(LIGHTUSD_ENABLE_THREAD) && !defined(__EMSCRIPTEN__)
   std::lock_guard<std::mutex> lock(*_mu);
 #endif
   return _by_resolved.size();
 }
 
 }  // namespace pcp
-}  // namespace tinyusdz
+}  // namespace lightusd

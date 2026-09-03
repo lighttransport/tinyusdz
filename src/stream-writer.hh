@@ -41,7 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "buffer-util.hh"
 #include "tiny-format.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace {
 
@@ -455,4 +455,4 @@ class ChunkedStreamWriter {
   const size_t max_length_;
 };
 
-} // namespace tinyusdz
+} // namespace lightusd

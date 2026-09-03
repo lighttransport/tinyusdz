@@ -8,8 +8,8 @@
 // vertex positions are pairwise distinct: the OSD comparator matches
 // vertices by position, and symmetric meshes would make that ambiguous.
 
-#ifndef TINYUSDZ_TESTS_SUBDIV_MESH_CORPUS_HH_
-#define TINYUSDZ_TESTS_SUBDIV_MESH_CORPUS_HH_
+#ifndef LIGHTUSD_TESTS_SUBDIV_MESH_CORPUS_HH_
+#define LIGHTUSD_TESTS_SUBDIV_MESH_CORPUS_HH_
 
 #include <cmath>
 #include <cstdint>
@@ -470,4 +470,4 @@ inline Mesh NonManifoldFan() {
 
 }  // namespace corpus
 
-#endif  // TINYUSDZ_TESTS_SUBDIV_MESH_CORPUS_HH_
+#endif  // LIGHTUSD_TESTS_SUBDIV_MESH_CORPUS_HH_

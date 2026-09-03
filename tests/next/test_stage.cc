@@ -11,7 +11,7 @@
 #include "next/stage/stage.hh"
 #include "next/eval/attribute-eval.hh"
 
-using namespace tinyusdz::next;
+using namespace lightusd::next;
 
 void test_stage_builder() {
   std::cout << "Testing StageBuilder..." << std::endl;
@@ -609,7 +609,7 @@ void test_name_table_registration() {
 
   PropNameTable& table = GetPropNameTable();
   table.freeze();
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   assert(table.is_frozen());
 #endif
   for (const char* name : kAccessorNames) {

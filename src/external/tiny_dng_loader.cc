@@ -3,7 +3,7 @@
 //
 // Keeping the header-only implementation here prevents every image-loader
 // consumer from owning a separate implementation and makes the TinyDNG
-// symbols link exactly once in the TinyUSDZ library.
+// symbols link exactly once in the LightUSD library.
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"

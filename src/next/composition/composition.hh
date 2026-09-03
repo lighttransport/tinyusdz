@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Composition Arcs
+// LightUSD Next - Composition Arcs
 //
 // USD composition: references, payloads, inherits, specializes, variants
 
@@ -18,7 +18,7 @@
 #include <memory>
 #include <functional>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Composition arc types (in LIVRPS strength order)
@@ -367,4 +367,4 @@ std::vector<CompositionArc> GetPayloads(const Layer& layer);
 bool HasCompositionArcs(const PrimSpec& prim);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

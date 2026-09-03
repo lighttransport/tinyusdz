@@ -12,16 +12,16 @@
 #endif
 #endif
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
 #endif
 
 #include "usdc-reader-impl.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
+#if !defined(LIGHTUSD_DISABLE_MODULE_USDC_READER)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace usdc {
 
 Prim *USDCReader::Impl::ResolveVariantOwnerPrim(int32_t parent_node_id,
@@ -205,7 +205,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
 
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#if defined(LIGHTUSD_LOCAL_DEBUG_PRINT)
   for (auto &fv : fvs) {
     DCOUT("parent[" << current << "] level [" << level << "] fv name "
                     << fv.first << "(type = " << fv.second.type_name() << ")");
@@ -565,7 +565,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
 
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#if defined(LIGHTUSD_LOCAL_DEBUG_PRINT)
   for (auto &fv : fvs) {
     DCOUT("parent[" << current << "] level [" << level << "] fv name "
                     << fv.first << "(type = " << fv.second.type_name() << ")");
@@ -851,9 +851,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 }
 
 // Switch between recursive and iterative implementation
-#define TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM 1
+#define LIGHTUSD_USE_ITERATIVE_RECONSTRUCT_PRIM 1
 
-#if TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM
+#if LIGHTUSD_USE_ITERATIVE_RECONSTRUCT_PRIM
 
 //
 // Iterative version of ReconstructPrimRecursively using explicit stack
@@ -1117,7 +1117,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   return true;
 }
 
-#else // !TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM
+#else // !LIGHTUSD_USE_ITERATIVE_RECONSTRUCT_PRIM
 
 //
 // Original recursive implementation
@@ -1281,7 +1281,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   return true;
 }
 
-#endif // TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM
+#endif // LIGHTUSD_USE_ITERATIVE_RECONSTRUCT_PRIM
 
 bool USDCReader::Impl::ReconstructPrimSpecRecursively(
     int parent, int current, PrimSpec *parentPrimSpec, int level,
@@ -1454,7 +1454,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 }
 
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
 
 //
 // Parallel prim reconstruction.
@@ -2016,10 +2016,10 @@ bool USDCReader::Impl::ReconstructPrimSpecHierarchyParallel(
   return true;
 }
 
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
 
 
 }  // namespace usdc
-}  // namespace tinyusdz
+}  // namespace lightusd
 
-#endif  // !TINYUSDZ_DISABLE_MODULE_USDC_READER
+#endif  // !LIGHTUSD_DISABLE_MODULE_USDC_READER

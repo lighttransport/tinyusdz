@@ -11,7 +11,7 @@
 ///
 /// Supported light types:
 /// - SphereLight: Point light with sphere shape
-/// - CylinderLight: Cylindrical area light  
+/// - CylinderLight: Cylindrical area light
 /// - DomeLight: Environment/HDR lighting
 /// - DiskLight: Disk-shaped area light
 /// - RectLight: Rectangular area light
@@ -40,7 +40,7 @@
 #include "core/variant-types.hh"    // VariantSet
 #include "xform.hh"                 // Xformable
 
-namespace tinyusdz {
+namespace lightusd {
 
 constexpr auto kSphereLight = "SphereLight";
 constexpr auto kCylinderLight = "CylinderLight";
@@ -163,13 +163,13 @@ class BoundableLight : public Xformable, public Collection, public LightAPI {
   std::map<std::string, Property> props;
   PrimMeta meta; // TODO: move to private
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
 
@@ -197,13 +197,13 @@ class NonboundableLight : public Xformable, public Collection, public LightAPI {
   std::map<std::string, Property> props;
   PrimMeta meta; // TODO: move to private
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
 
@@ -326,13 +326,13 @@ struct LightFilter : public Xformable {
   std::map<std::string, Property> props;
   PrimMeta meta;
 
-  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
-  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const LIGHTUSD_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() LIGHTUSD_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
-  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
-  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const LIGHTUSD_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() LIGHTUSD_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() LIGHTUSD_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -423,4 +423,4 @@ DEFINE_TYPE_TRAIT(PluginLightFilter, kPluginLightFilter, TYPE_ID_LUX_PLUGIN_LIGH
 
 } // namespace value
 
-}  // namespace tinyusdz
+}  // namespace lightusd

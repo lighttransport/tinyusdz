@@ -43,11 +43,11 @@ public:
 
   /// Get all tokens for serialization
   const std::map<std::string, TokenIndex>& GetTokens() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return tokens_;
   }
   const std::map<TokenIndex, std::string>& GetReverseTokens() const
-      TINYUSDZ_LIFETIMEBOUND {
+      LIGHTUSD_LIFETIMEBOUND {
     return reverse_tokens_;
   }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdrender — embedded QuickJS scripting + MCP server (stdio / HTTP). Compiles
-// to nothing unless TINYUSDZ_WITH_QJS is defined.
-#ifdef TINYUSDZ_WITH_QJS
+// to nothing unless LIGHTUSD_WITH_QJS is defined.
+#ifdef LIGHTUSD_WITH_QJS
 #include <fstream>
 #include <sstream>
 
@@ -211,7 +211,7 @@ void RegFn(JSContext *ctx, JSValue obj, const char *name, JSCFunctionData *fn,
                     JS_NewCFunctionData(ctx, fn, len, 0, 0, nullptr));
 }
 
-void RegisterTusdrenderModule(tinyusdz::tydra::JSEngineState &engine,
+void RegisterTusdrenderModule(lightusd::tydra::JSEngineState &engine,
                               RenderContext *rc) {
   JSContext *ctx = static_cast<JSContext *>(engine.context);
   g_render_ctx = rc;
@@ -256,29 +256,29 @@ int RunJSScriptMode(const Options &opt, const std::string &script_path) {
     return EXIT_FAILURE;
   }
 
-  tinyusdz::tydra::JSEngineState engine;
+  lightusd::tydra::JSEngineState engine;
   std::string err;
-  if (!tinyusdz::tydra::InitJSEngine(engine, err)) {
+  if (!lightusd::tydra::InitJSEngine(engine, err)) {
     std::cerr << "JS engine init failed: " << err << "\n";
     return EXIT_FAILURE;
   }
   qjs::RegisterTusdrenderModule(engine, &ctx);
 
   nlohmann::json ret;
-  const bool ok = tinyusdz::tydra::RunJSScript(engine, code, ret, err);
+  const bool ok = lightusd::tydra::RunJSScript(engine, code, ret, err);
   if (!ok) {
     std::cerr << "JS error: " << err << "\n";
   } else if (!ret.is_null()) {
     std::cerr << "JS result: " << ret.dump() << "\n";
   }
-  tinyusdz::tydra::DestroyJSEngine(engine);
+  lightusd::tydra::DestroyJSEngine(engine);
   qjs::g_render_ctx = nullptr;
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 // Build a tusdrender.* JS expression from an MCP tool call and evaluate it
 // against the persistent engine, returning the JSON result.
-bool McpCallTool(tinyusdz::tydra::JSEngineState &engine, const std::string &name,
+bool McpCallTool(lightusd::tydra::JSEngineState &engine, const std::string &name,
                  const nlohmann::json &args, nlohmann::json &out,
                  std::string &err) {
   auto num = [&](const char *k, double d) -> double {
@@ -341,7 +341,7 @@ bool McpCallTool(tinyusdz::tydra::JSEngineState &engine, const std::string &name
     err = "unknown tool: " + name;
     return false;
   }
-  if (!tinyusdz::tydra::RunJSScript(engine, code, out, err)) {
+  if (!lightusd::tydra::RunJSScript(engine, code, out, err)) {
     return false;  // err set
   }
   return true;
@@ -399,9 +399,9 @@ int RunMCPMode(const Options &opt) {
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
   if (opt.stats) PrintRTStats(ctx);
 
-  tinyusdz::tydra::JSEngineState engine;
+  lightusd::tydra::JSEngineState engine;
   std::string err;
-  if (!tinyusdz::tydra::InitJSEngine(engine, err)) {
+  if (!lightusd::tydra::InitJSEngine(engine, err)) {
     std::cerr << "JS engine init failed: " << err << "\n";
     return EXIT_FAILURE;
   }
@@ -462,10 +462,10 @@ int RunMCPMode(const Options &opt) {
     // notifications (no id) other than the above are ignored.
   }
 
-  tinyusdz::tydra::DestroyJSEngine(engine);
+  lightusd::tydra::DestroyJSEngine(engine);
   qjs::g_render_ctx = nullptr;
   return EXIT_SUCCESS;
 }
 
 }  // namespace tusdr
-#endif  // TINYUSDZ_WITH_QJS
+#endif  // LIGHTUSD_WITH_QJS

@@ -42,11 +42,11 @@ its generated preview image. `web/demo/index.html` reads that config directly.
 ## Useful Overrides
 
 ```bash
-TINYUSDZ_PREVIEW_WIDTH=1280 npm --prefix web/demo run capture-previews
-TINYUSDZ_PREVIEW_HEIGHT=820 npm --prefix web/demo run capture-previews
-TINYUSDZ_PREVIEW_WAIT_MS=120000 npm --prefix web/demo run capture-previews
+LIGHTUSD_PREVIEW_WIDTH=1280 npm --prefix web/demo run capture-previews
+LIGHTUSD_PREVIEW_HEIGHT=820 npm --prefix web/demo run capture-previews
+LIGHTUSD_PREVIEW_WAIT_MS=120000 npm --prefix web/demo run capture-previews
 CHROME_BIN=/path/to/chrome npm --prefix web/demo run capture-previews
-TINYUSDZ_PREVIEW_NO_XVFB=1 npm --prefix web/demo run capture-previews
+LIGHTUSD_PREVIEW_NO_XVFB=1 npm --prefix web/demo run capture-previews
 ```
 
 ## Verify

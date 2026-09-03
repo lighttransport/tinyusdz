@@ -6,7 +6,7 @@
 #include <map>
 #include <cstdint>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 /// Result of a USDZ write operation.
@@ -38,4 +38,4 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
     const std::map<std::string, std::vector<uint8_t>>& assets);
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

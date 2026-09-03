@@ -9,7 +9,7 @@
 #include "common-macros.inc"
 #include "tiny-format.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 
@@ -24,11 +24,11 @@ bool export_to_json(const RenderScene &scene, bool asset_as_binary,
   (void)err;
 
   // TODO
-  
+
   return false;
 }
 
 
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 

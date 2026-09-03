@@ -6,7 +6,7 @@ import {
   isOwnedUint32Array,
   toOwnedFloat32Array,
   toOwnedUint32Array,
-} from '../src/tinyusdz/TypedArrayOwnership.js';
+} from '../src/lightusd/TypedArrayOwnership.js';
 
 const heap = new ArrayBuffer(64);
 new Float32Array(heap, 8, 3).set([1, 2, 3]);

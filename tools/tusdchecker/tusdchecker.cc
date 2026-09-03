@@ -29,14 +29,14 @@
 
 namespace {
 
-using tinyusdz::next::GetAOUSDCoreSpecVersionString;
-using tinyusdz::next::GetOrderedValidationIssues;
-using tinyusdz::next::GetValidationGroupNames;
-using tinyusdz::next::Layer;
-using tinyusdz::next::USDValidationIssue;
-using tinyusdz::next::USDValidationResult;
-using tinyusdz::next::USDValidationSeverity;
-using tinyusdz::next::ValidationOptions;
+using lightusd::next::GetAOUSDCoreSpecVersionString;
+using lightusd::next::GetOrderedValidationIssues;
+using lightusd::next::GetValidationGroupNames;
+using lightusd::next::Layer;
+using lightusd::next::USDValidationIssue;
+using lightusd::next::USDValidationResult;
+using lightusd::next::USDValidationSeverity;
+using lightusd::next::ValidationOptions;
 
 constexpr int kExitValid = 0;
 constexpr int kExitInvalid = 1;
@@ -71,14 +71,14 @@ struct Args {
 constexpr size_t kVariantValidationLimit = 1000;
 
 ValidationOptions AllAvailableGroups() {
-  return tinyusdz::next::MakeValidateAllOptions();
+  return lightusd::next::MakeValidateAllOptions();
 }
 
 void PrintUsage(std::ostream& os) {
   os << "Usage: tusdchecker [options] FILE\n"
         "\n"
         "Validate USDA, USDC, USDZ, or MaterialX (.mtlx) against AOUSD Core\n"
-        "1.0.1 and TinyUSDZ's structural schema rules. FILE may be '-' for\n"
+        "1.0.1 and LightUSD's structural schema rules. FILE may be '-' for\n"
         "stdin.\n"
         "\n"
         "Options:\n"
@@ -159,7 +159,7 @@ std::vector<std::string> Split(const std::string& text, char separator) {
   return values;
 }
 
-// Map an OpenUSD usdchecker validator keyword to tinyusdz group names, so
+// Map an OpenUSD usdchecker validator keyword to lightusd group names, so
 // `--include-keywords UsdGeomValidators` style invocations work verbatim.
 // Returns an empty list for a non-keyword (regular group name).
 std::vector<std::string> KeywordToGroups(const std::string& keyword) {
@@ -283,8 +283,8 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
     } else if (arg == "-v" || arg == "--verbose") {
       args->verbose = true;
     } else if (arg == "-d" || arg == "--dump-rules" || arg == "--dumpRules") {
-      for (const tinyusdz::next::ValidationRuleInfo& rule :
-           tinyusdz::next::GetValidationRuleTable()) {
+      for (const lightusd::next::ValidationRuleInfo& rule :
+           lightusd::next::GetValidationRuleTable()) {
         std::cout << "[" << rule.group << ":" << rule.id << "]:\n"
                   << "\tDoc: " << rule.doc << "\n";
       }
@@ -905,7 +905,7 @@ void ValidatePackageCentralDirectory(const uint8_t* bytes, size_t size,
 }
 
 void CollectValueDependencies(
-    const tinyusdz::next::Value& value,
+    const lightusd::next::Value& value,
     std::unordered_set<std::string>* dependencies) {
   if (!dependencies) return;
   if (const std::string* asset = value.as_asset_path()) {
@@ -913,7 +913,7 @@ void CollectValueDependencies(
     return;
   }
   if (value.is_array() &&
-      value.type_id() == tinyusdz::next::TypeId::AssetPath) {
+      value.type_id() == lightusd::next::TypeId::AssetPath) {
     if (const auto* assets = value.as_token_array()) {
       for (const std::string& asset : *assets) {
         if (!asset.empty()) dependencies->insert(asset);
@@ -921,7 +921,7 @@ void CollectValueDependencies(
     }
     return;
   }
-  if (const tinyusdz::next::Dict* dict = value.as_dictionary()) {
+  if (const lightusd::next::Dict* dict = value.as_dictionary()) {
     for (const auto& entry : dict->entries) {
       CollectValueDependencies(entry.second, dependencies);
     }
@@ -942,7 +942,7 @@ void CollectLayerDependencies(const Layer& layer,
   for (const auto& prim : layer.prims()) {
     const auto collect_arcs = [&](const std::vector<std::string>& arcs) {
       for (const std::string& encoded : arcs) {
-        const auto arc = tinyusdz::next::Compositor::ParseReference(encoded);
+        const auto arc = lightusd::next::Compositor::ParseReference(encoded);
         if (!arc.asset_path.empty()) dependencies->insert(arc.asset_path);
       }
     };
@@ -953,7 +953,7 @@ void CollectLayerDependencies(const Layer& layer,
     CollectValueDependencies(prim.meta().sdrMetadata(), dependencies);
     CollectValueDependencies(prim.meta().clips(), dependencies);
     for (const auto& slot : prim.properties().slots()) {
-      const tinyusdz::next::Value* value = prim.property_value(slot.name_id);
+      const lightusd::next::Value* value = prim.property_value(slot.name_id);
       if (value) CollectValueDependencies(*value, dependencies);
       if (const auto* meta = prim.property_meta(slot.name_id)) {
         CollectValueDependencies(meta->customData, dependencies);
@@ -962,7 +962,7 @@ void CollectLayerDependencies(const Layer& layer,
       }
       if (const auto* samples = prim.time_samples(slot.name_id)) {
         for (const auto& sample : *samples) {
-          if (const tinyusdz::next::Value* sample_value =
+          if (const lightusd::next::Value* sample_value =
                   prim.time_sample_value(sample.second)) {
             CollectValueDependencies(*sample_value, dependencies);
           }
@@ -1023,11 +1023,11 @@ void ValidateCrate(const uint8_t* bytes, size_t size,
                    USDValidationResult* result) {
   if (!result) return;
   result->checked_groups.crate = true;
-  tinyusdz::next::CrateReadOptions options;
+  lightusd::next::CrateReadOptions options;
   options.max_memory = max_memory;
   options.lazy_arrays = true;
-  tinyusdz::next::CrateReader reader(options);
-  tinyusdz::next::CrateReadResult read = reader.Read(bytes, size);
+  lightusd::next::CrateReader reader(options);
+  lightusd::next::CrateReadResult read = reader.Read(bytes, size);
   if (!read.success) {
     for (const auto& error : read.errors) {
       AddIssue(result, USDValidationSeverity::Error, "crate.structure",
@@ -1139,15 +1139,15 @@ std::string MapComposedPath(const std::string& source_path,
   return std::string();
 }
 
-std::string PropertyTypeName(const tinyusdz::next::PrimSpec& prim,
-                             const tinyusdz::next::PropSlot& slot) {
+std::string PropertyTypeName(const lightusd::next::PrimSpec& prim,
+                             const lightusd::next::PropSlot& slot) {
   const std::string& name =
-      tinyusdz::next::GetPropNameTable().get(slot.name_id);
+      lightusd::next::GetPropNameTable().get(slot.name_id);
   if (const std::string* declared = prim.property_type_name(name)) {
     if (!declared->empty()) return *declared;
   }
-  const char* type = tinyusdz::next::GetTypeName(
-      static_cast<tinyusdz::next::TypeId>(slot.value_type));
+  const char* type = lightusd::next::GetTypeName(
+      static_cast<lightusd::next::TypeId>(slot.value_type));
   return type ? std::string(type) : std::to_string(slot.value_type);
 }
 
@@ -1159,15 +1159,15 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
     const std::string mapped = MapComposedPath(
         weak_prim.path().str(), weaker_prefix, stronger_prefix);
     if (mapped.empty()) continue;
-    const tinyusdz::next::PrimSpec* strong_prim =
+    const lightusd::next::PrimSpec* strong_prim =
         stronger.prim_at_path(mapped);
     if (!strong_prim) continue;
     for (const auto& weak_slot : weak_prim.properties().slots()) {
-      const tinyusdz::next::PropSlot* strong_slot =
+      const lightusd::next::PropSlot* strong_slot =
           strong_prim->property(weak_slot.name_id);
       if (!strong_slot) continue;
       const std::string& property =
-          tinyusdz::next::GetPropNameTable().get(weak_slot.name_id);
+          lightusd::next::GetPropNameTable().get(weak_slot.name_id);
       const bool weak_rel = weak_slot.is_relationship();
       const bool strong_rel = strong_slot->is_relationship();
       if (weak_rel != strong_rel) {
@@ -1193,7 +1193,7 @@ void CompareLayerTypes(const Layer& stronger, const Layer& weaker,
 
 void AuditLayerTypesRecursive(
     const Layer& layer, const std::string& anchor,
-    const tinyusdz::next::pcp::LayerLoadOptions& options,
+    const lightusd::next::pcp::LayerLoadOptions& options,
     std::unordered_set<std::string>* visited, USDValidationResult* result) {
   if (!visited || !result) return;
   const auto load_and_audit = [&](const std::string& asset,
@@ -1203,7 +1203,7 @@ void AuditLayerTypesRecursive(
     const std::string resolved = ResolveDependencyPath(anchor, asset);
     std::string warnings, errors;
     std::shared_ptr<Layer> dependency =
-        tinyusdz::next::pcp::LoadLayerFromFile(
+        lightusd::next::pcp::LoadLayerFromFile(
             resolved, &warnings, &errors, options);
     if (!dependency) return;
     std::string effective_prefix = source_prefix;
@@ -1230,7 +1230,7 @@ void AuditLayerTypesRecursive(
   for (const auto& prim : layer.prims()) {
     const auto audit_arcs = [&](const std::vector<std::string>& arcs) {
       for (const std::string& encoded : arcs) {
-        const auto arc = tinyusdz::next::Compositor::ParseReference(encoded);
+        const auto arc = lightusd::next::Compositor::ParseReference(encoded);
         if (!arc.asset_path.empty()) {
           load_and_audit(arc.asset_path, arc.prim_path, prim.path().str());
         }
@@ -1438,7 +1438,7 @@ int main(int argc, char** argv) {
     return kExitError;
   }
   const size_t max_memory = args.max_memory_mb * size_t{1024} * 1024;
-  tinyusdz::next::pcp::LayerLoadOptions load_options;
+  lightusd::next::pcp::LayerLoadOptions load_options;
   load_options.max_memory = max_memory;
   load_options.strict_aousd_conformance = args.strict_parse;
 
@@ -1451,7 +1451,7 @@ int main(int argc, char** argv) {
       std::cerr << "tusdchecker: error: " << error << '\n';
       return kExitError;
     }
-    layer = tinyusdz::next::pcp::LoadLayerFromMemory(
+    layer = lightusd::next::pcp::LoadLayerFromMemory(
         "stdin.usda", reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors,
         load_options);
@@ -1460,11 +1460,11 @@ int main(int argc, char** argv) {
       std::cerr << "tusdchecker: error: " << error << '\n';
       return kExitError;
     }
-    layer = tinyusdz::next::pcp::LoadLayerFromMemory(
+    layer = lightusd::next::pcp::LoadLayerFromMemory(
         args.input, reinterpret_cast<const uint8_t*>(input_bytes.data()),
         input_bytes.size(), &parser_warnings, &parser_errors, load_options);
   } else {
-    layer = tinyusdz::next::pcp::LoadLayerFromFile(
+    layer = lightusd::next::pcp::LoadLayerFromFile(
         args.input, &parser_warnings, &parser_errors, load_options);
   }
   if (!layer) {
@@ -1480,13 +1480,13 @@ int main(int argc, char** argv) {
   // single pass with no overrides reproduces the previous behavior.
   auto compose_pass =
       [&](const std::map<std::string, std::string>& variant_overrides,
-          std::vector<tinyusdz::next::CompositionError>* errors)
+          std::vector<lightusd::next::CompositionError>* errors)
       -> std::unique_ptr<Layer> {
-    tinyusdz::next::ResolverConfig resolver_config;
+    lightusd::next::ResolverConfig resolver_config;
     resolver_config.enable_suffix_fallback = !args.strict_parse;
-    tinyusdz::next::AssetResolver resolver(resolver_config);
-    tinyusdz::next::Compositor compositor(&resolver);
-    tinyusdz::next::CompositionOptions composition_options;
+    lightusd::next::AssetResolver resolver(resolver_config);
+    lightusd::next::Compositor compositor(&resolver);
+    lightusd::next::CompositionOptions composition_options;
     composition_options.strict_aousd_conformance = args.strict_parse;
     composition_options.max_layer_memory = max_memory;
     composition_options.variant_overrides = variant_overrides;
@@ -1496,7 +1496,7 @@ int main(int argc, char** argv) {
       std::string dependency_warnings;
       std::string dependency_errors;
       std::shared_ptr<Layer> loaded =
-          tinyusdz::next::pcp::LoadLayerFromFile(
+          lightusd::next::pcp::LoadLayerFromFile(
               resolved_path, &dependency_warnings, &dependency_errors,
               load_options);
       if (!dependency_warnings.empty()) parser_warnings += dependency_warnings;
@@ -1513,13 +1513,13 @@ int main(int argc, char** argv) {
   };
 
   USDValidationResult result;
-  std::vector<tinyusdz::next::CompositionError> composition_errors;
+  std::vector<lightusd::next::CompositionError> composition_errors;
   size_t variant_pass_count = 1;
   bool variant_limit_hit = false;
   bool any_pass_composed = false;
 
   if (!args.composed) {
-    result = tinyusdz::next::ValidateLayerAgainstAOUSDCore(*layer, args.groups);
+    result = lightusd::next::ValidateLayerAgainstAOUSDCore(*layer, args.groups);
   } else {
     const std::vector<VariantChoice> choices = CollectVariantChoices(*layer);
     const std::vector<std::map<std::string, std::string>> passes =
@@ -1541,11 +1541,11 @@ int main(int argc, char** argv) {
     // usdchecker resolves stage-metadata presence against the ROOT layer; a
     // composed layer's metas may have merged sublayer opinions, so check the
     // authored layer here and disable the per-pass check.
-    tinyusdz::next::ValidationOptions pass_groups = args.groups;
+    lightusd::next::ValidationOptions pass_groups = args.groups;
     pass_groups.stage_presence_checks = false;
     {
       USDValidationResult presence;
-      tinyusdz::next::ValidateStageMetadataPresence(*layer, args.groups,
+      lightusd::next::ValidateStageMetadataPresence(*layer, args.groups,
                                                     &presence);
       MergeDedupedIssues(&result, &seen_issue_keys, presence);
     }
@@ -1558,7 +1558,7 @@ int main(int argc, char** argv) {
         }
         std::cerr << '\n';
       }
-      std::vector<tinyusdz::next::CompositionError> pass_errors;
+      std::vector<lightusd::next::CompositionError> pass_errors;
       std::unique_ptr<Layer> composed =
           compose_pass(passes[pass_index], &pass_errors);
       for (auto& composition_error : pass_errors) {
@@ -1571,7 +1571,7 @@ int main(int argc, char** argv) {
       if (!composed) continue;
       any_pass_composed = true;
       const USDValidationResult pass_result =
-          tinyusdz::next::ValidateLayerAgainstAOUSDCore(*composed,
+          lightusd::next::ValidateLayerAgainstAOUSDCore(*composed,
                                                         pass_groups);
       MergeDedupedIssues(&result, &seen_issue_keys, pass_result);
     }
@@ -1650,7 +1650,7 @@ int main(int argc, char** argv) {
     }
   }
   if (args.usdchecker_compat) {
-    tinyusdz::next::ApplyUsdcheckerCompatSeverities(&result);
+    lightusd::next::ApplyUsdcheckerCompatSeverities(&result);
   }
   const bool warnings_fail =
       args.strict && (result.warning_count() > 0 || !parser_warnings.empty());
@@ -1679,7 +1679,7 @@ int main(int argc, char** argv) {
       *output << "\nParser warnings:\n" << parser_warnings;
       if (parser_warnings.back() != '\n') *output << '\n';
     }
-    *output << tinyusdz::next::FormatValidationResult(result);
+    *output << lightusd::next::FormatValidationResult(result);
     if (warnings_fail && result.ok()) {
       *output << "Strict result: FAILED - warnings are errors\n";
     }

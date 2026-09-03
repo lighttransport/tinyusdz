@@ -3,8 +3,8 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 
 //
-// NOTE: pxrUSD uses row-major format for matrix, so use row-major format in tinyusdz as well.
-// 
+// NOTE: pxrUSD uses row-major format for matrix, so use row-major format in lightusd as well.
+//
 #pragma once
 
 #include <cstring>
@@ -13,7 +13,7 @@
 #include "core/xform-op.hh"  // XformOp (Xformable::xformOps); self-contained so
                              // includers need not pre-include it (e.g. via pprinter.hh)
 
-namespace tinyusdz {
+namespace lightusd {
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -113,10 +113,10 @@ value::matrix4d inverse_pxr(const value::matrix4d &m, double *determinant, doubl
 value::matrix2d transpose(const value::matrix2d &m);
 value::matrix3d transpose(const value::matrix3d &m);
 
-// NOTE: Full matrix transpose(i.e, translation elements are transposed). 
+// NOTE: Full matrix transpose(i.e, translation elements are transposed).
 // So if you want to transform normal vector, first make input matrix elements upper-left 3x3 only,
 // then transpose(inverse(upper_left_3x3_only(M)))
-value::matrix4d transpose(const value::matrix4d &m); 
+value::matrix4d transpose(const value::matrix4d &m);
 
 
 value::float4 matmul(const value::matrix4d &m, const value::float4 &p);
@@ -149,7 +149,7 @@ value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p
 value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p);
 
 // tx, ty, tz = [inout]
-// default eps is grabbed from pxrUSD. 
+// default eps is grabbed from pxrUSD.
 bool orthonormalize_basis(value::double3 &tx, value::double3 &ty, value::double3 &tz, const bool normalize, const double eps = 1e-6);
 
 // `result_valid` become set to false when orthonormalization failed(did not converged.)
@@ -162,7 +162,7 @@ value::matrix4d orthonormalize(const value::matrix4d &m, bool *result_valid = nu
 // Build matrix from T R S.
 // Rotation is given by angle in degree and its ordering is XYZ.
 // (equivalent to [xformOp:translation, xformOp:RotateXYZ, xformOp:scale])
-// 
+//
 value::matrix4d trs_angle_xyz(
   const value::double3 &translation,
   const value::double3 &rotation_angles_xyz,
@@ -172,7 +172,7 @@ value::matrix4d trs_angle_xyz(
 // Build matrix from T R S.
 //
 // Rotation is given by 3 vectors axis(orthonormalized inside trs()).
-// 
+//
 value::matrix4d trs_rot_axis(
   const value::double3 &translation,
   const value::double3 &rotation_x_axis,
@@ -221,7 +221,7 @@ struct Xformable {
   ///
   /// Evaluate xformOps and get local matrix.
   ///
-  /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
+  /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!?
   ///
   // Computes the local matrix on each call and returns it by value. (Previously
   // cached into `mutable` members, which races if a single Xformable instance is
@@ -257,4 +257,4 @@ struct Xformable {
 };
 
 
-} // namespace tinyusdz
+} // namespace lightusd

@@ -12,7 +12,7 @@ This mirrors the methodology of the Activision Caldera benchmark documented in
 Example:
     python3 tools/tusdrender/bench_island.py \
         --island /mnt/disk1/data/island \
-        --dist /mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist \
+        --dist /mnt/nvme02/work/lightusd-repo/OpenUSD/dist \
         --out /tmp/island_bench
 """
 

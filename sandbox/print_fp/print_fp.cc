@@ -11,9 +11,9 @@
 
 // Define this to use direct binary16 dragonbox (shorter strings, smaller buffer)
 // Undefine to use fp16->fp32->dragonbox (simpler, reuses existing code)
-// #define TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+// #define LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 #include "dragonbox_binary16.hh"
 #endif
 
@@ -60,18 +60,18 @@ namespace internal {
 //
 // Half (fp16) worst case:
 //
-// When TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX is defined:
+// When LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX is defined:
 //   Uses direct binary16 dragonbox - produces true shortest representation
 //   Worst case: "-6.5504e+4" = 10 chars + null = 11 bytes
 //   Buffer size: 16 bytes (conservative, with safety margin)
 //
-// When TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX is NOT defined (default):
+// When LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX is NOT defined (default):
 //   fp16 values are converted to float before dragonbox conversion,
 //   so output contains enough digits for float32 roundtrip, not just fp16.
 //   Worst case (from exhaustive testing): "-1.1920928955078125e-7" = 22 chars
 //   Buffer size: 24 bytes (allows for future format changes)
 //
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
 constexpr size_t DTOA_DRAGONBOX_BUFFER_SIZE_HALF = 16;
 #else
 constexpr size_t DTOA_DRAGONBOX_BUFFER_SIZE_HALF = 24;
@@ -112,7 +112,7 @@ struct half {
 };
 
 // Convert half (fp16) to float (fp32)
-// Based on implementation from TinyUSDZ value-types.cc
+// Based on implementation from LightUSD value-types.cc
 inline float half_to_float(half h) {
   // Little endian implementation (most common)
   union {
@@ -452,21 +452,21 @@ char* dtoa_dragonbox(const float f, char* buf) {
 //
 // Two implementations available via compile-time switch:
 //
-// 1. TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX defined:
+// 1. LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX defined:
 //    - Uses direct binary16 dragonbox algorithm
 //    - Produces TRUE shortest representation for fp16
 //    - Shorter strings (~70% reduction vs fp32 path)
 //    - Smaller buffer requirement (16 vs 24 bytes)
 //    - Example: 0.333 → "0.3333" (5 chars)
 //
-// 2. TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX NOT defined (default):
+// 2. LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX NOT defined (default):
 //    - Converts half → float → dragonbox(float)
 //    - Produces shortest representation for FLOAT32
 //    - Longer strings but simpler implementation
 //    - Example: 0.333 → "0.33325195312500" (16 chars)
 //
 char* dtoa_dragonbox(const half h, char* buf) {
-#ifdef TINYUSDZ_USE_DIRECT_FP16_DRAGONBOX
+#ifdef LIGHTUSD_USE_DIRECT_FP16_DRAGONBOX
   // Direct binary16 dragonbox implementation
 
   // Handle special cases
@@ -608,19 +608,19 @@ std::string print_floats(const std::vector<float> &v) {
 template<size_t N>
 std::string print_float_array(const std::vector<std::array<float, N>> &v) {
   std::ostringstream oss;
-  
+
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       oss << ", ";
     }
-    
+
     oss << "(";
-    
+
     for (size_t j = 0; j < N; j++) {
       if (j > 0) {
         oss << ", ";
       }
-      
+
       char buffer[internal::DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT];
       // Handle special cases to avoid dragonbox assertion
       if (!std::isfinite(v[i][j]) || v[i][j] == 0.0f) {
@@ -637,10 +637,10 @@ std::string print_float_array(const std::vector<std::array<float, N>> &v) {
         oss << buffer;
       }
     }
-    
+
     oss << ")";
   }
-  
+
   oss << "\n";
   return oss.str();
 }
@@ -648,19 +648,19 @@ std::string print_float_array(const std::vector<std::array<float, N>> &v) {
 template<size_t N>
 std::string print_double_array(const std::vector<std::array<double, N>> &v) {
   std::ostringstream oss;
-  
+
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       oss << ", ";
     }
-    
+
     oss << "(";
-    
+
     for (size_t j = 0; j < N; j++) {
       if (j > 0) {
         oss << ", ";
       }
-      
+
       char buffer[internal::DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE];
       // Handle special cases to avoid dragonbox assertion
       if (!std::isfinite(v[i][j]) || v[i][j] == 0.0) {
@@ -677,10 +677,10 @@ std::string print_double_array(const std::vector<std::array<double, N>> &v) {
         oss << buffer;
       }
     }
-    
+
     oss << ")";
   }
-  
+
   oss << "\n";
   return oss.str();
 }
@@ -766,7 +766,7 @@ std::string print_half4_array(const std::vector<half4> &v) {
 
 #if 0
 std::string print_floats(const std::vector<float> &v) {
-  
+
   char buffer[25];
 
   size_t n = v.size();
@@ -850,7 +850,7 @@ int main(int argc, char** argv) {
 
   // Test vector array printers
   std::cout << "\n=== Testing vector array printers ===\n";
-  
+
   // Test float2 arrays
   std::vector<float2> float2_test = {
     {1.0f, 2.0f},
@@ -858,7 +858,7 @@ int main(int argc, char** argv) {
     {0.0001f, 1000000.0f}
   };
   std::cout << "float2 array: " << print_float2_array(float2_test);
-  
+
   // Test float3 arrays
   std::vector<float3> float3_test = {
     {1.0f, 2.0f, 3.0f},
@@ -866,28 +866,28 @@ int main(int argc, char** argv) {
     {-1.0f, 0.0f, 1.0f}
   };
   std::cout << "float3 array: " << print_float3_array(float3_test);
-  
+
   // Test float4 arrays
   std::vector<float4> float4_test = {
     {1.0f, 0.0f, 0.0f, 1.0f},
     {0.5f, 0.5f, 0.5f, 0.8f}
   };
   std::cout << "float4 array: " << print_float4_array(float4_test);
-  
+
   // Test double2 arrays
   std::vector<double2> double2_test = {
     {1.0, 2.0},
     {3.14, -2.71}
   };
   std::cout << "double2 array: " << print_double2_array(double2_test);
-  
+
   // Test double3 arrays
   std::vector<double3> double3_test = {
     {1.0, 2.0, 3.0},
     {0.577, 0.577, 0.577}
   };
   std::cout << "double3 array: " << print_double3_array(double3_test);
-  
+
   // Test double4 arrays
   std::vector<double4> double4_test = {
     {1.0, 2.0, 3.0, 4.0},

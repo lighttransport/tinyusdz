@@ -16,8 +16,8 @@
 #include <cmath>
 #include <cstring>
 
-using namespace tinyusdz;
-using namespace tinyusdz::tydra;
+using namespace lightusd;
+using namespace lightusd::tydra;
 
 // -----------------------------------------------------------------------
 // Helpers: build a simple 3-joint chain (shoulder-elbow-hand) along +Y

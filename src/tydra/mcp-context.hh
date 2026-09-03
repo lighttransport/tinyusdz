@@ -11,7 +11,7 @@
 #include "../tiny-hashmap.hh"
 #include "diff-and-compare.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace tydra {
 
@@ -47,8 +47,8 @@ struct MCPAsset
   std::string description; // optional
   Image preview; // preview image of the asset(optional)
   std::string uuid;
-  
-  
+
+
   // Geometry and bounding box parameters
   std::array<float, 3> pivot_position = {0.0f, 0.0f, 0.0f}; // pivot point for rotation and scaling
   std::array<float, 3> bmin = {-1.0f, -1.0f, -1.0f}; // bounding box minimum
@@ -81,8 +81,8 @@ struct DiffSession
   Layer left;
   Layer right;
   tydra::DiffOptions opts;
-  tinyusdz::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
-  tinyusdz::HashMap<std::string, tydra::PropDiff> propDiffs;
+  lightusd::HashMap<std::string, tydra::PrimSpecDiff> psDiffs;
+  lightusd::HashMap<std::string, tydra::PropDiff> propDiffs;
   tydra::LayerMetaDiff layerMetaDiff;
 };
 
@@ -92,21 +92,21 @@ struct Context
   std::unique_ptr<Stage> stage;
   bool stage_loaded{false};
 
-  // ---- Cached layer diff (for the diff_* tools + tinyusdz.diff.* in JS) ----
+  // ---- Cached layer diff (for the diff_* tools + lightusd.diff.* in JS) ----
   std::unique_ptr<DiffSession> diff;
 
   // ---- Uncomposed Layers (for editing) ----
   // key = UUID
-  tinyusdz::HashMap<std::string, USDLayer> layers;
+  lightusd::HashMap<std::string, USDLayer> layers;
 
   // ---- Viewer workflow assets ----
   // key = name
-  tinyusdz::HashMap<std::string, MCPAsset> assets;
+  lightusd::HashMap<std::string, MCPAsset> assets;
 
   std::vector<AssetSelection> selected_assets;
 
   // key = name
-  tinyusdz::HashMap<std::string, Screenshot> screenshots;
+  lightusd::HashMap<std::string, Screenshot> screenshots;
 
   // ---- QuickJS engine (persistent per session) ----
   std::unique_ptr<JSEngineState> js_engine;
@@ -117,5 +117,5 @@ struct Context
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 

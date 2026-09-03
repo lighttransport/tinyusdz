@@ -32,7 +32,7 @@
 #include "pprint-meta.hh"
 #include "core/prim-spec.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
@@ -58,7 +58,7 @@
 
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace crate {
 
 #define kTag "[Crate]"
@@ -362,7 +362,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
         memcpy(&rep32, &payload32, sizeof(rep32));
         ival = static_cast<int64_t>(rep32);
       } else if (payload48 & (1ull << 47)) {
-        // Legacy TinyUSDZ inline payload: sign-extend from bit 47.
+        // Legacy LightUSD inline payload: sign-extend from bit 47.
         ival = static_cast<int64_t>(payload48 | (~((1ull << 48) - 1)));
       } else {
         ival = static_cast<int64_t>(payload48);
@@ -372,7 +372,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
-      // OpenUSD writes inlined uint64 as uint32; also accept older TinyUSDZ
+      // OpenUSD writes inlined uint64 as uint32; also accept older LightUSD
       // files that used the full 48-bit ValueRep payload.
       uint64_t ival = rep.GetPayload() & ((1ull << 48) - 1);
       DCOUT("value.uint64 = " << ival);
@@ -720,7 +720,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     // representation is not expected.
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE: {
       PUSH_ERROR(
-          "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
+          "Invalid data type(or maybe not supported in LightUSD yet) for "
           "Inlined value: " +
           crate::GetCrateDataTypeName(dty.dtype_id));
       return false;
@@ -1221,7 +1221,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of bool array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of bool array too large. LightUSD limites it up to {}", _config.maxArrayElements));
         }
 
         size_t uint8_t_size;
@@ -1283,7 +1283,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxAssetPathElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of AssetPaths too large. TinyUSDZ limites it up to {}", _config.maxAssetPathElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of AssetPaths too large. LightUSD limites it up to {}", _config.maxAssetPathElements));
         }
 
         size_t crate_Index_size;
@@ -1368,7 +1368,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. LightUSD limits it up to {}", _config.maxArrayElements));
         }
 
         size_t crate_Index_size;
@@ -1441,7 +1441,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. LightUSD limites it up to {}", _config.maxArrayElements));
         }
 
         size_t crate_Index_size;
@@ -1564,7 +1564,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of uchar array too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of uchar array too large. LightUSD limits it up to {}", _config.maxArrayElements));
         }
 
         size_t uint8_t_size;
@@ -1749,7 +1749,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(std::move(empty_v));
           return true;
         }
-        
+
         std::vector<float> v;
         if (!ReadFloatArray(rep.IsCompressed(), &v)) {
           PUSH_ERROR("Failed to read float array value.");
@@ -1786,7 +1786,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(std::move(empty_v));
           return true;
         }
-        
+
         std::vector<double> v;
         if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
           PUSH_ERROR("Failed to read Double value.");
@@ -2145,7 +2145,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // Crate wire layout is [x, y, z, w] = (imag, real); see
         // value-types.hh:957. (USDA uses the opposite [w, x, y, z]
         // order — that's a *display* convention, not a wire one.)
-        // tinyusdz's value::quatd struct matches the Crate layout, so
+        // lightusd's value::quatd struct matches the Crate layout, so
         // memcpy reads the bytes directly.
         value::quatd v;
         if (!sr()->read(sizeof(v), sizeof(v),
@@ -3621,7 +3621,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxAssetPathElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of PathExpressions too large. TinyUSDZ limits it up to {}", _config.maxAssetPathElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of PathExpressions too large. LightUSD limits it up to {}", _config.maxAssetPathElements));
         }
 
         size_t crate_Index_size;
@@ -3689,7 +3689,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
 
       if (n > _config.maxArrayElements) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of relocates too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of relocates too large. LightUSD limits it up to {}", _config.maxArrayElements));
       }
 
       // Account the reservation against the memory budget (with overflow-safe
@@ -3765,7 +3765,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to decode spline: " + serr);
       }
 
-      // Per-knot customData map (count + entries). tinyusdz does not retain
+      // Per-knot customData map (count + entries). lightusd does not retain
       // per-knot customData; only consume the count. The entries are not read
       // back here -- this value lives at its own offset, so leaving them
       // unconsumed does not affect other value reads.
@@ -3774,7 +3774,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline customData count.");
       }
       if (cdCount > 0) {
-        PUSH_WARN("Per-knot spline customData is not retained by TinyUSDZ.");
+        PUSH_WARN("Per-knot spline customData is not retained by LightUSD.");
       }
 
       value->Set(std::move(sd));
@@ -3782,7 +3782,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP: {
       PUSH_ERROR(
-          "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
+          "Invalid data type(or maybe not supported in LightUSD yet) for "
           "Uninlined value: " +
           crate::GetCrateDataTypeName(dty.dtype_id));
       return false;
@@ -3797,4 +3797,4 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 }
 
 } // namespace crate
-} // namespace tinyusdz
+} // namespace lightusd

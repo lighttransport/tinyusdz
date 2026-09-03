@@ -6,7 +6,7 @@
 
 import { StreamingUSDRenderer } from './streaming.js';
 import { renderHttpUSD } from './http-asset-resolver.js';
-import { getBackendFromURL } from './src/tinyusdz/LoaderConfigUtils.js';
+import { getBackendFromURL } from './src/lightusd/LoaderConfigUtils.js';
 
 const DEFAULT_URL = './assets/suzanne.usdc';
 const DEFAULT_CAMERA = {

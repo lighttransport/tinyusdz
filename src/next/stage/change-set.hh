@@ -11,7 +11,7 @@
 
 #include "stage.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct StageSnapshot {
@@ -69,4 +69,4 @@ struct StageChangeSet {
 };
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

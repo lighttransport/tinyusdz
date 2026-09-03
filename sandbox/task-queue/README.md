@@ -209,4 +209,4 @@ Note: In lock-free mode, `Size()` returns an approximate value due to relaxed or
 
 ## License
 
-Same as TinyUSDZ (MIT or Apache 2.0)
+Same as LightUSD (MIT or Apache 2.0)

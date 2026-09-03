@@ -8,7 +8,7 @@
 //     asset inputs:file = @diffuse.png@ ( customData = { asset ktx2 = @diffuse.ktx2@ } )
 //
 // `inputs:file` is left untouched, so the asset still opens in stock USD tools
-// and stays USDZ-legal; tinyusdz-aware consumers (tusdview
+// and stays USDZ-legal; lightusd-aware consumers (tusdview
 // --texture-keep-compressed on) find the companion and upload/transcode its GPU
 // blocks directly. This is the producer side of doc/texcomp.md.
 //
@@ -24,20 +24,20 @@
 #include "image-loader.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 extern "C" {
 #include "texpipe.h"  // tp_ktx2_write_uni[_zstd] (pulls in texcomp.h)
 #include "tir.h"      // tir_resize (mip chain)
 }
 
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
 #include "external/zstd.h"  // ZSTD_compress for supercompressionScheme 2
 #endif
 
 namespace {
 
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
 // Zstd callbacks for tp_ktx2_write_uni_zstd (texpipe carries no zstd itself).
 size_t ZstdBound(void * /*user*/, size_t src_size) {
   return ZSTD_compressBound(src_size);
@@ -53,7 +53,7 @@ constexpr bool kZstdAvailable = false;
 #endif
 
 std::string LowerExt(const std::string &p) {
-  const std::string e = tinyusdz::io::GetFileExtension(p);
+  const std::string e = lightusd::io::GetFileExtension(p);
   std::string lo;
   for (char c : e) lo += char(std::tolower(static_cast<unsigned char>(c)));
   return lo;
@@ -73,13 +73,13 @@ bool HasImageExt(const std::string &p) {
 // Load an HDR image as tightly-packed float RGB (3 channels), for the BC6H path.
 bool LoadRGBf(const std::string &path, std::vector<float> *out, int *w, int *h,
               std::string *err) {
-  auto r = tinyusdz::image::LoadImageFromFile(path);
+  auto r = lightusd::image::LoadImageFromFile(path);
   if (!r) {
     if (err) *err = r.error();
     return false;
   }
-  const tinyusdz::Image &im = r.value().image;
-  if (im.format != tinyusdz::Image::PixelFormat::Float || im.width <= 0 ||
+  const lightusd::Image &im = r.value().image;
+  if (im.format != lightusd::Image::PixelFormat::Float || im.width <= 0 ||
       im.height <= 0 || im.channels < 3) {
     if (err) *err = "not a float RGB(A) image";
     return false;
@@ -137,12 +137,12 @@ std::string ReplaceExtWithKtx2(const std::string &p) {
 // Load an image and normalize it to tightly-packed 8-bit RGBA.
 bool LoadRGBA8(const std::string &path, std::vector<uint8_t> *out, int *w, int *h,
                std::string *err) {
-  auto r = tinyusdz::image::LoadImageFromFile(path);
+  auto r = lightusd::image::LoadImageFromFile(path);
   if (!r) {
     if (err) *err = r.error();
     return false;
   }
-  const tinyusdz::Image &im = r.value().image;
+  const lightusd::Image &im = r.value().image;
   if (im.bpp != 8 || im.width <= 0 || im.height <= 0) {
     if (err) *err = "not an 8-bit image (uni is LDR RGBA8 only)";
     return false;
@@ -172,7 +172,7 @@ bool LoadRGBA8(const std::string &path, std::vector<uint8_t> *out, int *w, int *
 
 // RGBA8 -> private uni mip chain -> KTX2 bytes. `zstd` supercompresses the
 // level payloads (supercompressionScheme 2). This carrier is decoded by
-// tinyusdz/textools; it is not Basis UASTC.
+// lightusd/textools; it is not Basis UASTC.
 bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
                    bool zstd, std::vector<uint8_t> *out, int *levels_out,
                    std::string *err) {
@@ -216,7 +216,7 @@ bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
   }
   const int n = int(uni.size());
 
-#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(LIGHTUSD_WITH_ZSTD_COMPRESSION)
   if (zstd) {
     uint8_t *buf = nullptr;
     size_t bsz = 0;
@@ -253,40 +253,40 @@ bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
 
 // Record `src -> ktx2` on every asset-valued attribute whose value is `src`,
 // as a customData "ktx2" hint. `inputs:file` itself is left unchanged.
-size_t AddKtx2Hints(tinyusdz::PrimSpec &ps,
+size_t AddKtx2Hints(lightusd::PrimSpec &ps,
                     const std::map<std::string, std::string> &hint,
                     int depth = 0) {
   if (depth > 512) return 0;
   size_t n = 0;
   for (auto &item : ps.props()) {
-    tinyusdz::Attribute *attr = item.second.get_attribute_or_null();
+    lightusd::Attribute *attr = item.second.get_attribute_or_null();
     if (!attr || !attr->has_value()) continue;
-    tinyusdz::value::AssetPath ap;
+    lightusd::value::AssetPath ap;
     if (!attr->get_value(&ap)) continue;
     const auto it = hint.find(ap.GetAssetPath());
     if (it == hint.end()) continue;
 
-    tinyusdz::Dictionary cd;
+    lightusd::Dictionary cd;
     if (attr->metas().has_customData()) cd = attr->metas().get_customData();
-    tinyusdz::MetaVariable mv;
-    mv.set_value("ktx2", tinyusdz::value::AssetPath(it->second));
+    lightusd::MetaVariable mv;
+    mv.set_value("ktx2", lightusd::value::AssetPath(it->second));
     cd["ktx2"] = mv;
     attr->metas().set_customData(cd);
     ++n;
   }
-  for (tinyusdz::PrimSpec &child : ps.children()) {
+  for (lightusd::PrimSpec &child : ps.children()) {
     n += AddKtx2Hints(child, hint, depth + 1);
   }
   return n;
 }
 
-void CollectAssetPaths(const tinyusdz::PrimSpec &ps, std::vector<std::string> *out,
+void CollectAssetPaths(const lightusd::PrimSpec &ps, std::vector<std::string> *out,
                        int depth = 0) {
   if (depth > 512) return;
   for (const auto &item : ps.props()) {
-    const tinyusdz::Attribute *attr = item.second.get_attribute_or_null();
+    const lightusd::Attribute *attr = item.second.get_attribute_or_null();
     if (!attr || !attr->has_value()) continue;
-    tinyusdz::value::AssetPath ap;
+    lightusd::value::AssetPath ap;
     if (!attr->get_value(&ap)) continue;
     const std::string p = ap.GetAssetPath();
     if (!p.empty() && HasImageExt(p)) out->push_back(p);
@@ -333,16 +333,16 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  tinyusdz::Layer layer;
+  lightusd::Layer layer;
   std::string warn, err;
-  if (!tinyusdz::LoadLayerFromFile(in_path, &layer, &warn, &err)) {
+  if (!lightusd::LoadLayerFromFile(in_path, &layer, &warn, &err)) {
     std::fprintf(stderr, "failed to load %s: %s\n", in_path.c_str(), err.c_str());
     return 1;
   }
   if (!warn.empty()) std::fprintf(stderr, "warn: %s\n", warn.c_str());
 
-  const std::string in_dir = tinyusdz::io::GetBaseDir(in_path);
-  const std::string out_dir = tinyusdz::io::GetBaseDir(out_path);
+  const std::string in_dir = lightusd::io::GetBaseDir(in_path);
+  const std::string out_dir = lightusd::io::GetBaseDir(out_path);
 
   // Collect the referenced image assets.
   std::vector<std::string> assets;
@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
   std::map<std::string, std::string> hint;  // src asset path -> ktx2 asset path
   size_t total_src = 0, total_ktx = 0;
   for (const std::string &a : assets) {
-    const std::string src = in_dir.empty() ? a : tinyusdz::io::JoinPath(in_dir, a);
+    const std::string src = in_dir.empty() ? a : lightusd::io::JoinPath(in_dir, a);
     const bool is_hdr = IsHdrExt(a);
     int w = 0, h = 0;
     std::string lerr;
@@ -389,7 +389,7 @@ int main(int argc, char **argv) {
       kind = zstd ? "zstd-uni" : "uni";
     }
     const std::string rel = ReplaceExtWithKtx2(a);
-    const std::string dst = out_dir.empty() ? rel : tinyusdz::io::JoinPath(out_dir, rel);
+    const std::string dst = out_dir.empty() ? rel : lightusd::io::JoinPath(out_dir, rel);
     std::ofstream f(dst, std::ios::binary);
     if (!f) {
       std::fprintf(stderr, "skip %s: cannot write %s\n", a.c_str(), dst.c_str());
@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
     nhint += AddKtx2Hints(item.second, hint);
   }
 
-  const std::string usda = tinyusdz::to_string(layer);
+  const std::string usda = lightusd::to_string(layer);
   std::ofstream o(out_path);
   if (!o) {
     std::fprintf(stderr, "cannot write %s\n", out_path.c_str());

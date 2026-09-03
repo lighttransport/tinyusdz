@@ -1,14 +1,14 @@
 import pytest
 
-import tinyusdz
+import lightusd
 import typeguard
 
 def test_token():
-    a = tinyusdz.Token("bora")
+    a = lightusd.Token("bora")
     del a
 
 def test_token_invalid_numeric():
     # raise error
     with pytest.raises(typeguard.TypeCheckError):
-        a = tinyusdz.Token(1)
+        a = lightusd.Token(1)
 

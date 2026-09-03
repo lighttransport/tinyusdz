@@ -5,7 +5,7 @@
 #include <string>
 
 #include "usdMtlx.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 
 // MaterialX XML with nodegraph connections
 const char* test_mtlx_with_nodegraph = R"(<?xml version="1.0"?>
@@ -34,12 +34,12 @@ const char* test_mtlx_with_nodegraph = R"(<?xml version="1.0"?>
 int main(int argc, char** argv) {
   std::string warn, err;
 
-  std::cout << "=== TinyUSDZ MaterialX NodeGraph Export Test ===\n\n";
+  std::cout << "=== LightUSD MaterialX NodeGraph Export Test ===\n\n";
 
   // Test 1: Parse MaterialX with nodegraph
   std::cout << "Test 1: Parsing MaterialX with nodegraph...\n";
-  tinyusdz::MtlxModel mtlx;
-  bool ret = tinyusdz::ReadMaterialXFromString(
+  lightusd::MtlxModel mtlx;
+  bool ret = lightusd::ReadMaterialXFromString(
       test_mtlx_with_nodegraph, "test_nodegraph.mtlx", &mtlx, &warn, &err);
 
   if (!ret) {
@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
   warn.clear();
   err.clear();
 
-  ret = tinyusdz::WriteMaterialXToString(mtlx, xml_out, &warn, &err);
+  ret = lightusd::WriteMaterialXToString(mtlx, xml_out, &warn, &err);
 
   if (!ret) {
     std::cerr << "ERROR: Failed to export MaterialX\n";

@@ -1,6 +1,6 @@
 # Memory and Performance
 
-End-to-end memory analysis of TinyUSDZ — from USD file loading through Tydra
+End-to-end memory analysis of LightUSD — from USD file loading through Tydra
 RenderScene conversion to WASM/WebGL rendering — plus the durable optimization
 history, measurement procedures, and benchmark results.
 
@@ -82,7 +82,7 @@ File on Disk (.usdc / .usda / .usdz)
 [Stage 3] Tydra ConvertToRenderScene → RenderScene object
     ├── ConvertMesh: points, normals, texcoords, tangents, indices
     │   (per-mesh geometry runs on a worker pool when
-    │    TINYUSDZ_ENABLE_THREAD is ON and scene_config.num_threads != 1;
+    │    LIGHTUSD_ENABLE_THREAD is ON and scene_config.num_threads != 1;
     │    output is byte-identical to the serial path)
     ├── Texture loading: image decode into buffers[]
     ├── Material conversion
@@ -101,10 +101,10 @@ File on Disk (.usdc / .usda / .usdz)
 | `MMapFile()` | ~0 | OS page-maps file, no heap copy |
 | `ReadWholeFile()` | file size | `std::vector<uint8_t>` allocation |
 
-Used in `tusdcat/main.cc` and `tinyusdz.cc`. For a 188 MB USDC, mmap avoids 188 MB of
+Used in `tusdcat/main.cc` and `lightusd.cc`. For a 188 MB USDC, mmap avoids 188 MB of
 heap entirely. Fallback to `ReadWholeFile` when mmap is unavailable.
 
-Limits (`USDLoadOptions`, `tinyusdz.hh`): `max_memory_limit_in_mb` 16384 (16 GB);
+Limits (`USDLoadOptions`, `lightusd.hh`): `max_memory_limit_in_mb` 16384 (16 GB);
 `max_allowed_asset_size_in_mb` 1024 (1 GB); `max_image_width/height` 2048.
 
 ### Stage 2: USDC/USDA Parsing
@@ -253,10 +253,10 @@ estimated peak ~600–700 MB (V1 hybrid) → ~400–450 MB (V2 deferred).
 | Optimization | Savings | Where |
 |-------------|---------|-------|
 | Parallel per-mesh geometry conversion (legacy Tydra) | ~2x on 16 workers for many-mesh scenes; byte-identical output | `render-data.cc` (`ConvertDeferredMeshes`), `task-arena.hh`, `render-data-material.cc` (collect mode) |
-| Dynamic work distribution (tydra-next) | removes fixed-batch wave stalls on mixed-size meshes (~3.5x vs serial when `TINYUSDZ_NEXT_ENABLE_THREAD=ON`) | `tydra/next/render-converter.cc` |
+| Dynamic work distribution (tydra-next) | removes fixed-batch wave stalls on mixed-size meshes (~3.5x vs serial when `LIGHTUSD_NEXT_ENABLE_THREAD=ON`) | `tydra/next/render-converter.cc` |
 | Instance-registry descendant lookup | O(instances × meshes) → O(log meshes) | `render-data.cc` |
 | MikkTSpace Fast/Hybrid zero-copy inputs | one full vertex-array copy per mesh | `render-data-mesh.cc`, `fast-mikktspace.hh` |
-| mmap file loading | ~file size heap | `tusdcat`, `tinyusdz.cc` |
+| mmap file loading | ~file size heap | `tusdcat`, `lightusd.cc` |
 | MMap zero-copy V2 (deferred reads) | ~120+ MB on large meshes; Stage arrays → sentinels | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
 | Tangent quantization (10_10_10_2 / Fp16x4) | 83% / 67% tangent storage | `render-data.cc`, `tangent-quantize.hh` |
 | Normal quantization (SNorm8 default) | 75% normal storage | `render-data.cc`, `tangent-quantize.hh` |
@@ -408,7 +408,7 @@ intended for refcounts / type tags / cache-coherency flags.
 
 | File | Purpose |
 |------|---------|
-| `src/tinyusdz.hh` | `USDLoadOptions` (memory / asset limits) |
+| `src/lightusd.hh` | `USDLoadOptions` (memory / asset limits) |
 | `src/memory-budget.hh` | `MemoryBudgetManager` RAII |
 | `src/usdc-reader.hh` | `USDCMemoryUsageReport`, memory-tracking API |
 | `src/crate-reader.cc` | budget-checked allocations, buffer reuse, streaming decompress |

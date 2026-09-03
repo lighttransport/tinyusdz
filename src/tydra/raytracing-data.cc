@@ -9,7 +9,7 @@
 
 #include "../safe-arithmetic.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 //
@@ -391,4 +391,4 @@ AABB RaytracingScene::compute_scene_bounds() const {
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

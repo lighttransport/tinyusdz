@@ -10,7 +10,7 @@
 
 #include "external/miniz.h"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace ptx {
 namespace {
 
@@ -373,4 +373,4 @@ bool Reader::ReadFace(uint32_t face, uint32_t level, size_t max_bytes,
 }
 
 }  // namespace ptx
-}  // namespace tinyusdz
+}  // namespace lightusd

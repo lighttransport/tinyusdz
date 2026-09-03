@@ -6,7 +6,7 @@ EMSDK_DIR="${SCRIPT_DIR}/.emsdk"
 EMSDK_VERSION="${EMSDK_VERSION:-4.0.9}"
 EMSDK_REPO_URL="${EMSDK_REPO_URL:-https://github.com/emscripten-core/emsdk.git}"
 EMSDK_REF="${EMSDK_REF:-${EMSDK_VERSION}}"
-OFFLINE="${TINYUSDZ_VERIFY_OFFLINE:-0}"
+OFFLINE="${LIGHTUSD_VERIFY_OFFLINE:-0}"
 LOCAL_NODE="${SCRIPT_DIR}/.nodejs/current/bin/node"
 
 source "${SCRIPT_DIR}/setup-nodejs.sh"

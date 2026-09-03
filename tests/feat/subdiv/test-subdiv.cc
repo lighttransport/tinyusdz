@@ -52,17 +52,17 @@ const char *g_current_test = "";
     fn();                              \
   } while (0)
 
-using tinyusdz::tsd::BoundaryInterpolation;
-using tinyusdz::tsd::CreasingMethod;
-using tinyusdz::tsd::FVarChannelView;
-using tinyusdz::tsd::FVarLinearInterpolation;
-using tinyusdz::tsd::MeshView;
-using tinyusdz::tsd::Options;
-using tinyusdz::tsd::RefinedMesh;
-using tinyusdz::tsd::Result;
-using tinyusdz::tsd::Scheme;
-using tinyusdz::tsd::TriangleSubdivision;
-using tinyusdz::tsd::VertexPrimvarView;
+using lightusd::tsd::BoundaryInterpolation;
+using lightusd::tsd::CreasingMethod;
+using lightusd::tsd::FVarChannelView;
+using lightusd::tsd::FVarLinearInterpolation;
+using lightusd::tsd::MeshView;
+using lightusd::tsd::Options;
+using lightusd::tsd::RefinedMesh;
+using lightusd::tsd::Result;
+using lightusd::tsd::Scheme;
+using lightusd::tsd::TriangleSubdivision;
+using lightusd::tsd::VertexPrimvarView;
 
 MeshView ToView(const corpus::Mesh &m) {
   MeshView v;
@@ -129,7 +129,7 @@ void test_bad_level_rejected() {
   opts.level = -1;
   CHECK(Refine(ToView(cube), opts, &out, nullptr) ==
         Result::InvalidArgument);
-  opts.level = tinyusdz::tsd::kMaxLevel + 1;
+  opts.level = lightusd::tsd::kMaxLevel + 1;
   CHECK(Refine(ToView(cube), opts, &out, nullptr) ==
         Result::InvalidArgument);
 }
@@ -206,7 +206,7 @@ void test_level0_fvar_expansion() {
   // 4 corners indexing 2 distinct UV values.
   const float uv_values[] = {0.0f, 0.0f, 1.0f, 1.0f};
   const uint32_t uv_indices[] = {0, 1, 1, 0};
-  tinyusdz::tsd::FVarChannelView ch;
+  lightusd::tsd::FVarChannelView ch;
   ch.values = uv_values;
   ch.num_values = 2;
   ch.indices = uv_indices;
@@ -271,7 +271,7 @@ void test_catmark_cube_level1_smooth_vertex() {
   // Hand-derive the smooth vertex rule for vertex 0 (valence 3):
   // V' = (n-2)/n*V + sum(other endpoints)/n^2 + sum(child face points)/n^2.
   // Child face points (centroids) occupy out.points[(8+12+f)*3].
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(cube.face_vertex_counts.data(), 6,
                       cube.face_vertex_indices.data(), 24, 8, &topo,
                       nullptr) == Result::Success);
@@ -322,7 +322,7 @@ void test_infinite_crease_midpoints() {
   Result r = Refine(ToView(cube), opts, &out, &err);
   CHECK_MSG(r == Result::Success, err);
 
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(cube.face_vertex_counts.data(), 6,
                       cube.face_vertex_indices.data(), 24, 8, &topo,
                       nullptr) == Result::Success);
@@ -361,7 +361,7 @@ void test_partition_of_unity() {
   // refinement (weights sum to 1), and a constant "varying" one likewise.
   corpus::Mesh cube = corpus::CreasedCube(1.5f, "creased");
   std::vector<float> ones(8, 1.0f);
-  tinyusdz::tsd::VertexPrimvarView pv[2];
+  lightusd::tsd::VertexPrimvarView pv[2];
   pv[0].values = ones.data();
   pv[0].stride = 1;
   pv[0].varying = false;
@@ -465,12 +465,12 @@ void test_fvar_split_caps_enforced() {
     vals[2 * i + 1] = float(i + 100);
   }
 
-  tinyusdz::tsd::FVarChannelView ch;
+  lightusd::tsd::FVarChannelView ch;
   ch.values = vals.data();
   ch.num_values = uint32_t(cube.face_vertex_indices.size());
   ch.indices = nullptr;
   ch.stride = 2;
-  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::None;
+  ch.interpolation = lightusd::tsd::FVarLinearInterpolation::None;
 
   Options opts;
   opts.max_vertices = 30;  // base and geometry child fit; fvar split child does not.
@@ -495,14 +495,14 @@ void test_fvar_continuous_equals_vertex_refinement() {
     vals[2 * v + 1] = cube.points[3 * v + 1];
   }
 
-  tinyusdz::tsd::FVarChannelView ch;
+  lightusd::tsd::FVarChannelView ch;
   ch.values = vals.data();
   ch.num_values = 8;
   ch.indices = cube.face_vertex_indices.data();  // continuous: vertex ids
   ch.stride = 2;
-  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::CornersPlus1;
+  ch.interpolation = lightusd::tsd::FVarLinearInterpolation::CornersPlus1;
 
-  tinyusdz::tsd::VertexPrimvarView pv;
+  lightusd::tsd::VertexPrimvarView pv;
   pv.values = vals.data();
   pv.stride = 2;
   pv.varying = false;
@@ -542,12 +542,12 @@ void test_fvar_island_constants_preserved() {
     }
   }
 
-  tinyusdz::tsd::FVarChannelView ch;
+  lightusd::tsd::FVarChannelView ch;
   ch.values = vals.data();
   ch.num_values = 2;
   ch.indices = indices.data();
   ch.stride = 2;
-  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::None;
+  ch.interpolation = lightusd::tsd::FVarLinearInterpolation::None;
 
   Options opts;
   opts.level = 2;
@@ -574,7 +574,7 @@ void test_fvar_modes_differ_at_seams() {
   // Sanity: "all" (linear) and "none" (smooth) must produce different
   // refined values for a channel with seams.
   corpus::Mesh m = corpus::UVSeamGrid();
-  tinyusdz::tsd::FVarChannelView ch;
+  lightusd::tsd::FVarChannelView ch;
   ch.values = m.fvar_uv.data();
   ch.num_values = uint32_t(m.fvar_uv.size() / 2);
   ch.indices = m.fvar_indices.data();
@@ -585,10 +585,10 @@ void test_fvar_modes_differ_at_seams() {
   RefinedMesh out_all;
   RefinedMesh out_none;
   std::string err;
-  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::All;
+  ch.interpolation = lightusd::tsd::FVarLinearInterpolation::All;
   CHECK(Refine(ToView(m), &ch, 1, nullptr, 0, opts, &out_all, &err) ==
         Result::Success);
-  ch.interpolation = tinyusdz::tsd::FVarLinearInterpolation::None;
+  ch.interpolation = lightusd::tsd::FVarLinearInterpolation::None;
   CHECK(Refine(ToView(m), &ch, 1, nullptr, 0, opts, &out_none, &err) ==
         Result::Success);
   CHECK(out_all.fvar[0].size() == out_none.fvar[0].size());
@@ -620,7 +620,7 @@ void test_loop_regular_vertex_weights() {
   Result r = Refine(ToView(m), opts, &out, &err);
   CHECK_MSG(r == Result::Success, err);
 
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(m.face_vertex_counts.data(),
                       uint32_t(m.face_vertex_counts.size()),
                       m.face_vertex_indices.data(),
@@ -668,7 +668,7 @@ void test_loop_edge_smooth_rule() {
   Result r = Refine(ToView(m), opts, &out, &err);
   CHECK_MSG(r == Result::Success, err);
 
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(m.face_vertex_counts.data(), 20,
                       m.face_vertex_indices.data(), 60, 12, &topo,
                       nullptr) == Result::Success);
@@ -716,7 +716,7 @@ void test_limit_regular_interior_mask() {
   Result r = SnapToLimit(ToView(m), opts, &snapped, &err);
   CHECK_MSG(r == Result::Success, err);
 
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(refined.face_vertex_counts.data(),
                       uint32_t(refined.face_vertex_counts.size()),
                       refined.face_vertex_indices.data(),
@@ -885,7 +885,7 @@ void test_parallel_determinism() {
 
 void test_topology_cube() {
   corpus::Mesh cube = corpus::Cube();
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   std::string err;
   Result r = BuildTopology(cube.face_vertex_counts.data(),
                            uint32_t(cube.face_vertex_counts.size()),
@@ -907,7 +907,7 @@ void test_topology_cube() {
 
 void test_topology_single_quad_boundary() {
   corpus::Mesh quad = corpus::SingleQuad();
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   std::string err;
   Result r = BuildTopology(quad.face_vertex_counts.data(), 1,
                            quad.face_vertex_indices.data(), 4, 4, &topo, &err);
@@ -923,7 +923,7 @@ void test_topology_single_quad_boundary() {
 
 void test_topology_mixed_degree() {
   corpus::Mesh m = corpus::MixedDegree();
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   std::string err;
   Result r = BuildTopology(m.face_vertex_counts.data(),
                            uint32_t(m.face_vertex_counts.size()),
@@ -937,7 +937,7 @@ void test_topology_mixed_degree() {
 
 void test_topology_non_manifold_rejected() {
   corpus::Mesh m = corpus::NonManifoldFan();
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   std::string err;
   Result r = BuildTopology(m.face_vertex_counts.data(),
                            uint32_t(m.face_vertex_counts.size()),
@@ -951,7 +951,7 @@ void test_topology_inconsistent_winding_rejected() {
   // Two quads sharing edge (1,2) traversed in the SAME direction.
   const uint32_t fvc[] = {4, 4};
   const uint32_t fvi[] = {0, 1, 2, 3, 1, 2, 4, 5};
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   std::string err;
   Result r = BuildTopology(fvc, 2, fvi, 8, 6, &topo, &err);
   CHECK(r == Result::InvalidTopology);
@@ -960,7 +960,7 @@ void test_topology_inconsistent_winding_rejected() {
 void test_topology_degenerate_edge_rejected() {
   const uint32_t fvc[] = {3};
   const uint32_t fvi[] = {0, 0, 1};
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   std::string err;
   Result r = BuildTopology(fvc, 1, fvi, 3, 2, &topo, &err);
   CHECK(r == Result::InvalidTopology);
@@ -976,7 +976,7 @@ void test_crease_canonicalize_per_crease() {
   cube.crease_lengths = {3};
   cube.crease_sharpnesses = {2.5f};  // per-crease
 
-  tinyusdz::tsd::CreaseEdges ce;
+  lightusd::tsd::CreaseEdges ce;
   std::string err;
   Result r = CanonicalizeCreases(ToView(cube), &ce, &err);
   CHECK(r == Result::Success);
@@ -996,7 +996,7 @@ void test_crease_canonicalize_per_edge_and_dedup() {
   cube.crease_lengths = {3, 2};
   cube.crease_sharpnesses = {1.0f, 2.0f, 4.0f};  // per-edge (2 + 1)
 
-  tinyusdz::tsd::CreaseEdges ce;
+  lightusd::tsd::CreaseEdges ce;
   std::string err;
   Result r = CanonicalizeCreases(ToView(cube), &ce, &err);
   CHECK(r == Result::Success);
@@ -1025,11 +1025,11 @@ void test_crease_sharpness_clamped() {
   cube.crease_lengths = {2};
   cube.crease_sharpnesses = {1.0e10f};  // way past infinite
 
-  tinyusdz::tsd::CreaseEdges ce;
+  lightusd::tsd::CreaseEdges ce;
   std::string err;
   CHECK(CanonicalizeCreases(ToView(cube), &ce, &err) == Result::Success);
   CHECK(ce.sharpnesses.size() == 1);
-  CHECK(std::fabs(ce.sharpnesses[0] - tinyusdz::tsd::kInfiniteSharpness) <
+  CHECK(std::fabs(ce.sharpnesses[0] - lightusd::tsd::kInfiniteSharpness) <
         1e-6f);
 }
 
@@ -1220,7 +1220,7 @@ void test_closed_stays_closed() {
       RefinedMesh out;
       std::string err;
       CHECK(Refine(ToView(m), opts, &out, &err) == Result::Success);
-      tinyusdz::tsd::Topology topo;
+      lightusd::tsd::Topology topo;
       CHECK(BuildTopology(out.face_vertex_counts.data(),
                           uint32_t(out.face_vertex_counts.size()),
                           out.face_vertex_indices.data(),
@@ -1247,7 +1247,7 @@ void test_semisharp_crease_transitional_blend() {
   std::string err;
   CHECK(Refine(ToView(m), opts, &out, &err) == Result::Success);
 
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(m.face_vertex_counts.data(), 6,
                       m.face_vertex_indices.data(), 24, 8, &topo,
                       nullptr) == Result::Success);
@@ -1266,7 +1266,7 @@ void test_semisharp_crease_transitional_blend() {
     CHECK(e != 0xFFFFFFFFu);
     const uint32_t f0 = topo.edge_faces[2 * e];
     const uint32_t f1 = topo.edge_faces[2 * e + 1];
-    CHECK(f1 != tinyusdz::tsd::kInvalidIndex);
+    CHECK(f1 != lightusd::tsd::kInvalidIndex);
     for (int c = 0; c < 3; c++) {
       const float p0 = m.points[rv[0] * 3 + size_t(c)];
       const float p1 = m.points[rv[1] * 3 + size_t(c)];
@@ -1286,7 +1286,7 @@ void test_chaikin_formula_and_decay() {
   // SEMI-sharp incident edges only, so infinitely-sharp neighbors are excluded.
   // (Regression: do not "fix" this to include infinite edges -- it would
   // diverge from OSD; the differential test confirms the current behavior.)
-  using tinyusdz::tsd::ChaikinChildEdgeSharpness;
+  using lightusd::tsd::ChaikinChildEdgeSharpness;
   {
     const float inc[3] = {4.0f, 10.0f, 10.0f};  // semi-sharp set is {4.0} only
     CHECK(std::fabs(ChaikinChildEdgeSharpness(4.0f, 3, inc) - 3.0f) < 1e-6f);
@@ -1330,7 +1330,7 @@ void test_boundary_edgeonly_vs_edgeandcorner() {
   const uint32_t nf = uint32_t(m.face_vertex_counts.size());
   const uint32_t nfi = uint32_t(m.face_vertex_indices.size());
   const uint32_t nv = uint32_t(m.points.size() / 3);
-  tinyusdz::tsd::Topology topo;
+  lightusd::tsd::Topology topo;
   CHECK(BuildTopology(m.face_vertex_counts.data(), nf,
                       m.face_vertex_indices.data(), nfi, nv, &topo,
                       nullptr) == Result::Success);
@@ -1678,7 +1678,7 @@ struct StreamCollect {
   std::vector<uint8_t> n_written;
 };
 
-bool StreamSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool StreamSinkFn(void *user, const lightusd::tsd::StreamBatch *b) {
   StreamCollect *c = static_cast<StreamCollect *>(user);
   for (uint32_t i = 0; i < b->num_vertices; i++) {
     const uint32_t gid = b->vertex_source[i];
@@ -1725,8 +1725,8 @@ bool StreamSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
 }
 
 void test_stream_matches_bulk() {
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::Cube());
@@ -1823,8 +1823,8 @@ void test_stream_matches_bulk() {
 }
 
 void test_stream_level0_passthrough() {
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
   corpus::Mesh m = corpus::Cube();
   Options opts;
   opts.level = 0;
@@ -1842,8 +1842,8 @@ void test_stream_level0_passthrough() {
 }
 
 void test_stream_normals() {
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::Cube());
@@ -1950,7 +1950,7 @@ struct BlockCollect {
   std::vector<uint32_t> face_corners;  // flat, global emitted-vertex ids
 };
 
-bool BlockSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool BlockSinkFn(void *user, const lightusd::tsd::StreamBatch *b) {
   BlockCollect *c = static_cast<BlockCollect *>(user);
   const uint32_t vbase = uint32_t(c->positions.size() / 3);
   for (uint32_t i = 0; i < b->num_vertices * 3; i++) {
@@ -1981,8 +1981,8 @@ std::vector<uint32_t> CanonFace(std::vector<uint32_t> ids, uint32_t src) {
 }
 
 void test_stream_blocked_matches_bulk() {
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::Cube());
@@ -2109,7 +2109,7 @@ struct FvarCollect {
   std::vector<float> fvar;  // concatenated per-corner, emission order
 };
 
-bool FvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool FvarSinkFn(void *user, const lightusd::tsd::StreamBatch *b) {
   FvarCollect *c = static_cast<FvarCollect *>(user);
   if (b->num_fvar == 1) {
     const float *v = b->fvar[0].values;
@@ -2122,10 +2122,10 @@ bool FvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
 }
 
 void test_stream_fvar() {
-  using tinyusdz::tsd::FVarChannelView;
-  using tinyusdz::tsd::FVarLinearInterpolation;
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::FVarChannelView;
+  using lightusd::tsd::FVarLinearInterpolation;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::UVSeamGrid());
@@ -2214,7 +2214,7 @@ struct BlockFvarCollect {
   long miss = 0, tot = 0;
 };
 
-bool BlockFvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool BlockFvarSinkFn(void *user, const lightusd::tsd::StreamBatch *b) {
   BlockFvarCollect *c = static_cast<BlockFvarCollect *>(user);
   if (b->num_fvar != 1) return true;
   uint32_t off = 0;
@@ -2248,10 +2248,10 @@ bool BlockFvarSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
 }
 
 void test_stream_blocked_fvar() {
-  using tinyusdz::tsd::FVarChannelView;
-  using tinyusdz::tsd::FVarLinearInterpolation;
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::FVarChannelView;
+  using lightusd::tsd::FVarLinearInterpolation;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::UVSeamGrid());
@@ -2328,10 +2328,10 @@ void test_stream_blocked_fvar() {
 // ---------------------------------------------------------------------------
 
 void test_stream_level0_fvar() {
-  using tinyusdz::tsd::FVarChannelView;
-  using tinyusdz::tsd::FVarLinearInterpolation;
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::FVarChannelView;
+  using lightusd::tsd::FVarLinearInterpolation;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::UVSeamGrid());
@@ -2397,7 +2397,7 @@ struct MixedArityCollect {
   std::vector<uint32_t> face_idx;   // flat canonical face vertex ids
 };
 
-bool MixedAritySinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool MixedAritySinkFn(void *user, const lightusd::tsd::StreamBatch *b) {
   MixedArityCollect *c = static_cast<MixedArityCollect *>(user);
   if (b->face_vertex_counts) c->saw_counts = true;
   size_t off = 0;
@@ -2417,8 +2417,8 @@ bool MixedAritySinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
 // Level-0 passthrough of a mixed-degree mesh with native (non-triangulated)
 // faces must report per-face arity, not claim uniform arity.
 void test_stream_level0_mixed_arity() {
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
   corpus::Mesh m = corpus::MixedDegree();  // face_vertex_counts {4,3,3,5}
   Options opts;
   opts.level = 0;
@@ -2441,15 +2441,15 @@ void test_stream_level0_mixed_arity() {
 struct AbortCtx {
   int calls = 0;
 };
-bool AbortSinkFn(void *user, const tinyusdz::tsd::StreamBatch *) {
+bool AbortSinkFn(void *user, const lightusd::tsd::StreamBatch *) {
   static_cast<AbortCtx *>(user)->calls++;
   return false;  // abort immediately
 }
 
 // Block mode must stop refining further blocks once the sink aborts.
 void test_stream_block_abort() {
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
   corpus::Mesh m = corpus::QuadGrid(6, 6, "abort");  // 36 base faces
   Options opts;
   opts.level = 2;
@@ -2478,7 +2478,7 @@ struct NormalCollect {
   bool had_normals = true;
 };
 
-bool NormalSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
+bool NormalSinkFn(void *user, const lightusd::tsd::StreamBatch *b) {
   NormalCollect *c = static_cast<NormalCollect *>(user);
   if (!b->normals) {
     c->had_normals = false;
@@ -2496,9 +2496,9 @@ bool NormalSinkFn(void *user, const tinyusdz::tsd::StreamBatch *b) {
 }
 
 void test_stream_blocked_normals() {
-  using tinyusdz::tsd::ComputeLimitNormals;
-  using tinyusdz::tsd::RefineStream;
-  using tinyusdz::tsd::StreamOptions;
+  using lightusd::tsd::ComputeLimitNormals;
+  using lightusd::tsd::RefineStream;
+  using lightusd::tsd::StreamOptions;
 
   std::vector<corpus::Mesh> meshes;
   meshes.push_back(corpus::QuadTorus(10, 8));       // closed, curved, all valence-4

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdGeomPointInstancer Schema
+// LightUSD Next - UsdGeomPointInstancer Schema
 // Convenience API for PointInstancer primitives
 
 #pragma once
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 struct PointInstancerTransform {
@@ -71,4 +71,4 @@ bool IsPointInstancer(const UsdPrim& prim);
 std::vector<UsdGeomPointInstancer> GetAllPointInstancers(const Stage& stage);
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

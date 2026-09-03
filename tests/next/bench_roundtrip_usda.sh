@@ -16,7 +16,7 @@
 set -u
 
 BIN="${BIN:-build_next_thr/next_usdcat}"
-TMP="${TMP:-${TMPDIR:-/tmp}/tinyusdz-next-bench}"
+TMP="${TMP:-${TMPDIR:-/tmp}/lightusd-next-bench}"
 THREADS=""          # empty = auto
 USE_O=0             # 1 = use `-o <file>` (FdSink) instead of stdout redirect
 ROUNDTRIP=0
@@ -46,8 +46,8 @@ done
 [ ${#SCENES[@]} -eq 0 ] && SCENES=(house island caldera)
 
 CAP=(systemd-run --user --scope -q -p MemoryMax=32G -p MemorySwapMax=0)
-ENVV=(env TINYUSDZ_NEXT_TIMING=1)
-[ -n "$THREADS" ] && ENVV+=(TINYUSDZ_NEXT_NUM_THREADS="$THREADS")
+ENVV=(env LIGHTUSD_NEXT_TIMING=1)
+[ -n "$THREADS" ] && ENVV+=(LIGHTUSD_NEXT_NUM_THREADS="$THREADS")
 
 mbps() { awk -v b="$1" -v ms="$2" 'BEGIN{ if(ms>0) printf "%.0f", b/1048576/(ms/1000); else print "?"; }'; }
 getms() { grep -o "$1=[0-9.]*" "$2" | head -1 | cut -d= -f2; }

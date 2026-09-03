@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdAR Schema
+// LightUSD Next - UsdAR Schema
 
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 // ============================================================
@@ -135,4 +135,4 @@ struct ARImagingAPIData {
 bool GetARImagingAPIData(const UsdPrim& prim, ARImagingAPIData* out);
 
 } // namespace next
-} // namespace tinyusdz
+} // namespace lightusd

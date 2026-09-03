@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 ///
@@ -150,4 +150,4 @@ int FindBoneChainDistance(
     const std::vector<int> &parent_indices);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

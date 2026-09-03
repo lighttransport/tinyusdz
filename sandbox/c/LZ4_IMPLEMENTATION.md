@@ -9,15 +9,15 @@ Successfully added full LZ4 decompression support to the C99 USDC (Crate binary)
 ### Key Components Added
 
 1. **LZ4 Integration** (`usdc_parser.h`, `usdc_parser.c`)
-   - Direct integration with TinyUSDZ's LZ4 library (`src/lz4/lz4.c`)
-   - Proper handling of TinyUSDZ's LZ4 wrapper format
+   - Direct integration with LightUSD's LZ4 library (`src/lz4/lz4.c`)
+   - Proper handling of LightUSD's LZ4 wrapper format
    - Memory-safe decompression with bounds checking
 
-2. **TinyUSDZ LZ4 Wrapper Format Support**
+2. **LightUSD LZ4 Wrapper Format Support**
    ```c
    int usdc_lz4_decompress(const char *src, char *dst, int compressed_size, int max_decompressed_size)
    ```
-   - Handles TinyUSDZ's specific LZ4 wrapper format
+   - Handles LightUSD's specific LZ4 wrapper format
    - First byte indicates number of chunks (0 = single chunk)
    - Single-chunk decompression using `LZ4_decompress_safe()`
    - Multi-chunk support framework (not implemented, rarely needed)
@@ -35,7 +35,7 @@ Successfully added full LZ4 decompression support to the C99 USDC (Crate binary)
 ### Technical Details
 
 #### LZ4 Wrapper Format
-TinyUSDZ uses a custom LZ4 wrapper format:
+LightUSD uses a custom LZ4 wrapper format:
 ```
 [1 byte: nChunks] [LZ4 compressed data...]
 ```
@@ -122,7 +122,7 @@ sandbox/c/LZ4_IMPLEMENTATION.md - This file
 ## Compatibility
 
 - **C Standard**: C99 compatible
-- **Dependencies**: Only requires TinyUSDZ's LZ4 library
+- **Dependencies**: Only requires LightUSD's LZ4 library
 - **Platforms**: Linux, macOS, Windows (any platform supported by LZ4)
 - **USD Versions**: Supports USDC format 0.4.0+ (when LZ4 compression was introduced)
 
@@ -141,4 +141,4 @@ sandbox/c/LZ4_IMPLEMENTATION.md - This file
 
 ## Conclusion
 
-The LZ4 integration is complete and functional, successfully parsing real USDC files and extracting token data. The implementation follows TinyUSDZ's security-focused approach with comprehensive bounds checking and memory management while maintaining C99 compatibility.
+The LZ4 integration is complete and functional, successfully parsing real USDC files and extracting token data. The implementation follows LightUSD's security-focused approach with comprehensive bounds checking and memory management while maintaining C99 compatibility.

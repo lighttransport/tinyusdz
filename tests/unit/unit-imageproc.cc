@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <vector>
 
-using namespace tinyusdz;
+using namespace lightusd;
 
 namespace {
 

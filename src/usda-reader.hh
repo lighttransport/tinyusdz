@@ -3,13 +3,13 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 #pragma once
 
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "stream-reader.hh"
 
 #include "ascii-parser.hh"
 //#include "asset-resolution.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 namespace usda {
 
@@ -153,7 +153,7 @@ class USDAReader {
   }
 
  private:
-#if defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+#if defined(LIGHTUSD_DISABLE_MODULE_USDA_READER)
   Stage *_empty_stage{nullptr};
 #else
   class Impl;
@@ -164,4 +164,4 @@ class USDAReader {
 
 } // namespace usda
 
-} // namespace tinyusdz
+} // namespace lightusd

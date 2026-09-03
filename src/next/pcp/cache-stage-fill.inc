@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - PCP Cache stage opinion-fill pass.
+// LightUSD Next - PCP Cache stage opinion-fill pass.
 // Included inside Cache::Impl.
 
   // Per-prim opinion records collected by the structure pass, drained by
@@ -198,7 +198,7 @@
         }
       }
     };
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     int nt = options.num_threads;
     if (nt < 0) {
       nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - UsdGeomPointInstancer Schema Implementation
+// LightUSD Next - UsdGeomPointInstancer Schema Implementation
 
 #include "geom-point-instancer.hh"
 
@@ -10,61 +10,61 @@
 #include <cmath>
 #include <unordered_set>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace {
 
-const ::tinyusdz::next::PropNameId& kIdProtoIndices() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("protoIndices");
+const ::lightusd::next::PropNameId& kIdProtoIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("protoIndices");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdPositions() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("positions");
+const ::lightusd::next::PropNameId& kIdPositions() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("positions");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdOrientations() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("orientations");
+const ::lightusd::next::PropNameId& kIdOrientations() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("orientations");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdScales() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("scales");
+const ::lightusd::next::PropNameId& kIdScales() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("scales");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdVelocities() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("velocities");
+const ::lightusd::next::PropNameId& kIdVelocities() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("velocities");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdAngularVelocities() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("angularVelocities");
+const ::lightusd::next::PropNameId& kIdAngularVelocities() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("angularVelocities");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdIds() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("ids");
+const ::lightusd::next::PropNameId& kIdIds() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("ids");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInvisibleIds() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("invisibleIds");
+const ::lightusd::next::PropNameId& kIdInvisibleIds() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("invisibleIds");
   return id;
 }
 
-const ::tinyusdz::next::PropNameId& kIdInactiveIds() {
-  static const ::tinyusdz::next::PropNameId id =
-      ::tinyusdz::next::GetPropNameTable().intern("inactiveIds");
+const ::lightusd::next::PropNameId& kIdInactiveIds() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("inactiveIds");
   return id;
 }
 
@@ -113,20 +113,20 @@ bool ReadInt64View(const UsdPrim& prim, const PropNameId name_id, double time,
 bool ReadFloatView(const UsdPrim& prim, const char* name, double time,
                   ArrayScratch<float>* scratch, ArrayView<float>* view) {
   return ReadFloatView(prim,
-                       tinyusdz::next::GetPropNameTable().find(name), time,
+                       lightusd::next::GetPropNameTable().find(name), time,
                        scratch, view);
 }
 
 bool ReadIntView(const UsdPrim& prim, const char* name, double time,
                 ArrayScratch<int32_t>* scratch, ArrayView<int32_t>* view) {
-  return ReadIntView(prim, tinyusdz::next::GetPropNameTable().find(name), time,
+  return ReadIntView(prim, lightusd::next::GetPropNameTable().find(name), time,
                      scratch, view);
 }
 
 bool ReadInt64View(const UsdPrim& prim, const char* name, double time,
                   ArrayScratch<int64_t>* scratch, ArrayView<int64_t>* view) {
   return ReadInt64View(prim,
-                       tinyusdz::next::GetPropNameTable().find(name), time,
+                       lightusd::next::GetPropNameTable().find(name), time,
                        scratch, view);
 }
 
@@ -434,4 +434,4 @@ std::vector<UsdGeomPointInstancer> GetAllPointInstancers(const Stage& stage) {
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

@@ -11,11 +11,11 @@
 #pragma clang diagnostic pop
 #endif
 
-#include "../tinyusdz.hh"
+#include "../lightusd.hh"
 #include "js-script.hh"
 #include "mcp-context.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -42,9 +42,9 @@ bool EnsureJSEngineReady(Context &ctx, std::string &err) {
     }
   }
 
-  // Expose tinyusdz.diff.* when a diff is cached in the session. Done after
+  // Expose lightusd.diff.* when a diff is cached in the session. Done after
   // RegisterUSDModule so it augments (rather than is clobbered by) the
-  // tinyusdz global; works standalone too (no stage required).
+  // lightusd global; works standalone too (no stage required).
   if (ctx.diff) {
     if (!RegisterDiffModule(*ctx.js_engine, ctx.diff.get(), err)) {
       return false;
@@ -85,4 +85,4 @@ bool RunScript(Context &ctx, const nlohmann::json &args,
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd

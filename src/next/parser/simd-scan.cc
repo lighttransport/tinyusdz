@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - SIMD scanning helpers (implementation)
+// LightUSD Next - SIMD scanning helpers (implementation)
 //
 // Two build paths, selected at compile time:
 //   * SSE2  - the x86-64 baseline (and 32-bit x86 only when the compiler is
@@ -15,16 +15,16 @@
 #include "simd-scan.hh"
 
 // Master switch. The SIMD backends (SSE2 / NEON) are compiled in by default;
-// define TINYUSDZ_DISABLE_SIMD (e.g. -DTINYUSDZ_DISABLE_SIMD) to force the
-// portable scalar path on every target. TINYUSDZ_ENABLE_SIMD may also be defined
+// define LIGHTUSD_DISABLE_SIMD (e.g. -DLIGHTUSD_DISABLE_SIMD) to force the
+// portable scalar path on every target. LIGHTUSD_ENABLE_SIMD may also be defined
 // explicitly; disable wins if both are set.
-#if defined(TINYUSDZ_DISABLE_SIMD)
-#undef TINYUSDZ_ENABLE_SIMD
-#elif !defined(TINYUSDZ_ENABLE_SIMD)
-#define TINYUSDZ_ENABLE_SIMD
+#if defined(LIGHTUSD_DISABLE_SIMD)
+#undef LIGHTUSD_ENABLE_SIMD
+#elif !defined(LIGHTUSD_ENABLE_SIMD)
+#define LIGHTUSD_ENABLE_SIMD
 #endif
 
-#if defined(TINYUSDZ_ENABLE_SIMD)
+#if defined(LIGHTUSD_ENABLE_SIMD)
 // Gate each backend on the intrinsics' *availability* (matching str-util.cc), not
 // just the target arch. On a no-SIMD x86 build (e.g. -m32 without -msse2)
 // __i386__ is still defined but the SSE2 intrinsics are unusable, so keying on the
@@ -36,17 +36,17 @@
 #if defined(_MSC_VER)
 #include <intrin.h>  // _BitScanForward (MSVC has no __builtin_ctz)
 #endif
-#define TINYUSDZ_SIMDSCAN_SSE2 1
+#define LIGHTUSD_SIMDSCAN_SSE2 1
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>  // NEON (baseline on AArch64)
 #if defined(_MSC_VER)
 #include <intrin.h>  // _BitScanForward64 for MSVC ARM64
 #endif
-#define TINYUSDZ_SIMDSCAN_NEON 1
+#define LIGHTUSD_SIMDSCAN_NEON 1
 #endif
-#endif  // TINYUSDZ_ENABLE_SIMD
+#endif  // LIGHTUSD_ENABLE_SIMD
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace simdscan {
 
@@ -75,7 +75,7 @@ const char* ScanScalar(const char* p, const char* end, size_t* newlines) {
 
 }  // namespace
 
-#if defined(TINYUSDZ_SIMDSCAN_SSE2)
+#if defined(LIGHTUSD_SIMDSCAN_SSE2)
 
 namespace {
 
@@ -141,7 +141,7 @@ const char* ScanArrayStructural(const char* p, const char* end,
 
 const char* Backend() { return "sse2"; }
 
-#elif defined(TINYUSDZ_SIMDSCAN_NEON)
+#elif defined(LIGHTUSD_SIMDSCAN_NEON)
 
 const char* ScanArrayStructural(const char* p, const char* end,
                                 size_t* newlines) {
@@ -204,8 +204,8 @@ const char* ScanArrayStructural(const char* p, const char* end,
 
 const char* Backend() { return "scalar"; }
 
-#endif  // TINYUSDZ_SIMDSCAN_SSE2
+#endif  // LIGHTUSD_SIMDSCAN_SSE2
 
 }  // namespace simdscan
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

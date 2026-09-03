@@ -1175,7 +1175,7 @@ void tydra_phys_wake_body(TydraPhysWorld *world, int32_t body_index) {
 #ifdef __cplusplus
 
 #include "rb-dynamics.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "core/prim.hh"
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
@@ -1186,7 +1186,7 @@ void tydra_phys_wake_body(TydraPhysWorld *world, int32_t body_index) {
 #include <unordered_map>
 #include <functional>
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 namespace {
@@ -1349,7 +1349,7 @@ TydraPhysTransform BuildAnchorTransform(
   if (rot.authored()) {
     value::quatf q = rot.get_value();
     /* value::quatf is (x,y,z,w) or (w,x,y,z)? Check convention. */
-    /* tinyusdz quatf: real part first? Actually
+    /* lightusd quatf: real part first? Actually
      * value::quatf stores as [x, y, z, w] based on USD convention. */
     xf.rotation = tp_q(q[0], q[1], q[2], q[3]);
   }
@@ -1889,6 +1889,6 @@ void FreePhysWorld(TydraPhysWorld *world) {
 }
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd
 
 #endif /* __cplusplus */

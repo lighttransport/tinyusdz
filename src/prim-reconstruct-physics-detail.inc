@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache 2.0
-// Shared physics-joint reconstruct helpers, #included INSIDE namespace tinyusdz::prim by
+// Shared physics-joint reconstruct helpers, #included INSIDE namespace lightusd::prim by
 // prim-reconstruct-physics{,3,4}.cc (each instantiates them for its joint types; internal linkage).
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"

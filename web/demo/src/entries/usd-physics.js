@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { showLoader, hideLoader } from "../tusd-loader.js";
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import loadMuJoCo from '@lighttransport/mujoco-wasm';
 
 const USDA = './assets/physics-robot-arm.usda';
@@ -428,14 +428,14 @@ async function loadUSDScene(loader) {
     loader.parse(bytes.buffer, 'robot-arm.usda', resolve, reject, { backend: 'legacy' });
   });
   const rootNode = scene.getDefaultRootNode();
-  const mat = TinyUSDZLoaderUtils.createDefaultMaterial();
-  const usdObj = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, mat, scene, { overrideMaterial: false });
+  const mat = LightUSDLoaderUtils.createDefaultMaterial();
+  const usdObj = await LightUSDLoaderUtils.buildThreeNode(rootNode, mat, scene, { overrideMaterial: false });
   usdObj.name = 'USD rest pose';
   styleRestPose(usdObj);
   restRoot.add(usdObj);
 
   // Extract physics JSON
-  const native = new loader.native_.TinyUSDZLoaderNative();
+  const native = new loader.native_.LightUSDLoaderNative();
   const loaded = native.loadAsLayerFromBinary(bytes, 'robot-arm.usda');
   if (loaded) {
     const json = native.extractPhysicsSceneJSON();
@@ -468,15 +468,15 @@ async function main() {
   buildJointControls();
   fit();
 
-  setStatus('Initializing TinyUSDZ...');
-  const loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 256 });
-  showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+  setStatus('Initializing LightUSD...');
+  const loader = new LightUSDLoader(null, { maxMemoryLimitMB: 256 });
+  showLoader("Loading LightUSD WASM...", document.getElementById("viewport"));
   try {
     await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
   } finally {
     hideLoader();
   }
-  TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+  LightUSDLoaderUtils.setLightUSD(loader.native_);
 
   await loadUSDScene(loader);
 

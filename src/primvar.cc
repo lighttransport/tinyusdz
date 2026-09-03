@@ -16,7 +16,7 @@
 #include "value-types.hh"
 #include "value-pprint.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace primvar {
 
 bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, value::Value *dst) const {
@@ -61,7 +61,7 @@ bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInte
         (*dst) = it_minus_1->value;
         return true;
 
-      } else { // Lerp 
+      } else { // Lerp
 
         // TODO: Unify code in prim-types.hh
         auto it = std::lower_bound(
@@ -110,5 +110,5 @@ bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInte
 }
 
 } // namespace primvar
-}  // namespace tinyusdz
+}  // namespace lightusd
 

@@ -51,7 +51,7 @@
 // - Relationship : Typeless relation(e.g. `rel material:binding`)
 // - TypedConnection : Typed relation(e.g. `token outputs:result = </material/diffuse.rgb>`)
 
-namespace tinyusdz {
+namespace lightusd {
 namespace prim {
 
 //constexpr auto kTag = "[PrimReconstruct]";
@@ -73,7 +73,7 @@ namespace prim {
 
 
 ///
-/// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
+/// LightUSD reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
 /// here, not in Tydra
 ///
 template <typename T>
@@ -190,4 +190,4 @@ bool ReconstructPrim<GeomMesh>(
 
 
 }  // namespace prim
-}  // namespace tinyusdz
+}  // namespace lightusd

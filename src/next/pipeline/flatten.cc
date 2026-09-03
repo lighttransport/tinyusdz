@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - Low-memory flatten pipeline implementation
+// LightUSD Next - Low-memory flatten pipeline implementation
 
 #include "flatten.hh"
 
@@ -20,13 +20,13 @@
 
 #include <memory>
 
-#if defined(__EMSCRIPTEN__) && defined(TINYUSDZ_FLATTEN_MEMLOG)
+#if defined(__EMSCRIPTEN__) && defined(LIGHTUSD_FLATTEN_MEMLOG)
 #include <emscripten/heap.h>
 #include "../strfmt.hh"     // AppendUInt
 #include "../../logger.hh"  // TUSDZ_LOG_I (only pulled in for this opt-in diag)
 #endif
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 namespace pipeline {
 
@@ -39,13 +39,13 @@ double ElapsedMs(const Clock::time_point& a, const Clock::time_point& b) {
 }
 
 // Attribution aid: log the wasm linear-heap high-water at each flatten stage
-// boundary when built with -DTINYUSDZ_FLATTEN_MEMLOG. emscripten_get_heap_size()
+// boundary when built with -DLIGHTUSD_FLATTEN_MEMLOG. emscripten_get_heap_size()
 // is the grown ArrayBuffer size (monotonic), so the per-stage deltas attribute
 // the peak to read / compose / write. Compiled out (zero cost) by default; an
 // env gate can't be used because emscripten getenv() does not see process.env.
 void FlattenMemLog(const char* stage) {
   (void)stage;
-#if defined(__EMSCRIPTEN__) && defined(TINYUSDZ_FLATTEN_MEMLOG)
+#if defined(__EMSCRIPTEN__) && defined(LIGHTUSD_FLATTEN_MEMLOG)
   std::string msg = "[flatten-mem] ";
   msg += stage;
   msg += " heap=";
@@ -569,4 +569,4 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
 
 }  // namespace pipeline
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

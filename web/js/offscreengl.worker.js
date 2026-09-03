@@ -1,7 +1,7 @@
 // offscreengl.worker.js — Dedicated Web Worker that owns the WebGL context.
 //
 // CRITICAL: The document polyfill MUST be at the top of this file.
-// TinyUSDZLoaderUtils calls document.createElement('canvas') in texture helpers.
+// LightUSDLoaderUtils calls document.createElement('canvas') in texture helpers.
 // We stub it with OffscreenCanvas so those calls succeed inside the worker.
 //
 // NOTE: With Vite bundling, this code executes before any module side-effects that
@@ -31,9 +31,9 @@ if (typeof document === 'undefined') {
 
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from './src/tinyusdz/TinyUSDZLoaderUtils.js';
-import { setTinyUSDZ as setMaterialXTinyUSDZ } from './src/tinyusdz/TinyUSDZMaterialX.js';
+import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
+import { LightUSDLoaderUtils } from './src/lightusd/LightUSDLoaderUtils.js';
+import { setLightUSD as setMaterialXLightUSD } from './src/lightusd/LightUSDMaterialX.js';
 
 // ─── Worker-compatible image loading patch ─────────────────────────────────
 // THREE.ImageLoader normally calls document.createElementNS('...', 'img')
@@ -155,7 +155,7 @@ async function handleInit({ canvas, width, height, pixelRatio, testMode = false 
         return;
     }
 
-    sendStatus('Initializing TinyUSDZ WASM…');
+    sendStatus('Initializing LightUSD WASM…');
     try {
         await initLoader();
     } catch (err) {
@@ -201,18 +201,18 @@ function initThreeJS(offscreenCanvas, width, height, pixelRatio) {
     three.pmremGenerator.compileEquirectangularShader();
 }
 
-// ─── TinyUSDZ WASM loader setup ────────────────────────────────────────────
+// ─── LightUSD WASM loader setup ────────────────────────────────────────────
 
 async function initLoader() {
     // The combined WASM module exposes both the legacy loader and next
     // RenderStream APIs. Auto selects it here; the next-only module does not
-    // expose TinyUSDZLoaderNative, which this worker uses for file loading.
-    loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512, backend: 'auto' });
+    // expose LightUSDLoaderNative, which this worker uses for file loading.
+    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'auto' });
     await loaderState.loader.init({ useMemory64: USE_MEMORY64 });
 
     const wasmModule = loaderState.loader.native_;
-    TinyUSDZLoaderUtils.setTinyUSDZ(wasmModule);
-    setMaterialXTinyUSDZ(wasmModule);
+    LightUSDLoaderUtils.setLightUSD(wasmModule);
+    setMaterialXLightUSD(wasmModule);
 }
 
 // ─── Environment (HDR) ─────────────────────────────────────────────────────
@@ -316,7 +316,7 @@ async function loadUSDFromData(data, filename) {
 
     sendStatus(`Parsing: ${filename}…`);
 
-    loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
+    loaderState.nativeLoader = new loaderState.loader.native_.LightUSDLoaderNative();
     const success = loaderState.nativeLoader.loadFromBinary(data, filename);
     if (!success) {
         sendError(`Failed to parse USD file: ${filename}`);
@@ -334,7 +334,7 @@ async function loadUSDFromData(data, filename) {
 
     // Try to load DomeLight environment
     try {
-        const result = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(
+        const result = await LightUSDLoaderUtils.loadDomeLightFromUSD(
             loaderState.nativeLoader,
             three.pmremGenerator
         );
@@ -378,7 +378,7 @@ async function buildSceneGraph() {
     });
 
     if (usdRootNode) {
-        sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
+        sceneState.root = await LightUSDLoaderUtils.buildThreeNode(
             usdRootNode,
             defaultMtl,
             loaderState.nativeLoader,

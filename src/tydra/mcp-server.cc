@@ -5,7 +5,7 @@
 #include "uuid-gen.hh"
 #include "js-script.hh"
 
-#if defined(TINYUSDZ_WITH_MCP_SERVER)
+#if defined(LIGHTUSD_WITH_MCP_SERVER)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -40,7 +40,7 @@
 //   [ ] resources/list_changed
 //   [ ] tools/list_changed
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -50,7 +50,7 @@ struct JsonRpcRequest {
   std::string method;
   nlohmann::json params;
   nlohmann::json id;
-  
+
   bool is_notification() const { return id.is_null(); }
 };
 
@@ -60,18 +60,18 @@ struct JsonRpcResponse {
   nlohmann::json result;
   nlohmann::json error;
   nlohmann::json id;
-  
+
   nlohmann::json to_json() const {
     nlohmann::json response;
     response["jsonrpc"] = jsonrpc;
     response["id"] = id;
-    
+
     if (!error.is_null()) {
       response["error"] = error;
     } else {
       response["result"] = result;
     }
-    
+
     return response;
   }
 };
@@ -148,7 +148,7 @@ class MCPServer::Impl {
     // mg_stop() is called in dtor.
     return true;
   }
-  
+
   // Register a JSON-RPC method handler
   void register_method(const std::string& method, MethodHandler handler);
 
@@ -164,16 +164,16 @@ class MCPServer::Impl {
  private:
   struct mg_context *ctx_ = nullptr; // Pointer to the CivetWeb context
   std::map<std::string, MethodHandler> method_handlers_;
-  
+
   // Static callback for MCP requests(POST + jsonrpc)
   static int mcp_handler(struct mg_connection *conn, void *user_data);
-  
+
   // Process JSON-RPC request
   JsonRpcResponse process_request(const JsonRpcRequest& request, const std::string &sess_id);
-  
+
   // Parse JSON-RPC request from string
   JsonRpcRequest parse_request(const std::string& json_str);
-  
+
   // Create JSON-RPC error response
   JsonRpcResponse create_error_response(int code, const std::string& message, const nlohmann::json& id = nullptr);
 
@@ -187,7 +187,7 @@ class MCPServer::Impl {
 
 int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   MCPServer::Impl* server = static_cast<MCPServer::Impl*>(user_data);
-  
+
   const struct mg_request_info *request_info = mg_get_request_info(conn);
 
   DCOUT("req_method " << request_info->request_method);
@@ -207,7 +207,7 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     const std::string o = get_header_value(request_info, "Origin");
     if (!o.empty()) cors_origin = o;
   }
-  
+
   // Handle POST requests for JSON-RPC
   if (strcmp(request_info->request_method, "POST") == 0) {
     if ((request_info->content_length > 0) &&
@@ -223,7 +223,7 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     std::string body;
     char buffer[1024];
     int bytes_read;
-    
+
     while ((bytes_read = mg_read(conn, buffer, sizeof(buffer))) > 0) {
       if (body.size() + size_t(bytes_read) > server->options_.max_request_body_bytes) {
         mg_printf(conn,
@@ -239,19 +239,19 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     } else {
       DCOUT("body size " << body.size() << " bytes");
     }
-    
+
     // Parse and process JSON-RPC request
     JsonRpcRequest rpc_request = server->parse_request(body);
     JsonRpcResponse rpc_response = server->process_request(rpc_request, mcp_sess_id);
 
     if (rpc_request.is_notification()) {
-        // Return 202 
+        // Return 202
       mg_printf(conn,
                 "HTTP/1.1 202 Accepted\r\n"
                 "Content-Length: 0\r\n"
                 "\r\n");
     } else {
-    
+
       // Send JSON-RPC response
       std::string response_json = rpc_response.to_json().dump();
 
@@ -288,10 +288,10 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
                   response_json.c_str());
       }
     }
-    
+
     return 200; // Request handled
   }
-  
+
   // Handle OPTIONS for CORS
   if (strcmp(request_info->request_method, "OPTIONS") == 0) {
     mg_printf(conn,
@@ -305,13 +305,13 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
               cors_origin.c_str());
     return 200;
   }
-  
+
   return 404; // Not found
 }
 
 JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
   JsonRpcRequest request;
-  
+
   nlohmann::json json_obj;
   if (!nlohmann::json::accept(json_str)) {
     // Return invalid request on parse error
@@ -319,7 +319,7 @@ JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
     request.jsonrpc = "";
     return request;
   }
-  
+
   json_obj = nlohmann::json::parse(json_str);
 
   if (json_obj.contains("jsonrpc") && json_obj["jsonrpc"].is_string()) {
@@ -338,7 +338,7 @@ JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
   if (json_obj.contains("id")) {
     request.id = json_obj["id"];
   }
-  
+
   return request;
 }
 
@@ -355,17 +355,17 @@ JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request, 
       return create_error_response(INVALID_REQUEST, "Missing or invalid mcp-session-id", request.id);
     }
   }
-  
+
   // Check if method exists
   auto handler_it = method_handlers_.find(request.method);
   if (handler_it == method_handlers_.end()) {
     return create_error_response(METHOD_NOT_FOUND, "Method not found", request.id);
   }
-  
+
   // Execute method handler
   std::string err;
   nlohmann::json result = handler_it->second(request.params, sess_id, err);
-  
+
   JsonRpcResponse response;
 
   if (err.size()) {
@@ -374,7 +374,7 @@ JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request, 
     response.id = request.id;
     response.result = result;
   }
-  
+
   return response;
 }
 
@@ -385,7 +385,7 @@ JsonRpcResponse MCPServer::Impl::create_error_response(int code, const std::stri
     {"code", code},
     {"message", message}
   };
-  
+
   return response;
 }
 
@@ -411,7 +411,7 @@ void MCPServer::Impl::register_methods() {
     // Extract client info if provided
     std::string client_name = "unknown";
     std::string client_version = "unknown";
-    
+
     if (params.contains("clientInfo")) {
       auto client_info = params["clientInfo"];
       if (client_info.contains("name")) {
@@ -421,12 +421,12 @@ void MCPServer::Impl::register_methods() {
         client_version = client_info["version"];
       }
     }
-    
+
     // Return server capabilities
     return nlohmann::json{
       {"protocolVersion", "2025-03-26"},
       {"serverInfo", {
-        {"name", "tinyusdz-mcp-server"},
+        {"name", "lightusd-mcp-server"},
         {"version", "1.0.0"}
       }},
       {"capabilities", {
@@ -458,7 +458,7 @@ void MCPServer::Impl::register_methods() {
 
     nlohmann::json j;
     mcp::GetResourcesList(mcp_ctx_, j);
-    
+
     return j;
 
   });
@@ -481,7 +481,7 @@ void MCPServer::Impl::register_methods() {
       err += "Failed to read resource: " + uri;
       return result;
     }
-    
+
     return result;
 
   });
@@ -494,7 +494,7 @@ void MCPServer::Impl::register_methods() {
 
     nlohmann::json j;
     mcp::GetToolsList(mcp_ctx_, j);
-    
+
     return j;
 
   });
@@ -504,7 +504,7 @@ void MCPServer::Impl::register_methods() {
     (void)sess_id;
 
     nlohmann::json result;
-    
+
     if (!params.contains("name")) {
       err = "`name` is missing in params.";
       return result;
@@ -529,7 +529,7 @@ void MCPServer::Impl::register_methods() {
     (void)params;
     (void)err;
     (void)sess_id;
-    
+
     // Return server capabilities
     return nlohmann::json::object();
   });
@@ -556,10 +556,10 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   if (!ctx_) {
     return false; // Failed to start server
   }
-  
+
   // Register HTTP handler for MCP endpoint
   mg_set_request_handler(ctx_, "/mcp", mcp_handler, this);
-  
+
   return true; // Server initialized successfully
 }
 
@@ -637,12 +637,12 @@ bool MCPServer::stop() {
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 
 
 #else
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 namespace mcp {
 
@@ -677,6 +677,6 @@ bool MCPServer::stop() {
 
 } // namespace mcp
 } // namespace tydra
-} // namespace tinyusdz
+} // namespace lightusd
 
 #endif

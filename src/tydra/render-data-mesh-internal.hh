@@ -14,7 +14,7 @@
 #include "tydra/render-data.hh"           // RenderMesh, VertexAttribute, vec2, vec3
 #include "tydra/render-data-internal.hh"  // MeshConverterConfig
 
-namespace tinyusdz {
+namespace lightusd {
 namespace tydra {
 
 // Tangent / normal computation + quantization (render-data-mesh-tangent.cc):
@@ -50,4 +50,4 @@ bool QuantizeMeshNormals(
     MeshConverterConfig::NormalStorageFormat format);
 
 }  // namespace tydra
-}  // namespace tinyusdz
+}  // namespace lightusd

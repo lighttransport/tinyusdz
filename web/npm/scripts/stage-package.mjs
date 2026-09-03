@@ -8,9 +8,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..', '..');
-const sourceDir = path.resolve(packageRoot, '..', 'js', 'src', 'tinyusdz');
+const sourceDir = path.resolve(packageRoot, '..', 'js', 'src', 'lightusd');
 // Dependency-free modules that live one directory above sourceDir but are
-// imported by the packaged loaders (e.g. TinyUSDZLoader.js pulls
+// imported by the packaged loaders (e.g. LightUSDLoader.js pulls
 // parseUSDZEntries from ../usdzconvert.js). They are staged flat into dist and
 // the staged importers are rewritten from '../<name>' to './<name>'.
 const PARENT_DIR_MODULES = ['usdzconvert.js'];
@@ -21,14 +21,14 @@ const licensePath = path.resolve(repoRoot, 'LICENSE');
 const manifestPath = path.resolve(packageRoot, 'package.json');
 
 const REQUIRED_SOURCE_FILES = [
-  'tinyusdz.js',
-  'tinyusdz.wasm',
-  'tinyusdz_64.js',
-  'tinyusdz_64.wasm',
-  'tinyusdz_next.js',
-  'tinyusdz_next.wasm',
-  'tinyusdz_next_64.js',
-  'tinyusdz_next_64.wasm'
+  'lightusd.js',
+  'lightusd.wasm',
+  'lightusd_64.js',
+  'lightusd_64.wasm',
+  'lightusd_next.js',
+  'lightusd_next.wasm',
+  'lightusd_next_64.js',
+  'lightusd_next_64.wasm'
 ];
 
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$/;

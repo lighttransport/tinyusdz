@@ -33,7 +33,7 @@
 #include "str-util.hh"
 #include "tiny-container.hh"
 #include "tiny-format.hh"
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usda-reader.hh"
@@ -41,7 +41,7 @@
 //
 #include "common-macros.inc"
 
-namespace tinyusdz {
+namespace lightusd {
 
 #if 1
 // For PUSH_ERROR_AND_RETURN
@@ -265,7 +265,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
         "Path is not absolute. Non-absolute Path is TODO.\n");
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::unique_lock<std::mutex> cache_lock(*_cache_mu);
 #endif
   if (_dirty) {
@@ -284,7 +284,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
       return ret->second;
     }
   }
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   cache_lock.unlock();  // release during the (lock-free) _root_nodes walk
 #endif
 
@@ -293,7 +293,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   if (auto pv = GetPrimAtPathIterative(_root_nodes, path)) {
     // Add to cache.
     // Assume pointer address does not change unless dirty state.
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     cache_lock.lock();  // re-acquire before mutating the cache (released above)
 #endif
     // Key on the full Path (matches the find() above; the cache is Path-hashed
@@ -413,7 +413,7 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
     return false;
   }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   std::unique_lock<std::mutex> cache_lock(*_cache_mu);
 #endif
   if (_prim_id_dirty) {
@@ -431,13 +431,13 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
       return true;
     }
   }
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
   cache_lock.unlock();  // release during the (lock-free) _root_nodes walk
 #endif
 
   const Prim *p{nullptr};
   if (FindPrimByPrimIdIterative(prim_id, _root_nodes, &p)) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     cache_lock.lock();
 #endif
     _prim_id_cache[prim_id] = p;
@@ -534,7 +534,7 @@ namespace {
 
 std::string Stage::ExportToString(bool relative_path, bool parallel) const {
   (void)relative_path;
-#if !defined(TINYUSDZ_ENABLE_THREAD)
+#if !defined(LIGHTUSD_ENABLE_THREAD)
   (void)parallel; // Threading disabled
 #endif
 
@@ -558,7 +558,7 @@ std::string Stage::ExportToString(bool relative_path, bool parallel) const {
       primNameTable.emplace(_root_nodes[i].element_name(), &_root_nodes[i]);
     }
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (parallel) {
       // Parallel printing path
       std::vector<const Prim*> ordered_prims;
@@ -575,7 +575,7 @@ std::string Stage::ExportToString(bool relative_path, bool parallel) const {
       prim::ParallelPrintConfig config;
       ss << prim::print_prims_parallel(ordered_prims, 0, config);
     } else
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
     {
       // Sequential printing path (original)
       for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
@@ -595,7 +595,7 @@ std::string Stage::ExportToString(bool relative_path, bool parallel) const {
       }
     }
   } else {
-#if defined(TINYUSDZ_ENABLE_THREAD)
+#if defined(LIGHTUSD_ENABLE_THREAD)
     if (parallel) {
       // Parallel printing path
       std::vector<const Prim*> prims;
@@ -607,7 +607,7 @@ std::string Stage::ExportToString(bool relative_path, bool parallel) const {
       prim::ParallelPrintConfig config;
       ss << prim::print_prims_parallel(prims, 0, config);
     } else
-#endif  // TINYUSDZ_ENABLE_THREAD
+#endif  // LIGHTUSD_ENABLE_THREAD
     {
       // Sequential printing path (original)
       for (size_t i = 0; i < _root_nodes.size(); i++) {
@@ -1838,4 +1838,4 @@ void Stage::ImportInstanceData(
   }
 }
 
-}  // namespace tinyusdz
+}  // namespace lightusd

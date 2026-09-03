@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TinyUSDZ Next - typed AOUSD spline support. See spline.hh.
+// LightUSD Next - typed AOUSD spline support. See spline.hh.
 
 #include "spline.hh"
 
@@ -16,7 +16,7 @@
 #include "../crate/crate-format.hh"  // FloatToHalf/HalfToFloat (round-to-even)
 #include "../writer/dtoa.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 namespace next {
 
 namespace {
@@ -24,8 +24,8 @@ namespace {
 // Use the canonical half converters so spline-encoded halves are byte-identical
 // to pxr (round-to-nearest-even) and to next's own half evaluation cast; a
 // truncating local copy silently diverged from both.
-using tinyusdz::next::FloatToHalf;
-using tinyusdz::next::HalfToFloat;
+using lightusd::next::FloatToHalf;
+using lightusd::next::HalfToFloat;
 
 template <typename T>
 void Wr(std::vector<uint8_t>* buf, const T& v) {
@@ -741,18 +741,18 @@ bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
   }
 
   // Bridge to the shared evaluator.
-  tinyusdz::Spline<double> sp;
-  sp.curveType = (src->curve_type == 1) ? tinyusdz::SplineCurveType::Hermite
-                                      : tinyusdz::SplineCurveType::Bezier;
+  lightusd::Spline<double> sp;
+  sp.curveType = (src->curve_type == 1) ? lightusd::SplineCurveType::Hermite
+                                      : lightusd::SplineCurveType::Bezier;
   auto extrap = [](int m) {
     switch (m) {
-      case 0: return tinyusdz::SplineExtrapolationMode::None;
-      case 2: return tinyusdz::SplineExtrapolationMode::Linear;
-      case 3: return tinyusdz::SplineExtrapolationMode::Sloped;
-      case 4: return tinyusdz::SplineExtrapolationMode::LoopRepeat;
-      case 5: return tinyusdz::SplineExtrapolationMode::LoopReset;
-      case 6: return tinyusdz::SplineExtrapolationMode::LoopOscillate;
-      default: return tinyusdz::SplineExtrapolationMode::Held;
+      case 0: return lightusd::SplineExtrapolationMode::None;
+      case 2: return lightusd::SplineExtrapolationMode::Linear;
+      case 3: return lightusd::SplineExtrapolationMode::Sloped;
+      case 4: return lightusd::SplineExtrapolationMode::LoopRepeat;
+      case 5: return lightusd::SplineExtrapolationMode::LoopReset;
+      case 6: return lightusd::SplineExtrapolationMode::LoopOscillate;
+      default: return lightusd::SplineExtrapolationMode::Held;
     }
   };
   sp.preExtrapolation = extrap(src->pre_extrap);
@@ -767,7 +767,7 @@ bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
 
   sp.knots.reserve(src->knots.size());
   for (const SplineKnot& k : src->knots) {
-    tinyusdz::SplineKnot<double> sk;
+    lightusd::SplineKnot<double> sk;
     sk.time = k.time;
     sk.value = k.value;
     sk.preValue = k.pre_value;
@@ -777,16 +777,16 @@ bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
     sk.postTangentSlope = k.post_tan_slope;
     sk.postTangentWidth = k.post_tan_width;
     switch (k.interp) {
-      case 0: sk.nextInterpolationMode = tinyusdz::SplineInterpolationMode::None; break;
-      case 1: sk.nextInterpolationMode = tinyusdz::SplineInterpolationMode::Held; break;
-      case 2: sk.nextInterpolationMode = tinyusdz::SplineInterpolationMode::Linear; break;
-      default: sk.nextInterpolationMode = tinyusdz::SplineInterpolationMode::Curve; break;
+      case 0: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::None; break;
+      case 1: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::Held; break;
+      case 2: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::Linear; break;
+      default: sk.nextInterpolationMode = lightusd::SplineInterpolationMode::Curve; break;
     }
     sp.knots.push_back(sk);
   }
 
-  return tinyusdz::EvaluateSpline(sp, time, out);
+  return lightusd::EvaluateSpline(sp, time, out);
 }
 
 }  // namespace next
-}  // namespace tinyusdz
+}  // namespace lightusd

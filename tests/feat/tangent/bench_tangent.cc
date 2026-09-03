@@ -3,7 +3,7 @@
 // Compares three methods:
 //   1. Reference MikkTSpace (original C implementation via wrapper)
 //   2. Optimized MikkTSpace (fast-mikktspace.hh)
-//   3. Lengyel (existing TinyUSDZ method)
+//   3. Lengyel (existing LightUSD method)
 //
 // Test scenes:
 //   - Synthetic UV sphere (various tessellation)
@@ -33,14 +33,14 @@
 #include <string>
 #include <vector>
 
-// ---- TinyUSDZ headers for USD loading (optional) ----
+// ---- LightUSD headers for USD loading (optional) ----
 #ifdef BENCH_WITH_USD
-#include "tinyusdz.hh"
+#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #endif
 
-// ---- TinyUSDZ types for tangent computation ----
+// ---- LightUSD types for tangent computation ----
 // We include the minimal headers needed for the tangent functions.
 #include "value-types.hh"
 
@@ -56,8 +56,8 @@
 // ComputeTangentsAndBinormals is a static function in render-data.cc, so we
 // replicate a lightweight standalone version here for the benchmark.
 
-using float2 = tinyusdz::value::float2;
-using float3 = tinyusdz::value::float3;
+using float2 = lightusd::value::float2;
+using float3 = lightusd::value::float3;
 
 // ============================================================================
 // Standalone Lengyel tangent computation (extracted from render-data.cc)
@@ -332,19 +332,19 @@ static FVMesh generateIcosphere(int subdivisions) {
 #ifdef BENCH_WITH_USD
 // Load a USD file and extract the first mesh as facevarying data
 static bool loadUSDMesh(const std::string &filepath, FVMesh *out, std::string *err) {
-  tinyusdz::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
-  if (!tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, err)) {
+  if (!lightusd::LoadUSDFromFile(filepath, &stage, &warn, err)) {
     return false;
   }
 
-  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.triangulate = true;
   env.mesh_config.compute_tangents_and_binormals = false; // we compute separately
   env.mesh_config.compute_normals = true;
 
-  tinyusdz::tydra::RenderScene scene;
-  tinyusdz::tydra::RenderSceneConverter converter;
+  lightusd::tydra::RenderScene scene;
+  lightusd::tydra::RenderSceneConverter converter;
   if (!converter.ConvertToRenderScene(env, &scene)) {
     if (err) *err = converter.GetError();
     return false;
@@ -676,7 +676,7 @@ int main(int argc, char **argv) {
       size_t mem = estimateMemoryRefMikkTSpace(nFV, nTris);
       auto res = benchmarkMethod("Ref-MikkTSpace", mesh, warmup, repeat, [&]() {
         tangents.clear(); binormals.clear();
-        tinyusdz::tydra::ComputeTangentsMikkTSpace(
+        lightusd::tydra::ComputeTangentsMikkTSpace(
             mesh.positions, mesh.normals, mesh.texcoords,
             mesh.faceVertexCounts, &tangents, &binormals, &err);
       });
@@ -697,7 +697,7 @@ int main(int argc, char **argv) {
       size_t mem = estimateMemoryFastMikkTSpace(nFV, nTris);
       auto res = benchmarkMethod("Fast-MikkTSpace", mesh, warmup, repeat, [&]() {
         tangents.clear(); binormals.clear();
-        tinyusdz::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
+        lightusd::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
             mesh.positions, mesh.normals, mesh.texcoords,
             mesh.faceVertexCounts, &tangents, &binormals, &err);
       });
@@ -718,10 +718,10 @@ int main(int argc, char **argv) {
     {
       std::vector<float3> tangents, binormals;
       std::string err;
-      tinyusdz::tydra::fast_mikkt::HybridStats hstats = {};
+      lightusd::tydra::fast_mikkt::HybridStats hstats = {};
       auto res = benchmarkMethod("Hybrid", mesh, warmup, repeat, [&]() {
         tangents.clear(); binormals.clear();
-        tinyusdz::tydra::fast_mikkt::ComputeTangentsHybrid(
+        lightusd::tydra::fast_mikkt::ComputeTangentsHybrid(
             mesh.positions, mesh.normals, mesh.texcoords,
             mesh.faceVertexCounts, &tangents, &binormals, &hstats, &err);
       });
@@ -773,7 +773,7 @@ int main(int argc, char **argv) {
 
     // --- Quantization quality/size report (uses Ref tangents) ---
     if (hasRef && measureQuality) {
-      using namespace tinyusdz::tydra::tangent_quantize;
+      using namespace lightusd::tydra::tangent_quantize;
 
       printf("  ---- Tangent Quantization ----\n");
       printf("  %-14s  %5s  %8s  %10s  %10s  %6s\n",

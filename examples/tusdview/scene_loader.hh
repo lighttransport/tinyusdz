@@ -17,13 +17,13 @@
 #include "gpu_scene.hh"
 #include "tydra/next/resource-budget.hh"  // TextureFit
 #include "preview_cache.hh"
-#include "io-util.hh"  // tinyusdz::io::MMapFileHandle
+#include "io-util.hh"  // lightusd::io::MMapFileHandle
 #include "layer.hh"
 #include "load_control.hh"
 #include "stage.hh"
 #include "tydra/render-data.hh"
 
-namespace tinyusdz { struct USDZAsset; }
+namespace lightusd { struct USDZAsset; }
 
 namespace tusdview {
 
@@ -95,7 +95,7 @@ struct LoadOptions {
   // --texture-fit: resident-byte threshold (geometry + decoded textures) under
   // which textures are left unshrunk and uncompressed. 0 == "always process"
   // (the pre-policy behaviour); UINT64 max == "never process".
-  tinyusdz::tydra::next::TextureFit textureFit{};
+  lightusd::tydra::next::TextureFit textureFit{};
   size_t textureFitThresholdBytes{0};
   // 25% of resident VRAM, INDEPENDENT of --texture-fit. Gates mip generation
   // only; see the comment where it is consumed in next_scene_loader.cc.
@@ -149,7 +149,7 @@ struct LoadOptions {
   // arcs resolve with the user's choices instead of the layer defaults.
   std::map<std::string, std::map<std::string, std::string>> variantOverrides;
   // Allow parent-directory ('..') segments in composition asset paths
-  // (--allow-parent-paths). Off by default (tinyusdz rejects '..' traversal as
+  // (--allow-parent-paths). Off by default (lightusd rejects '..' traversal as
   // unsafe). Some production scenes (e.g. Animal Logic ALab's lighting overrides
   // referenced as `../lightingrenderovers/...`) need it; resolution of the
   // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
@@ -242,10 +242,10 @@ struct DeferredArc {
 // composed Stage alone is not enough to load payloads later).
 struct CompositionInfo {
   bool composed{false};
-  std::shared_ptr<const tinyusdz::Layer> rootLayer;
+  std::shared_ptr<const lightusd::Layer> rootLayer;
   std::vector<std::string> searchPaths;
   // Retained package backing for composition and later payload recomposition.
-  std::shared_ptr<tinyusdz::USDZAsset> usdzAsset;
+  std::shared_ptr<lightusd::USDZAsset> usdzAsset;
   // Mirror of SceneLoaderOptions::allowParentRelativePaths, retained so the
   // RenderScene conversion applies the same '..' policy to texture/light asset
   // resolution that composition used (the tydra asset resolver defaults to
@@ -258,8 +258,8 @@ struct CompositionInfo {
 // Holds both the parsed Stage (for the hierarchy browser / property inspector)
 // and the converted RenderScene (for rendering). Both must stay alive together.
 struct LoadedScene {
-  tinyusdz::Stage stage;
-  tinyusdz::tydra::RenderScene render;
+  lightusd::Stage stage;
+  lightusd::tydra::RenderScene render;
   std::string filepath;
   std::string warn;
   std::string err;
@@ -270,7 +270,7 @@ struct LoadedScene {
   // USDC arrays reference this mapping). Unmapped when this LoadedScene dies.
   // Null on the composition path (composition copies specs, so zero-copy
   // offsets would dangle).
-  std::shared_ptr<tinyusdz::io::MMapFileHandle> mmap;
+  std::shared_ptr<lightusd::io::MMapFileHandle> mmap;
   CompositionInfo comp;
 };
 
@@ -330,7 +330,7 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 // geometry belongs to the old scene). NOT thread-safe: only one RenderSceneAtTime
 // may touch a given cache at a time (the app gates reconverts to one in flight).
 struct RestSceneCache {
-  tinyusdz::tydra::RenderScene scene;
+  lightusd::tydra::RenderScene scene;
   double timecode = 0.0;
   bool valid = false;
 };

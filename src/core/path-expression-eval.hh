@@ -17,7 +17,7 @@
 
 #include "core/path-expression.hh"
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Caller-provided hooks. Both are optional; when unset the matcher evaluates
 // structurally (predicates pass, references match nothing).
@@ -38,7 +38,7 @@ struct PathExpressionEvalContext {
 };
 
 // Match a single pattern against an (absolute) path string. `path` may include a
-// trailing `.property`. `*`/`?` wildcards are matched with tinyusdz's freestanding
+// trailing `.property`. `*`/`?` wildcards are matched with lightusd's freestanding
 // GlobMatch; `//` matches arbitrary hierarchy depth; predicates use ctx.
 bool MatchPattern(const PathPattern &pattern, const std::string &path,
                   const PathExpressionEvalContext &ctx = {});
@@ -47,4 +47,4 @@ bool MatchPattern(const PathPattern &pattern, const std::string &path,
 bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
                const PathExpressionEvalContext &ctx = {});
 
-}  // namespace tinyusdz
+}  // namespace lightusd

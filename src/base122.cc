@@ -2,11 +2,11 @@
 
 #include <array>
 
-namespace tinyusdz {
+namespace lightusd {
 
 // Base122 uses 122 safe printable ASCII characters
 // Excluding problematic chars like quotes, backslash, DEL, etc.
-static const char base122_alphabet[122] = 
+static const char base122_alphabet[122] =
     "!#$%&()*+,-./0123456789:;<=>?@"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`"
     "abcdefghijklmnopqrstuvwxyz{|}~"
@@ -76,4 +76,4 @@ int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
     return 0;
 }
 
-} // namespace tinyusdz
+} // namespace lightusd
