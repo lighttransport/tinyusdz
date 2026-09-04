@@ -355,6 +355,30 @@ ctest --output-on-failure -LE benchmark
 
 ## Regression Test Procedure
 
+For Vulkan transparency changes, run the persistent-viewer promotion tests as
+well as the fixed-frame transparency matrix:
+
+```sh
+xvfb-run -a ctest --test-dir build_ninja \
+  -R 'lusdview-(vulkan-oit-promotion|vulkan-cold-start-auto|transparency|vk-oit-validation)' \
+  --output-on-failure
+```
+
+The promotion test checks a responsive baseline, mode-change cancellation,
+reuse without another compilation, and screenshot parity with explicit weighted
+startup. The non-threaded case also loads native-carrier, instanced, and MaterialX
+scenes into the same renderer. Compilation duration and resident memory are
+advisory measurements; a fresh application cache does not imply a cold driver
+cache. Khronos validation requires an installed or locally built layer.
+
+The live-reload harness keeps a large finite frame budget so idle headless
+frames cannot end the viewer during a cold driver compilation. Vulkan reload
+launches retain a 10-second responsiveness deadline; synchronous CUDA/HIP
+reloads have a separate 180-second compilation allowance.
+The hardware Vulkan test also rejects an interactive reload that omits
+`LUSDVIEW_RT_INTERACTIVE_ONLY`, even when a driver cache could hide the extra
+compilation cost. Its completion deadline remains 180 seconds.
+
 Use this procedure for merge-level validation, release checks, and refactor hardening:
 
 ### 1) CTest matrix (native)

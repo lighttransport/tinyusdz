@@ -989,6 +989,15 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
       {"specular-f0", RenderMode::SpecularF0},
       {"ior-f0", RenderMode::IorF0},
   };
+  struct TransparencyName {
+    const char* name;
+    TransparencyMode mode;
+  };
+  static constexpr TransparencyName kTransparencyModes[] = {
+      {"auto", TransparencyMode::Auto},
+      {"weighted", TransparencyMode::Weighted},
+      {"sorted", TransparencyMode::Sorted},
+  };
 
   if (args.contains("mode")) {
     if (!args["mode"].is_string()) {
@@ -1006,6 +1015,28 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
     }
     if (!found) {
       err = "render_settings: unsupported mode '" + requested + "'";
+      return json::object();
+    }
+  }
+  if (args.contains("transparency")) {
+    if (!args["transparency"].is_string()) {
+      err = "render_settings: transparency must be a string";
+      return json::object();
+    }
+    const std::string requested = args["transparency"].get<std::string>();
+    bool found = false;
+    for (const TransparencyName& entry : kTransparencyModes) {
+      if (requested == entry.name) {
+        transparencyMode_ = entry.mode;
+        postGpu([this, mode = entry.mode] {
+          if (renderer_) renderer_->setTransparencyMode(mode);
+        });
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      err = "render_settings: unsupported transparency '" + requested + "'";
       return json::object();
     }
   }
@@ -1054,6 +1085,11 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
     }
   }
   return json{{"mode", currentName}, {"camera", cameraName_},
+              {"transparency", transparencyMode_ == TransparencyMode::Weighted
+                                   ? "weighted"
+                                   : transparencyMode_ == TransparencyMode::Sorted
+                                         ? "sorted"
+                                         : "auto"},
               {"adaptive_quality", adaptiveQuality_},
               {"target_render_fps", adaptiveTargetFps_},
               {"render_scale", adaptiveRenderScale_}};
@@ -1165,6 +1201,8 @@ json App::mcpRenderStats(const json&, std::string&) {
                                 : (cudaTracer_.rtBackend() ==
                                            CudaRtBackend::SoftwareBvh
                                        ? "software" : "auto");
+  const TransparencyStatus transparency =
+      renderer_ ? renderer_->transparencyStatus() : TransparencyStatus{};
   return json{{"ui_fps", ImGui::GetIO().Framerate},
               {"render_fps", renderFps_},
               {"threaded", renderThreadActive_},
@@ -1172,6 +1210,15 @@ json App::mcpRenderStats(const json&, std::string&) {
               {"adaptive_tier", tier},
               {"render_scale", adaptiveRenderScale_},
               {"target_render_fps", adaptiveTargetFps_},
+              {"transparency", transparency.requested == TransparencyMode::Weighted ? "weighted" :
+                   transparency.requested == TransparencyMode::Sorted ? "sorted" : "auto"},
+              {"transparency_effective", transparency.active ? "weighted" : "sorted"},
+              {"transparency_phase", transparency.phase},
+              {"transparency_error", transparency.error},
+              {"transparency_compile_ms", transparency.compileMs},
+              {"weighted_oit_supported", transparency.supported},
+              {"weighted_oit_active", transparency.active},
+              {"oit_attachment_bytes", transparency.attachmentBytes},
               {"cuda_rt", {{"transport", cudaTracer_.usesOptixTransport()
                                                   ? "optix" : "software-bvh"},
                            {"requested", cudaRequest},

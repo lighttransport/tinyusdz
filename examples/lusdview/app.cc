@@ -1184,6 +1184,11 @@ bool CompileLiveVulkanShader(const std::string& source,
   } else if (!useProceduralMaterialShader) {
     variantDefines = " -DLUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL=1";
   }
+  // Match the interactive startup shader: the production integrator is unused
+  // here but can add minutes of driver optimization if left in the module.
+  // Keep it for actual path-tracing reloads, including the hardware backend.
+  if (!softwareBvh && !productionPath)
+    variantDefines += " -DLUSDVIEW_RT_INTERACTIVE_ONLY=1";
   const std::string compilerCommand =
       ShellQuote(compiler) + " --target-env=vulkan1.2 "
       "-fshader-stage=compute" + variantDefines + " -I" +
@@ -6329,7 +6334,7 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
       state->vulkanSourceJob.emplace(std::async(
           std::launch::async,
           [source, full, procedural, softwareBvh,
-           productionPath = softwareBvh && pathTrace_.enabled, maxBytes,
+           productionPath = pathTrace_.enabled, maxBytes,
            timeout]() {
             LiveShaderState::VulkanSourceResult result;
             result.ok = CompileLiveVulkanShader(

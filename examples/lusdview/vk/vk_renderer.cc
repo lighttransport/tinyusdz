@@ -33,6 +33,7 @@
 #include "line_vert.spv.h"
 #include "mesh_frag.spv.h"
 #include "mesh_oit_frag.spv.h"
+#include "mesh_oit_simple_frag.spv.h"
 #include "environment_vert.spv.h"
 #include "environment_frag.spv.h"
 #include "shadow_frag.spv.h"
@@ -1946,7 +1947,311 @@ bool VulkanRenderer::createOitRenderPass(std::string* err) {
   return true;
 }
 
-bool VulkanRenderer::createOitCompositePipeline(std::string* err) {
+void VulkanRenderer::captureOitRecipe(
+    size_t slot, const VkGraphicsPipelineCreateInfo& info,
+    const uint32_t* vertex, size_t vertexBytes,
+    const uint32_t* fragment, size_t fragmentBytes) {
+  OitRecipe& recipe = oitRecipes_[slot];
+  recipe.layout = info.layout;
+  recipe.raster = *info.pRasterizationState;
+  recipe.assembly = *info.pInputAssemblyState;
+  const auto& input = *info.pVertexInputState;
+  recipe.bindings.assign(input.pVertexBindingDescriptions,
+                         input.pVertexBindingDescriptions + input.vertexBindingDescriptionCount);
+  recipe.attributes.assign(input.pVertexAttributeDescriptions,
+                           input.pVertexAttributeDescriptions + input.vertexAttributeDescriptionCount);
+  recipe.dynamic.assign(info.pDynamicState->pDynamicStates,
+                        info.pDynamicState->pDynamicStates + info.pDynamicState->dynamicStateCount);
+  recipe.vertex = vertex;
+  recipe.vertexBytes = vertexBytes;
+  recipe.fragment = fragment;
+  recipe.fragmentBytes = fragmentBytes;
+}
+
+VkPipeline VulkanRenderer::compileOitRecipe(
+    VkDevice device, VkRenderPass pass, VkPipelineCache cache,
+    const OitRecipe& recipe) {
+  VkShaderModule modules[2]{};
+  const uint32_t* words[2] = {recipe.vertex, recipe.fragment};
+  const size_t bytes[2] = {recipe.vertexBytes, recipe.fragmentBytes};
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  for (size_t i = 0; i < 2; ++i) {
+    VkShaderModuleCreateInfo shader{};
+    shader.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader.codeSize = bytes[i];
+    shader.pCode = words[i];
+    if (vkCreateShaderModule(device, &shader, nullptr, &modules[i]) != VK_SUCCESS) {
+      if (modules[0]) vkDestroyShaderModule(device, modules[0], nullptr);
+      return VK_NULL_HANDLE;
+    }
+    stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[i].stage = i == 0 ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[i].module = modules[i];
+    stages[i].pName = "main";
+  }
+  VkPipelineVertexInputStateCreateInfo input{};
+  input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  input.vertexBindingDescriptionCount = static_cast<uint32_t>(recipe.bindings.size());
+  input.pVertexBindingDescriptions = recipe.bindings.data();
+  input.vertexAttributeDescriptionCount = static_cast<uint32_t>(recipe.attributes.size());
+  input.pVertexAttributeDescriptions = recipe.attributes.data();
+  VkPipelineViewportStateCreateInfo viewport{};
+  viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewport.viewportCount = viewport.scissorCount = 1;
+  VkPipelineMultisampleStateCreateInfo samples{};
+  samples.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  samples.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  VkPipelineDepthStencilStateCreateInfo depth{};
+  depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  depth.depthTestEnable = VK_TRUE;
+  depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+  VkPipelineColorBlendAttachmentState attachments[2]{};
+  attachments[0].blendEnable = VK_TRUE;
+  attachments[0].srcColorBlendFactor = attachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  attachments[0].srcAlphaBlendFactor = attachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  attachments[0].colorBlendOp = attachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
+  attachments[0].colorWriteMask = 0xf;
+  attachments[1].blendEnable = VK_TRUE;
+  attachments[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+  attachments[1].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  attachments[1].colorBlendOp = attachments[1].alphaBlendOp = VK_BLEND_OP_ADD;
+  attachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+  VkPipelineColorBlendStateCreateInfo blend{};
+  blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  blend.attachmentCount = 2;
+  blend.pAttachments = attachments;
+  VkPipelineDynamicStateCreateInfo dynamic{};
+  dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamic.dynamicStateCount = static_cast<uint32_t>(recipe.dynamic.size());
+  dynamic.pDynamicStates = recipe.dynamic.data();
+  VkGraphicsPipelineCreateInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  info.stageCount = 2;
+  info.pStages = stages;
+  info.pVertexInputState = &input;
+  info.pInputAssemblyState = &recipe.assembly;
+  info.pViewportState = &viewport;
+  info.pRasterizationState = &recipe.raster;
+  info.pMultisampleState = &samples;
+  info.pDepthStencilState = &depth;
+  info.pColorBlendState = &blend;
+  info.pDynamicState = &dynamic;
+  info.layout = recipe.layout;
+  info.renderPass = pass;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(device, cache, 1, &info, nullptr, &pipeline) != VK_SUCCESS) {
+    if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
+    pipeline = VK_NULL_HANDLE;
+  }
+  for (auto module : modules) vkDestroyShaderModule(device, module, nullptr);
+  return pipeline;
+}
+
+TransparencyStatus VulkanRenderer::transparencyStatus() const {
+  std::lock_guard<std::mutex> lock(oitStatusMutex_);
+  return oitStatus_;
+}
+
+void VulkanRenderer::publishOitStatus() {
+  TransparencyStatus status;
+  status.requested = requestedTransparency_;
+  status.supported = weightedOitSupported_;
+  status.active = oitEffective_ && rtMode_ == 0;
+  status.attachmentBytes = caps_.oitAttachmentBytes;
+  status.compileMs = oitCompileMs_;
+  status.error = oitError_;
+  status.phase = oitPromotion_ ? "warming" : !oitError_.empty() ? "failed" :
+      oitEffective_ ? "ready" : "idle";
+  std::lock_guard<std::mutex> lock(oitStatusMutex_);
+  oitStatus_ = std::move(status);
+}
+
+uint32_t VulkanRenderer::requiredOitMask() const {
+  if (!oitRequirementsDirty_) return oitRequiredMask_;
+  bool graph = false;
+  for (const auto& material : rtMaterialsCpu_) {
+    if (material.materialXGraph.valid &&
+        std::any_of(material.materialXGraph.output.begin(), material.materialXGraph.output.end(),
+                    [](int route) { return route >= 0; })) {
+      graph = true;
+      break;
+    }
+  }
+  uint32_t mask = meshes_.empty() ? 0u :
+      ((graph || (oitReadyMask_ & 2u)) ? 2u : 1u);
+  for (const auto& mesh : meshes_) if (mesh.instanceCount) { mask |= 4u; break; }
+  if (!nativePoints_.empty() || !nativeCurves_.empty()) mask |= 8u;
+  if (!volumes_.empty()) mask |= 16u;
+  oitRequirementsDirty_ = false;
+  oitRequiredMask_ = mask;
+  return mask;
+}
+
+void VulkanRenderer::setTransparencyMode(TransparencyMode mode) {
+  requestedTransparency_ = mode;
+  transparencyMode_ = mode;
+  caps_.transparencyMode = mode == TransparencyMode::Weighted ? "weighted" :
+      mode == TransparencyMode::Sorted ? "sorted" : "auto";
+  oitError_.clear();
+  oitFailedMask_ = 0;
+  if (mode != TransparencyMode::Weighted) oitEffective_ = false;
+  // Submission/compilation is serviced exclusively by the rendering owner.
+  // Returning from an MCP request never runs driver compilation.
+  publishOitStatus();
+}
+
+bool VulkanRenderer::beginOitPromotion(std::string* err) {
+  if (!weightedOitSupported_) {
+    if (err) *err = "weighted OIT unsupported";
+    return false;
+  }
+  if (oitPromotion_) return true;
+  if (!oitPass_ && !createOitRenderPass(err)) return false;
+  if (!oitCompositeLayout_ && !createOitCompositePipeline(err, false)) return false;
+  if (!oitPass_ || !oitCompositeLayout_ || !weightedOitSupported_) {
+    if (err) *err = "OIT resource setup failed";
+    return false;
+  }
+  auto result = std::make_shared<AsyncOitPromotion>();
+  result->mask = requiredOitMask() & ~oitReadyMask_;
+  const auto recipes = oitRecipes_;
+  const VkDevice device = device_;
+  const VkRenderPass pass = oitPass_;
+  const VkPipelineLayout compositeLayout = oitCompositeLayout_;
+  const bool needComposite = !oitCompositePipeline_;
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(phys_, &props);
+  // A separate file avoids lost updates with the existing RT cache writer.
+  const std::string base = RtPipelineCachePath(props, nullptr, 0);
+  const std::string path = base.empty() ? std::string() : base + ".oit";
+  oitPromotion_ = result;
+  oitPromotionJob_ = std::async(std::launch::async,
+      [this, device, pass, compositeLayout, recipes, result, needComposite, path] {
+    std::lock_guard<std::mutex> compileLock(pipelineCompileMutex_);
+    const auto start = std::chrono::steady_clock::now();
+    constexpr size_t maxCacheBytes = 64u * 1024u * 1024u;
+    std::vector<uint8_t> blob;
+    if (!path.empty()) {
+      std::ifstream in(path, std::ios::binary | std::ios::ate);
+      const auto size = in ? in.tellg() : std::streampos(-1);
+      if (size > 0 && size <= std::streampos(maxCacheBytes)) {
+        blob.resize(static_cast<size_t>(size));
+        in.seekg(0);
+        if (!in.read(reinterpret_cast<char*>(blob.data()), size)) blob.clear();
+      }
+    }
+    VkPipelineCacheCreateInfo cacheInfo{};
+    cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    cacheInfo.initialDataSize = blob.size();
+    cacheInfo.pInitialData = blob.data();
+    VkPipelineCache cache = VK_NULL_HANDLE;
+    if (vkCreatePipelineCache(device, &cacheInfo, nullptr, &cache) != VK_SUCCESS) {
+      cacheInfo.initialDataSize = 0;
+      cacheInfo.pInitialData = nullptr;
+      vkCreatePipelineCache(device, &cacheInfo, nullptr, &cache);
+    }
+    bool ok = true;
+    for (size_t i = 0; i < 5 && ok; ++i) {
+      if (!(result->mask & (1u << i))) continue;
+      OitRecipe recipe = recipes[i < 2 ? 0 : i - 1];
+      if (i == 0) {
+        recipe.fragment = mesh_oit_simple_frag_spv;
+        recipe.fragmentBytes = sizeof(mesh_oit_simple_frag_spv);
+      }
+      if (!recipe.layout || !recipe.vertex) { ok = false; break; }
+      result->pipelines[i] = compileOitRecipe(device, pass, cache, recipe);
+      ok = result->pipelines[i] != VK_NULL_HANDLE;
+    }
+    if (ok && needComposite) {
+      VkShaderModuleCreateInfo shaderInfo{};
+      shaderInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+      shaderInfo.pCode = oit_composite_comp_spv;
+      shaderInfo.codeSize = sizeof(oit_composite_comp_spv);
+      VkShaderModule shader = VK_NULL_HANDLE;
+      if (vkCreateShaderModule(device, &shaderInfo, nullptr, &shader) == VK_SUCCESS) {
+        VkComputePipelineCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        info.layout = compositeLayout;
+        info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        info.stage.module = shader;
+        info.stage.pName = "main";
+        ok = vkCreateComputePipelines(device, cache, 1, &info, nullptr,
+                                      &result->composite) == VK_SUCCESS;
+        vkDestroyShaderModule(device, shader, nullptr);
+      } else ok = false;
+    }
+    // Cache I/O stays on the worker, never on a frame boundary. Only one OIT
+    // worker writes this renderer's cache at a time; rename publishes atomically.
+    if (cache && !path.empty()) {
+      size_t size = 0;
+      if (vkGetPipelineCacheData(device, cache, &size, nullptr) == VK_SUCCESS &&
+          size && size <= maxCacheBytes) {
+        std::vector<uint8_t> data(size);
+        if (vkGetPipelineCacheData(device, cache, &size, data.data()) == VK_SUCCESS) {
+          data.resize(size);
+          if (data != blob) {
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+            const std::string tmp = path + ".tmp-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count());
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(data.data()),
+                      static_cast<std::streamsize>(data.size()));
+            out.close();
+            if (out) std::filesystem::rename(tmp, path, ec);
+            if (!out || ec) std::filesystem::remove(tmp, ec);
+          }
+        }
+      }
+    }
+    if (cache) vkDestroyPipelineCache(device, cache, nullptr);
+    result->ok = ok;
+    if (!ok) result->error = "OIT pipeline compilation failed";
+    result->elapsedMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+    result->done.store(true, std::memory_order_release);
+  });
+  return true;
+}
+
+void VulkanRenderer::serviceOitPromotion() {
+  if (oitPromotion_ && oitPromotion_->done.load(std::memory_order_acquire)) {
+    oitPromotionJob_.get();
+    auto result = std::move(oitPromotion_);
+    oitCompileMs_ += result->elapsedMs;
+    if (result->ok) {
+      VkPipeline* slots[] = {&oitSimpleMeshPipeline_, &oitMeshPipeline_, &oitInstPipeline_,
+                            &oitNativeCarrierPipeline_, &oitVolumePipeline_};
+      for (size_t i = 0; i < 5; ++i)
+        if (result->pipelines[i]) *slots[i] = result->pipelines[i];
+      if (result->composite) oitCompositePipeline_ = result->composite;
+      oitReadyMask_ |= result->mask;
+      oitRequirementsDirty_ = true;
+    } else {
+      for (auto pipeline : result->pipelines)
+        if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+      if (result->composite) vkDestroyPipeline(device_, result->composite, nullptr);
+      oitFailedMask_ |= result->mask;
+      oitError_ = result->error;
+    }
+  }
+  const uint32_t required = requiredOitMask();
+  oitEffective_ = false;
+  if (requestedTransparency_ == TransparencyMode::Weighted && weightedOitSupported_) {
+    const bool ready = (required & ~oitReadyMask_) == 0 && oitCompositePipeline_;
+    if (ready && colorView_ && depthView_) {
+      oitEffective_ = oitFb_ || createOitAttachments();
+      if (!oitEffective_) oitError_ = "OIT attachment allocation failed";
+    } else if (!oitPromotion_ && !(required & oitFailedMask_) && oitError_.empty()) {
+      if (!beginOitPromotion(&oitError_) && oitError_.empty())
+        oitError_ = "OIT promotion unavailable";
+    }
+  }
+  publishOitStatus();
+}
+
+bool VulkanRenderer::createOitCompositePipeline(std::string* err, bool compile) {
   if (!weightedOitSupported_ ||
       transparencyMode_ != TransparencyMode::Weighted)
     return true;
@@ -2002,6 +2307,7 @@ bool VulkanRenderer::createOitCompositePipeline(std::string* err) {
     caps_.supportsWeightedOit = false;
     return true;
   }
+  if (!compile) return true;
   VkShaderModule shader = createShader(oit_composite_comp_spv,
                                        sizeof(oit_composite_comp_spv));
   if (!shader) {
@@ -2216,7 +2522,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     if (in) {
       in.seekg(0, std::ios::end);
       const std::streamoff size = in.tellg();
-      if (size > 0) {
+      if (size > 0 && size <= 64 * 1024 * 1024) {
         in.seekg(0, std::ios::beg);
         pipelineCacheBlob.resize(static_cast<size_t>(size));
         if (!in.read(reinterpret_cast<char*>(pipelineCacheBlob.data()), size))
@@ -2512,52 +2818,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     reportPipeline("sorted transparent");
     if (rt != VK_SUCCESS) translucentPipeline_ = VK_NULL_HANDLE;  // opaque-only fallback
   }
+  captureOitRecipe(0, ci, mesh_vert_spv, sizeof(mesh_vert_spv),
+                   mesh_oit_frag_spv, sizeof(mesh_oit_frag_spv));
   if (r == VK_SUCCESS && weightedOitSupported_ && oitPass_) {
-    VkShaderModule oitFs =
-        createShader(mesh_oit_frag_spv, sizeof(mesh_oit_frag_spv));
-    if (oitFs) {
-      VkPipelineShaderStageCreateInfo oitStages[2] = {stages[0], stages[1]};
-      oitStages[1].module = oitFs;
-      VkPipelineDepthStencilStateCreateInfo oitDs = ds;
-      oitDs.depthTestEnable = VK_TRUE;
-      oitDs.depthWriteEnable = VK_FALSE;
-      oitDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-      VkPipelineColorBlendAttachmentState oitBlend[2]{};
-      oitBlend[0].blendEnable = VK_TRUE;
-      oitBlend[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitBlend[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitBlend[0].colorBlendOp = VK_BLEND_OP_ADD;
-      oitBlend[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitBlend[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitBlend[0].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitBlend[0].colorWriteMask =
-          VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-      oitBlend[1].blendEnable = VK_TRUE;
-      oitBlend[1].srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitBlend[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-      oitBlend[1].colorBlendOp = VK_BLEND_OP_ADD;
-      oitBlend[1].srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitBlend[1].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitBlend[1].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitBlend[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
-      VkPipelineColorBlendStateCreateInfo oitCb = cb;
-      oitCb.attachmentCount = 2;
-      oitCb.pAttachments = oitBlend;
-      VkGraphicsPipelineCreateInfo oitCi = ci;
-      oitCi.pStages = oitStages;
-      oitCi.pDepthStencilState = &oitDs;
-      oitCi.pColorBlendState = &oitCb;
-      oitCi.renderPass = oitPass_;
-      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &oitCi,
-                                    nullptr, &oitMeshPipeline_) != VK_SUCCESS) {
-        oitMeshPipeline_ = VK_NULL_HANDLE;
-        weightedOitSupported_ = false;
-        caps_.supportsWeightedOit = false;
-        LOGW("Vulkan weighted OIT disabled: mesh pipeline creation failed");
-      }
-      reportPipeline("weighted OIT");
-      vkDestroyShaderModule(device_, oitFs, nullptr);
+    oitMeshPipeline_ = compileOitRecipe(device_, oitPass_, pipelineCache,
+                                            oitRecipes_[0]);
+    if (oitMeshPipeline_) {
+      oitReadyMask_ |= 2u;
     } else {
       weightedOitSupported_ = false;
       caps_.supportsWeightedOit = false;
@@ -2598,7 +2865,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
       size_t size = 0;
       if (vkGetPipelineCacheData(device_, pipelineCache, &size, nullptr) ==
               VK_SUCCESS &&
-          size > 0 && size != pipelineCacheBlob.size()) {
+          size > 0 && size <= 64u * 1024u * 1024u) {
         std::vector<uint8_t> data(size);
         if (vkGetPipelineCacheData(device_, pipelineCache, &size, data.data()) ==
             VK_SUCCESS) {
@@ -2900,49 +3167,13 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   if (r == VK_SUCCESS) {
     tr = createInstVariant(/*translucent=*/true, &instTranslucentPipeline_);
   }
+  captureOitRecipe(1, ci, mesh_inst_vert_spv, sizeof(mesh_inst_vert_spv),
+                   mesh_inst_frag_oit_spv, sizeof(mesh_inst_frag_oit_spv));
   if (r == VK_SUCCESS && weightedOitSupported_ && oitPass_) {
-    VkShaderModule oitFs = createShader(mesh_inst_frag_oit_spv,
-                                        sizeof(mesh_inst_frag_oit_spv));
-    if (oitFs) {
-      stages[1].module = oitFs;
-      VkPipelineColorBlendAttachmentState oitAttachments[2]{};
-      oitAttachments[0].blendEnable = VK_TRUE;
-      oitAttachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].colorBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                         VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT |
-                                         VK_COLOR_COMPONENT_A_BIT;
-      oitAttachments[1].blendEnable = VK_TRUE;
-      oitAttachments[1].srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitAttachments[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-      oitAttachments[1].colorBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[1].srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitAttachments[1].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-      oitAttachments[1].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
-      VkPipelineColorBlendStateCreateInfo oitBlend = cb;
-      oitBlend.attachmentCount = 2;
-      oitBlend.pAttachments = oitAttachments;
-      VkPipelineDepthStencilStateCreateInfo oitDepth = ds;
-      oitDepth.depthWriteEnable = VK_FALSE;
-      oitDepth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-      VkGraphicsPipelineCreateInfo oitCi = ci;
-      oitCi.pColorBlendState = &oitBlend;
-      oitCi.pDepthStencilState = &oitDepth;
-      oitCi.renderPass = oitPass_;
-      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &oitCi, nullptr,
-                                    &oitInstPipeline_) != VK_SUCCESS) {
-        oitInstPipeline_ = VK_NULL_HANDLE;
-        weightedOitSupported_ = false;
-        caps_.supportsWeightedOit = false;
-      }
-      vkDestroyShaderModule(device_, oitFs, nullptr);
-      stages[1].module = fs;
+    oitInstPipeline_ = compileOitRecipe(device_, oitPass_, VK_NULL_HANDLE,
+                                            oitRecipes_[1]);
+    if (oitInstPipeline_) {
+      oitReadyMask_ |= 4u;
     } else {
       weightedOitSupported_ = false;
       caps_.supportsWeightedOit = false;
@@ -3244,50 +3475,13 @@ bool VulkanRenderer::createNativeCarrierPipeline(std::string* err) {
   ci.subpass = 0;
   const VkResult result = vkCreateGraphicsPipelines(
       device_, VK_NULL_HANDLE, 1, &ci, nullptr, &nativeCarrierPipeline_);
+  captureOitRecipe(2, ci, nonmesh_vert_spv, sizeof(nonmesh_vert_spv),
+                   nonmesh_frag_oit_spv, sizeof(nonmesh_frag_oit_spv));
   if (result == VK_SUCCESS && weightedOitSupported_ && oitPass_) {
-    VkShaderModule oitFs = createShader(nonmesh_frag_oit_spv,
-                                        sizeof(nonmesh_frag_oit_spv));
-    if (oitFs) {
-      stages[1].module = oitFs;
-      VkPipelineColorBlendAttachmentState oitAttachments[2]{};
-      oitAttachments[0].blendEnable = VK_TRUE;
-      oitAttachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].colorBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                         VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT |
-                                         VK_COLOR_COMPONENT_A_BIT;
-      oitAttachments[1].blendEnable = VK_TRUE;
-      oitAttachments[1].srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitAttachments[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-      oitAttachments[1].colorBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[1].srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitAttachments[1].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-      oitAttachments[1].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
-      VkPipelineColorBlendStateCreateInfo oitBlend = blend;
-      oitBlend.attachmentCount = 2;
-      oitBlend.pAttachments = oitAttachments;
-      VkPipelineDepthStencilStateCreateInfo oitDepth = ds;
-      oitDepth.depthWriteEnable = VK_FALSE;
-      oitDepth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-      VkGraphicsPipelineCreateInfo oitCi = ci;
-      oitCi.pStages = stages;
-      oitCi.pColorBlendState = &oitBlend;
-      oitCi.pDepthStencilState = &oitDepth;
-      oitCi.renderPass = oitPass_;
-      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &oitCi, nullptr,
-                                    &oitNativeCarrierPipeline_) != VK_SUCCESS) {
-        oitNativeCarrierPipeline_ = VK_NULL_HANDLE;
-        weightedOitSupported_ = false;
-        caps_.supportsWeightedOit = false;
-      }
-      vkDestroyShaderModule(device_, oitFs, nullptr);
-      stages[1].module = fs;
+    oitNativeCarrierPipeline_ = compileOitRecipe(device_, oitPass_, VK_NULL_HANDLE,
+                                            oitRecipes_[2]);
+    if (oitNativeCarrierPipeline_) {
+      oitReadyMask_ |= 8u;
     } else {
       weightedOitSupported_ = false;
       caps_.supportsWeightedOit = false;
@@ -3461,46 +3655,13 @@ bool VulkanRenderer::createVolumePipeline(std::string* err) {
   ci.subpass = 0;
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &volumePipeline_);
+  captureOitRecipe(3, ci, volume_vert_spv, sizeof(volume_vert_spv),
+                   volume_frag_oit_spv, sizeof(volume_frag_oit_spv));
   if (r == VK_SUCCESS && weightedOitSupported_ && oitPass_) {
-    VkShaderModule oitFs = createShader(volume_frag_oit_spv,
-                                        sizeof(volume_frag_oit_spv));
-    if (oitFs) {
-      stages[1].module = oitFs;
-      VkPipelineColorBlendAttachmentState oitAttachments[2]{};
-      oitAttachments[0].blendEnable = VK_TRUE;
-      oitAttachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].colorBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-      oitAttachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                         VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT |
-                                         VK_COLOR_COMPONENT_A_BIT;
-      oitAttachments[1].blendEnable = VK_TRUE;
-      oitAttachments[1].srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitAttachments[1].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-      oitAttachments[1].colorBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[1].srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-      oitAttachments[1].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-      oitAttachments[1].alphaBlendOp = VK_BLEND_OP_ADD;
-      oitAttachments[1].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
-      VkPipelineColorBlendStateCreateInfo oitBlend = cb;
-      oitBlend.attachmentCount = 2;
-      oitBlend.pAttachments = oitAttachments;
-      VkGraphicsPipelineCreateInfo oitCi = ci;
-      oitCi.pStages = stages;
-      oitCi.pColorBlendState = &oitBlend;
-      oitCi.renderPass = oitPass_;
-      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &oitCi, nullptr,
-                                    &oitVolumePipeline_) != VK_SUCCESS) {
-        oitVolumePipeline_ = VK_NULL_HANDLE;
-        weightedOitSupported_ = false;
-        caps_.supportsWeightedOit = false;
-      }
-      vkDestroyShaderModule(device_, oitFs, nullptr);
-      stages[1].module = fs;
+    oitVolumePipeline_ = compileOitRecipe(device_, oitPass_, VK_NULL_HANDLE,
+                                            oitRecipes_[3]);
+    if (oitVolumePipeline_) {
+      oitReadyMask_ |= 16u;
     } else {
       weightedOitSupported_ = false;
       caps_.supportsWeightedOit = false;
@@ -3569,6 +3730,7 @@ void VulkanRenderer::recordVolumePass(VkCommandBuffer cb, VkPipeline pipe) {
 }
 
 void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
+  oitRequirementsDirty_ = true;
   if (v.density.empty() || v.dim[0] <= 0 || v.dim[1] <= 0 || v.dim[2] <= 0) return;
   if (volumes_.size() >= 64) return;  // pool cap
 
@@ -6555,6 +6717,7 @@ VkDeviceAddress VulkanRenderer::bufferDeviceAddress(VkBuffer buf) const {
 }
 
 void VulkanRenderer::destroyScene() {
+  oitRequirementsDirty_ = true;
   for (auto& m : meshes_) {
     if (m.vbo) vkDestroyBuffer(device_, m.vbo, nullptr);
     if (m.vboMem) vkFreeMemory(device_, m.vboMem, nullptr);
@@ -6850,6 +7013,7 @@ void VulkanRenderer::growTextureSlots(int textureCount) {
 
 void VulkanRenderer::syncSceneResources(
     const std::vector<DrawMaterialCPU>& materials, int textureCount) {
+  oitRequirementsDirty_ = true;
   if (!device_) return;
   // Same job GLRenderer::syncSceneResources does: make room for the texture
   // slots and materials that streamed in after beginScene. Materials are
@@ -6863,6 +7027,7 @@ void VulkanRenderer::syncSceneResources(
 
 bool VulkanRenderer::updateMaterialConstants(
     int materialId, const DrawMaterialCPU& material, std::string* err) {
+  oitRequirementsDirty_ = true;
   if (!device_ || materialId < 0 ||
       static_cast<size_t>(materialId) >= rtMaterialsCpu_.size()) {
     if (err) *err = "Vulkan material index is out of range";
@@ -7175,6 +7340,7 @@ bool VulkanRenderer::ensureRasterMaterialCapacity(size_t materialCount) {
 
 void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                                 int textureCount) {
+  oitRequirementsDirty_ = true;
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
   rtTextureTableDirty_ = true;
@@ -8096,6 +8262,7 @@ void VulkanRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
 }
 
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
+  oitRequirementsDirty_ = true;
   std::string validationError;
   if (!ValidateDrawMesh(sm, rtMaterialsCpu_.size(), &validationError)) {
     LOGE("Vulkan rejected unsafe draw mesh: %s", validationError.c_str());
@@ -8750,20 +8917,24 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
 }
 
 void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
+  oitRequirementsDirty_ = true;
   if (!points.points.empty()) nativePoints_.push_back(points);
 }
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
+  oitRequirementsDirty_ = true;
   if (curves.points.size() < 6) return;
   nativeCurves_.push_back(curves);
   BakeCurveWorld(&nativeCurves_.back());
 }
 
 void VulkanRenderer::appendPoints(DrawPointsCPU&& points) {
+  oitRequirementsDirty_ = true;
   if (!points.points.empty()) nativePoints_.push_back(std::move(points));
 }
 
 void VulkanRenderer::appendCurves(DrawCurvesCPU&& curves) {
+  oitRequirementsDirty_ = true;
   if (curves.points.size() < 6) return;
   BakeCurveWorld(&curves);
   nativeCurves_.push_back(std::move(curves));
@@ -12774,6 +12945,7 @@ bool VulkanRenderer::beginReloadRayTracingShaderAsync(
       std::launch::async,
       [this, device, layout, technique, path, words = std::move(words),
        cachePath]() mutable {
+        std::lock_guard<std::mutex> compileLock(pipelineCompileMutex_);
         const auto started = std::chrono::steady_clock::now();
         VkPipeline candidate = VK_NULL_HANDLE;
         std::string localError;
@@ -13012,6 +13184,134 @@ void VulkanRenderer::destroyOffscreen() {
   if (depthMem_) { vkFreeMemory(device_, depthMem_, nullptr); depthMem_ = VK_NULL_HANDLE; }
 }
 
+bool VulkanRenderer::createOitAttachments() {
+  if (oitFb_) return true;
+  if (!colorView_ || !depthView_ || !oitCompositeSet_) return false;
+  auto makeImage = [&](uint32_t width, uint32_t height, VkFormat fmt,
+                       VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                       VkImage* img, VkDeviceMemory* mem, VkImageView* view) -> bool {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = fmt;
+    ici.extent = {width, height, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = usage;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device_, &ici, nullptr, img) != VK_SUCCESS) return false;
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device_, *img, &req);
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits,
+                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) {
+      vkDestroyImage(device_, *img, nullptr);
+      *img = VK_NULL_HANDLE;
+      return false;
+    }
+    vkBindImageMemory(device_, *img, *mem, 0);
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = *img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
+    vci.subresourceRange.aspectMask = aspect;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device_, &vci, nullptr, view) != VK_SUCCESS) {
+      vkDestroyImage(device_, *img, nullptr);
+      vkFreeMemory(device_, *mem, nullptr);
+      *img = VK_NULL_HANDLE;
+      *mem = VK_NULL_HANDLE;
+      return false;
+    }
+    return true;
+  };
+
+  VkFramebufferCreateInfo fci{};
+  fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  fci.width = static_cast<uint32_t>(vpW_);
+  fci.height = static_cast<uint32_t>(vpH_);
+  fci.layers = 1;
+  if (weightedOitSupported_ &&
+      transparencyMode_ == TransparencyMode::Weighted && oitPass_) {
+    const VkImageUsageFlags oitUsage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+        VK_IMAGE_USAGE_STORAGE_BIT;
+    const bool accumOk = makeImage(
+        static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_),
+        VK_FORMAT_R16G16B16A16_SFLOAT, oitUsage, VK_IMAGE_ASPECT_COLOR_BIT,
+        &oitAccumImg_, &oitAccumMem_, &oitAccumView_);
+    const bool revealOk = makeImage(
+        static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_),
+        VK_FORMAT_R16_SFLOAT, oitUsage, VK_IMAGE_ASPECT_COLOR_BIT,
+        &oitRevealImg_, &oitRevealMem_, &oitRevealView_);
+    if (accumOk && revealOk) {
+      VkImageView oitAttachments[3] = {oitAccumView_, oitRevealView_,
+                                       depthView_};
+      VkFramebufferCreateInfo oitFci = fci;
+      oitFci.renderPass = oitPass_;
+      oitFci.attachmentCount = 3;
+      oitFci.pAttachments = oitAttachments;
+      if (vkCreateFramebuffer(device_, &oitFci, nullptr, &oitFb_) !=
+          VK_SUCCESS) {
+        oitFb_ = VK_NULL_HANDLE;
+      }
+      if (oitFb_ && oitCompositeSet_) {
+        VkDescriptorImageInfo images[3]{};
+        images[0].imageView = colorView_;
+        images[1].imageView = oitAccumView_;
+        images[2].imageView = oitRevealView_;
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t i = 0; i < 3; ++i) {
+          images[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+          writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+          writes[i].dstSet = oitCompositeSet_;
+          writes[i].dstBinding = i;
+          writes[i].descriptorCount = 1;
+          writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+          writes[i].pImageInfo = &images[i];
+        }
+        vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        caps_.usesWeightedOit =
+            transparencyMode_ != TransparencyMode::Sorted;
+        caps_.oitAttachmentBytes =
+            static_cast<uint64_t>(vpW_) * static_cast<uint64_t>(vpH_) *
+            (8u + 2u);  // RGBA16F accumulation + R16F revealage
+        LOGD("Vulkan weighted OIT resources ready (%llu attachment bytes; "
+             "per-frame activity is reported separately)",
+             static_cast<unsigned long long>(caps_.oitAttachmentBytes));
+      }
+    }
+    if (!accumOk || !revealOk || !oitFb_) {
+      LOGW("Vulkan weighted OIT disabled: viewport attachment allocation failed");
+      if (oitAccumView_) vkDestroyImageView(device_, oitAccumView_, nullptr);
+      if (oitAccumImg_) vkDestroyImage(device_, oitAccumImg_, nullptr);
+      if (oitAccumMem_) vkFreeMemory(device_, oitAccumMem_, nullptr);
+      if (oitRevealView_) vkDestroyImageView(device_, oitRevealView_, nullptr);
+      if (oitRevealImg_) vkDestroyImage(device_, oitRevealImg_, nullptr);
+      if (oitRevealMem_) vkFreeMemory(device_, oitRevealMem_, nullptr);
+      oitAccumView_ = oitRevealView_ = VK_NULL_HANDLE;
+      oitAccumImg_ = oitRevealImg_ = VK_NULL_HANDLE;
+      oitAccumMem_ = oitRevealMem_ = VK_NULL_HANDLE;
+      weightedOitSupported_ = false;
+      caps_.supportsWeightedOit = false;
+      caps_.usesWeightedOit = false;
+      caps_.oitAttachmentBytes = 0;
+    }
+  }
+
+  // Material binding 48 already references colorView_; promotion does not
+  // replace that view, so no per-material descriptor rewrite is needed.
+  return oitFb_ != VK_NULL_HANDLE;
+}
+
+
 void VulkanRenderer::resizeViewport(int width, int height) {
   if (width < 1) width = 1;
   if (height < 1) height = 1;
@@ -13166,73 +13466,7 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     LOGE("[vk] resizeViewport: framebuffer creation failed");
   }
 
-  if (weightedOitSupported_ &&
-      transparencyMode_ == TransparencyMode::Weighted && oitPass_) {
-    const VkImageUsageFlags oitUsage =
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-        VK_IMAGE_USAGE_STORAGE_BIT;
-    const bool accumOk = makeImage(
-        static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_),
-        VK_FORMAT_R16G16B16A16_SFLOAT, oitUsage, VK_IMAGE_ASPECT_COLOR_BIT,
-        &oitAccumImg_, &oitAccumMem_, &oitAccumView_);
-    const bool revealOk = makeImage(
-        static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_),
-        VK_FORMAT_R16_SFLOAT, oitUsage, VK_IMAGE_ASPECT_COLOR_BIT,
-        &oitRevealImg_, &oitRevealMem_, &oitRevealView_);
-    if (accumOk && revealOk) {
-      VkImageView oitAttachments[3] = {oitAccumView_, oitRevealView_,
-                                       depthView_};
-      VkFramebufferCreateInfo oitFci = fci;
-      oitFci.renderPass = oitPass_;
-      oitFci.attachmentCount = 3;
-      oitFci.pAttachments = oitAttachments;
-      if (vkCreateFramebuffer(device_, &oitFci, nullptr, &oitFb_) !=
-          VK_SUCCESS) {
-        oitFb_ = VK_NULL_HANDLE;
-      }
-      if (oitFb_ && oitCompositeSet_) {
-        VkDescriptorImageInfo images[3]{};
-        images[0].imageView = colorView_;
-        images[1].imageView = oitAccumView_;
-        images[2].imageView = oitRevealView_;
-        VkWriteDescriptorSet writes[3]{};
-        for (uint32_t i = 0; i < 3; ++i) {
-          images[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-          writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-          writes[i].dstSet = oitCompositeSet_;
-          writes[i].dstBinding = i;
-          writes[i].descriptorCount = 1;
-          writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-          writes[i].pImageInfo = &images[i];
-        }
-        vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
-        caps_.usesWeightedOit =
-            transparencyMode_ != TransparencyMode::Sorted;
-        caps_.oitAttachmentBytes =
-            static_cast<uint64_t>(vpW_) * static_cast<uint64_t>(vpH_) *
-            (8u + 2u);  // RGBA16F accumulation + R16F revealage
-        LOGD("Vulkan weighted OIT resources ready (%llu attachment bytes; "
-             "per-frame activity is reported separately)",
-             static_cast<unsigned long long>(caps_.oitAttachmentBytes));
-      }
-    }
-    if (!accumOk || !revealOk || !oitFb_) {
-      LOGW("Vulkan weighted OIT disabled: viewport attachment allocation failed");
-      if (oitAccumView_) vkDestroyImageView(device_, oitAccumView_, nullptr);
-      if (oitAccumImg_) vkDestroyImage(device_, oitAccumImg_, nullptr);
-      if (oitAccumMem_) vkFreeMemory(device_, oitAccumMem_, nullptr);
-      if (oitRevealView_) vkDestroyImageView(device_, oitRevealView_, nullptr);
-      if (oitRevealImg_) vkDestroyImage(device_, oitRevealImg_, nullptr);
-      if (oitRevealMem_) vkFreeMemory(device_, oitRevealMem_, nullptr);
-      oitAccumView_ = oitRevealView_ = VK_NULL_HANDLE;
-      oitAccumImg_ = oitRevealImg_ = VK_NULL_HANDLE;
-      oitAccumMem_ = oitRevealMem_ = VK_NULL_HANDLE;
-      weightedOitSupported_ = false;
-      caps_.supportsWeightedOit = false;
-      caps_.usesWeightedOit = false;
-      caps_.oitAttachmentBytes = 0;
-    }
-  }
+  if (oitEffective_) createOitAttachments();
 
   if (!shadowFb_) {
     const bool shadowColorOk = makeImage(
@@ -13410,7 +13644,9 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   tlasDirty_ = true;
 }
 
-void VulkanRenderer::newFrame() { ImGui_ImplVulkan_NewFrame(); }
+void VulkanRenderer::newFrame() {
+  ImGui_ImplVulkan_NewFrame();
+}
 
 void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.view) std::memcpy(view_, params.view, sizeof(view_));
@@ -14213,6 +14449,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // Commit only after the previous frame fence has retired; the expensive
   // driver compilation itself runs on the worker.
   serviceAsyncRtReload();
+  serviceOitPromotion();
 
   // Per-pass GPU timing. The fence above already retired the previous submit, so
   // its four timestamps are readable with no extra wait.
@@ -14734,6 +14971,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     };
     uint64_t oitDrawCalls = 0;
     auto drawMeshPass = [&](int apass, VkPipeline meshPl) {
+    // A native-only scene need not compile a mesh OIT variant.
+    if (!meshPl) return;
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
     int cullState = -1;  // -1 unknown; dedup vkCmdSetCullMode across meshes
     // Sets 2 and 3 are frame-constant and shared by the coarse/tess pipelines.
@@ -15050,8 +15289,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     };
     const bool useWeightedOit =
-        transparencyMode_ == TransparencyMode::Weighted &&
-        weightedOitSupported_ && oitFb_ && oitMeshPipeline_ &&
+        oitEffective_ &&
+        weightedOitSupported_ && oitFb_ &&
         oitCompositePipeline_ && oitCompositeSet_ && rtMode_ == 0;
     caps_.usesWeightedOit = useWeightedOit;
     if (wireMode_ != 1) drawMeshPass(/*apass=*/0, pipeline_);
@@ -15347,7 +15586,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdBeginRenderPass(cb, &oitBegin, VK_SUBPASS_CONTENTS_INLINE);
       vkCmdSetViewport(cb, 0, 1, &vpRect);
       vkCmdSetScissor(cb, 0, 1, &sc);
-      drawMeshPass(/*apass=*/1, oitMeshPipeline_);
+      drawMeshPass(/*apass=*/1, (requiredOitMask() & 2u)
+                                   ? oitMeshPipeline_ : oitSimpleMeshPipeline_);
       if (oitInstPipeline_ && instPipelineLayout_) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           oitInstPipeline_);
@@ -15922,7 +16162,20 @@ void VulkanRenderer::destroySwapchain() {
 }
 
 void VulkanRenderer::shutdown() {
+  // The warm worker owns temporary Vulkan objects and must finish before any
+  // device-owned layout or render pass is released.
+  if (oitPromotionJob_.valid()) oitPromotionJob_.wait();
+  if (oitPromotion_ && device_) {
+    for (auto pipeline : oitPromotion_->pipelines)
+      if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+    if (oitPromotion_->composite)
+      vkDestroyPipeline(device_, oitPromotion_->composite, nullptr);
+  }
+  oitPromotion_.reset();
   if (device_) vkDeviceWaitIdle(device_);
+  if (oitSimpleMeshPipeline_ && device_)
+    vkDestroyPipeline(device_, oitSimpleMeshPipeline_, nullptr);
+  oitSimpleMeshPipeline_ = VK_NULL_HANDLE;
   destroyScene();
   // The unit-cube proxy BLAS is renderer-wide rather than part of meshes_, so
   // destroyScene intentionally retains it across scene reloads. Release it

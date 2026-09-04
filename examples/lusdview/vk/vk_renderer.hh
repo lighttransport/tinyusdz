@@ -13,6 +13,7 @@
 // volkInitialize()/volkLoadInstance()/volkLoadDevice() populate.
 #include "volk.h"
 
+#include <atomic>
 #include <cstdint>
 #include <future>
 #include <mutex>
@@ -44,9 +45,8 @@ class VulkanRenderer final : public Renderer {
   void setDevicePreference(const RendererDevicePreference& preference) override {
     devicePreference_ = preference;
   }
-  void setTransparencyMode(TransparencyMode mode) override {
-    transparencyMode_ = mode;
-  }
+  void setTransparencyMode(TransparencyMode mode) override;
+  TransparencyStatus transparencyStatus() const override;
   void setRasterQualityHigh(bool high) override { rasterQualityHigh_ = high; }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
@@ -397,7 +397,9 @@ class VulkanRenderer final : public Renderer {
   bool createPerImageSync(std::string* err);
   bool createOffscreenRenderPass(std::string* err);
   bool createOitRenderPass(std::string* err);
-  bool createOitCompositePipeline(std::string* err);
+  bool createOitCompositePipeline(std::string* err, bool compile = true);
+  bool beginOitPromotion(std::string* err);
+  void serviceOitPromotion();
   bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
   struct NonMeshChunkUpload {
     VkBuffer buf{VK_NULL_HANDLE};
@@ -800,6 +802,57 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout volumeLayout_{VK_NULL_HANDLE};
   VkPipeline volumePipeline_{VK_NULL_HANDLE};
   VkPipeline oitVolumePipeline_{VK_NULL_HANDLE};
+
+  // Immutable copies of the fixed-function state, captured by startup builders.
+  // Pointers in Vulkan create-info structs are rebound to these owned arrays
+  // when compiling; no pointers to startup stack data escape.
+  struct OitRecipe {
+    VkPipelineLayout layout{VK_NULL_HANDLE};
+    VkPipelineRasterizationStateCreateInfo raster{};
+    VkPipelineInputAssemblyStateCreateInfo assembly{};
+    std::vector<VkVertexInputBindingDescription> bindings;
+    std::vector<VkVertexInputAttributeDescription> attributes;
+    std::vector<VkDynamicState> dynamic;
+    const uint32_t* vertex{nullptr};
+    size_t vertexBytes{0};
+    const uint32_t* fragment{nullptr};
+    size_t fragmentBytes{0};
+  };
+  std::array<OitRecipe, 4> oitRecipes_;
+  void captureOitRecipe(size_t slot, const VkGraphicsPipelineCreateInfo& info,
+                        const uint32_t* vertex, size_t vertexBytes,
+                        const uint32_t* fragment, size_t fragmentBytes);
+  static VkPipeline compileOitRecipe(VkDevice device, VkRenderPass pass,
+                                    VkPipelineCache cache, const OitRecipe& recipe);
+  bool createOitAttachments();
+  uint32_t requiredOitMask() const;
+  void publishOitStatus();
+  struct AsyncOitPromotion {
+    std::atomic<bool> done{false};
+    uint32_t mask{0};
+    bool ok{false};
+    double elapsedMs{0};
+    std::array<VkPipeline, 5> pipelines{};
+    VkPipeline composite{VK_NULL_HANDLE};
+    std::string error;
+  };
+  std::shared_ptr<AsyncOitPromotion> oitPromotion_;
+  std::future<void> oitPromotionJob_;
+  // Background RT reload and OIT promotion share the compiler budget.
+  std::mutex pipelineCompileMutex_;
+  // Bits: graph-free mesh, full mesh, instancing, native carriers, volumes.
+  uint32_t oitReadyMask_{0};
+  mutable bool oitRequirementsDirty_{true};
+  mutable uint32_t oitRequiredMask_{0};
+  uint32_t oitFailedMask_{0};
+  VkPipeline oitSimpleMeshPipeline_{VK_NULL_HANDLE};
+  TransparencyMode requestedTransparency_{TransparencyMode::Auto};
+  bool oitEffective_{false};
+  std::string oitError_;
+  double oitCompileMs_{0};
+  mutable std::mutex oitStatusMutex_;
+  TransparencyStatus oitStatus_;
+
   VkPipeline volumePipelineNoDepth_{VK_NULL_HANDLE};  // RT overlay (no depth)
   VkDescriptorSetLayout volumeSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool volumePool_{VK_NULL_HANDLE};

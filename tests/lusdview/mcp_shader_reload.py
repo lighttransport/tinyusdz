@@ -59,7 +59,9 @@ def main():
     viewer = args.viewer.resolve()
     source = args.source.resolve()
     scene = args.scene.resolve()
-    command = [str(viewer), "--headless", "--frames", "1000000",
+    # Idle headless frames can spin very quickly while the driver compiles.
+    # Let the RPC/CTest deadlines, not the frame budget, bound this process.
+    command = [str(viewer), "--headless", "--frames", "1000000000",
                "--mcp-stdio", "--no-grid", "--size", "64x64"]
     if args.backend == "vulkan":
         command += ["--backend", "vk", "--rt"]
@@ -88,6 +90,15 @@ def main():
             good = td / source.name
             bad = td / (source.stem + "-bad" + source.suffix)
             shutil.copyfile(source, good)
+            if args.backend == "vulkan" and source.name == "raytrace.comp":
+                # This test launches interactive RT, not the production path
+                # tracer. Fail even on a warm cache if reload loses that mode.
+                with good.open("a", encoding="utf-8") as stream:
+                    stream.write(
+                        "\n#if !defined(LUSDVIEW_RT_INTERACTIVE_ONLY) || "
+                        "!LUSDVIEW_RT_INTERACTIVE_ONLY\n"
+                        '#error "interactive reload included production integrator"\n'
+                        "#endif\n")
             if args.backend == "vulkan":
                 bad.write_text("#version 460\nthis_is_not_valid_glsl\n")
             else:
@@ -95,7 +106,8 @@ def main():
 
             launch = client.call("shader_reload",
                                  {"action": "reload", "backend": args.backend,
-                                  "source": str(good)}, timeout=10.0)
+                                  "source": str(good)},
+                                 timeout=10.0 if args.backend == "vulkan" else 180.0)
             launch_state = backend_state(launch, args.backend)
             if args.backend == "vulkan":
                 if not launch_state.get("pending"):

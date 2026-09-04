@@ -156,6 +156,7 @@ json MCPServer::buildToolsList() const {
       "Query or set resettable per-capture options without restarting lusdview.",
       {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
        {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}},
+       {"transparency", strProp("auto | weighted | sorted; weighted warms asynchronously on Vulkan")},
        {"adaptive_quality", {{"type", "boolean"}, {"description", "enable adaptive Vulkan quality"}}},
        {"target_render_fps", numProp("adaptive render FPS floor")},
        {"camera", strProp("named USD camera to resolve on the next load")}}));

@@ -262,6 +262,12 @@ vec4 sampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing) {
   return udim ? sampleUdim(uGraphUdim7, int(udimRow + 0.5), uv, missing) : texture(uGraphTex7, uv);
 }
 
+#ifdef LUSDVIEW_GRAPH_FREE
+bool hasGraphRoute(int route) { return false; }
+void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
+  for (int route = 0; route < 9; ++route) result[route] = vec4(0.0);
+}
+#else
 bool hasGraphRoute(int route) {
   int mid = max(pc.ids.x, 0);
   uint base = uint(mid) * 1394u;
@@ -269,13 +275,17 @@ bool hasGraphRoute(int route) {
          mgraph.graphRows[base + uint(route) + 1u] >= 0.0;
 }
 
-vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
+void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[9]) {
+  bool connected = false;
+  for (int route = 0; route < 9; ++route) {
+    result[route] = vec4(0.0);
+    connected = connected || hasGraphRoute(route);
+  }
+  if (!connected) return;
   int mid = max(pc.ids.x, 0);
   uint base = uint(mid) * 1394u;
-  if (!hasGraphRoute(route)) return vec4(0.0);
   int count = int(clamp(mgraph.graphRows[base], 0.0, 64.0));
-  int wanted = int(mgraph.graphRows[base + uint(route) + 1u] + 0.5);
-  if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
+  if (count <= 0) return;
   vec4 v[64];
   // CompileMaterialXGraphRuntime packs dependencies before their consumers.
   for (int i = 0; i < count; ++i) {
@@ -355,8 +365,14 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
       }
       else v[i] = value;
   }
-  return v[wanted];
+  for (int route = 0; route < 9; ++route) {
+    if (hasGraphRoute(route)) {
+      int wanted = int(mgraph.graphRows[base + uint(route) + 1u] + 0.5);
+      if (wanted >= 0 && wanted < count) result[route] = v[wanted];
+    }
+  }
 }
+#endif
 
 // Specular F0 (T12): specular workflow -> specularColor directly; else the
 // dielectric reflectance from ior lerped toward base by metalness. ior 1.5 (the
@@ -734,15 +750,19 @@ void shadeFragment() {
                    ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                    : normalize(vNormalW);
   vec3 N = applyNormalMap(Nbase);
-  vec4 graphBase = evalRasterMaterialXGraph(0, vUV);
-  vec4 graphMetal = evalRasterMaterialXGraph(1, vUV);
-  vec4 graphRough = evalRasterMaterialXGraph(2, vUV);
-  vec4 graphOpacity = evalRasterMaterialXGraph(3, vUV);
-  vec4 graphEmission = evalRasterMaterialXGraph(4, vUV);
-  vec4 graphNormal = evalRasterMaterialXGraph(5, vUV);
-  vec4 graphSubsurface = evalRasterMaterialXGraph(6, vUV);
-  vec4 graphSubsurfaceColor = evalRasterMaterialXGraph(7, vUV);
-  vec4 graphSubsurfaceRadius = evalRasterMaterialXGraph(8, vUV);
+  // All outputs share the same topologically ordered graph and UV input.
+  // Evaluate once instead of asking the driver to inline nine interpreters.
+  vec4 graphResults[9];
+  evalRasterMaterialXGraphs(vUV, graphResults);
+  vec4 graphBase = graphResults[0];
+  vec4 graphMetal = graphResults[1];
+  vec4 graphRough = graphResults[2];
+  vec4 graphOpacity = graphResults[3];
+  vec4 graphEmission = graphResults[4];
+  vec4 graphNormal = graphResults[5];
+  vec4 graphSubsurface = graphResults[6];
+  vec4 graphSubsurfaceColor = graphResults[7];
+  vec4 graphSubsurfaceRadius = graphResults[8];
   if (hasGraphRoute(5)) {
     MaterialTexParam gm = matTexParam();
     vec2 graphSourceUv = (gm.uvSets.z > 0.5) ? vUV1 : vUV;

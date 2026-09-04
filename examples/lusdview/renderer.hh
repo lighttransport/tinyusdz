@@ -42,6 +42,17 @@ struct AsyncShaderReloadResult {
 enum class Backend { GL, Vulkan };
 enum class TransparencyMode { Auto, Weighted, Sorted };
 
+// Thread-safe renderer snapshot for runtime transparency requests.
+struct TransparencyStatus {
+  TransparencyMode requested{TransparencyMode::Auto};
+  bool supported{false};
+  bool active{false};
+  std::string phase{"idle"};
+  std::string error;
+  double compileMs{0};
+  uint64_t attachmentBytes{0};
+};
+
 // Return the logical dimensions addressed by a streamed texture-region update
 // at mipLevel. Keeping this calculation in the renderer ABI makes the Vulkan
 // bounds checks and CPU-side regression tests agree on NPOT dimensions.
@@ -342,6 +353,7 @@ class Renderer {
   virtual void setDevicePreference(
       const RendererDevicePreference& /*preference*/) {}
   virtual void setTransparencyMode(TransparencyMode /*mode*/) {}
+  virtual TransparencyStatus transparencyStatus() const { return {}; }
   virtual void setRasterQualityHigh(bool /*high*/) {}
 
   // Resize the headless composite at runtime (recreate the offscreen swap images

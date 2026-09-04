@@ -53,6 +53,10 @@ done
 echo "==> mesh.frag (weighted OIT) -> embedded/mesh_oit_frag.spv.h"
 "$GLSLANG" -V -DLUSDVIEW_OIT=1 --vn mesh_oit_frag_spv \
   -o "$OUT/mesh_oit_frag.spv.h" "$HERE/mesh.frag"
+echo "==> mesh.frag (graph-free weighted OIT)"
+"$GLSLANG" -V -DLUSDVIEW_OIT=1 -DLUSDVIEW_GRAPH_FREE=1 \
+  --vn mesh_oit_simple_frag_spv \
+  -o "$OUT/mesh_oit_simple_frag.spv.h" "$HERE/mesh.frag"
 for sh in mesh_inst.frag nonmesh.frag volume.frag; do
   sym="${sh/./_}"
   echo "==> $sh (weighted OIT) -> embedded/${sym}_oit.spv.h"

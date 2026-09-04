@@ -17,6 +17,7 @@ set(LUSDVIEW_SHADER_EMBED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/embedded)
 set(_required_spv
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_frag.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_oit_simple_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/wire_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/wire_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/environment_vert.spv.h

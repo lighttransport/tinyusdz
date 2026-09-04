@@ -1190,6 +1190,45 @@ one file named with the literal `{mode}` from the tracer's own write, so the
 viewer now refuses the combination with an error rather than emitting wrong
 output. Run one mode per invocation for those backends.
 
+## Runtime weighted transparency
+
+Vulkan starts with sorted transparency in `auto` mode. A persistent MCP client
+can request weighted OIT with
+`render_settings {"transparency":"weighted"}`, then poll `get_render_stats`.
+The response exposes `transparency` (requested mode),
+`transparency_effective`, `transparency_phase` (`idle`, `warming`, `ready`,
+or `failed`), `transparency_error`, `transparency_compile_ms`,
+`weighted_oit_supported`, `weighted_oit_active`, and `oit_attachment_bytes`.
+Statistics are copied through a synchronized snapshot in threaded mode.
+
+Missing OIT pipelines compile sequentially on a background worker while the
+complete sorted path keeps rendering. RT shader reload and OIT compilation share
+a compiler mutex to limit concurrent driver memory use. Promotion installs only
+the OIT attachments after the frame fence; it does not rebuild the viewport or
+shadow maps. A newer `auto` or `sorted` request is honored even if compilation
+finishes later. Completed pipelines remain reusable for the renderer's lifetime.
+Scene/material changes request additional variants before weighted rendering
+resumes. Failures leave the sorted path available.
+
+Graph-free materials use a shader without the MaterialX interpreter. The full
+mesh shader evaluates the graph once for all nine supported outputs, preserving
+the existing output routing. OIT cache blobs use the existing cache directory,
+a device/driver key, and a separate `.oit` file so RT cache writes cannot
+overwrite them. Cache reads and writes are bounded to 64 MiB and published by
+atomic rename. No runtime shader compiler or additional Vulkan device is needed.
+Driver compilation already in progress cannot be cancelled; renderer teardown
+waits for the worker before destroying its Vulkan dependencies.
+
+The CLI `--transparency weighted` retains explicit startup warming for
+fixed-frame captures. Runtime promotion is exercised by
+`lusdview-vulkan-oit-promotion` and its `-threaded` counterpart.
+
+On an RTX 5060 Ti with driver 610.57.04, a 96x96 transparent-plane scene
+measured 1.69 s of promotion compilation with an empty application cache versus
+12 ms with the persisted cache. MCP requests returned in under 1 ms and the
+maximum observed status poll during warming was 2.8 ms. These are advisory
+measurements taken during regression testing, not cold-driver timing guarantees.
+
 ## Machine-readable capability line
 
 Every run prints a versioned capability line after renderer init, and again
@@ -1560,6 +1599,11 @@ its own compatible live source. CUDA/HIP
 kernels must retain the existing `trace` name and parameter ABI, and Vulkan
 edits must retain the descriptor-set and push-constant ABI of the active
 hardware or compute-BVH pipeline.
+
+Interactive hardware RT reloads also retain the startup shader's
+`LUSDVIEW_RT_INTERACTIVE_ONLY` define. Omitting it compiles the unused production
+integrator and can turn a small reload into minutes of driver optimization.
+Production path-tracing reloads retain that integrator.
 
 MCP accepts arbitrary local source paths and the HTTP endpoint has no
 authentication. Keep it bound to the trusted development machine/network.

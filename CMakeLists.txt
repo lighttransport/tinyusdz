@@ -3542,6 +3542,21 @@ if(LIGHTUSD_BUILD_TESTS)
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                                     LABELS "lusdview;vulkan;startup;transparency")
 
+    add_test(NAME lusdview-vulkan-oit-promotion
+      COMMAND python3 "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_oit_promotion.py"
+              "$<TARGET_FILE:lusdview>"
+              "${PROJECT_SOURCE_DIR}/models/lusdview-transparency.usda" --scene-changes)
+    set_tests_properties(lusdview-vulkan-oit-promotion PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview;vulkan;transparency")
+    if(LUSDVIEW_ENABLE_GL_THREAD)
+      add_test(NAME lusdview-vulkan-oit-promotion-threaded
+        COMMAND python3 "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_oit_promotion.py"
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/models/lusdview-transparency.usda" --threaded)
+      set_tests_properties(lusdview-vulkan-oit-promotion-threaded PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview;vulkan;transparency")
+    endif()
+
     # Optional Khronos ValidationLayers smoke for the weighted-OIT command path.
     # Local developers can build the layer with
     # scripts/setup-vulkan-validation-linux.sh. CI may provide a distro package
