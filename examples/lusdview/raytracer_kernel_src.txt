@@ -2197,10 +2197,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         materialOpacity >= 0.5f)
       materialOpacity=1.f;
     if (alphaMode > 1.5f && specIor > 1.01f && authoredOpacity < 0.999f)
-      // Fractional PreviewSurface opacity plus a dielectric IOR denotes a
-      // glass interface, not a chalky diffuse/transmission mixture. Coverage
-      // remains controlled by materialOpacity in the compositor below.
-      transmission=1.f;
+      // PreviewSurface represents implicit glass through fractional opacity
+      // and IOR. Its transmission is the uncovered fraction, not a full
+      // transmission override: the latter drops the authored shaded layer.
+      transmission=fmaxf(transmission,1.f-materialOpacity);
 
     // Default shaded view: realtime OpenPBR preview. It consumes the canonical
     // packed material block while preserving the existing texture sampling and

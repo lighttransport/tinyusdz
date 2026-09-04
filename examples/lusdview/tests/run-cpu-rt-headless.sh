@@ -7,6 +7,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BIN="${LUSDVIEW:-$REPO_ROOT/build_ninja/lusdview}"
 ASSET="${ASSET:-$REPO_ROOT/models/lusdview-transparency.usda}"
 [ -x "$BIN" ] || { echo "SKIP: lusdview not found"; exit "$SKIP"; }
+[ -f "$ASSET" ] || {
+  echo "SKIP: CPU RT asset not present: $ASSET"
+  exit "$SKIP"
+}
 
 OUT="${LUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 mkdir -p "$OUT"

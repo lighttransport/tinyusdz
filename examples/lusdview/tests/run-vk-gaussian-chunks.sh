@@ -21,6 +21,10 @@ if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 echo "$log"
+if grep -Eq 'caps: v1 .*rt=software|pipeline cache is cold' <<<"$log"; then
+  echo "SKIP: Vulkan hardware RT pipeline cache is cold"
+  exit "$SKIP"
+fi
 if ! grep -Eq 'Gaussian point BVH: 12 point\(s\) in 3 chunk\(s\)' <<<"$log"; then
   echo "FAIL: expected three Gaussian chunks"
   exit 1

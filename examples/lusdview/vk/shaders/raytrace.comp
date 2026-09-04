@@ -3169,6 +3169,7 @@ void main() {
         }
       }
 
+#if !LUSDVIEW_RT_FAST_MATERIAL
       uint graphBase = mid * 1394u;
       if (graphBase + 20u < uint(graphRows.length())) {
         if (graphRows[graphBase + 1u] >= 0.0)
@@ -3201,6 +3202,7 @@ void main() {
           specIor = max(evalMaterialXGraph(mid, 19, uv0h, uv1h,
                                             sourceFace).x, 1.0);
       }
+#endif
     } else {
       base = ii.tint.rgb;
       alpha = clamp(ii.tint.a, 0.0, 1.0);

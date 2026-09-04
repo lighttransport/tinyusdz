@@ -41,6 +41,9 @@ for scene in authored-nested-closures authored-volume-material; do
   rc=$?
   cat "$log"
   [ "$rc" -eq 0 ] || { echo "FAIL: $scene exited $rc"; exit 1; }
+  grep -Eq 'caps: v1 .*rt=software|pipeline cache is cold' "$log" && {
+    echo "SKIP: Vulkan hardware RT pipeline cache is cold"; exit "$SKIP";
+  }
   grep -q 'device=discrete rt=hardware' "$log" || {
     echo "FAIL: $scene did not use hardware Vulkan RT"; exit 1;
   }

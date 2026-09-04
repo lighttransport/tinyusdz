@@ -1235,7 +1235,7 @@ int main(int argc, char** argv) {
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
           "  --transparency auto|weighted|sorted  Select Vulkan raster "
-          "transparency (default: auto).\n"
+          "transparency (default: auto/sorted; weighted warms OIT).\n"
           "  --path-trace  Use the production multi-bounce integrator. Select "
           "Vulkan by default, or combine with --cuda/--hip.\n"
           "  --pt-quality interactive|final  Select 6-bounce interactive or "

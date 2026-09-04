@@ -42,6 +42,10 @@ render() {
     echo "SKIP: Vulkan ray-query unavailable"
     exit 77
   fi
+  if grep -Eq 'caps: v1 .*rt=software|pipeline cache is cold' "$log"; then
+    echo "SKIP: Vulkan hardware RT pipeline cache is cold"
+    exit 77
+  fi
   [[ -s "$image" ]] || { echo "FAIL: missing $image" >&2; return 1; }
   if [[ "$variant" == multi ]] &&
      ! grep -q 'non-truncating multi-TLAS: 3 instances in 2 chunks' "$log"; then

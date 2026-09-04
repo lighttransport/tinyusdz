@@ -115,6 +115,7 @@ package_scene preview-raised raised
 render() {
   local name="$1" scene="$2"; shift 2
   "$BIN" --headless --backend vk --config "$OUT/config.json" --frames 4 \
+    --size 256x256 \
     --no-grid --mode albedo --view-dir '1,0,-1' --screenshot "$OUT/$name.ppm" \
     "$@" "$scene" >"$OUT/$name.log" 2>&1
 }

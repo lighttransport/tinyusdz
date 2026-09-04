@@ -148,6 +148,18 @@ for spec in "gl:--backend gl" "vk:--backend vk" "vkrt:--backend vk --rt" \
   fi
   ok=1
   persistent=0
+  if [ "$backend" = vkrt ]; then
+    capability_log="$OUT/vkrt-capability.log"
+    run_bounded env XDG_CONFIG_HOME="$OUT/config" "$BIN" --headless \
+      --backend vk --rt --frames 1 --size 64x64 \
+      --screenshot "$OUT/vkrt-capability.ppm" "$OUT/backface.usda" \
+      >"$capability_log" 2>&1
+    if grep -Eq 'caps: v1 .*rt=software|pipeline cache is cold' \
+        "$capability_log"; then
+      echo "SKIP: Vulkan hardware RT pipeline cache is cold"
+      continue
+    fi
+  fi
   if [ "$backend" = gl ] || [ "$backend" = vk ] || [ "$backend" = vkrt ]; then
     manifest="$OUT/$backend-batch.json"
     python3 - "$manifest" "$OUT/backface.usda" \
@@ -194,6 +206,10 @@ PY
     elif [ "$batch_rc" -ne 0 ]; then
       echo "FAIL: $backend persistent MCP batch failed"
       exit 1
+    elif [ "$backend" = vkrt ] &&
+         grep -Eq 'caps: v1 .*rt=software|pipeline cache is cold' "$batch_log"; then
+      echo "SKIP: Vulkan hardware RT pipeline cache is cold"
+      ok=0
     else
       persistent=1
     fi

@@ -385,6 +385,16 @@ std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
   return dir + "/raytrace-" + hex + ".pipelinecache";
 }
 
+std::string RtPipelineReadyPath(const std::string& cachePath,
+                                const void* spv, size_t spvSize) {
+  if (cachePath.empty() || !spv || spvSize == 0) return std::string();
+  uint64_t hash = RtHashBytes(UINT64_C(14695981039346656037), spv, spvSize);
+  char hex[17] = {};
+  std::snprintf(hex, sizeof(hex), "%016llx",
+                static_cast<unsigned long long>(hash));
+  return cachePath + ".rt-" + hex + ".ready";
+}
+
 constexpr uint32_t kRasterDescriptorSetCount = 4;
 constexpr uint32_t kMaterialBindingCount =
     34 + 2 * kRasterMaterialGraphImageCount;
@@ -1800,7 +1810,13 @@ bool VulkanRenderer::createOffscreenRenderPass(std::string* err) {
 }
 
 bool VulkanRenderer::createOitRenderPass(std::string* err) {
-  if (!weightedOitSupported_) return true;
+  // Weighted OIT's MaterialX-capable fragment pipeline is exceptionally costly
+  // to JIT on a cold driver cache. Auto mode therefore retains the established
+  // sorted-transparent path; users that need order-independent compositing opt
+  // in explicitly with --transparency weighted (which also warms the cache).
+  if (!weightedOitSupported_ ||
+      transparencyMode_ != TransparencyMode::Weighted)
+    return true;
 
   VkAttachmentDescription atts[3]{};
   atts[0].format = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -1931,7 +1947,9 @@ bool VulkanRenderer::createOitRenderPass(std::string* err) {
 }
 
 bool VulkanRenderer::createOitCompositePipeline(std::string* err) {
-  if (!weightedOitSupported_) return true;
+  if (!weightedOitSupported_ ||
+      transparencyMode_ != TransparencyMode::Weighted)
+    return true;
   VkDescriptorSetLayoutBinding bindings[3]{};
   for (uint32_t i = 0; i < 3; ++i) {
     bindings[i].binding = i;
@@ -2376,6 +2394,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   ci.layout = pipelineLayout_;
   ci.renderPass = offscreenPass_;
   ci.subpass = 0;
+  // Prefer a responsive first launch when no reusable driver pipeline data is
+  // available. The generated shaders are already offline-optimized; asking the
+  // driver to skip additional expensive optimization avoids a long cold-start
+  // JIT. Subsequent launches consume the persisted pipeline cache below.
+  if (pipelineCacheBlob.empty()) {
+    ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+  }
   VkResult r = vkCreateGraphicsPipelines(device_, pipelineCache, 1, &ci, nullptr,
                                          &pipeline_);
   reportPipeline("opaque");
@@ -11177,6 +11202,10 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   vkGetPhysicalDeviceProperties(phys_, &props);
   const std::string cachePath =
       RtPipelineCachePath(props, rtShaderCode, rtShaderBytes);
+  const std::string readyPath =
+      RtPipelineReadyPath(cachePath, rtShaderCode, rtShaderBytes);
+  const bool rtReadyMarker = !readyPath.empty() &&
+                             std::filesystem::is_regular_file(readyPath);
   std::vector<uint8_t> cacheBlob;
   bool cacheHit = false;
   if (!cachePath.empty()) {
@@ -11195,6 +11224,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
       }
     }
   }
+  const bool rtCacheWarm = cacheHit && rtReadyMarker;
 
   VkPipelineCache pipeCache = VK_NULL_HANDLE;
   {
@@ -11228,11 +11258,26 @@ bool VulkanRenderer::createRtResources(std::string* err) {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
     return value != nullptr && std::atoi(value) != 0;
   }();
-  if (!interactiveShader && pipelineCompileRequiredSupported_ &&
-      !allowBlockingColdCompile) {
+  if (pipelineCompileRequiredSupported_ && !allowBlockingColdCompile) {
     cpci.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
   } else if (!cacheHit) {
     cpci.flags = VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+  }
+  // NVIDIA drivers may advertise pipeline-creation cache control yet ignore
+  // FAIL_ON_PIPELINE_COMPILE_REQUIRED and block here for several minutes. An
+  // empty on-disk cache is unambiguously cold, so do not enter the driver at
+  // all unless the caller explicitly requested cache warming.
+  if (!rtCacheWarm && pipelineCompileRequiredSupported_ &&
+      !allowBlockingColdCompile) {
+    vkDestroyShaderModule(device_, cs, nullptr);
+    if (pipeCache != VK_NULL_HANDLE) {
+      vkDestroyPipelineCache(device_, pipeCache, nullptr);
+    }
+    if (err) {
+      *err = "Vulkan RT pipeline cache is cold; set "
+             "LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 to warm it";
+    }
+    return false;
   }
   const auto pipelineStart = std::chrono::steady_clock::now();
   // Some NVIDIA drivers advertise pipeline-creation cache control but still
@@ -11313,6 +11358,10 @@ bool VulkanRenderer::createRtResources(std::string* err) {
                        std::to_string(static_cast<int>(r)) + ")";
     }
     return false;
+  }
+  if (!readyPath.empty()) {
+    std::ofstream marker(readyPath, std::ios::binary | std::ios::trunc);
+    if (marker) marker << "ready\n";
   }
   return true;
 #else
@@ -12912,7 +12961,7 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   }
 
   if (weightedOitSupported_ &&
-      transparencyMode_ != TransparencyMode::Sorted && oitPass_) {
+      transparencyMode_ == TransparencyMode::Weighted && oitPass_) {
     const VkImageUsageFlags oitUsage =
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
         VK_IMAGE_USAGE_STORAGE_BIT;
@@ -14792,7 +14841,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     };
     const bool useWeightedOit =
-        transparencyMode_ != TransparencyMode::Sorted &&
+        transparencyMode_ == TransparencyMode::Weighted &&
         weightedOitSupported_ && oitFb_ && oitMeshPipeline_ &&
         oitCompositePipeline_ && oitCompositeSet_ && rtMode_ == 0;
     caps_.usesWeightedOit = useWeightedOit;

@@ -3511,8 +3511,6 @@ void ApplyMeshPurposes(const lightusd::Stage& stage, DrawScene* draw) {
     const std::string model = ResolveModelRoot(stage, mesh.absPath);
     if (!model.empty()) renderModels.insert(model);
   }
-  if (renderModels.empty()) return;
-
   const size_t before = draw->meshes.size();
   draw->meshes.erase(
       std::remove_if(draw->meshes.begin(), draw->meshes.end(),
@@ -3524,6 +3522,14 @@ void ApplyMeshPurposes(const lightusd::Stage& stage, DrawScene* draw) {
                                   ResolveModelRoot(stage, mesh.absPath)) > 0;
                      }),
       draw->meshes.end());
+
+  // A standalone proxy is not an alternative to anything. Keep its authored
+  // purpose for inspection/toggling, but let the default view show it.
+  for (DrawMeshCPU& mesh : draw->meshes) {
+    if (mesh.purpose != "proxy" || mesh.absPath.empty()) continue;
+    mesh.proxyFallback = renderModels.count(
+        ResolveModelRoot(stage, mesh.absPath)) == 0;
+  }
 
   const size_t superseded = before - draw->meshes.size();
   if (superseded > 0) {

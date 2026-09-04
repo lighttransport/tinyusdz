@@ -41,7 +41,7 @@ MIN_IOU = 0.90
 MAX_RASTER_MEAN = 0.5
 
 
-def render(binary, scene, out, extra=(), env=None):
+def render(binary, scene, out, extra=(), env=None, log_out=None):
     e = dict(os.environ)
     if env:
         e.update(env)
@@ -51,10 +51,15 @@ def render(binary, scene, out, extra=(), env=None):
             f.write('{"window_size":{"width":320,"height":320}}\n')
     cmd = [binary, "--legacy-load", "--headless", "--mode", "material-id",
            "--camera", "Cam", "--no-grid", "--frames", "3", "--time", "20",
-           "--config", config, "--screenshot", out, *extra, scene]
+           "--config", config, "--size", "320x320", "--screenshot", out,
+           *extra, scene]
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       env=e, timeout=120)
+        run = subprocess.run(
+            cmd, stdout=subprocess.PIPE if log_out is not None else subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if log_out is not None else subprocess.DEVNULL,
+            env=e, timeout=120)
+        if log_out is not None:
+            log_out.append(run.stdout.decode(errors="replace"))
     except subprocess.TimeoutExpired:
         return False
     return os.path.exists(out) and os.path.getsize(out) > 0
@@ -211,7 +216,12 @@ def main():
               f"local AABB's corners, which inflate under rotation.")
         return 1
 
-    if not software_only_vulkan() and render(binary, scene, rt, extra=["--rt"]):
+    rt_log = []
+    rt_rendered = (not software_only_vulkan() and
+                   render(binary, scene, rt, extra=["--rt"], log_out=rt_log))
+    hardware_rt = rt_rendered and not any(
+        token in rt_log[0] for token in ("rt=software", "pipeline cache is cold"))
+    if hardware_rt:
         r = iou(rt, ref)
         if r < MIN_IOU:
             print(f"FAIL: the ray tracer does not pose the mesh where the CPU bake "

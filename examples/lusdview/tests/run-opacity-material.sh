@@ -211,8 +211,12 @@ label=sys.argv[2]
 if label in ("vary-vkrt", "vary-cuda", "vary-hip"):
     # The RT preview paths are single-hit: Blend surfaces composite over the
     # environment rather than tracing the red mesh behind them. A broad green
-    # intensity distribution verifies the authored opacity ramp.
-    if green < 300 or spread < 8: sys.exit(1)
+    # intensity distribution verifies the authored opacity ramp. Vulkan's
+    # deterministic refracted-background mix has a narrower lit-color range;
+    # its opacity AOV is checked separately below with the stronger spatial
+    # ramp assertion.
+    min_spread = 4 if label == "vary-vkrt" else 8
+    if green < 300 or spread < min_spread: sys.exit(1)
 elif label.startswith("vary"):
     if red < 300 or green < 300 or mix < 200: sys.exit(1)
 else:
@@ -292,12 +296,12 @@ for spec in "gl:--backend gl" "vk:--backend vk"; do
       # GL needs a display. Do not pass --headless: that option is Vulkan-only
       # and intentionally forces the Vulkan renderer.
       # shellcheck disable=SC2086
-      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --frames 4 --view-dir 0,0,-1 \
+      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --size 256x256 --frames 4 --view-dir 0,0,-1 \
         --screenshot "$img" "$OUT/$scene.usda" >"$OUT/$scene-$tag.log" 2>&1
     else
       # Windowless Vulkan must not inherit Xvfb's software-Vulkan selection.
       # shellcheck disable=SC2086
-      run_viewer "$BIN" --headless $args --config "$CONFIG" --frames 4 --view-dir 0,0,-1 \
+      run_viewer "$BIN" --headless $args --config "$CONFIG" --size 256x256 --frames 4 --view-dir 0,0,-1 \
         --screenshot "$img" "$OUT/$scene.usda" >"$OUT/$scene-$tag.log" 2>&1
     fi
     if ! grep -q 'render stats' "$OUT/$scene-$tag.log" || [ ! -s "$img" ]; then
@@ -331,11 +335,11 @@ for spec in "gl:--backend gl" "vk:--backend vk"; do
     aov="$OUT/${scene}-${tag}-opacity-aov.ppm"
     if [ "$tag" = gl ]; then
       # shellcheck disable=SC2086
-      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --mode opacity --frames 4 \
+      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --mode opacity --size 256x256 --frames 4 \
         --view-dir 0,0,-1 --screenshot "$aov" "$OUT/$scene.usda" \
         >"$OUT/$scene-$tag-opacity-aov.log" 2>&1
     else
-      run_viewer "$BIN" --headless $args --config "$CONFIG" --mode opacity \
+      run_viewer "$BIN" --headless $args --config "$CONFIG" --mode opacity --size 256x256 \
         --frames 4 --view-dir 0,0,-1 --screenshot "$aov" "$OUT/$scene.usda" \
         >"$OUT/$scene-$tag-opacity-aov.log" 2>&1
     fi
@@ -360,7 +364,7 @@ if [ "$vk_software" -ne 0 ]; then
   echo "SKIP: Vulkan ray query unavailable (software Vulkan only)"
 else
 img="$OUT/display-opacity-vkrt.ppm"
-run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --frames 4 \
+run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --size 256x256 --frames 4 \
   --view-dir 0,0,-1 --screenshot "$img" "$OUT/display-opacity.usda" \
   >"$OUT/display-opacity-vkrt.log" 2>&1
 if grep -q 'caps: v1 .*rt=hardware' "$OUT/display-opacity-vkrt.log" && [ -s "$img" ]; then
@@ -370,7 +374,7 @@ if grep -q 'caps: v1 .*rt=hardware' "$OUT/display-opacity-vkrt.log" && [ -s "$im
     echo "FAIL: Vulkan RT clear colour was sRGB-encoded twice"; fail=1;
   }
   aov="$OUT/display-opacity-vkrt-opacity-aov.ppm"
-  run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" \
+  run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --size 256x256 \
     --mode opacity --frames 4 --view-dir 0,0,-1 --screenshot "$aov" \
     "$OUT/display-opacity.usda" >"$OUT/display-opacity-vkrt-opacity-aov.log" 2>&1
   if grep -q 'caps: v1 .*rt=hardware' \
@@ -383,7 +387,7 @@ if grep -q 'caps: v1 .*rt=hardware' "$OUT/display-opacity-vkrt.log" && [ -s "$im
     fail=1
   fi
   mask_img="$OUT/opacity-udim-vkrt.ppm"
-  run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --frames 4 \
+  run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --size 256x256 --frames 4 \
     --view-dir 0,0,-1 --screenshot "$mask_img" "$OUT/opacity-udim.usda" \
     >"$OUT/opacity-udim-vkrt.log" 2>&1
   if grep -q 'caps: v1 .*rt=hardware' \
@@ -403,7 +407,7 @@ fi
 # from the hardware ray-query branch so llvmpipe/CPU Vulkan installations still
 # exercise tile selection rather than silently skipping the regression.
 sw_img="$OUT/opacity-udim-swbvh.ppm"
-LUSDVIEW_RT_FORCE_SW=1 run_viewer "$BIN" --headless --backend vk --rt \
+LUSDVIEW_RT_FORCE_SW=1 run_viewer "$BIN" --headless --backend vk --rt --size 256x256 \
   --config "$CONFIG" --frames 2 --view-dir 0,0,-1 --screenshot "$sw_img" \
   "$OUT/opacity-udim.usda" >"$OUT/opacity-udim-swbvh.log" 2>&1
 if grep -q 'renderer: Vulkan (compute BVH)' "$OUT/opacity-udim-swbvh.log" &&
@@ -416,7 +420,7 @@ fi
 
 for rt in cuda hip; do
   img="$OUT/display-opacity-$rt.ppm"
-  run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --frames 4 \
+  run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --size 256x256 --frames 4 \
     --view-dir 0,0,-1 --screenshot "$img" "$OUT/display-opacity.usda" \
     >"$OUT/display-opacity-$rt.log" 2>&1
   upper="CUDA"; [ "$rt" = hip ] && upper="HIP"
@@ -424,7 +428,7 @@ for rt in cuda hip; do
     ran=$((ran+1)); varying_ran=$((varying_ran+1))
     probe "$img" "vary-$rt" || { echo "FAIL: vary-$rt"; fail=1; }
     aov="$OUT/display-opacity-$rt-opacity-aov.ppm"
-    run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --mode opacity \
+    run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --mode opacity --size 256x256 \
       --frames 4 --view-dir 0,0,-1 --screenshot "$aov" \
       "$OUT/display-opacity.usda" \
       >"$OUT/display-opacity-$rt-opacity-aov.log" 2>&1
@@ -438,7 +442,7 @@ for rt in cuda hip; do
       fail=1
     fi
     mask_img="$OUT/opacity-udim-$rt.ppm"
-    run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --frames 4 \
+    run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --size 256x256 --frames 4 \
       --view-dir 0,0,-1 --screenshot "$mask_img" "$OUT/opacity-udim.usda" \
       >"$OUT/opacity-udim-$rt.log" 2>&1
     if grep -q "$upper RT wrote" "$OUT/opacity-udim-$rt.log" &&

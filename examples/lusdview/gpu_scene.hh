@@ -119,6 +119,11 @@ struct DrawMeshCPU {
   std::string name;
   std::string absPath;
   std::string purpose{"default"};  // USD purpose token: default/render/proxy/guide
+  // A proxy with no render-purpose alternative in its model is the only usable
+  // representation and is therefore visible in the default viewer profile.
+  // Keep this separate from `purpose`: callers and the Purpose UI still see
+  // the authored proxy token.
+  bool proxyFallback{false};
 
   std::vector<DrawVertex> vertices;  // rest pose (GPU morph re-derives from this)
   // Optional per-vertex displayColor (rgb, parallel to `vertices`); empty = none.

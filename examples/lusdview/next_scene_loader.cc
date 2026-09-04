@@ -1558,6 +1558,16 @@ std::string ResolveNextPurpose(const tnext::Stage& stage,
   return ResolveNextPurpose(stage.GetPrimAtPath(abs));
 }
 
+// See mesh_build.cc ResolveModelRoot. Purpose alternatives belong to one model,
+// not to an arbitrary common ancestor such as /World.
+std::string ResolveNextModelRoot(const tnext::UsdPrim& source) {
+  for (tnext::UsdPrim prim = source; prim.IsValid(); prim = prim.GetParent()) {
+    const std::string& kind = prim.GetMeta().kind();
+    if (!kind.empty() && kind != "group") return prim.GetPath().str();
+  }
+  return {};
+}
+
 // Unreal renders many thin architectural/foliage assets two-sided but its USD
 // exporter does not always author the corresponding Mesh doubleSided opinion.
 // Apply that compatibility fallback only inside an Unreal assetInfo hierarchy;
@@ -7267,7 +7277,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     batch->dm.submeshes.push_back(
         DrawSubmesh{indexOffset, indexCount, materialId, backMaterialId});
   };
-  // key = (purpose, geometricNormal, doubleSided, front/back material, morphId)
+  // key = (purpose, geometricNormal, proxyFallback, doubleSided, front/back
+  // material, morphId)
   // -> current
   // batch. Keying by material keeps per-material draws distinct so each batch can
   // reference its own DrawMaterialCPU instead of the single default gray material.
@@ -7275,7 +7286,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
   // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
   // are per-mesh, so two morphed meshes must not share a batch.
-  using BatchKey = std::tuple<std::string, bool, bool, int, int, int, int, int>;
+  using BatchKey =
+      std::tuple<std::string, bool, bool, bool, int, int, int, int, int>;
   struct BatchKeyHash {
     size_t operator()(const BatchKey& key) const {
       size_t h = std::hash<std::string>{}(std::get<0>(key));
@@ -7284,11 +7296,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       };
       mix(std::hash<bool>{}(std::get<1>(key)));
       mix(std::hash<bool>{}(std::get<2>(key)));
-      mix(std::hash<int>{}(std::get<3>(key)));
+      mix(std::hash<bool>{}(std::get<3>(key)));
       mix(std::hash<int>{}(std::get<4>(key)));
       mix(std::hash<int>{}(std::get<5>(key)));
       mix(std::hash<int>{}(std::get<6>(key)));
       mix(std::hash<int>{}(std::get<7>(key)));
+      mix(std::hash<int>{}(std::get<8>(key)));
       return h;
     }
   };
@@ -7637,17 +7650,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // below for every mesh. This is deliberately a structural predicate rather
   // than a scene/profile special case; any authored feature falls back to the
   // full path.
-  auto appendPlainStatic = [&](const std::string& purpose,
+  auto appendPlainStatic = [&](const std::string& purpose, bool proxyFallback,
                                const DrawMeshCPU& source,
                                const tydn::RenderMesh& sourceMesh,
                                const std::string& path) {
-    Batch& b = getBatch({purpose, source.geometricNormal,
+    Batch& b = getBatch({purpose, source.geometricNormal, proxyFallback,
                          sourceMesh.double_sided, 0, -1, 0, 0, 0});
     if (!b.dm.vertices.empty() &&
         b.dm.vertices.size() + source.vertices.size() > kBatchVtxCap) {
       flushBatch(b);
     }
     b.dm.purpose = purpose;
+    b.dm.proxyFallback = proxyFallback;
     b.dm.geometricNormal = source.geometricNormal;
     b.dm.doubleSided = sourceMesh.double_sided;
     if (b.dm.absPath.empty()) {
@@ -7686,6 +7700,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     double world[16];
     bool animatedWorld{false};
     bool deferredProxy{false};
+    bool proxyFallback{false};
     float viewPriority{-1.0f};
   };
   std::vector<PendingMeshPrim> meshPrims;
@@ -7721,6 +7736,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       pending.deferredProxy = true;
       tydn::ComputeWorldTransform(stage, prim, pending.world, time);
       meshPrims.push_back(std::move(pending));
+    }
+    std::unordered_set<std::string> renderModels;
+    for (const PendingMeshPrim& pending : meshPrims) {
+      if (pending.purpose != "render") continue;
+      const std::string model = ResolveNextModelRoot(pending.prim);
+      if (!model.empty()) renderModels.insert(model);
+    }
+    for (PendingMeshPrim& pending : meshPrims) {
+      if (pending.purpose != "proxy") continue;
+      pending.proxyFallback = renderModels.count(
+          ResolveNextModelRoot(pending.prim)) == 0;
     }
     // Native-instance and extraction-only records are no longer needed. Drop
     // their backing vectors before geometry conversion starts competing for the
@@ -8256,7 +8282,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       admittedGeometryBytes +=
           loc.vertices.size() * sizeof(DrawVertex) +
           loc.indices.size() * sizeof(uint32_t);
-      appendPlainStatic(meshRecord.purpose, loc, m, meshRecord.path);
+      appendPlainStatic(meshRecord.purpose, meshRecord.proxyFallback, loc, m,
+                        meshRecord.path);
       const tydn::Float3& lo = m.bbox_min;
       const tydn::Float3& hi = m.bbox_max;
       float mf[16];
@@ -8641,7 +8668,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           morphBatchId != 0
               ? morphBatchId
               : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
-      Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided,
+      Batch& b = getBatch({purpose, loc.geometricNormal,
+                           meshRecord.proxyFallback, m.double_sided,
                            canonicalMaterialId(wholeMat),
                            canonicalMaterialId(wholeBackMat), batchIsolationId,
                            lightLinkBatchId, animatedWorldBatchId});
@@ -8654,6 +8682,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (hasGeomProps && b.dm.vertices.empty())
         b.dm.geomProps = loc.geomProps;
       b.dm.purpose = purpose;
+      b.dm.proxyFallback = meshRecord.proxyFallback;
       b.dm.geometricNormal = loc.geometricNormal;
       b.dm.doubleSided = m.double_sided;
       // Static/material batching can merge several source meshes into one draw,
@@ -8760,7 +8789,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             morphBatchId != 0
                 ? morphBatchId
                 : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
-        Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided,
+        Batch& b = getBatch({purpose, loc.geometricNormal,
+                             meshRecord.proxyFallback, m.double_sided,
                              canonicalMaterialId(gm.first),
                              canonicalMaterialId(gm.second), batchIsolationId,
                              lightLinkBatchId, animatedWorldBatchId});
@@ -8771,6 +8801,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.matId = gm.first;
         b.backMatId = gm.second;
         b.dm.purpose = purpose;
+        b.dm.proxyFallback = meshRecord.proxyFallback;
         b.dm.geometricNormal = loc.geometricNormal;
         b.dm.doubleSided = m.double_sided;
         if (b.dm.absPath.empty()) {

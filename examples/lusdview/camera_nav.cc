@@ -238,11 +238,14 @@ void OrbitCamera::pan(float dxPix, float dyPix) {
 
 void OrbitCamera::moveForward(float amount) {
   if (!std::isfinite(amount) || amount == 0.0f) return;
-  // Symmetric exponential response bounds a single large mouse delta while
-  // retaining fine control for wheel notches/key repeats.
+  // Symmetric exponential response retains fine control for wheel notches and
+  // bounds a large mouse delta. Keep enough headroom to move the navigation
+  // pivot through the eye: a strict one-reference-distance cap asymptotically
+  // approached the pivot but could never cross it.
   const float magnitude =
-      1.0f - std::exp(-std::abs(amount) * 0.12f * 0.65f * navigationScale_ *
-                      dollySensitivity_);
+      1.25f *
+      (1.0f - std::exp(-std::abs(amount) * 0.12f * 0.65f *
+                         navigationScale_ * dollySensitivity_));
   const float signedMagnitude = amount > 0.0f ? magnitude : -magnitude;
   const light3d::Vec3 forward = light3d::normalize(target_ - eye());
   target_ = target_ + forward * (moveRefDistance() * signedMagnitude);

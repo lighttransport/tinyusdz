@@ -96,7 +96,7 @@ for name in ("pipeline_binds", "descriptor_set_binds"):
     value = backend.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise SystemExit(f"invalid backend.{name}: {value!r}")
-expected_weighted = tag in ("vk-auto", "vk-weighted")
+expected_weighted = tag == "vk-weighted"
 if backend.get("weighted_oit_active") is not expected_weighted:
     raise SystemExit(
         f"invalid backend.weighted_oit_active for {tag}: "

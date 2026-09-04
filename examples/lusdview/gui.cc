@@ -4552,6 +4552,10 @@ bool Gui::meshPurposeVisible(const std::string& purpose) const {
 bool Gui::meshVisibleForView(size_t meshIndex) const {
   if (!draw_ || meshIndex >= draw_->meshes.size()) return false;
   if (meshIndex < meshVisible_.size() && !meshVisible_[meshIndex]) return false;
+  if (draw_->meshes[meshIndex].purpose == "proxy" &&
+      draw_->meshes[meshIndex].proxyFallback) {
+    return true;
+  }
   return meshPurposeVisible(draw_->meshes[meshIndex].purpose);
 }
 

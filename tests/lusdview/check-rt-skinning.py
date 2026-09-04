@@ -45,7 +45,7 @@ def render(binary, model, out, skinning, time):
     except FileNotFoundError:
         pass
     cmd = [binary, *vk_device_args("vk"), "--next", "--headless", "--rt",
-           "--frames", "3",
+           "--frames", "3", "--size", "320x320",
            "--time", str(time), "--skinning", skinning, "--screenshot", out,
            model]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -117,6 +117,9 @@ def main():
         return SKIP
     if "ray tracing is unavailable" in log:
         print("SKIP: no ray-tracing capable Vulkan device")
+        return SKIP
+    if "rt=software" in log or "pipeline cache is cold" in log:
+        print("SKIP: Vulkan hardware RT pipeline cache is cold")
         return SKIP
     if not os.path.exists(probe):
         print("SKIP: --rt produced no image (no ray-tracing capable device?)")

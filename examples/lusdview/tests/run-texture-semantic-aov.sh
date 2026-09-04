@@ -872,9 +872,9 @@ sweep_prerender() {
   esac
   local log="$OUT/$tag-$prefix-sweep.log"
   if [[ "$tag" = gl* ]]; then
-    run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
+    run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --size 256x256 --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
   else
-    run "$@" --config "$OUT/config.json" --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
+    run "$@" --config "$OUT/config.json" --size 256x256 --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
   fi
   if [[ "$tag" = vk-rt* ]] &&
      grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer' "$log"; then
@@ -911,10 +911,10 @@ case_run() {
     # this asset (--mode-sweep), byte-identical to rendering them separately.
     log="${prerendered_log[$img]}"
   elif [[ "$tag" = gl* ]]; then
-    run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
+    run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --size 256x256 --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
     run_rc=$?
   else
-    run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
+    run "$@" --config "$OUT/config.json" --size 256x256 --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
     run_rc=$?
   fi
   # Hardware ray-query semantic coverage is not meaningful on llvmpipe. The
@@ -962,9 +962,9 @@ case_run() {
      [ "$case_id" = preview-vector ]; then
     local packed="$OUT/$tag-vector-usdz.ppm"
     if [[ "$tag" = gl* ]]; then
-      run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
+      run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --size 256x256 --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
     else
-      run "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
+      run "$@" --config "$OUT/config.json" --size 256x256 --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
     fi
     [ -s "$packed" ] && compare "$img" "$packed" || { echo "FAIL: $tag external/USDZ"; fail=1; }
   fi
@@ -997,9 +997,9 @@ case_run() {
      [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
     if [[ "$tag" = gl* ]]; then
-      run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+      run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --size 256x256 --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
     else
-      run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+      run "$@" --config "$OUT/config.json" --size 256x256 --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
     fi
     [ -s "$packed" ] && compare "$img" "$packed" || { echo "FAIL: $tag $case_id external/USDZ"; fail=1; }
   fi

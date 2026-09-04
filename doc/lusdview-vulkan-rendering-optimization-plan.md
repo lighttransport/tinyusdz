@@ -99,8 +99,10 @@ are asserted exactly and are suitable for regression testing across machines.
 - Enable and validate Vulkan `independentBlend` and attachment capabilities.
   Fall back on feature, format, allocation, or pipeline failure.
 - Add `--transparency auto|weighted|sorted` and matching
-  `render.transparency` configuration. `auto` is the default. OpenGL and
-  unsupported Vulkan devices use sorted transparency.
+  `render.transparency` configuration. `auto` is the default and uses sorted
+  transparency without compiling the expensive weighted-OIT shader; `weighted`
+  explicitly enables and warms OIT. OpenGL and unsupported Vulkan devices use
+  sorted transparency.
 - Honor authored `doubleSided` consistently. Mask remains alpha-tested and
   depth-writing. Blend shadows remain omitted. Picking and diagnostic/AOV
   passes remain alpha-aware, deterministic depth-writing passes. Selection and
