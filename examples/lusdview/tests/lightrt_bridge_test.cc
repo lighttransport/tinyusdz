@@ -82,6 +82,7 @@ int main() {
   mat.params.push_back(Vec3Param("emission_color", 0.1f, 0.2f, 0.3f));
   mat.params.push_back(FloatParam("transmission_weight", 0.8f));
   mat.params.push_back(Vec3Param("transmission_color", 0.25f, 0.5f, 1.0f));
+  mat.params.push_back(FloatParam("geometry_thin_walled", 1.0f));
   mat.params.push_back(FloatParam("subsurface_weight", 0.22f));
   mat.params.push_back(Vec3Param("subsurface_color", 0.6f, 0.7f, 0.8f));
   mat.params.push_back(FloatParam("subsurface_anisotropy", 0.2f));
@@ -189,11 +190,16 @@ int main() {
       !Near(directRasterTexPack[68 * 4 + 0], 0.25f) ||
       !Near(directRasterTexPack[68 * 4 + 1], 0.5f) ||
       !Near(directRasterTexPack[68 * 4 + 2], 1.0f) ||
+      !Near(directRasterTexPack[67 * 4 + 3], 1.0f) ||
       !Near(directRasterTexPack[72 * 4 + 0], 0.22f) ||
       !Near(directRasterTexPack[72 * 4 + 1], 1.0f) ||
       !Near(directRasterTexPack[72 * 4 + 2],
             0.2126f * 0.7f + 0.7152f * 0.5f + 0.0722f * 0.3f)) {
     std::fprintf(stderr, "raster transmission controls were not packed\n");
+    return 1;
+  }
+  if (!mat.lightRtOpenPBR.geometryThinWalled || !Near(directPack[71], 1.0f)) {
+    std::fprintf(stderr, "OpenPBR geometry_thin_walled was not baked\n");
     return 1;
   }
   scene.materials.push_back(mat);
@@ -222,6 +228,14 @@ int main() {
   std::string err;
   if (!lusdview::BuildHostScene(scene, 0, 0, 0.0f, &host, &err)) {
     std::fprintf(stderr, "BuildHostScene failed: %s\n", err.c_str());
+    return 1;
+  }
+  if (host.prototypes.size() != 1 ||
+      host.prototypes[0].triOffset != 0 ||
+      host.prototypes[0].triCount != 1 ||
+      host.instancePrototype.size() != host.instances.size() ||
+      host.instancePrototype.empty() || host.instancePrototype[0] != 0) {
+    std::fprintf(stderr, "hardware RT prototype/instance mapping failed\n");
     return 1;
   }
 
@@ -494,6 +508,7 @@ int main() {
   extendedPbr.coatRotation = 45.0f;
   extendedPbr.coatRoughnessAnisotropy = -0.2f;
   extendedPbr.coatDarkening = 0.6f;
+  extendedPbr.geometryThinWalled = true;
   extendedPbr.volumeDensity = 2.0f;
   extendedPbr.volumeAlbedo[0] = 0.2f;
   extendedPbr.volumeAlbedo[1] = 0.3f;
@@ -512,7 +527,8 @@ int main() {
       !Near(extendedPack[63], 0.2f) || !Near(extendedPack[64], -0.3f) ||
       !Near(extendedPack[65], 0.1f) || !Near(extendedPack[66], 45.0f) ||
       !Near(extendedPack[69], -0.2f) ||
-      !Near(extendedPack[70], 0.6f) || !Near(extendedPack[72], 0.2f) ||
+      !Near(extendedPack[70], 0.6f) || !Near(extendedPack[71], 1.0f) ||
+      !Near(extendedPack[72], 0.2f) ||
       !Near(extendedPack[73], 0.3f) || !Near(extendedPack[74], 0.4f) ||
       !Near(extendedPack[75], 2.0f) || !Near(extendedPack[76], 0.5f) ||
       !Near(extendedPack[77], 0.6f) || !Near(extendedPack[78], 0.7f) ||

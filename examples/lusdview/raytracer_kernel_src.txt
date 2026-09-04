@@ -48,6 +48,7 @@ __device__ float ggxG1(float nx,float r){float k=(r+1.f)*(r+1.f)*0.125f;return n
 __device__ float ggxDAniso(float nh,float ht,float hb,float r,float an){float a=fmaxf(r*r,.002f),ax=fmaxf(a*(1.f+an),.001f),ay=fmaxf(a*(1.f-an),.001f);float q=ht*ht/(ax*ax)+hb*hb/(ay*ay)+nh*nh;return 1.f/fmaxf(3.14159265f*ax*ay*q*q,1e-6f);}
 __device__ float ggxG1Aniso(float nv,float vt,float vb,float r,float an){float a=fmaxf(r*r,.002f),ax=fmaxf(a*(1.f+an),.001f),ay=fmaxf(a*(1.f-an),.001f);float vn2=fmaxf(nv*nv,1e-6f);float lambda=.5f*(-1.f+sqrtf(1.f+(vt*vt*ax*ax+vb*vb*ay*ay)/vn2));return 1.f/fmaxf(1.f+lambda,1e-6f);}
 __device__ F3 fresnelSchlick(float vh,F3 f0){float q=powf(1.f-fminf(fmaxf(vh,0.f),1.f),5.f);return mk(f0.x+(1.f-f0.x)*q,f0.y+(1.f-f0.y)*q,f0.z+(1.f-f0.z)*q);}
+__device__ float fresnelDielectric(float ci,float etaI,float etaT){ci=fminf(fmaxf(fabsf(ci),0.f),1.f);float eta=etaI/fmaxf(etaT,1e-6f),st2=eta*eta*fmaxf(0.f,1.f-ci*ci);if(st2>=1.f)return 1.f;float ct=sqrtf(fmaxf(0.f,1.f-st2));float rs=(etaI*ci-etaT*ct)/fmaxf(etaI*ci+etaT*ct,1e-6f),rp=(etaT*ci-etaI*ct)/fmaxf(etaT*ci+etaI*ct,1e-6f);return .5f*(rs*rs+rp*rp);}
 __device__ F3 applyThinFilm(F3 f0,float cosTheta,float weight,float thickness,float ior){
   float w=fminf(fmaxf(weight,0.f),1.f); if(w<=0.f||thickness<=0.f)return f0;
   float phase=6.28318530718f*fmaxf(ior,1.f)*thickness*(1.f-fminf(fmaxf(cosTheta,0.f),1.f));
@@ -57,6 +58,7 @@ __device__ F3 applyThinFilm(F3 f0,float cosTheta,float weight,float thickness,fl
             f0.z+(1.f-f0.z)*film.z*0.65f*w);
 }
 __device__ float linearToSrgb1(float x){x=fminf(fmaxf(x,0.f),1.f);return x<=0.0031308f?x*12.92f:1.055f*powf(x,1.f/2.4f)-0.055f;}
+__device__ float aces1(float x){x=fmaxf(x,0.f);return fminf(fmaxf(x*(2.51f*x+0.03f)/(x*(2.43f*x+0.59f)+0.14f),0.f),1.f);}
 // Stable distinct color per material id (-1 -> neutral gray).
 __device__ F3 idColor(int id){
   if (id<0) return mk(0.45f,0.45f,0.45f);
@@ -407,6 +409,30 @@ __device__ F3 sampleTexRGB(const unsigned char* texels, const TexDesc* tex,
                            int numTex, int id, float u, float v){
   F4 c=sampleTexRGBA(texels,tex,numTex,id,u,v);
   return mk(c.x,c.y,c.z);
+}
+__device__ F3 decodeRgbe(const unsigned char* p){
+  if (!p || p[3]==0) return mk(0.f,0.f,0.f);
+  float s=ldexpf(1.f,(int)p[3]-(128+8));
+  return mk(((float)p[0]+.5f)*s,((float)p[1]+.5f)*s,
+            ((float)p[2]+.5f)*s);
+}
+__device__ F3 sampleDomeEnv(const unsigned char* texels,const TexDesc* tex,
+                            int numTex,int id,float u,float v,int rgbe){
+  if (!rgbe) return sampleTexRGB(texels,tex,numTex,id,u,v);
+  if (!texels||!tex||id<0||id>=numTex) return mk(0.f,0.f,0.f);
+  TexDesc td=tex[id];
+  if(td.width<=0||td.height<=0) return mk(0.f,0.f,0.f);
+  u=wrapCoord(u,td.wrapS);v=wrapCoord(v,td.wrapT);
+  float fx=u*(float)(td.width-1),fy=v*(float)(td.height-1);
+  int x0=(int)floorf(fx),y0=(int)floorf(fy);
+  int x1=x0+1<td.width?x0+1:x0,y1=y0+1<td.height?y0+1:y0;
+  float tx=fx-floorf(fx),ty=fy-floorf(fy);
+  F3 a=decodeRgbe(texels+td.offset+(y0*td.width+x0)*4);
+  F3 b=decodeRgbe(texels+td.offset+(y0*td.width+x1)*4);
+  F3 c=decodeRgbe(texels+td.offset+(y1*td.width+x0)*4);
+  F3 e=decodeRgbe(texels+td.offset+(y1*td.width+x1)*4);
+  F3 ab=add(a,scale(sub(b,a),tx)),ce=add(c,scale(sub(e,c),tx));
+  return add(ab,scale(sub(ce,ab),ty));
 }
 __device__ float channel4(F4 c, int ch){
   if (ch==1) return c.y;
@@ -895,10 +921,10 @@ struct PtMat {
   float subsurfaceAnisotropy;
   float anisotropy, anisotropyRotation, coatAnisotropy, coatRotation;
   float thinFilmWeight, thinFilmThickness, thinFilmIor;
-  float dispersion, dispersionAbbe, transmissionDepth;
+  float dispersion, dispersionAbbe, transmissionDepth, thinWalled;
   F3 transmissionScatter, volumeAlbedo, volumeEmission;
   float transmissionScatterG, volumeDensity;
-  float opacity, alphaMode;
+  float opacity, authoredOpacity, alphaMode, implicitGlass;
 };
 
 __device__ F3 ptMul(F3 a,F3 b){return mk(a.x*b.x,a.y*b.y,a.z*b.z);}
@@ -1009,9 +1035,9 @@ __device__ PtMat ptResolveMaterial(
   m.sheenRoughness=.3f;m.subsurfaceAnisotropy=0.f;
   m.anisotropy=0.f;m.anisotropyRotation=0.f;m.coatAnisotropy=0.f;m.coatRotation=0.f;
   m.thinFilmWeight=0.f;m.thinFilmThickness=0.f;m.thinFilmIor=1.5f;
-  m.dispersion=0.f;m.dispersionAbbe=0.f;m.transmissionDepth=0.f;
+  m.dispersion=0.f;m.dispersionAbbe=0.f;m.transmissionDepth=0.f;m.thinWalled=0.f;
   m.transmissionScatter=mk(0.f,0.f,0.f);m.transmissionScatterG=0.f;m.volumeAlbedo=mk(1.f,1.f,1.f);m.volumeEmission=mk(0.f,0.f,0.f);m.volumeDensity=0.f;
-  m.opacity=1.f;m.alphaMode=0.f;
+  m.opacity=1.f;m.authoredOpacity=1.f;m.alphaMode=0.f;m.implicitGlass=0.f;
   int mid=mats?mats[tri]:-1;
   if(!front&&backMats&&backMats[tri]>=0)mid=backMats[tri];
   float w0=1.f-bu-bv;
@@ -1024,7 +1050,7 @@ __device__ PtMat ptResolveMaterial(
   if(mid>=0&&mid<numMats){
     if(matPbr){m.metal=fminf(fmaxf(matPbr[mid*6],0.f),1.f);m.rough=fminf(fmaxf(matPbr[mid*6+1],.02f),1.f);m.emission=mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]);}
     if(matLightRt){const float* p=&matLightRt[mid*LIGHTUSD_GPU_OPENPBR_FLOATS];if(p[51]>.5f){
-      m.base=scale(mk(p[0],p[1],p[2]),p[3]);m.specularColor=mk(p[4],p[5],p[6]);m.specularWeight=fminf(fmaxf(p[7],0.f),1.f);m.transmissionColor=mk(p[8],p[9],p[10]);m.transmission=fminf(fmaxf(p[11],0.f),1.f);m.transmissionScatter=mk(fmaxf(p[12],0.f),fmaxf(p[13],0.f),fmaxf(p[14],0.f));m.transmissionDepth=fmaxf(p[15],0.f);m.opacity=fminf(fmaxf(p[39],0.f),1.f);m.alphaMode=p[54];
+      m.base=scale(mk(p[0],p[1],p[2]),p[3]);m.specularColor=mk(p[4],p[5],p[6]);m.specularWeight=fminf(fmaxf(p[7],0.f),1.f);m.transmissionColor=mk(p[8],p[9],p[10]);m.transmission=fminf(fmaxf(p[11],0.f),1.f);m.transmissionScatter=mk(fmaxf(p[12],0.f),fmaxf(p[13],0.f),fmaxf(p[14],0.f));m.transmissionDepth=fmaxf(p[15],0.f);m.opacity=fminf(fmaxf(p[39],0.f),1.f);m.authoredOpacity=m.opacity;m.alphaMode=p[54];m.thinWalled=p[71]>=.5f?1.f:0.f;
       m.subsurfaceColor=mk(p[16],p[17],p[18]);m.subsurface=fminf(fmaxf(p[19],0.f),1.f);m.radius=scale(mk(fmaxf(p[20],1e-5f),fmaxf(p[21],1e-5f),fmaxf(p[22],1e-5f)),fmaxf(p[23],1e-5f));m.coatColor=mk(p[24],p[25],p[26]);m.coatWeight=fminf(fmaxf(p[27],0.f),1.f);m.sheenColor=mk(p[28],p[29],p[30]);m.sheenWeight=fminf(fmaxf(p[31],0.f),1.f);m.ior=fmaxf(p[43],1.0001f);m.coatRoughness=fminf(fmaxf(p[44],.02f),1.f);m.coatIor=fmaxf(p[45],1.0001f);m.sheenRoughness=fminf(fmaxf(p[46],.02f),1.f);m.transmissionScatterG=fminf(fmaxf(p[47],-.95f),.95f);m.subsurfaceAnisotropy=fminf(fmaxf(p[64],-.95f),.95f);m.anisotropy=fminf(fmaxf(p[57]+.5f*p[59],-.95f),.95f);m.anisotropyRotation=p[58];m.coatAnisotropy=fminf(fmaxf(p[65]+.5f*p[69],-.95f),.95f);m.coatRotation=p[66];m.coatAffectColor=fminf(fmaxf(p[67],0.f),1.f);m.coatAffectRoughness=fminf(fmaxf(p[68],0.f),1.f);m.coatDarkening=fminf(fmaxf(p[70],0.f),1.f);m.thinFilmWeight=fminf(fmaxf(p[48],0.f),1.f);m.thinFilmThickness=fmaxf(p[49],0.f)*1e-3f;m.thinFilmIor=fmaxf(p[50],1.f);m.dispersion=fmaxf(p[60]*p[62],0.f);m.dispersionAbbe=fmaxf(p[61],0.f);m.volumeAlbedo=mk(fmaxf(p[72],0.f),fmaxf(p[73],0.f),fmaxf(p[74],0.f));m.volumeDensity=fmaxf(p[75],0.f);m.volumeEmission=scale(mk(fmaxf(p[76],0.f),fmaxf(p[77],0.f),fmaxf(p[78],0.f)),fmaxf(p[79],0.f));m.emission=add(m.emission,scale(mk(p[32],p[33],p[34]),fmaxf(p[35],0.f)));}}
     if(matTex){int tid=matTex[mid*LIGHTUSD_GPU_MATERIAL_TEX_SLOTS];F4 q=sampleMaterialTexture(texels,textures,numTextures,tid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));m.base=mk(m.base.x*q.x,m.base.y*q.y,m.base.z*q.z);m.opacity*=q.w;int opacityTid=matTex[mid*LIGHTUSD_GPU_MATERIAL_TEX_SLOTS+5];if(opacityTid>=0){F4 oq=sampleMaterialTexture(texels,textures,numTextures,opacityTid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));const float* tp=matTexParam?&matTexParam[mid*LIGHTUSD_GPU_MATERIAL_TEX_PARAM_FLOATS]:0;int ch=tp?(int)(tp[66]+.5f):0;float sample=ch==1?oq.y:(ch==2?oq.z:(ch==3?oq.w:oq.x));m.opacity*=sample*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);}}
     if(matGraph){int gb=mid*1394;if(matGraph[gb+1]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,0,u,v,u1,v1,tri,texels,textures,numTextures);m.base=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+2]>=0.f)m.metal=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+3]>=0.f)m.rough=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+4]>=0.f)m.opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+5]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,4,u,v,u1,v1,tri,texels,textures,numTextures);m.emission=scale(mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f)),matLightRt?fmaxf(matLightRt[mid*80+35],0.f):1.f);}if(matGraph[gb+7]>=0.f)m.subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+8]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,7,u,v,u1,v1,tri,texels,textures,numTextures);m.subsurfaceColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+9]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,8,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(fmaxf(q.x,1e-5f),fmaxf(q.y,1e-5f),fmaxf(q.z,1e-5f));}if(matGraph[gb+10]>=0.f)m.specularWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,9,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+11]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,10,u,v,u1,v1,tri,texels,textures,numTextures);m.specularColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+12]>=0.f)m.transmission=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,11,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+13]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,12,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+14]>=0.f)m.coatWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,13,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+15]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,14,u,v,u1,v1,tri,texels,textures,numTextures);m.coatColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+16]>=0.f)m.coatRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,15,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+17]>=0.f)m.sheenWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,16,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+18]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,17,u,v,u1,v1,tri,texels,textures,numTextures);m.sheenColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+19]>=0.f)m.sheenRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,18,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+20]>=0.f)m.ior=fmaxf(evalMaterialXGraphUv(matGraph,mid,19,u,v,u1,v1,tri,texels,textures,numTextures).x,1.0001f);}
@@ -1068,11 +1094,28 @@ __device__ PtMat ptResolveMaterial(
   }
   if(insts){m.base=ptMul(m.base,mk(insts[hitInst].tint[0],insts[hitInst].tint[1],insts[hitInst].tint[2]));m.opacity*=insts[hitInst].tint[3];}
   m.opacity=fminf(fmaxf(m.opacity,0.f),1.f);
+  // Shared blend atlases commonly paint opaque regions and translucent glass
+  // into one texture. Texture variation must not turn an authored-opaque
+  // material into coverage noise or dielectric transmission.
+  if(m.alphaMode>1.5f&&m.authoredOpacity>=.999f&&m.opacity>=.5f)m.opacity=1.f;
+  // PreviewSurface has no explicit transmission input. A fractional authored
+  // Blend material with a dielectric IOR is the legacy glass convention used
+  // by ALab and usdview. Treat it as an interface in the production integrator
+  // instead of stochastic coverage; otherwise most paths skip refraction and
+  // the few accepted hits become an over-bright alpha/transmission mixture.
+  if(m.alphaMode>1.5f&&m.authoredOpacity>=.125f&&
+     m.authoredOpacity<.999f&&m.ior>1.01f&&
+     m.transmission<=1e-4f){
+    m.transmission=1.f;m.implicitGlass=1.f;
+  }
 #undef evalMaterialXGraphUv
   return m;
 }
 
-__device__ F3 ptEnvironment(const float* lights,int count,F3 d,F3 clear){
+__device__ F3 ptEnvironment(const float* lights,int count,F3 d,F3 clear,
+                            const unsigned char* texels,const TexDesc* textures,
+                            int numTextures){
+  if(lights&&texels&&textures){for(int i=0;i<count;++i){const float* lp=&lights[i*80];int flags=(int)(lp[1]+.5f);if((int)(lp[0]+.5f)!=6||!(flags&(1<<4)))continue;F3 q=norm3(mk(lp[40]*d.x+lp[41]*d.y+lp[42]*d.z,lp[44]*d.x+lp[45]*d.y+lp[46]*d.z,lp[48]*d.x+lp[49]*d.y+lp[50]*d.z));float u=atan2f(q.x,-q.z)*.15915494f+.5f,v=acosf(fminf(fmaxf(q.y,-1.f),1.f))*.31830989f;F3 c=sampleDomeEnv(texels,textures,numTextures,(int)(lp[2]+.5f),u,v,(flags&(1<<8))!=0);return mk(c.x*lp[16],c.y*lp[17],c.z*lp[18]);}}
   F3 e=domeShRadiance(lights,count,d);
   // The viewer clear color is display-space, while path throughput and the
   // accumulation buffer are scene-linear. Match the Vulkan path's conversion
@@ -1087,26 +1130,56 @@ __device__ F3 ptEnvironmentCellDirection(int cell,float jx,float jy){
   float r=sqrtf(fmaxf(0.f,1.f-z*z));return mk(r*cosf(phi),r*sinf(phi),z);
 }
 __device__ float ptEnvironmentCellWeight(const float* lights,int count,
-                                          F3 clear,int cell){
-  return fmaxf(ptLum(ptEnvironment(lights,count,
-      ptEnvironmentCellDirection(cell,.5f,.5f),clear)),1e-6f);
+                                          F3 clear,int cell,const unsigned char* texels,
+                                          const TexDesc* textures,int numTextures){
+  // The host caches total/max values from these same HDR texels, so rejection
+  // sampling and MIS use one exact discrete proposal instead of an SH proxy.
+  F3 e=ptEnvironment(lights,count,
+      ptEnvironmentCellDirection(cell,.5f,.5f),clear,texels,textures,numTextures);
+  return fmaxf(ptLum(e),1e-6f);
+}
+__device__ float ptEnvironmentWeightTotal(const float* lights,int count,F3 clear,
+                                           const unsigned char* texels,
+                                           const TexDesc* textures,int numTextures){
+  if(lights){for(int i=0;i<count;++i){const float* lp=&lights[i*80];
+    if((int)(lp[0]+.5f)==6&&lp[79]>0.f)return lp[79];}}
+  float total=0.f;
+  for(int cell=0;cell<32;++cell)
+    total+=ptEnvironmentCellWeight(lights,count,clear,cell,texels,textures,numTextures);
+  return fmaxf(total,1e-20f);
+}
+__device__ float ptEnvironmentWeightMax(const float* lights,int count){
+  if(lights){for(int i=0;i<count;++i){const float* lp=&lights[i*80];
+    if((int)(lp[0]+.5f)==6&&lp[51]>0.f)return lp[51];}}
+  return 0.f;
 }
 __device__ F3 ptSampleEnvironment(const float* lights,int count,F3 clear,
-                                  unsigned& seed,float* pdf){
-  float total=0.f;int selected=0;
-  for(int cell=0;cell<32;++cell){float w=ptEnvironmentCellWeight(lights,count,clear,cell);total+=w;if(rndf(seed)<w/total)selected=cell;}
-  *pdf=ptEnvironmentCellWeight(lights,count,clear,selected)/fmaxf(total,1e-20f)*2.5464790894703255f;
+                                  unsigned& seed,float* pdf,const unsigned char* texels,
+                                  const TexDesc* textures,int numTextures,
+                                  float total,float maxWeight){
+  int selected=0;float selectedWeight=1e-6f;
+  if(maxWeight>0.f){
+    // Exact discrete rejection sampling of the same 32-cell distribution as
+    // the former reservoir scan. The CPU-packed SH maximum makes the average
+    // cost max/mean cell evaluations instead of an unconditional 32.
+    do{selected=min((int)(rndf(seed)*32.f),31);selectedWeight=ptEnvironmentCellWeight(lights,count,clear,selected,texels,textures,numTextures);}while(rndf(seed)*maxWeight>selectedWeight);
+  }else{
+    float running=0.f;
+    for(int cell=0;cell<32;++cell){float w=ptEnvironmentCellWeight(lights,count,clear,cell,texels,textures,numTextures);running+=w;if(rndf(seed)<w/running){selected=cell;selectedWeight=w;}}
+  }
+  *pdf=selectedWeight/total*2.5464790894703255f;
   return ptEnvironmentCellDirection(selected,rndf(seed),rndf(seed));
 }
 __device__ float ptEnvironmentPdf(const float* lights,int count,F3 clear,
-                                  F3 direction){
+                                  F3 direction,const unsigned char* texels,
+                                  const TexDesc* textures,int numTextures,
+                                  float total){
   direction=norm3(direction);float phi=atan2f(direction.y,direction.x);
   if(phi<0.f)phi+=6.28318530718f;
   int px=(int)(phi*(8.f/6.28318530718f));if(px>7)px=7;
   int pz=(int)((direction.z+1.f)*2.f);if(pz<0)pz=0;else if(pz>3)pz=3;
-  int selected=pz*8+px;float total=0.f;
-  for(int cell=0;cell<32;++cell)total+=ptEnvironmentCellWeight(lights,count,clear,cell);
-  return ptEnvironmentCellWeight(lights,count,clear,selected)/fmaxf(total,1e-20f)*2.5464790894703255f;
+  int selected=pz*8+px;
+  return ptEnvironmentCellWeight(lights,count,clear,selected,texels,textures,numTextures)/fmaxf(total,1e-20f)*2.5464790894703255f;
 }
 __device__ float ptSpectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.f||abbe<=0.f)return iorD;float lc=.6562725f,ld=.5875618f,lf=.4861327f,delta=(iorD-1.f)/fmaxf(abbe,1.f)*dispersion;float ic=1.f/(lc*lc),id=1.f/(ld*ld),iff=1.f/(lf*lf),B=delta/fmaxf(iff-ic,1e-6f),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return fmaxf(A+B/(lambda*lambda),1.0001f);}
 
@@ -1122,18 +1195,22 @@ __device__ F3 productionPath(
     const GeomPropDesc* geomProps,const float* geomPropValues,
     int geomPropCount){
   F3 L=mk(0.f,0.f,0.f),beta=mk(1.f,1.f,1.f);
-  int subsurfaceEvents=0,transparentEvents=0;bool inSubsurface=false;
+  int subsurfaceEvents=0,transparentEvents=0,transmissionEvents=0;
+  bool inSubsurface=false;
   float subsurfaceSigma=1.f;F3 subsurfaceAlbedo=mk(1.f,1.f,1.f);
   float subsurfaceG=0.f,previousBsdfPdf=0.f,previousEnvironmentPdf=0.f;
   bool previousDelta=true;
-  float mediumIor[4]={1.f,1.f,1.f,1.f};F3 mediumSigma[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};F3 mediumSigmaS[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};F3 mediumEmission[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};float mediumG[4]={0.f,0.f,0.f,0.f};int mediumInstance[4]={-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
+  const float environmentWeightTotal=ptEnvironmentWeightTotal(
+      lightParams,numLights,clear,texels,textures,numTextures);
+  const float environmentWeightMax=ptEnvironmentWeightMax(lightParams,numLights);
+  float mediumIor[8]={1.f,1.f,1.f,1.f,1.f,1.f,1.f,1.f};F3 mediumSigma[8]={};F3 mediumSigmaS[8]={};F3 mediumEmission[8]={};float mediumG[8]={};int mediumInstance[8]={-1,-1,-1,-1,-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
   for(int bounce=0;bounce<maxDepth;++bounce){
     int tri=-1,ii=-1;float bu=0.f,bv=0.f;
     float t=traverseCutout(tlas,insts,blas,tris,ro,rd,1e30f,&tri,&bu,&bv,&ii,
       cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,
       texels,textures,numTextures,uvs,uvs1,-1,false);
     if(tri<0||ii<0){
-      if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear)),mis));}
+      if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear,texels,textures,numTextures)),mis));}
       break;
     }
     if(!inSubsurface&&mediumDepth>0){F3 sigma=mediumSigma[mediumDepth];float majorant=ptMax(sigma);float flight=majorant>1e-6f?-logf(fmaxf(1e-7f,1.f-rndf(seed)))/majorant:1e30f;float segment=fminf(flight,t);F3 tr=mk(expf(-sigma.x*segment),expf(-sigma.y*segment),expf(-sigma.z*segment));F3 integral=mk(sigma.x>1e-6f?(1.f-tr.x)/sigma.x:segment,sigma.y>1e-6f?(1.f-tr.y)/sigma.y:segment,sigma.z>1e-6f?(1.f-tr.z)/sigma.z:segment);L=add(L,ptMul(beta,ptMul(mediumEmission[mediumDepth],integral)));beta=ptMul(beta,tr);if(flight<t&&ptMax(mediumSigmaS[mediumDepth])>1e-6f){beta=ptMul(beta,scale(mediumSigmaS[mediumDepth],1.f/fmaxf(majorant,1e-6f)));ro=add(ro,scale(rd,flight));rd=ptSampleHg(rd,mediumG[mediumDepth],seed);previousDelta=false;previousBsdfPdf=1.f/(4.f*3.14159265359f);continue;}}
@@ -1151,9 +1228,10 @@ __device__ F3 productionPath(
     F3 p=add(ro,scale(rd,t));const float* tv=&tris[tri*9];
     F3 p0=xfPt(insts[ii].o2w,mk(tv[0],tv[1],tv[2]));F3 p1=xfPt(insts[ii].o2w,mk(tv[3],tv[4],tv[5]));F3 p2=xfPt(insts[ii].o2w,mk(tv[6],tv[7],tv[8]));
     F3 gn=norm3(cross3(sub(p1,p0),sub(p2,p0)));bool front=dot3(gn,rd)<0.f;
-    F3 n=front?gn:scale(gn,-1.f);
+    F3 n=front?gn:scale(gn,-1.f);F3 geomN=n;
     PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts,n,p,scale(rd,-1.f),graphSceneTime,graphSceneFrame,geomProps,geomPropValues,geomPropCount);
-    if(m.alphaMode>1.5f&&m.opacity<1.f&&transparentEvents<16&&rndf(seed)>=m.opacity){
+    if(m.alphaMode>1.5f&&m.opacity<1.f&&m.implicitGlass<.5f&&
+       transparentEvents<16&&rndf(seed)>=m.opacity){
       ro=add(ro,scale(rd,t+1e-4f));++transparentEvents;--bounce;continue;
     }
     // Production paths use the authored interpolated shading normal and the
@@ -1254,7 +1332,7 @@ __device__ F3 productionPath(
     F3 diffuseC=scale(m.base,(1.f-m.metal)*(1.f-m.transmission)*(1.f-m.subsurface));
     F3 sheenC=scale(m.sheenColor,m.sheenWeight*(1.f-m.metal)*(1.f-m.transmission));
     F3 interfaceTransmission=m.transmissionDepth>0.f?mk(1.f,1.f,1.f):m.transmissionColor;F3 transmissionC=scale(interfaceTransmission,m.transmission*(1.f-m.metal));
-    F3 interfaceF=fresnelSchlick(fmaxf(dot3(n,scale(rd,-1.f)),0.f),f0);transmissionC=mk(transmissionC.x*(1.f-interfaceF.x),transmissionC.y*(1.f-interfaceF.y),transmissionC.z*(1.f-interfaceF.z));
+    bool exiting=(mediumDepth>0&&mediumInstance[mediumDepth]==ii)||(!front&&mediumDepth==0);float interfaceEtaI=exiting&&mediumDepth==0?m.ior:mediumIor[mediumDepth],interfaceEtaT=exiting?mediumIor[mediumDepth>0?mediumDepth-1:0]:m.ior;float interfaceFr=fresnelDielectric(fmaxf(dot3(n,scale(rd,-1.f)),0.f),interfaceEtaI,interfaceEtaT),interfaceScale=interfaceFr/fmaxf(df0,1e-6f);F3 interfaceF=mk(fminf(fmaxf(f0.x*interfaceScale,0.f),1.f),fminf(fmaxf(f0.y*interfaceScale,0.f),1.f),fminf(fmaxf(f0.z*interfaceScale,0.f),1.f));transmissionC=mk(transmissionC.x*(1.f-interfaceF.x),transmissionC.y*(1.f-interfaceF.y),transmissionC.z*(1.f-interfaceF.z));
     float subsurfaceEntry=(subsurfaceEvents<maxSubsurfaceEvents?m.subsurface:0.f)*
                           (1.f-m.metal)*(1.f-m.transmission);
     F3 subsurfaceC=ptMul(mk(1.f-interfaceF.x,1.f-interfaceF.y,1.f-interfaceF.z),
@@ -1266,8 +1344,22 @@ __device__ F3 productionPath(
     float wg=ptLum(f0),wc=ptLum(coatC),sum=wd+wt+ws+wg+wc;
     if(sum<=1e-7f)break;
     float diffuseP=wd/sum,glossyP=wg/sum,coatP=wc/sum;
-    float envPdf=0.f;F3 envDir=ptSampleEnvironment(lightParams,numLights,clear,seed,&envPdf);float envNl=fmaxf(dot3(n,envDir),0.f);
-    if(envNl>0.f){
+    float envPdf=0.f;
+    // Transmission-dominant interfaces already sample the environment through
+    // their BSDF. A separate reflection NEE ray for a sub-8% reflection lobe is
+    // expensive and contributes little at interactive sample counts; retain it
+    // for diffuse/glossy surfaces where it materially reduces variance.
+    float reflectionFraction=(wd+wg+wc)/sum;
+    // Reference/final paths retain even weak Fresnel lobes. The cutoff is an
+    // interactive-only variance/performance tradeoff; applying it at larger
+    // depth budgets systematically loses low-energy environment reflections
+    // on transmissive surfaces.
+    if(maxDepth>6||reflectionFraction>=.08f){
+      F3 envDir=ptSampleEnvironment(lightParams,numLights,clear,seed,&envPdf,
+          texels,textures,numTextures,environmentWeightTotal,
+          environmentWeightMax);
+      float envNl=fmaxf(dot3(n,envDir),0.f);
+      if(envNl>0.f){
       float reflectionPdf=0.f;F3 reflection=ptEvaluateReflection(
           m,n,coatN,scale(rd,-1.f),envDir,diffuseC,f0,sheenC,coatF0,m.coatWeight,
           diffuseP,glossyP,
@@ -1279,15 +1371,17 @@ __device__ F3 productionPath(
           uvs,uvs1,-1,false);
       if(et<0){
         float mis=ptPowerHeuristic(envPdf,reflectionPdf);
-        F3 c=ptMul(ptMul(beta,reflection),ptEnvironment(lightParams,numLights,envDir,clear));
+        F3 c=ptMul(ptMul(beta,reflection),ptEnvironment(lightParams,numLights,envDir,clear,texels,textures,numTextures));
         L=add(L,scale(c,envNl*mis/envPdf));}
+      }
     }
     float xi=rndf(seed)*sum;F3 nd,w;float side=1.f;bool reflectionSample=false;
     if((xi-=wt)<0.f){
-      float prob=wt/sum;if(heroChannel<0&&m.dispersion>0.f&&m.dispersionAbbe>0.f){heroChannel=(int)(rndf(seed)*3.f);if(heroChannel>2)heroChannel=2;F3 hero=heroChannel==0?mk(3.f,0.f,0.f):(heroChannel==1?mk(0.f,3.f,0.f):mk(0.f,0.f,3.f));transmissionC=ptMul(transmissionC,hero);}float materialIor=ptSpectralIor(m.ior,m.dispersionAbbe,m.dispersion,heroChannel<0?1:heroChannel);float outsideIor=mediumIor[mediumDepth],insideIor=materialIor;if(!front&&mediumDepth>0){insideIor=mediumIor[mediumDepth];outsideIor=mediumIor[mediumDepth-1];}float eta=outsideIor/insideIor,c=-dot3(n,rd);
+      ++transmissionEvents;
+      float prob=wt/sum;if(heroChannel<0&&m.dispersion>0.f&&m.dispersionAbbe>0.f){heroChannel=(int)(rndf(seed)*3.f);if(heroChannel>2)heroChannel=2;F3 hero=heroChannel==0?mk(3.f,0.f,0.f):(heroChannel==1?mk(0.f,3.f,0.f):mk(0.f,0.f,3.f));transmissionC=ptMul(transmissionC,hero);}float materialIor=ptSpectralIor(m.ior,m.dispersionAbbe,m.dispersion,heroChannel<0?1:heroChannel);float incidentIor=exiting&&mediumDepth==0?materialIor:mediumIor[mediumDepth],transmittedIor=exiting?mediumIor[mediumDepth>0?mediumDepth-1:0]:materialIor;float eta=m.thinWalled>.5f?1.f:incidentIor/transmittedIor,c=-dot3(n,rd);
       float k=1.f-eta*eta*(1.f-c*c);
-      nd=k<0.f?ptReflect(rd,n):norm3(add(scale(rd,eta),scale(n,eta*c-sqrtf(k))));
-      w=scale(transmissionC,1.f/fmaxf(prob,1e-6f));side=dot3(nd,n)<0.f?-1.f:1.f;if(k>=0.f){if(front&&mediumDepth<3){++mediumDepth;mediumIor[mediumDepth]=materialIor;F3 sigmaS=scale(m.volumeAlbedo,m.volumeDensity);F3 extinction=mk(m.volumeDensity,m.volumeDensity,m.volumeDensity);if(m.transmissionDepth>0.f){float depth=m.transmissionDepth;F3 muT=mk(-logf(fminf(fmaxf(m.transmissionColor.x,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.y,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.z,1e-6f),1.f))/depth);F3 muS=scale(mk(fmaxf(m.transmissionScatter.x,0.f),fmaxf(m.transmissionScatter.y,0.f),fmaxf(m.transmissionScatter.z,0.f)),1.f/depth);F3 muA=sub(muT,muS);float minA=fminf(muA.x,fminf(muA.y,muA.z));if(minA<0.f)muA=sub(muA,mk(minA,minA,minA));sigmaS=add(sigmaS,muS);extinction=add(extinction,add(muA,muS));}mediumSigma[mediumDepth]=extinction;mediumSigmaS[mediumDepth]=sigmaS;mediumEmission[mediumDepth]=m.volumeEmission;mediumG[mediumDepth]=m.transmissionScatterG;mediumInstance[mediumDepth]=ii;}else if(!front&&mediumDepth>0){int matched=mediumDepth;for(int level=mediumDepth;level>0;--level)if(mediumInstance[level]==ii){matched=level;break;}mediumDepth=matched-1;}}previousDelta=true;
+      nd=m.thinWalled>.5f?rd:(k<0.f?ptReflect(rd,n):norm3(add(scale(rd,eta),scale(n,eta*c-sqrtf(k)))));
+      w=scale(transmissionC,1.f/fmaxf(prob,1e-6f));side=dot3(nd,geomN)<0.f?-1.f:1.f;if(k>=0.f&&m.thinWalled<.5f){if(!exiting&&mediumDepth<7){++mediumDepth;mediumIor[mediumDepth]=materialIor;F3 sigmaS=scale(m.volumeAlbedo,m.volumeDensity);F3 extinction=mk(m.volumeDensity,m.volumeDensity,m.volumeDensity);if(m.transmissionDepth>0.f){float depth=m.transmissionDepth;F3 muT=mk(-logf(fminf(fmaxf(m.transmissionColor.x,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.y,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.z,1e-6f),1.f))/depth);F3 muS=scale(mk(fmaxf(m.transmissionScatter.x,0.f),fmaxf(m.transmissionScatter.y,0.f),fmaxf(m.transmissionScatter.z,0.f)),1.f/depth);F3 muA=sub(muT,muS);float minA=fminf(muA.x,fminf(muA.y,muA.z));if(minA<0.f)muA=sub(muA,mk(minA,minA,minA));sigmaS=add(sigmaS,muS);extinction=add(extinction,add(muA,muS));}mediumSigma[mediumDepth]=extinction;mediumSigmaS[mediumDepth]=sigmaS;mediumEmission[mediumDepth]=m.volumeEmission;mediumG[mediumDepth]=m.transmissionScatterG;mediumInstance[mediumDepth]=ii;}else if(exiting){--mediumDepth;}}previousDelta=true;
     }else if((xi-=ws)<0.f){
       float prob=ws/sum;
       w=scale(subsurfaceC,1.f/fmaxf(prob,1e-6f));
@@ -1306,9 +1400,21 @@ __device__ F3 productionPath(
       nd=ptCosine(n,seed);reflectionSample=true;previousDelta=false;
     }
     if(reflectionSample){float mixturePdf=0.f;F3 reflection=ptEvaluateReflection(m,n,coatN,scale(rd,-1.f),nd,
-        diffuseC,f0,sheenC,coatF0,m.coatWeight,diffuseP,glossyP,coatP,&mixturePdf);float nl=fmaxf(dot3(n,nd),0.f);if(mixturePdf<=1e-8f||nl<=0.f)break;w=scale(reflection,nl/mixturePdf);previousBsdfPdf=mixturePdf;previousEnvironmentPdf=ptEnvironmentPdf(lightParams,numLights,clear,nd);
+        diffuseC,f0,sheenC,coatF0,m.coatWeight,diffuseP,glossyP,coatP,&mixturePdf);float nl=fmaxf(dot3(n,nd),0.f);if(mixturePdf<=1e-8f||nl<=0.f)break;w=scale(reflection,nl/mixturePdf);previousBsdfPdf=mixturePdf;previousEnvironmentPdf=ptEnvironmentPdf(lightParams,numLights,clear,nd,texels,textures,numTextures,environmentWeightTotal);
     }else{previousBsdfPdf=0.f;previousEnvironmentPdf=0.f;}
-    beta=ptMul(beta,w);if(ptMax(beta)<1e-5f)break;if(bounce+1>=rrDepth){float survive=fminf(fmaxf(ptMax(beta),.05f),.95f);if(rndf(seed)>survive)break;beta=scale(beta,1.f/survive);}if(side!=0.f)ro=add(p,scale(n,side*1e-4f));rd=nd;
+    beta=ptMul(beta,w);if(ptMax(beta)<1e-5f)break;
+    bool transmissionRoulette=false;
+    // Interactive paths commonly finish their useful dielectric work after
+    // entering and leaving one shell. Continue deeper paths stochastically
+    // (with reciprocal weighting, so the estimator remains unbiased) instead
+    // of carrying almost every glass ray through bounces five and six. Final
+    // quality uses maxDepth>6 and deliberately keeps the full path budget.
+    if(maxDepth<=6&&transmissionEvents>=2&&bounce+1>=3){
+      const float survive=.625f;
+      if(rndf(seed)>survive)break;
+      beta=scale(beta,1.f/survive);transmissionRoulette=true;
+    }
+    if(!transmissionRoulette&&bounce+1>=rrDepth){float survive=fminf(fmaxf(ptMax(beta),.05f),.95f);if(rndf(seed)>survive)break;beta=scale(beta,1.f/survive);}if(side!=0.f)ro=add(p,scale(geomN,side*1e-4f));rd=nd;
   }
   return L;
 }
@@ -1389,13 +1495,15 @@ __device__ F3 primaryLayerTransmissionTint(
 
 __device__ F3 primaryLayerRefractedColor(
     int tri, float bu, float bv, int hitInst, const float* tris,
+    const float* nrms,
     const Inst* insts, const int* mats, const float* matLightRt, int numMats,
     const Node* tlas, const Node* blas, const float* cols, const float* matBase,
     const int* backMats,
     const float* matPbr, const float* matGraph, const int* matTex,
   const float* matTexParam, const unsigned char* texels,
   const TexDesc* textures, int numTextures, const float* uvs,
-  const float* uvs1, F3 rayOrigin, F3 rayDir, F3* outOrigin, F3* outDir) {
+  const float* uvs1, F3 rayOrigin, F3 rayDir, F3 missColor,
+  F3* outOrigin, F3* outDir) {
   if (!tris || !insts || !mats || tri < 0 || hitInst < 0) return mk(0.f, 0.f, 0.f);
   if (!matLightRt) return mk(0.f, 0.f, 0.f);
   F3 throughput = mk(1.f, 1.f, 1.f);
@@ -1418,8 +1526,20 @@ __device__ F3 primaryLayerRefractedColor(
     F3 p2 = xfPt(insts[currentInst].o2w,
                  mk(tris[currentTri * 9 + 6], tris[currentTri * 9 + 7],
                     tris[currentTri * 9 + 8]));
-    F3 n = xfNrm(insts[currentInst].w2o,
-                 norm3(cross3(sub(p1, p0), sub(p2, p0))));
+    F3 geometricN = norm3(cross3(sub(p1, p0), sub(p2, p0)));
+    F3 n = geometricN;
+    if (nrms) {
+      const float* nv = &nrms[currentTri * 9];
+      float w0 = 1.f - currentBu - currentBv;
+      F3 localN = mk(nv[0]*w0 + nv[3]*currentBu + nv[6]*currentBv,
+                     nv[1]*w0 + nv[4]*currentBu + nv[7]*currentBv,
+                     nv[2]*w0 + nv[5]*currentBu + nv[8]*currentBv);
+      F3 smoothN = norm3(xfNrm(insts[currentInst].w2o, localN));
+      if (dot3(smoothN, smoothN) > 1.0e-8f) {
+        if (dot3(smoothN, geometricN) < 0.f) smoothN = scale(smoothN, -1.f);
+        n = smoothN;
+      }
+    }
     const float normalDir = dot3(n, currentDir);
     const bool entering = normalDir < 0.f;
     if (normalDir > 0.f) n = scale(n, -1.f);
@@ -1445,10 +1565,20 @@ __device__ F3 primaryLayerRefractedColor(
                   cols, mats, backMats, matPbr, matLightRt, matGraph, numMats,
                   matTex, matTexParam, texels, textures, numTextures, uvs, uvs1,
                   -1, false);
-    if (nextTri < 0 || nextInst < 0) return mk(0.f, 0.f, 0.f);
+    if (nextTri < 0 || nextInst < 0)
+      return ptMul(throughput, missColor);
     currentTri = nextTri; currentInst = nextInst;
     currentBu = nextBu; currentBv = nextBv; currentDir = refr;
-    if (bounce == 2) {
+    int nextMid=mats[currentTri];
+    float nextTransmission=0.f;
+    if (nextMid>=0 && nextMid<numMats) {
+      const float* nextP=&matLightRt[nextMid*LIGHTUSD_GPU_OPENPBR_FLOATS];
+      nextTransmission=fminf(fmaxf(nextP[11],0.f),1.f);
+      float nextOpacity=nextP[51]>0.5f?nextP[39]:matPbr[nextMid*6+5];
+      if (nextP[54]>1.5f && nextP[43]>1.01f && nextOpacity<0.999f)
+        nextTransmission=fmaxf(nextTransmission,1.f-nextOpacity);
+    }
+    if (nextTransmission<=1.0e-4f) {
       F3 result = approxPrimaryLayer(currentTri, currentBu, currentBv,
                                       currentInst, cols, mats, matBase,
                                       matPbr, matLightRt, matGraph, numMats, matTex,
@@ -1457,6 +1587,7 @@ __device__ F3 primaryLayerRefractedColor(
       return mk(throughput.x * result.x, throughput.y * result.y,
                 throughput.z * result.z);
     }
+    if (bounce == 2) return ptMul(throughput, missColor);
   }
   return mk(0.f, 0.f, 0.f);
 }
@@ -1665,7 +1796,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                lp[48]*d.x+lp[49]*d.y+lp[50]*d.z);
       float eu=atan2f(de.x,-de.z)*0.15915494f+0.5f; // latlong u
       float ev=acosf(fminf(fmaxf(de.y,-1.f),1.f))*0.31830989f;
-      F3 env=sampleTexRGB(texels,textures,numTextures,envTex,eu,ev);
+      F3 env=sampleDomeEnv(texels,textures,numTextures,envTex,eu,ev,
+                           (lflags&(1<<8))!=0);
       outc=mk(env.x*lp[16],env.y*lp[17],env.z*lp[18]);
       break;
     }
@@ -1753,7 +1885,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     base=mk(base.x*bt.x,base.y*bt.y,base.z*bt.z);
     float metallic=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f;
     float roughness=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f;
-    float opacity=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f;
+    float authoredOpacity=(mid>=0&&mid<numMats&&lrt)?lrt[39]:
+                          ((mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f);
+    float opacity=authoredOpacity;
     float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*LIGHTUSD_GPU_OPENPBR_FLOATS+54]:0.f;
     float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*LIGHTUSD_GPU_OPENPBR_FLOATS+55]:0.5f;
     float specWeight=1.f, specIor=1.5f, specAnisotropy=0.f,
@@ -2056,6 +2190,17 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // the graph, so a connected opacity graph silently bypassed alphaCutoff.
     if (alphaMode > 0.5f && alphaMode < 1.5f)
       materialOpacity=(materialOpacity >= alphaCutoff) ? 1.f : 0.f;
+    // Match raster/Vulkan RT mixed-atlas semantics. Coverage-painted metal in
+    // a Blend atlas is opaque; only an authored fractional material remains
+    // transmissive glass.
+    if (alphaMode > 1.5f && opacityTex >= 0 && authoredOpacity >= 0.999f &&
+        materialOpacity >= 0.5f)
+      materialOpacity=1.f;
+    if (alphaMode > 1.5f && specIor > 1.01f && authoredOpacity < 0.999f)
+      // Fractional PreviewSurface opacity plus a dielectric IOR denotes a
+      // glass interface, not a chalky diffuse/transmission mixture. Coverage
+      // remains controlled by materialOpacity in the compositor below.
+      transmission=1.f;
 
     // Default shaded view: realtime OpenPBR preview. It consumes the canonical
     // packed material block while preserving the existing texture sampling and
@@ -2108,7 +2253,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
 // cap on its own; see the NOTE above.
 R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
           float sv=acosf(fminf(fmaxf(Re.y,-1.f),1.f))*0.31830989f;
-          F3 envc=sampleTexRGB(texels,textures,numTextures,envTexS,su,sv);
+          F3 envc=sampleDomeEnv(texels,textures,numTextures,envTexS,su,sv,
+                               (((int)(lp[1]+0.5f))&(1<<8))!=0);
           float rx=roughness*-1.f+1.f, ry=roughness*-0.0275f+0.0425f;
           float rz=roughness*-0.572f+1.04f, rw=roughness*0.022f-0.04f;
           float a004=fminf(rx*rx, exp2f(-9.28f*NoV))*rx+ry;
@@ -2199,12 +2345,10 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       F3 F=fresnelSchlick(vh,f0);
       float sg=ggxD(nh,roughness)*ggxG1(nv,roughness)*ggxG1(nl,roughness)/fmaxf(4.f*nv*nl,1e-5f)*fmaxf(specWeight,0.f);
       F3 specB=scale(F,sg);
-      F3 diffB=mk((1.f-F.x)*(1.f-metallic)*base.x*0.31830989f,
-                  (1.f-F.y)*(1.f-metallic)*base.y*0.31830989f,
-                  (1.f-F.z)*(1.f-metallic)*base.z*0.31830989f);
-      F3 transmissionB=mk(transmissionColor.x*transmission*(1.f-F.x)*0.31830989f,
-                          transmissionColor.y*transmission*(1.f-F.y)*0.31830989f,
-                          transmissionColor.z*transmission*(1.f-F.z)*0.31830989f);
+      float diffuseWeight=(1.f-metallic)*(1.f-transmission)*(1.f-subsurface);
+      F3 diffB=mk((1.f-F.x)*diffuseWeight*base.x*0.31830989f,
+                  (1.f-F.y)*diffuseWeight*base.y*0.31830989f,
+                  (1.f-F.z)*diffuseWeight*base.z*0.31830989f);
       float sheenScale=fminf(fmaxf(sheenWeight,0.f),1.f) *
           (0.5f+0.5f*fminf(fmaxf(sheenRoughness,0.f),1.f)) *
           powf(1.f-nl,5.f)*0.31830989f;
@@ -2231,8 +2375,8 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       float cg=ggxD(cnh,coatRoughness)*ggxG1(cnv,coatRoughness)*ggxG1(cnl,coatRoughness)/fmaxf(4.f*cnv*cnl,1e-5f)*fminf(fmaxf(coatWeight,0.f),1.f);
       F3 coatB=mk(cF.x*cg*coatColor.x,cF.y*cg*coatColor.y,cF.z*cg*coatColor.z);
       float ds=lp[29],ss=lp[30];
-      F3 baseBrdf=add(add(add(add(scale(diffB,ds),scale(sheenB,ds)),
-                              scale(transmissionB,ds)), scale(subsurfaceB,ds)),
+      F3 baseBrdf=add(add(add(scale(diffB,ds),scale(sheenB,ds)),
+                              scale(subsurfaceB,ds)),
                        scale(specB,ss));
       baseBrdf=scale(baseBrdf,1.f-0.5f*fminf(fmaxf(coatWeight,0.f),1.f));
       F3 coatBrdf=scale(coatB,ss);
@@ -2254,19 +2398,19 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       float sheenScale=fminf(fmaxf(sheenWeight,0.f),1.f) *
           (0.5f+0.5f*fminf(fmaxf(sheenRoughness,0.f),1.f)) *
           powf(1.f-nl,5.f)*0.31830989f;
-      direct3=mk(((1.f-F.x)*(1.f-metallic)*base.x*0.31830989f+
-                  sheenColor.x*sheenScale+transmissionColor.x*transmission*(1.f-F.x)*0.31830989f+F.x*sg)*nl,
-                 ((1.f-F.y)*(1.f-metallic)*base.y*0.31830989f+
-                  sheenColor.y*sheenScale+transmissionColor.y*transmission*(1.f-F.y)*0.31830989f+F.y*sg)*nl,
-                 ((1.f-F.z)*(1.f-metallic)*base.z*0.31830989f+
-                  sheenColor.z*sheenScale+transmissionColor.z*transmission*(1.f-F.z)*0.31830989f+F.z*sg)*nl);
+      float dw=(1.f-metallic)*(1.f-transmission)*(1.f-subsurface);
+      direct3=mk(((1.f-F.x)*dw*base.x*0.31830989f+
+                  sheenColor.x*sheenScale+F.x*sg)*nl,
+                 ((1.f-F.y)*dw*base.y*0.31830989f+
+                  sheenColor.y*sheenScale+F.y*sg)*nl,
+                 ((1.f-F.z)*dw*base.z*0.31830989f+
+                  sheenColor.z*sheenScale+F.z*sg)*nl);
     }
     // Occlusion modulates indirect/ambient only, never direct (matches raster).
-    F3 ambientBase=mk(base.x*amb3.x*occlusion,base.y*amb3.y*occlusion,
-                      base.z*amb3.z*occlusion);
-    ambientBase=add(ambientBase,scale(mk(transmissionColor.x*transmission,
-                                         transmissionColor.y*transmission,
-                                         transmissionColor.z*transmission),0.25f));
+    float ambientDiffuse=(1.f-metallic)*(1.f-transmission)*(1.f-subsurface);
+    F3 ambientBase=mk(base.x*amb3.x*occlusion*ambientDiffuse,
+                      base.y*amb3.y*occlusion*ambientDiffuse,
+                      base.z*amb3.z*occlusion*ambientDiffuse);
     outc=add(add(add(add(ambientBase,direct3),scale(specIBL3,occlusion)),
                  scale(sheenColor,fminf(fmaxf(sheenWeight,0.f),1.f)*0.025f)),em);
     // Render mode (clear[3]): 1=wireframe, 2=shading normal, 3=material-id,
@@ -2281,13 +2425,13 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 topTint=primaryLayerTransmissionTint(ht,mats,matLightRt,numMats);
         F3 throughput=scale(topTint,1.f-materialOpacity);
         F3 throughColor=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
-        float topTransmission = (matLightRt && mats[ht] >= 0)
-            ? fminf(fmaxf(matLightRt[mats[ht]*LIGHTUSD_GPU_OPENPBR_FLOATS+11],0.f),1.f) : 0.f;
+        float topTransmission=fminf(fmaxf(transmission,0.f),1.f);
         F3 refractedOrigin=o, refractedDir=d;
         F3 topRefr=primaryLayerRefractedColor(
-            ht,bu,bv,hitInst,tris,insts,mats,matLightRt,numMats,tlas,blas,
+            ht,bu,bv,hitInst,tris,nrms,insts,mats,matLightRt,numMats,tlas,blas,
             cols,matBase,backMats,matPbr,matGraph,matTex,matTexParam,texels,
-            textures,numTextures,uvs,uvs1,o,d,&refractedOrigin,&refractedDir);
+            textures,numTextures,uvs,uvs1,o,d,bg,&refractedOrigin,
+            &refractedDir);
         throughColor=mk(throughColor.x*(1.f-topTransmission)+topRefr.x*topTransmission,
                         throughColor.y*(1.f-topTransmission)+topRefr.y*topTransmission,
                         throughColor.z*(1.f-topTransmission)+topRefr.z*topTransmission);
@@ -2541,6 +2685,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     outc=scale(outc,exposureScale);
   }
   if (rmodePre==0 || rmodePre==1) {
+    if (rmodePre==0) outc=mk(aces1(outc.x),aces1(outc.y),aces1(outc.z));
     outc=mk(linearToSrgb1(outc.x),linearToSrgb1(outc.y),linearToSrgb1(outc.z));
   }
   int idx=(py*W+px)*4;

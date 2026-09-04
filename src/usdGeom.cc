@@ -16,7 +16,6 @@
 #include "xform.hh"
 #include "usdGeom.hh"
 //
-//#include "external/simple_match/include/simple_match/simple_match.hpp"
 //
 #include "common-macros.inc"
 #include "math-util.inc"

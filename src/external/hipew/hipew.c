@@ -31,6 +31,16 @@ thipFree hipFree;
 thipMemGetInfo hipMemGetInfo;
 thipMemcpyHtoD hipMemcpyHtoD;
 thipMemcpyDtoH hipMemcpyDtoH;
+thipMemcpyDtoHAsync hipMemcpyDtoHAsync;
+thipHostMalloc hipHostMalloc;
+thipHostFree hipHostFree;
+thipStreamCreate hipStreamCreate;
+thipStreamDestroy hipStreamDestroy;
+thipStreamSynchronize hipStreamSynchronize;
+thipEventCreate hipEventCreate;
+thipEventDestroy hipEventDestroy;
+thipEventRecord hipEventRecord;
+thipEventElapsedTime hipEventElapsedTime;
 thipModuleLoadData hipModuleLoadData;
 thipModuleUnload hipModuleUnload;
 thipModuleGetFunction hipModuleGetFunction;
@@ -169,6 +179,20 @@ int hipewInit(unsigned int mask) {
     HIPEW_FIND(g_hip_lib, hipMemGetInfo, thipMemGetInfo, hipMemGetInfo);
     HIPEW_FIND(g_hip_lib, hipMemcpyHtoD, thipMemcpyHtoD, hipMemcpyHtoD);
     HIPEW_FIND(g_hip_lib, hipMemcpyDtoH, thipMemcpyDtoH, hipMemcpyDtoH);
+    HIPEW_FIND(g_hip_lib, hipMemcpyDtoHAsync, thipMemcpyDtoHAsync,
+               hipMemcpyDtoHAsync);
+    HIPEW_FIND(g_hip_lib, hipHostMalloc, thipHostMalloc, hipHostMalloc);
+    HIPEW_FIND(g_hip_lib, hipHostFree, thipHostFree, hipHostFree);
+    HIPEW_FIND(g_hip_lib, hipStreamCreate, thipStreamCreate, hipStreamCreate);
+    HIPEW_FIND(g_hip_lib, hipStreamDestroy, thipStreamDestroy,
+               hipStreamDestroy);
+    HIPEW_FIND(g_hip_lib, hipStreamSynchronize, thipStreamSynchronize,
+               hipStreamSynchronize);
+    HIPEW_FIND(g_hip_lib, hipEventCreate, thipEventCreate, hipEventCreate);
+    HIPEW_FIND(g_hip_lib, hipEventDestroy, thipEventDestroy, hipEventDestroy);
+    HIPEW_FIND(g_hip_lib, hipEventRecord, thipEventRecord, hipEventRecord);
+    HIPEW_FIND(g_hip_lib, hipEventElapsedTime, thipEventElapsedTime,
+               hipEventElapsedTime);
     HIPEW_FIND(g_hip_lib, hipModuleLoadData, thipModuleLoadData,
                hipModuleLoadData);
     HIPEW_FIND(g_hip_lib, hipModuleUnload, thipModuleUnload, hipModuleUnload);

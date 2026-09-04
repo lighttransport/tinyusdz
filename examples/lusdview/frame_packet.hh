@@ -41,7 +41,7 @@ struct FramePacket {
   std::vector<uint8_t> meshVisible;
   std::vector<uint8_t> carrierVisible;
   std::vector<uint8_t> rtMeshVisible;
-  uint32_t purposeVisibleMask{0xBu};
+  uint32_t purposeVisibleMask{0x3u};
   int curveMaxSegments{8};
   int viewportW{0};
   int viewportH{0};

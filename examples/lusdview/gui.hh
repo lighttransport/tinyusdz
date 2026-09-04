@@ -265,6 +265,12 @@ class Gui {
   float displacementScale() const {
     return displacementEnabled_ ? displacementScale_ : 0.0f;
   }
+  uint32_t purposeVisibleMask() const {
+    return (showPurposeDefault_ ? 1u : 0u) |
+           (showPurposeRender_ ? 2u : 0u) |
+           (showPurposeProxy_ ? 4u : 0u) |
+           (showPurposeGuide_ ? 8u : 0u);
+  }
   bool showSkeletonOverlay() const { return showSkeleton_; }
   // Manual blendshape weights from the blend-shape editor (Maya-like). Returns
   // the override map when manual mode is active, else nullptr (use animation).
@@ -312,6 +318,27 @@ class Gui {
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   bool hasTechniqueRequest() const { return hasTechniqueRequest_; }
   RenderTechnique requestedTechnique() const { return requestedTechnique_; }
+  bool hasCudaDeviceRequest() const { return hasCudaDeviceRequest_; }
+  bool hasHipDeviceRequest() const { return hasHipDeviceRequest_; }
+  int requestedCudaDevice() const { return requestedCudaDevice_; }
+  int requestedHipDevice() const { return requestedHipDevice_; }
+  bool hasCudaRtBackendRequest() const { return hasCudaRtBackendRequest_; }
+  CudaRtBackend requestedCudaRtBackend() const {
+    return requestedCudaRtBackend_;
+  }
+  void setCudaRtBackend(CudaRtBackend backend, bool optixAvailable) {
+    cudaRtBackend_ = backend;
+    optixAvailable_ = optixAvailable;
+  }
+  void setComputeDevices(const std::vector<std::string>& cudaDevices,
+                         int cudaSelected,
+                         const std::vector<std::string>& hipDevices,
+                         int hipSelected) {
+    cudaDevices_ = cudaDevices;
+    hipDevices_ = hipDevices;
+    cudaDeviceSelected_ = cudaSelected;
+    hipDeviceSelected_ = hipSelected;
+  }
   // The "R" keybinding (Gui::handleNavigation): toggle CPU RT on/off, restoring
   // whatever technique was active before. App::run() owns the toggle logic
   // (it tracks previousTechnique_); this is a one-shot request flag, mirroring
@@ -364,6 +391,8 @@ class Gui {
     wantStepForward_ = wantStepBackward_ = false;
     hasSkinningModeRequest_ = false;
     hasTechniqueRequest_ = false;
+    hasCudaDeviceRequest_ = hasHipDeviceRequest_ = false;
+    hasCudaRtBackendRequest_ = false;
     wantToggleCpuRt_ = false;
   }
 
@@ -844,6 +873,18 @@ class Gui {
   bool hasTechniqueRequest_{false};
   RenderTechnique requestedTechnique_{RenderTechnique::GLRaster};
   RenderTechnique activeTechnique_{RenderTechnique::GLRaster};  // fed back by App each frame
+  std::vector<std::string> cudaDevices_;
+  std::vector<std::string> hipDevices_;
+  int cudaDeviceSelected_{0};
+  int hipDeviceSelected_{0};
+  int requestedCudaDevice_{0};
+  int requestedHipDevice_{0};
+  bool hasCudaDeviceRequest_{false};
+  bool hasHipDeviceRequest_{false};
+  CudaRtBackend cudaRtBackend_{CudaRtBackend::Auto};
+  CudaRtBackend requestedCudaRtBackend_{CudaRtBackend::Auto};
+  bool hasCudaRtBackendRequest_{false};
+  bool optixAvailable_{false};
   bool cudaAvailable_{true};
   bool hipAvailable_{true};
   bool vulkanAvailable_{false};

@@ -67,6 +67,9 @@ struct RealtimePbrMaterial {
   float opacity{1.0f};
   bool hasTextureInputs{false};
   bool hasNormalInput{false};
+  // OpenPBR geometry_thin_walled. Thin sheets transmit without entering a
+  // volumetric medium; closed dielectric shells retain the default false.
+  bool geometryThinWalled{false};
 };
 
 inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
@@ -156,6 +159,7 @@ inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
   dst[68] = p.coatAffectRoughness;
   dst[69] = p.coatRoughnessAnisotropy;
   dst[70] = p.coatDarkening;
+  dst[71] = p.geometryThinWalled ? 1.0f : 0.0f;
   StoreOpenPBR3(p.volumeAlbedo, dst + 72);        dst[75] = p.volumeDensity;
   StoreOpenPBR3(p.volumeEmission, dst + 76);     dst[79] = p.volumeEmissionScale;
 }

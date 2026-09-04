@@ -72,9 +72,6 @@
 // TODO: Use tinyobjloader's triangulation
 #include "external/mapbox/earcut/earcut.hpp"
 
-// For kNN point search
-// #include "external/nanoflann.hpp"
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif

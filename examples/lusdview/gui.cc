@@ -816,6 +816,41 @@ void Gui::drawDockspaceAndMenu() {
              vulkanCompiled && vulkanRtAvailable_ && (vkOwner ? rtAvail : true));
         item(RenderTechnique::CudaPathTrace, cudaAvailable_);
         item(RenderTechnique::HipPathTrace, hipAvailable_);
+        ImGui::Separator();
+        if (ImGui::BeginMenu("CUDA device", !cudaDevices_.empty())) {
+          for (size_t i = 0; i < cudaDevices_.size(); ++i) {
+            if (ImGui::MenuItem(cudaDevices_[i].c_str(), nullptr,
+                                cudaDeviceSelected_ == static_cast<int>(i))) {
+              requestedCudaDevice_ = static_cast<int>(i);
+              hasCudaDeviceRequest_ = true;
+            }
+          }
+          ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("CUDA traversal")) {
+          auto traversalItem = [&](const char* label, CudaRtBackend backend,
+                                   bool enabled = true) {
+            if (ImGui::MenuItem(label, nullptr, cudaRtBackend_ == backend,
+                                enabled)) {
+              requestedCudaRtBackend_ = backend;
+              hasCudaRtBackendRequest_ = true;
+            }
+          };
+          traversalItem("Auto", CudaRtBackend::Auto);
+          traversalItem("OptiX", CudaRtBackend::Optix, optixAvailable_);
+          traversalItem("Software BVH", CudaRtBackend::SoftwareBvh);
+          ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("ROCm/HIP device", !hipDevices_.empty())) {
+          for (size_t i = 0; i < hipDevices_.size(); ++i) {
+            if (ImGui::MenuItem(hipDevices_[i].c_str(), nullptr,
+                                hipDeviceSelected_ == static_cast<int>(i))) {
+              requestedHipDevice_ = static_cast<int>(i);
+              hasHipDeviceRequest_ = true;
+            }
+          }
+          ImGui::EndMenu();
+        }
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Path Trace Quality")) {

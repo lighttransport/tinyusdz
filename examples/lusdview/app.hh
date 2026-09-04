@@ -218,6 +218,9 @@ class App
   void setHeadless(bool on) { headless_ = on; }
   // --cuda: trace the screenshot with the CUDA BVH ray tracer (cuew runtime).
   void setCudaRt(bool on) { cudaRt_ = on; }
+  void setCudaRtBackend(CudaRtBackend backend) {
+    cudaTracer_.setRtBackend(backend);
+  }
   void setCudaCacheDir(const std::string& path) {
     cudaTracer_.setCacheDirectory(path);
   }
@@ -698,6 +701,48 @@ class App
   // Trace the CUDA viewport for one interactive frame (builds the scene on first
   // call). Returns false if CUDA is unavailable / the build failed.
   bool renderCudaViewport();
+  struct ExternalPathAccumulation {
+    std::array<float, 16> viewProj{};
+    float focusDistance{0.0f};
+    float apertureRadius{0.0f};
+    float sceneTime{0.0f};
+    int width{0};
+    int height{0};
+    int renderMode{0};
+    uint32_t maxDepth{0};
+    uint32_t rouletteDepth{0};
+    uint32_t maxSubsurfaceEvents{0};
+    uint32_t maxVolumeEvents{0};
+    uint32_t motionSegments{0};
+    uint32_t seed{0};
+    uint64_t kernelGeneration{0};
+    uint32_t samples{0};
+    uint64_t generation{0};
+    bool valid{false};
+    std::vector<uint8_t> lastRgba;
+    void invalidate() {
+      samples = 0;
+      valid = false;
+      lastRgba.clear();
+      ++generation;
+    }
+  };
+  struct ExternalTraceResult {
+    bool ok{false};
+    uint64_t generation{0};
+    uint32_t accumulationStart{0};
+    uint32_t samples{0};
+    int width{0};
+    int height{0};
+    float exposure{0.0f};
+    std::vector<uint8_t> rgba;
+    std::vector<float> linear;
+    std::string error;
+  };
+  ExternalPathAccumulation cudaPathAccum_;
+  ExternalPathAccumulation hipPathAccum_;
+  std::future<ExternalTraceResult> cudaTraceFuture_;
+  std::future<ExternalTraceResult> hipTraceFuture_;
   // Lazy, cached CUDA/HIP device-availability probe: init() compiles NVRTC/
   // hiprtc kernels, so it must not run speculatively at startup or on every
   // menu-open -- only once, on first switch attempt, then cached for the
@@ -705,6 +750,9 @@ class App
   enum class ProbeState { Unknown, Available, Unavailable };
   ProbeState cudaProbe_{ProbeState::Unknown};
   ProbeState hipProbe_{ProbeState::Unknown};
+  bool computeDevicesEnumerated_{false};
+  std::vector<std::string> cudaDevices_;
+  std::vector<std::string> hipDevices_;
 
   // CPU RT (the "R" keybinding / --cpu-rt / View > Render Technique > CPU RT).
   // Always available (no device to probe), so unlike cudaInteractive_/

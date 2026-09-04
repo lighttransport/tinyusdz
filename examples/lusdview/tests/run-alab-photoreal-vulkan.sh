@@ -2,6 +2,7 @@
 # External ALab quality smoke test. No ALab/HDR data or rendered output enters
 # the repository; callers provide the two public-asset locations.
 set -uo pipefail
+export LUSDVIEW_LOG=debug
 
 SKIP=77
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -21,9 +22,11 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 LANTERN="$ALAB_GENERATED/alab-static-lantern.usda"
 STOAT="$ALAB_GENERATED/alab-character-stoat.usda"
+OPAQUE="$ALAB_GENERATED/ALab/entity/decor_clip01/decor_clip01.usda"
 for asset in "$LANTERN" "$STOAT"; do
   if [ ! -f "$asset" ]; then echo "SKIP: missing $asset"; exit "$SKIP"; fi
 done
+if [ ! -f "$OPAQUE" ]; then echo "SKIP: missing $OPAQUE"; exit "$SKIP"; fi
 
 render() {
   local tag="$1" asset="$2" quality="$3"
@@ -45,6 +48,35 @@ render() {
 render lantern-current "$LANTERN" current
 render lantern-high "$LANTERN" high
 render stoat-high "$STOAT" high
+
+# Keep an inexpensive opaque RT sentinel separate from Lantern's glass and
+# subdivision complexity, then exercise the complete Lantern at authored
+# resolution. Hardware ray-query may deliberately fall back to compute-BVH on
+# drivers whose cold pipeline compilation is unsafe; both are Vulkan RT paths.
+render_rt() {
+  local tag="$1" asset="$2"; shift 2
+  timeout --kill-after=10s "${LUSDVIEW_ALAB_TIMEOUT:-240s}" \
+    "$BIN" --headless --backend vk --next --load-payloads --rt \
+      --frames 1 --size 640x640 --no-grid --envmap "$HDR" \
+      --envmap-intensity "${LUSDVIEW_HDR_INTENSITY:-1}" "$@" \
+      --screenshot "$OUT/$tag.ppm" "$asset" >"$OUT/$tag.log" 2>&1
+  test -s "$OUT/$tag.ppm" || {
+    echo "FAIL: $tag Vulkan RT render failed"; sed -n '1,100p' "$OUT/$tag.log"; exit 1;
+  }
+  grep -q 'Vulkan ray tracing enabled' "$OUT/$tag.log" || {
+    echo "FAIL: $tag did not enable Vulkan RT"; exit 1;
+  }
+}
+render_rt opaque-rt "$OPAQUE" --subdivision-level 0 --no-subdivision-auto
+render_rt lantern-rt-nosubd "$LANTERN" --subdivision-level 0 --no-subdivision-auto
+
+grep -qE 'drawn tris [1-9][0-9]*' "$OUT/opaque-rt.log" || {
+  echo "FAIL: opaque RT sentinel drew no geometry"; exit 1;
+}
+awk '/next: .*unique tris/ { for (i=1;i<=NF;i++) if ($(i+1)=="unique" && $i+0>0 && $i+0<100000) ok=1 }
+     END { exit ok ? 0 : 1 }' "$OUT/lantern-rt-nosubd.log" || {
+  echo "FAIL: Lantern no-subdivision RT did not retain lightweight topology"; exit 1;
+}
 
 grep -qE '4 materials, 7 textures' "$OUT/lantern-high.log" || {
   echo "FAIL: Lantern did not select the full-purpose PBR texture set"; exit 1;

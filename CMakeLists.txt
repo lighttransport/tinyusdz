@@ -5,7 +5,6 @@ set(LIGHTUSD_TARGET_NS "lightusd::lightusd") # dll lib. may not be built.
 set(LIGHTUSD_TARGET_STATIC_NS "lightusd::lightusd_static") # static lib is always built.
 set(LIGHTUSD_TARGET_STATIC "lightusd_static") # alias to ${LIGHTUSD_TARGET_STATIC_NS}
 set(BUILD_TARGET_C "c-lightusd")
-set(BUILD_TARGET_PY "pylightusd")
 #set(BUILD_TARGET_BLENDER_PY "lightusd_blender")
 set(LIGHTUSD_TEST_TARGET "test_lightusd")
 set(LIGHTUSD_BENCHMARK_TARGET "benchmark_lightusd")
@@ -232,20 +231,7 @@ set(OpenSubdiv_ROOT "" CACHE PATH "Path to OpenSubdiv source checkout (no pre-bu
 option(LIGHTUSD_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
 option(LIGHTUSD_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 
-option(LIGHTUSD_WITH_PYTHON "Build with Python binding through pybind11" OFF)
-
-if (LIGHTUSD_WITH_PYTHON)
-  # force enable Tydra C API + DLL build
-  set(LIGHTUSD_WITH_TYDRA ON CACHE INTERNAL "" FORCE)
-  set(LIGHTUSD_WITH_C_API ON CACHE INTERNAL "" FORCE)
-  set(LIGHTUSD_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
-endif()
-
-
-option(
-  LIGHTUSD_PREFER_LOCAL_PYTHON_INSTALLATION
-  "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option"
-  OFF)
+# The Python extension is built by setup.py from src/python using the CPython C API.
 
 option(LIGHTUSD_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${LIGHTUSD_DEFAULT_WITH_PXR_COMPAT_API})
 
@@ -254,12 +240,6 @@ if (NOT LIGHTUSD_WITH_TYDRA AND LIGHTUSD_WITH_C_API)
   message(WARNING "C API requires Tydra enabled, so disable C API build. Please do not set LIGHTUSD_WITH_TYDRA Off if you need C API library")
   set(LIGHTUSD_WITH_C_API Off CACHE INTERNAL "" FORCE)
 endif ()
-
-# deprecated. to be removed
-#option(
-#  LIGHTUSD_WITH_BLENDER_ADDON
-#  "Build with Python module for Blender(`LIGHTUSD_WITH_PYTHON` is force set to ON"
-#  OFF)
 
 option(LIGHTUSD_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
@@ -442,11 +422,6 @@ if (PROJECT_IS_TOP_LEVEL)
     message(STATUS "Use C++20 for c++20 coroutine.")
     # Coroutine support requires C++20
     set(CMAKE_CXX_STANDARD 20)
-  elseif(LIGHTUSD_WITH_PYTHON)
-    #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
-
-    # for pybind11
-    set(CMAKE_CXX_STANDARD 17)
   else()
     # Require strict C++17 mode(e.g. `-std=c++17`)
     set(CMAKE_CXX_STANDARD 17)
@@ -508,49 +483,6 @@ endif()
 
 if (LIGHTUSD_WITH_MCP_SERVER)
   set(LIGHTUSD_WITH_JSON On)
-endif()
-
-if(LIGHTUSD_WITH_PYTHON)
-
-  # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
-  # We may switch to nanobind at some point(probably around 2024?)
-
-  # We build monolithic python module, so build liblightusd as a static library
-  # with PIC enabled.
-  # NOTE: LightUSD now builds static lib with PIC enabled by default, so commented out here.
-  # set(CMAKE_POSITION_INDEPENDENT_CODE On)
-
-  #[nanobind]
-  #set(NB_SHARED
-  #    OFF
-  #    CACHE INTERNAL "")
-  #set(NB_STATIC
-  #    ON
-  #    CACHE INTERNAL "")
-
-  # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
-  # and use `FindPython3`, not `FindPython`
-  if(LIGHTUSD_PREFER_LOCAL_PYTHON_INSTALLATION)
-    #message(STATUS "Local Python")
-    set(Python3_FIND_FRAMEWORK NEVER) # Do not search framework python
-    set(Python3_FIND_STRATEGY LOCATION)
-    set(Python3_FIND_REGISTRY NEVER) # Windows only
-  else()
-    set(Python_FIND_FRAMEWORK LAST
-    )# Prefer Brew/Conda to Apple framework python
-  endif()
-
-  find_package(
-    Python3
-    COMPONENTS Interpreter Development.Module
-    REQUIRED)
-
-  #message(STATUS "Python include dirs: " ${Python_INCLUDE_DIRS})
-  message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
-
-  #add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
-
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
 set(LIGHTUSD_SOURCES
@@ -1000,12 +932,6 @@ if(LIGHTUSD_WITH_USDVOL)
   list(APPEND LIGHTUSD_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tinyvdb/tinyvdb_io.c)
 endif()
-
-set(LIGHTUSD_PYTHON_BINDING_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/python-bindings.cc)
-
-#set(LIGHTUSD_BLENDER_PYTHON_BINDING_SOURCES
-#    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
 
 if(LIGHTUSD_WITH_TIFF)
   list(APPEND LIGHTUSD_DEP_SOURCES
@@ -1994,65 +1920,6 @@ if(LIGHTUSD_WITH_C_API)
     ${BUILD_TARGET_C}_static PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()
 
-if(LIGHTUSD_WITH_PYTHON)
-
-  # TODO: Fully Remove pybind11-based python binding
-  ## For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
-  ## We may switch to nanobind at some point(probably around 2024?)
-
-  ## build monolithic .dll
-  ##nanobind_add_module(${BUILD_TARGET_PY} ${LIGHTUSD_PYTHON_BINDING_SOURCES})
-
-  #pybind11_add_module(${BUILD_TARGET_PY} ${LIGHTUSD_PYTHON_BINDING_SOURCES})
-  #add_sanitizers(${BUILD_TARGET_PY})
-  #target_include_directories(
-  #  ${BUILD_TARGET_PY} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-
-  #target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${LIGHTUSD_TARGET_STATIC})
-
-  ## Use 'c' prefix
-  ## TODO: Use `cpp` prefix?
-  #set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "clightusd")
-
-  ## copy python binding .so file to python/
-  ## For developer
-  ## NOTE: `POST_BUILD` command is not triggered when building python module using
-  ## `python setup.py build`
-  #add_custom_command(
-  #  TARGET ${BUILD_TARGET_PY}
-  #  POST_BUILD
-  #  COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_PY}>"
-  #          "${CMAKE_SOURCE_DIR}/python/lightusd/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
-  #  COMMENT "copying python module file to python/lightusd"
-  #  VERBATIM)
-  ## For pypi packaging
-  #install(TARGETS ${BUILD_TARGET_PY} LIBRARY DESTINATION lightusd)
-
-
-  # copy C lightusd .so file to python/lightusd/
-  # For developer
-  # NOTE: `POST_BUILD` command is not triggered when building python module using
-  # `python setup.py build`
-  add_custom_command(
-    TARGET ${BUILD_TARGET_C}
-    POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_C}>"
-            "${CMAKE_SOURCE_DIR}/python/lightusd/$<TARGET_FILE_NAME:${BUILD_TARGET_C}>"
-    COMMENT "Copying libc-lightusd.so/c-lightusd.dll file to <lightusd>/python/lightusd"
-    VERBATIM)
-
-  # TODO: Run ctypesgen?
-
-  #
-  # target for setup.py
-  # TODO: Use custom target and supply `cmake_install_target` in setup.py?
-  # https://scikit-build.readthedocs.io/en/latest/usage.html#scikit-build-options
-  #
-  install(TARGETS ${BUILD_TARGET_C} LIBRARY DESTINATION lightusd)
-
-
-endif()
-
 # TODO: deprecate in next major version
 if(LIGHTUSD_WITH_TOOL_USDA_PARSER AND LIGHTUSD_WITH_MODULE_USDA_READER)
   add_executable(
@@ -2078,18 +1945,6 @@ if(LIGHTUSD_WITH_TOOL_USDC_PARSER AND LIGHTUSD_WITH_MODULE_USDC_READER)
   target_include_directories(usdc_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
   target_link_libraries(usdc_parser PRIVATE ${LIGHTUSD_TARGET_STATIC})
 endif()
-
-#if(LIGHTUSD_WITH_BLENDER_ADDON)
-#  pybind11_add_module(${BUILD_TARGET_BLENDER_PY}
-#                      ${LIGHTUSD_BLENDER_PYTHON_BINDING_SOURCES})
-#  add_sanitizers(${BUILD_TARGET_BLENDER_PY})
-#
-#  # For Python.h header files. Assume Blender 2.93 LTS(Python 3.9)
-#  target_include_directories(
-#    ${BUILD_TARGET_BLENDER_PY}
-#    PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
-#
-#endif()
 
 # Enable CTest before the example subdirectories are added, so a subdirectory
 # (e.g. examples/lusdview) can register its own tests with add_test(). The

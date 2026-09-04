@@ -292,7 +292,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                                   {"cuda", "deferred"}, {"hip", "deferred"}}},
             {"deformation", json{{"usdskel_skinning", true},
                                   {"blendshapes", true},
-                                  {"adapters", json::array({"usdskel", "usd-overlay"})},
+                                  {"adapters", json::array({"usdskel", "usd-overlay", "body-playback"})},
                                   {"external_adapter", "json-rpc-overlay"}}},
             {"physics", json{{"mode", "diagnostic-rigid-body-preview"},
                               {"simulation", true},
@@ -317,7 +317,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     return {{"transport", "json-rpc-2.0-stdio"},
             {"methods", json::array({"rig.initialize", "rig.inspect",
                                       "rig.submit", "rig.status", "rig.cancel",
-                                      "dna.inspect", "dna.convert", "dna.evaluate"})},
+                                      "dna.inspect", "dna.convert", "dna.evaluate",
+                                      "body.animate"})},
             {"authoritative_result", "USD overlay layer"},
             {"input_path", loaded_.filepath},
             {"facial_first", true}, {"body", "next"},
@@ -333,6 +334,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                        {"capabilities", json::array({"skinning", "blendshapes", "inbetweens"})}},
                   json{{"name", "usd-overlay"}, {"active", true},
                        {"capabilities", json::array({"controls", "correctives", "physics-metadata"})}},
+                  json{{"name", "body-playback"}, {"active", !autoriggerExecutable_.empty()},
+                       {"capabilities", json::array({"usdskel-animation", "timeline", "contacts"})}},
                   json{{"name", "external-jsonrpc"}, {"active", !autoriggerExecutable_.empty()},
                        {"state", autoriggerExecutable_.empty() ? "not-configured" : "ready"}}})},
               {"evaluation_order", json::array({"overlay", "blendshape", "skinning", "physics"})}};
@@ -359,6 +362,55 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     }
     if (op == "apply-overlay") {
       return mcpVirtualHuman("apply_rig_overlay", args, err);
+    }
+    if (op == "body-playback") {
+      if (autoriggerExecutable_.empty() || loaded_.filepath.empty()) {
+        err = "vchar_deformer body-playback requires --autorigger and a loaded asset";
+        return json::object();
+      }
+      const std::string jointsPath = args.value("joints_path", std::string());
+      const std::string trackPath = args.value("track_path", std::string());
+      const std::string rigLayer = args.value("rig_layer", loaded_.filepath);
+      if (jointsPath.empty() || trackPath.empty() || rigLayer.empty()) {
+        err = "body-playback requires joints_path, track_path, and rig_layer";
+        return json::object();
+      }
+      const int timeoutMs = std::max(100, args.value("timeout_ms", 30000));
+      std::filesystem::path output = args.value("output", std::string());
+      if (output.empty()) output = std::filesystem::temp_directory_path() /
+          ("vchar-lightrig-body-" + std::to_string(sceneGen_) + ".usda");
+      const json request = { {"jsonrpc", "2.0"}, {"id", "body-playback"},
+        {"method", "body.animate"}, {"params", {
+          {"rig_layer", rigLayer}, {"joints_path", jointsPath},
+          {"track_path", trackPath}, {"output_layer", output.string()}}} };
+      const vchar::AutoriggerResult result = vchar::RunWorkerRequest(
+          autoriggerExecutable_, request.dump(), std::chrono::milliseconds(timeoutMs));
+      if (!result.ok) { err = result.timedOut ? "body playback worker timed out" : result.error; return json::object(); }
+      const json response = json::parse(result.response, nullptr, false);
+      if (response.is_discarded() || !response.contains("result") ||
+          !response["result"].contains("output_layer")) {
+        err = "body playback worker returned malformed response";
+        return json::object();
+      }
+      const std::string animation = response["result"].value("output_layer", output.string());
+      json applyArgs = {{"path", animation}};
+      if (response["result"].contains("start_time"))
+        applyArgs["animation_start"] = response["result"]["start_time"];
+      if (response["result"].contains("end_time"))
+        applyArgs["animation_end"] = response["result"]["end_time"];
+      if (response["result"].contains("fps"))
+        applyArgs["animation_fps"] = response["result"]["fps"];
+      json applied = mcpVirtualHuman("apply_rig_overlay", applyArgs, err);
+      if (!err.empty()) return json::object();
+      playRequested_ = args.value("autoplay", false);
+      applied["animation_layer"] = animation;
+      applied["playback"] = { {"autoplay_requested", playRequested_},
+                               {"state", playRequested_ ? "pending" : "paused"} };
+      applied["worker_response"] = response["result"];
+      for (const char* key : {"frame_count", "start_time", "end_time", "fps"}) {
+        if (response["result"].contains(key)) applied[key] = response["result"][key];
+      }
+      return applied;
     }
     if (op == "dna-inspect" || op == "dna-evaluate") {
       if (autoriggerExecutable_.empty()) {
@@ -399,7 +451,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       }
       return resultPayload;
     }
-    err = "vchar_deformer op must be status, autorig, apply-overlay, dna-inspect, or dna-evaluate";
+    err = "vchar_deformer op must be status, autorig, apply-overlay, body-playback, dna-inspect, or dna-evaluate";
     return json::object();
   }
 
@@ -423,7 +475,14 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         std::filesystem::temp_directory_path() /
         ("vchar-rig-session-" + std::to_string(++serial) + ".usda");
     std::ofstream stream(root, std::ios::binary | std::ios::trunc);
-    stream << "#usda 1.0\n(\n    subLayers = [\n        @" << overlay
+    stream << "#usda 1.0\n(\n";
+    if (args.contains("animation_start") && args.contains("animation_end")) {
+      stream << "    timeCodesPerSecond = "
+             << args.value("animation_fps", 1.0) << "\n"
+             << "    startTimeCode = " << args["animation_start"] << "\n"
+             << "    endTimeCode = " << args["animation_end"] << "\n";
+    }
+    stream << "    subLayers = [\n        @" << overlay
            << "@,\n        @" << loaded_.filepath << "@\n    ]\n)\n";
     if (!stream) {
       err = "apply_rig_overlay: could not create session root";
@@ -1100,13 +1159,30 @@ json App::mcpShaderReload(const json& args, std::string& err) {
 json App::mcpRenderStats(const json&, std::string&) {
   const char* tier = adaptiveTier_ == 2 ? "interactive" :
                      (adaptiveTier_ == 1 ? "balanced" : "full");
+  const char* cudaRequest = cudaTracer_.rtBackend() == CudaRtBackend::Optix
+                                ? "optix"
+                                : (cudaTracer_.rtBackend() ==
+                                           CudaRtBackend::SoftwareBvh
+                                       ? "software" : "auto");
   return json{{"ui_fps", ImGui::GetIO().Framerate},
               {"render_fps", renderFps_},
               {"threaded", renderThreadActive_},
               {"adaptive_quality", adaptiveQuality_},
               {"adaptive_tier", tier},
               {"render_scale", adaptiveRenderScale_},
-              {"target_render_fps", adaptiveTargetFps_}};
+              {"target_render_fps", adaptiveTargetFps_},
+              {"cuda_rt", {{"transport", cudaTracer_.usesOptixTransport()
+                                                  ? "optix" : "software-bvh"},
+                           {"requested", cudaRequest},
+                           {"optix_available", cudaTracer_.optixAvailable()},
+                           {"optix_status", cudaTracer_.optixStatus()},
+                           {"optix_abi", cudaTracer_.optixAbiVersion()},
+                           {"optix_gas_bytes", cudaTracer_.optixGasBytes()},
+                           {"optix_ias_bytes", cudaTracer_.optixIasBytes()},
+                           {"optix_acceleration_bytes",
+                            cudaTracer_.optixAccelerationBytes()},
+                           {"fallback_reason",
+                            cudaTracer_.optixFallbackReason()}}}};
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {

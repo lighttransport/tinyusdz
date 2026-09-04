@@ -44,7 +44,7 @@ mkdir -p "$OUT"
 # --- raster shaders (mesh / line) ------------------------------------------
 # --vn <sym> emits 'static const uint32_t <sym>[] = {...}', matching the names
 # vk_renderer.cc includes (mesh_vert.spv.h -> mesh_vert_spv, etc.).
-for sh in mesh.vert mesh.frag wire.frag environment.vert environment.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tess.tese mesh_inst.vert mesh_inst.frag shadow_inst.frag line.vert line.frag line_depth.frag volume.vert volume.frag nonmesh.vert nonmesh.frag; do
+for sh in mesh.vert mesh.frag wire.vert wire.frag environment.vert environment.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tess.tese mesh_inst.vert mesh_inst.frag shadow_inst.frag line.vert line.frag line_depth.frag volume.vert volume.frag nonmesh.vert nonmesh.frag; do
   sym="${sh/./_}"          # mesh.vert -> mesh_vert
   echo "==> $sh -> embedded/${sym}.spv.h (${sym}_spv)"
   "$GLSLANG" -V --vn "${sym}_spv" -o "$OUT/${sym}.spv.h" "$HERE/$sh"
@@ -136,6 +136,31 @@ else
   rm -f "$OUT/raytrace_fast_comp.spv.h"
   echo "==> WARNING: graph-free RT shader omitted"
 fi
+
+# The default interactive ray-query pipeline excludes the production path
+# integrator entirely. Keeping that code out of SPIR-V is important on NVIDIA:
+# disabling MaterialX alone still leaves a module large enough to spend minutes
+# in vkCreateComputePipelines.
+RAYTRACE_INTERACTIVE_TMP="$(mktemp "${TMPDIR:-/tmp}/lusdview-raytrace-interactive.XXXXXX.spv")"
+if [ -n "$GLSLC_FAST" ] && [ -x "$GLSLC_FAST" ] &&
+  "$GLSLC_FAST" --target-env=vulkan1.2 "$RT_SHADER_DEFINE" \
+      -DLUSDVIEW_RT_FAST_MATERIAL=1 \
+      -DLUSDVIEW_RT_DISABLE_MTLX=1 -DLUSDVIEW_RT_DISABLE_DEBUG_RAYS=1 \
+      -DLUSDVIEW_RT_INTERACTIVE_ONLY=1 \
+      -o "$RAYTRACE_INTERACTIVE_TMP" "$HERE/raytrace.comp"; then
+  xxd -i -c 12 "$RAYTRACE_INTERACTIVE_TMP" \
+    "$OUT/raytrace_interactive_comp.spv.h"
+  sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_interactive_comp_spv[]/' \
+    "$OUT/raytrace_interactive_comp.spv.h"
+  sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_interactive_comp_spv_len/' \
+    "$OUT/raytrace_interactive_comp.spv.h"
+  sed -i '1i#pragma once' "$OUT/raytrace_interactive_comp.spv.h"
+  echo "==> raytrace.comp (interactive-only) -> embedded/raytrace_interactive_comp.spv.h"
+else
+  rm -f "$OUT/raytrace_interactive_comp.spv.h"
+  echo "==> WARNING: interactive-only RT shader omitted"
+fi
+rm -f "$RAYTRACE_INTERACTIVE_TMP"
 cleanup_raytrace_fast_tmp
 trap - EXIT
 cleanup_raytrace_tmp

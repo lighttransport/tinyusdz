@@ -323,6 +323,8 @@ int main(int argc, char** argv) {
   bool transparencyExplicit = false;
   bool vkDeviceExplicit = false;
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  lusdview::CudaRtBackend cudaRtBackend = lusdview::CudaRtBackend::Auto;
+  bool cudaRtBackendExplicit = false;
   std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
@@ -1029,6 +1031,46 @@ int main(int argc, char** argv) {
       focusDistanceOverride = v;
     } if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
+    } if (std::strcmp(argv[i], "--optix") == 0) {
+      wantCuda = true;
+      cudaRtBackend = lusdview::CudaRtBackend::Optix;
+      cudaRtBackendExplicit = true;
+    } if (std::strcmp(argv[i], "--no-optix") == 0) {
+      wantCuda = true;
+      cudaRtBackend = lusdview::CudaRtBackend::SoftwareBvh;
+      cudaRtBackendExplicit = true;
+    } if (std::strcmp(argv[i], "--cuda-rt-backend") == 0) {
+      if (i + 1 >= argc) {
+        LOGE("--cuda-rt-backend requires auto, optix, or software");
+        return 1;
+      }
+      const char* value = argv[++i];
+      cudaRtBackendExplicit = true;
+      if (std::strcmp(value, "auto") == 0)
+        cudaRtBackend = lusdview::CudaRtBackend::Auto;
+      else if (std::strcmp(value, "optix") == 0) {
+        cudaRtBackend = lusdview::CudaRtBackend::Optix;
+        wantCuda = true;
+      } else if (std::strcmp(value, "software") == 0)
+        cudaRtBackend = lusdview::CudaRtBackend::SoftwareBvh;
+      else {
+        LOGE("--cuda-rt-backend requires auto, optix, or software");
+        return 1;
+      }
+    } if (std::strncmp(argv[i], "--cuda-rt-backend=", 18) == 0) {
+      const char* value = argv[i] + 18;
+      cudaRtBackendExplicit = true;
+      if (std::strcmp(value, "auto") == 0)
+        cudaRtBackend = lusdview::CudaRtBackend::Auto;
+      else if (std::strcmp(value, "optix") == 0) {
+        cudaRtBackend = lusdview::CudaRtBackend::Optix;
+        wantCuda = true;
+      } else if (std::strcmp(value, "software") == 0)
+        cudaRtBackend = lusdview::CudaRtBackend::SoftwareBvh;
+      else {
+        LOGE("--cuda-rt-backend requires auto, optix, or software");
+        return 1;
+      }
     } if (std::strcmp(argv[i], "--cuda-cache-dir") == 0) {
       if (i + 1 >= argc) {
         LOGE("--cuda-cache-dir requires a non-empty path");
@@ -1210,6 +1252,9 @@ int main(int argc, char** argv) {
           "  --f-stop F / --focus-distance D  Override USD camera lens values.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
+          "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
+          "  --optix       Alias for --cuda --cuda-rt-backend optix.\n"
+          "  --no-optix    Alias for --cuda --cuda-rt-backend software.\n"
           "  --cuda-cache-dir PATH  Store compiled CUDA PTX in PATH (default: the "
           "platform cache directory under lusdview/cuda).\n"
           "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
@@ -1788,6 +1833,14 @@ int main(int argc, char** argv) {
         transparencyMode = lusdview::TransparencyMode::Auto;
       }
     }
+    if (config.config.cudaRtBackend && !cudaRtBackendExplicit) {
+      if (*config.config.cudaRtBackend == "optix")
+        cudaRtBackend = lusdview::CudaRtBackend::Optix;
+      else if (*config.config.cudaRtBackend == "software")
+        cudaRtBackend = lusdview::CudaRtBackend::SoftwareBvh;
+      else
+        cudaRtBackend = lusdview::CudaRtBackend::Auto;
+    }
     if (config.config.materialXVulkanShaderMaxKiB &&
         !materialXVulkanShaderMaxExplicit) {
       materialXVulkanShaderMaxKiB = static_cast<size_t>(
@@ -2062,6 +2115,7 @@ int main(int argc, char** argv) {
     wantHip = false;
   }
   app.setCudaRt(wantCuda);
+  app.setCudaRtBackend(cudaRtBackend);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
   app.setCpuRt(wantCpuRt);

@@ -134,7 +134,7 @@ Gates before publish:
 
 ```bash
 # Editable install (builds into build_py_ext/; re-run after touching
-# src/python/module.c or any header it includes transitively):
+# src/python/py-*.c or any header it includes transitively):
 pip install -e . --no-build-isolation
 cd python && python3 -m pytest tests/ -q
 

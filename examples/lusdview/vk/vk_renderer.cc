@@ -45,6 +45,7 @@
 #include "mesh_tess_vert.spv.h"
 #include "mesh_vert.spv.h"
 #include "wire_frag.spv.h"
+#include "wire_vert.spv.h"
 #include "nonmesh_frag.spv.h"
 #include "nonmesh_frag_oit.spv.h"
 #include "nonmesh_vert.spv.h"
@@ -57,6 +58,10 @@
 #if __has_include("raytrace_fast_comp.spv.h")
 #include "raytrace_fast_comp.spv.h"  // graph-free RT variant
 #define LUSDVIEW_HAVE_FAST_RT_SHADER 1
+#endif
+#if __has_include("raytrace_interactive_comp.spv.h")
+#include "raytrace_interactive_comp.spv.h"
+#define LUSDVIEW_HAVE_INTERACTIVE_RT_SHADER 1
 #endif
 #endif
 #if defined(LUSDVIEW_HAVE_SWRT_SHADER) && LUSDVIEW_HAVE_SWRT_SHADER
@@ -1365,10 +1370,6 @@ bool VulkanRenderer::createDevice(std::string* err) {
     enabledFeatures.tessellationShader = VK_TRUE;
     tessSupported_ = true;
   }
-  if (supported.fillModeNonSolid) {
-    enabledFeatures.fillModeNonSolid = VK_TRUE;
-    surfaceWireSupported_ = true;
-  }
   if (supported.samplerAnisotropy) {
     enabledFeatures.samplerAnisotropy = VK_TRUE;
     samplerAnisotropySupported_ = true;
@@ -2406,25 +2407,55 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     if (envVs) vkDestroyShaderModule(device_, envVs, nullptr);
     if (envFs) vkDestroyShaderModule(device_, envFs, nullptr);
   }
-  if (r == VK_SUCCESS && surfaceWireSupported_) {
+  if (r == VK_SUCCESS) {
+    VkShaderModule wireVs = createShader(wire_vert_spv, sizeof(wire_vert_spv));
     VkShaderModule wireFs = createShader(wire_frag_spv, sizeof(wire_frag_spv));
     VkPipelineShaderStageCreateInfo wireStages[2] = {stages[0], stages[1]};
+    if (wireVs) wireStages[0].module = wireVs;
     if (wireFs) wireStages[1].module = wireFs;
+    VkPipelineInputAssemblyStateCreateInfo wireIa = ia;
+    wireIa.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     VkPipelineDepthStencilStateCreateInfo wireDs = ds;
+    wireDs.depthTestEnable = VK_TRUE;
     wireDs.depthWriteEnable = VK_FALSE;
     wireDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     VkPipelineRasterizationStateCreateInfo wireRs = rs;
-    wireRs.polygonMode = VK_POLYGON_MODE_LINE;
+    wireRs.depthBiasEnable = VK_TRUE;
+    wireRs.depthBiasConstantFactor = -1.0f;
+    wireRs.depthBiasSlopeFactor = -1.0f;
     VkGraphicsPipelineCreateInfo wireCi = ci;
     wireCi.pStages = wireStages;
+    wireCi.pInputAssemblyState = &wireIa;
     wireCi.pDepthStencilState = &wireDs;
     wireCi.pRasterizationState = &wireRs;
-    if (!wireFs || vkCreateGraphicsPipelines(device_, pipelineCache, 1, &wireCi, nullptr,
+    if (!wireVs || !wireFs || vkCreateGraphicsPipelines(device_, pipelineCache, 1, &wireCi, nullptr,
                                   &wirePipeline_) != VK_SUCCESS) {
       wirePipeline_ = VK_NULL_HANDLE;
     }
+    if (wireVs && wireFs) {
+      VkPipelineDepthStencilStateCreateInfo hiddenDs = wireDs;
+      hiddenDs.depthTestEnable = VK_FALSE;
+      VkPipelineColorBlendAttachmentState hiddenAttachment = cba;
+      hiddenAttachment.blendEnable = VK_TRUE;
+      hiddenAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+      hiddenAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+      hiddenAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+      hiddenAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+      hiddenAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+      hiddenAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+      VkPipelineColorBlendStateCreateInfo hiddenBlend = cb;
+      hiddenBlend.pAttachments = &hiddenAttachment;
+      VkGraphicsPipelineCreateInfo hiddenCi = wireCi;
+      hiddenCi.pDepthStencilState = &hiddenDs;
+      hiddenCi.pColorBlendState = &hiddenBlend;
+      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &hiddenCi,
+                                    nullptr, &wireOccludedPipeline_) !=
+          VK_SUCCESS)
+        wireOccludedPipeline_ = VK_NULL_HANDLE;
+    }
+    if (wireVs) vkDestroyShaderModule(device_, wireVs, nullptr);
     if (wireFs) vkDestroyShaderModule(device_, wireFs, nullptr);
-    reportPipeline("surface wire");
+    reportPipeline("authored cage wire");
   }
   // Translucent variant: same shaders/state, but premultiplied "over" blend
   // (mesh.frag premultiplies for Blend materials) and depth-write-off so
@@ -2580,7 +2611,6 @@ void VulkanRenderer::createTessPipeline() {
   VkShaderModule tcs = createShader(mesh_tess_tesc_spv, sizeof(mesh_tess_tesc_spv));
   VkShaderModule tes = createShader(mesh_tess_tese_spv, sizeof(mesh_tess_tese_spv));
   VkShaderModule fs = createShader(mesh_frag_spv, sizeof(mesh_frag_spv));
-  VkShaderModule wireFs = createShader(wire_frag_spv, sizeof(wire_frag_spv));
   if (!vs || !tcs || !tes || !fs) {
     if (vs) vkDestroyShaderModule(device_, vs, nullptr);
     if (tcs) vkDestroyShaderModule(device_, tcs, nullptr);
@@ -2690,28 +2720,10 @@ void VulkanRenderer::createTessPipeline() {
   ci.subpass = 0;
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &tessPipeline_);
-  if (r == VK_SUCCESS && surfaceWireSupported_) {
-    VkPipelineShaderStageCreateInfo wireStages[4] = {stages[0], stages[1],
-                                                     stages[2], stages[3]};
-    if (wireFs) wireStages[3].module = wireFs;
-    VkPipelineRasterizationStateCreateInfo wireRs = rs;
-    wireRs.polygonMode = VK_POLYGON_MODE_LINE;
-    VkPipelineDepthStencilStateCreateInfo wireDs = ds;
-    wireDs.depthWriteEnable = VK_FALSE;
-    wireDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    VkGraphicsPipelineCreateInfo wireCi = ci;
-    wireCi.pStages = wireStages;
-    wireCi.pRasterizationState = &wireRs;
-    wireCi.pDepthStencilState = &wireDs;
-    if (!wireFs || vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &wireCi, nullptr,
-                                  &tessWirePipeline_) != VK_SUCCESS)
-      tessWirePipeline_ = VK_NULL_HANDLE;
-  }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, tcs, nullptr);
   vkDestroyShaderModule(device_, tes, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
-  if (wireFs) vkDestroyShaderModule(device_, wireFs, nullptr);
   if (r != VK_SUCCESS) {
     tessPipeline_ = VK_NULL_HANDLE;
     LOGD("tessellation pipeline creation failed (%d); using coarse displacement", int(r));
@@ -6573,6 +6585,8 @@ void VulkanRenderer::destroyScene() {
     if (m.eboMem) vkFreeMemory(device_, m.eboMem, nullptr);
     if (m.wireEbo) vkDestroyBuffer(device_, m.wireEbo, nullptr);
     if (m.wireEboMem) vkFreeMemory(device_, m.wireEboMem, nullptr);
+    if (m.wireVbo) vkDestroyBuffer(device_, m.wireVbo, nullptr);
+    if (m.wireVboMem) vkFreeMemory(device_, m.wireVboMem, nullptr);
     for (auto& lod : m.prototypeLods) {
       if (lod.ebo) vkDestroyBuffer(device_, lod.ebo, nullptr);
       if (lod.eboMem) vkFreeMemory(device_, lod.eboMem, nullptr);
@@ -8372,6 +8386,14 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
                        sm.wireframeIndices.data(), &gm.wireEbo,
                        &gm.wireEboMem, false, poolStatic)) {
     gm.wireIndexCount = static_cast<uint32_t>(sm.wireframeIndices.size());
+    if (std::getenv("LUSDVIEW_DEBUG_WIRE"))
+      LOGI("Vulkan authored cage upload: %u line indices", gm.wireIndexCount);
+  }
+  if (!sm.wireframeVertices.empty()) {
+    createHostBuffer(sm.wireframeVertices.size() * sizeof(DrawVertex),
+                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     sm.wireframeVertices.data(), &gm.wireVbo,
+                     &gm.wireVboMem, false, poolStatic);
   }
 
   // Per-triangle source USD face id buffer (source-face-id AOV). Always created so
@@ -9160,6 +9182,12 @@ void VulkanRenderer::uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) {
                        mesh.wireframeIndices.data(), &gpu.wireEbo,
                        &gpu.wireEboMem, false, true)) {
     gpu.wireIndexCount = static_cast<uint32_t>(mesh.wireframeIndices.size());
+  }
+  if (!mesh.wireframeVertices.empty() && gpu.wireVbo == VK_NULL_HANDLE) {
+    createHostBuffer(mesh.wireframeVertices.size() * sizeof(DrawVertex),
+                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     mesh.wireframeVertices.data(), &gpu.wireVbo,
+                     &gpu.wireVboMem, false, true);
   }
 }
 
@@ -11114,11 +11142,18 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &rtPipelineLayout_),
            "rt pipeline layout");
 
-  const bool hasMaterialXGraphs =
-      MaterialsNeedFullRtShader(rtMaterialsCpu_);
+  const bool hasMaterialXGraphs = MaterialsNeedFullRtShader(rtMaterialsCpu_);
   rtUsesProceduralMaterialX_ =
       MaterialsUseProceduralRtMaterialX(rtMaterialsCpu_);
-  rtUsesFullShader_ = hasMaterialXGraphs;
+  rtUsesFullShader_ = false;
+#if defined(LUSDVIEW_HAVE_INTERACTIVE_RT_SHADER) && \
+    LUSDVIEW_HAVE_INTERACTIVE_RT_SHADER
+  constexpr bool interactiveShader = true;
+  const void* rtShaderCode =
+      static_cast<const void*>(raytrace_interactive_comp_spv);
+  size_t rtShaderBytes = sizeof(raytrace_interactive_comp_spv);
+#else
+  constexpr bool interactiveShader = false;
 #if defined(LUSDVIEW_HAVE_FAST_RT_SHADER) && LUSDVIEW_HAVE_FAST_RT_SHADER
   const void* rtShaderCode = hasMaterialXGraphs
                                   ? static_cast<const void*>(raytrace_comp_spv)
@@ -11129,6 +11164,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
 #else
   const void* rtShaderCode = raytrace_comp_spv;
   const size_t rtShaderBytes = sizeof(raytrace_comp_spv);
+#endif
 #endif
   VkShaderModule cs = createShader(rtShaderCode, rtShaderBytes);
   if (!cs) {
@@ -11192,7 +11228,8 @@ bool VulkanRenderer::createRtResources(std::string* err) {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
     return value != nullptr && std::atoi(value) != 0;
   }();
-  if (pipelineCompileRequiredSupported_ && !allowBlockingColdCompile) {
+  if (!interactiveShader && pipelineCompileRequiredSupported_ &&
+      !allowBlockingColdCompile) {
     cpci.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
   } else if (!cacheHit) {
     cpci.flags = VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
@@ -11202,14 +11239,13 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   // block inside vkCreateComputePipelines instead of returning
   // VK_PIPELINE_COMPILE_REQUIRED. Do not enter the driver at all for a known
   // cold shader unless the user explicitly requested cache warming.
-  VkResult r = !allowBlockingColdCompile
-                   ? VK_PIPELINE_COMPILE_REQUIRED
-                   : vkCreateComputePipelines(device_, pipeCache, 1, &cpci,
-                                              nullptr, &rtPipeline_);
+  VkResult r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
+                                        &rtPipeline_);
   // A cold full MaterialX pipeline is optional. If the driver reports that it
   // would need compilation, immediately install the compact ABI-compatible
   // variant and leave full promotion for a later cache-warmed attempt.
-  if (r == VK_PIPELINE_COMPILE_REQUIRED && hasMaterialXGraphs) {
+  if (r == VK_PIPELINE_COMPILE_REQUIRED && hasMaterialXGraphs &&
+      !rtPipeline_) {
 #if defined(LUSDVIEW_HAVE_FAST_RT_SHADER) && LUSDVIEW_HAVE_FAST_RT_SHADER
     vkDestroyShaderModule(device_, cs, nullptr);
     rtShaderCode = static_cast<const void*>(raytrace_fast_comp_spv);
@@ -11220,10 +11256,8 @@ bool VulkanRenderer::createRtResources(std::string* err) {
       cpci.flags = allowBlockingColdCompile
                        ? VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT
                        : VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
-      r = !allowBlockingColdCompile
-              ? VK_PIPELINE_COMPILE_REQUIRED
-              : vkCreateComputePipelines(device_, pipeCache, 1, &cpci,
-                                         nullptr, &rtPipeline_);
+      r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
+                                   &rtPipeline_);
       rtUsesFullShader_ = false;
       LOGW("Vulkan RT full MaterialX pipeline requires cold compilation; "
            "using compact pipeline until the full variant is cache-warmed");
@@ -11233,7 +11267,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   if (std::getenv("LUSDVIEW_RT_TIMING")) {
     const double seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - pipelineStart).count();
-    LOGI("[vk] RT compute pipeline: %.3f s (%s cache, shader %.1f KiB)",
+    LOGD("[vk] RT compute pipeline: %.3f s (%s cache, shader %.1f KiB)",
          seconds, cacheHit ? "warm" : "cold",
          static_cast<double>(rtShaderBytes) / 1024.0);
   }
@@ -11334,7 +11368,7 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
       const auto pipelineStart = std::chrono::steady_clock::now();
       const VkResult result = vkCreateComputePipelines(
           device_, cache, 1, &info, nullptr, &pipeline);
-      LOGI("[vk] compute-BVH full %s pipeline: %.3f s (%s cache, shader %.1f KiB)",
+      LOGD("[vk] compute-BVH full %s pipeline: %.3f s (%s cache, shader %.1f KiB)",
            label,
            std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                          pipelineStart).count(),
@@ -11393,14 +11427,15 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
     swRtPipeline_ = fullPreview;
     swRtPathPipeline_ = fullPath;
     rtUsesFullShader_ = true;
-    LOGI("Vulkan compute-BVH selected full MaterialX shaders in %.3f s",
+    LOGD("Vulkan compute-BVH selected full MaterialX shaders in %.3f s",
          std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
              .count());
     return;
   }
 #endif
 #if defined(LUSDVIEW_HAVE_RT_SHADER) && LUSDVIEW_HAVE_RT_SHADER
-  if (rtUsesFullShader_ || !MaterialsNeedFullRtShader(materials) ||
+  if (!pathTrace_.enabled || rtUsesFullShader_ ||
+      !MaterialsNeedFullRtShader(materials) ||
       rtPipeline_ == VK_NULL_HANDLE ||
       rtTechnique_ != RtTechnique::kHardware) {
     return;
@@ -11584,7 +11619,7 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
         device_, cache, 1, &info, nullptr, output);
     const double seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - start).count();
-    LOGI("[vk] compute-BVH %s pipeline: %.3f s (%s cache, shader %.1f KiB)",
+    LOGD("[vk] compute-BVH %s pipeline: %.3f s (%s cache, shader %.1f KiB)",
          label, seconds, initial.empty() ? "cold" : "warm",
          static_cast<double>(bytes) / 1024.0);
     vkDestroyShaderModule(device_, module, nullptr);
@@ -11803,7 +11838,10 @@ void VulkanRenderer::rebuildSwBvh() {
   // the CUDA/HIP tracers expose (loadOpts_/rtMaxInstances_) -- revisit once
   // this path is validated.
   if (!BuildHostScene(*hostSceneSource_, /*maxTris=*/0, /*maxInstances=*/0,
-                      /*displacementScale=*/0.0f, &hs, &buildErr)) {
+                      /*displacementScale=*/0.0f, &hs, &buildErr,
+                      /*progress=*/nullptr, /*refitOut=*/nullptr,
+                      /*textureBudgetBytes=*/0, &rtMeshVisible_,
+                      rtPurposeMask_)) {
     LOGW("compute-BVH: BuildHostScene failed: %s", buildErr.c_str());
     tlasDirty_ = false;
     return;
@@ -12476,16 +12514,19 @@ void VulkanRenderer::setRayTracing(bool enable) {
       want = false;
     } else {
       createRtImage();  // see the ordering note above
+      caps_.rtShaderVariant = usedHardwareInit ? "interactive"
+                                               : "compute-bvh";
       rtInitMs_ = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start)
                       .count();
-      LOGI("Vulkan ray tracing resources initialized in %.1f ms (%s)",
+      LOGD("Vulkan ray tracing resources initialized in %.1f ms (%s)",
            rtInitMs_,
            usedHardwareInit ? "hardware ray query" : "compute-BVH fallback");
     }
   }
   if (want == rtActive_) return;
   rtActive_ = want;
+  if (!rtActive_) caps_.rtShaderVariant = "none";
   techniqueLabel_ = !rtActive_               ? "Vulkan (raster)"
                     : rayTracingIsHardware()  ? "Vulkan (ray query)"
                                               : "Vulkan (compute BVH)";
@@ -12915,7 +12956,7 @@ void VulkanRenderer::resizeViewport(int width, int height) {
         caps_.oitAttachmentBytes =
             static_cast<uint64_t>(vpW_) * static_cast<uint64_t>(vpH_) *
             (8u + 2u);  // RGBA16F accumulation + R16F revealage
-        LOGI("Vulkan weighted OIT resources ready (%llu attachment bytes; "
+        LOGD("Vulkan weighted OIT resources ready (%llu attachment bytes; "
              "per-frame activity is reported separately)",
              static_cast<unsigned long long>(caps_.oitAttachmentBytes));
       }
@@ -13079,7 +13120,7 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     }
     refreshMaterialDescriptors();
     if (rasterQualityHigh_ && oitFb_) {
-      LOGI("Vulkan high-quality screen-space refraction ready");
+      LOGD("Vulkan high-quality screen-space refraction ready");
     }
   }
 
@@ -13481,7 +13522,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   highlightMeshIndex_ = params.highlightMeshIndex;
   highlightHasSubset_ = params.highlightIndices && params.highlightIndexCount > 0;
   if (params.highlightLines && params.highlightLineVertexCount > 0 &&
-      (!surfaceWireSupported_ || highlightHasSubset_ || rtActive_)) {
+      (highlightHasSubset_ || rtActive_)) {
     highlightLineCopy_.assign(
         params.highlightLines,
         params.highlightLines + params.highlightLineVertexCount);
@@ -13938,6 +13979,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                                 sizeof(uint64_t),
                                 VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
         const double toMs = gpuTimestampPeriodNs_ * 1e-6;
+        caps_.gpuRtMs = double(ts[2] - ts[1]) * toMs;
+        caps_.gpuTotalMs = double(ts[3] - ts[0]) * toMs;
         std::fprintf(stderr,
                      "[gpu] pre-main(shadow+copies)=%.2fms  main-offscreen=%.2fms  "
                      "swap+imgui=%.2fms  total=%.2fms\n",
@@ -14049,6 +14092,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                          0, nullptr);
     mdiInstPendingXf_.clear();
     mdiInstPendingCol_.clear();
+  }
+  if (timeGpu && gpuQueryPool_) {
+    vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                        gpuQueryPool_, 1);
   }
 
   // ---- Offscreen 3D pass: ray query (compute) or rasterization ----
@@ -14399,9 +14446,6 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     rp.renderArea.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_)};
     rp.clearValueCount = 2;
     rp.pClearValues = clears;
-    if (timeGpu && gpuQueryPool_) {
-      vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpuQueryPool_, 1);
-    }
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
     // Y-flipped viewport so the offscreen image is upright (top-left origin).
@@ -14758,9 +14802,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       drawMeshPass(/*apass=*/1, translucentPipeline_);
     }
 
-    // Draw the actual rendered triangle surface in line mode. Displaced meshes
-    // use the same tessellation evaluation stage as their shaded pass, avoiding
-    // the detached low-resolution authored cage and its depth fighting.
+    // Draw authored polygon boundaries, not renderer triangulation or generated
+    // tessellation edges. This matches usdview's control-cage overlay.
     if ((wireMode_ != 0 || (highlightMeshIndex_ >= 0 && !highlightHasSubset_)) &&
         wirePipeline_ != VK_NULL_HANDLE) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
@@ -14786,7 +14829,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                               !highlightHasSubset_;
         if (wireMode_ == 0 && !selected) continue;
         const VkMeshGPU& mesh = meshes_[mi];
-        if (!mesh.vbo || !mesh.ebo || mesh.submeshes.empty() ||
+        if (!mesh.vbo || !mesh.wireEbo || mesh.wireIndexCount == 0 ||
             mesh.instanceCount > 0)
           continue;
         VkDescriptorSet deform =
@@ -14795,33 +14838,40 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   pipelineLayout_, 1, 1, &deform, 0, nullptr);
         }
-        VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
+        VkBuffer bufs[7] = {mesh.wireVbo ? mesh.wireVbo : mesh.vbo,
+                            mesh.jointVbo,   mesh.weightVbo,
                             mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
                             mesh.morphOffsetVbo};
         VkDeviceSize offsets[7]{};
         vkCmdBindVertexBuffers(cb, 0, 7, bufs, offsets);
-        vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
-        for (const DrawSubmesh& sub : mesh.submeshes) {
-          PushC pc{};
-          std::memcpy(pc.model, mesh.world, sizeof(pc.model));
-          pc.baseColor[0] = selected ? 1.0f : 0.62f;
-          pc.baseColor[1] = selected ? 0.48f : 0.66f;
-          pc.baseColor[2] = selected ? 0.04f : 0.72f;
+        vkCmdBindIndexBuffer(cb, mesh.wireEbo, 0, VK_INDEX_TYPE_UINT32);
+        PushC pc{};
+        std::memcpy(pc.model, mesh.world, sizeof(pc.model));
+        pc.baseColor[0] = selected ? 1.0f : 0.18f;
+        pc.baseColor[1] = selected ? 0.48f : 0.20f;
+        pc.baseColor[2] = selected ? 0.04f : 0.23f;
+        pc.baseColor[3] = 1.0f;
+        pc.ids[2] = static_cast<int>(mi);
+        vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
+        if (selected && wireOccludedPipeline_) {
+          // A subdivision control cage can lie inside its smooth limit surface.
+          // Draw it faintly first, then redraw depth-visible edges at full
+          // strength. This preserves occlusion cues without losing the cage.
+          pc.baseColor[3] = 0.18f;
+          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc),
+                             &pc);
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            wireOccludedPipeline_);
+          vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
           pc.baseColor[3] = 1.0f;
-          pc.ids[0] = sub.materialId;
-          pc.ids[1] = (mesh.geometricNormal ? 1 : 0);
-          pc.ids[2] = static_cast<int>(mi);
-          pc.ids[3] = 0x40000000;
-          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
-          const bool tessWire = tessWirePipeline_ && displacement_ &&
-                                maxTessLevel_ > 1 && sub.materialId >= 0;
-          if (tessWire)
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              tessWirePipeline_);
-          vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
-          if (tessWire)
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
+          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc),
+                             &pc);
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
         }
+        vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
+        if (std::getenv("LUSDVIEW_DEBUG_WIRE"))
+          LOGI("Vulkan authored cage draw: mesh=%zu indices=%u selected=%d",
+               mi, mesh.wireIndexCount, selected ? 1 : 0);
       }
     }
 
@@ -15180,10 +15230,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     } else {
       caps_.oitDrawCalls = 0;
     }
-    if (timeGpu && gpuQueryPool_) {
-      vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpuQueryPool_, 2);
-      gpuQueriesArmed_ = true;  // slots 1 and 2 recorded; the set is complete
-    }
+  }
+  if (timeGpu && gpuQueryPool_) {
+    vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                        gpuQueryPool_, 2);
+    gpuQueriesArmed_ = true;
   }
 
   // ---- Swapchain pass: ImGui ----
@@ -15267,18 +15318,28 @@ bool VulkanRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
   // uploaded image; resize it if the interactive viewport changed size.
   if (!colorImg_ || w != vpW_ || h != vpH_) resizeViewport(w, h);
   if (!colorImg_) return false;
-  vkDeviceWaitIdle(device_);
 
   const VkDeviceSize size = static_cast<VkDeviceSize>(w) * h * 4;
-  // Recreate the host-visible staging buffer with this frame's pixels. (Per-frame
-  // create/destroy is cheap next to the multi-ms GPU trace that produced them.)
-  if (extStaging_) { vkDestroyBuffer(device_, extStaging_, nullptr); extStaging_ = VK_NULL_HANDLE; }
-  if (extStagingMem_) { vkFreeMemory(device_, extStagingMem_, nullptr); extStagingMem_ = VK_NULL_HANDLE; }
-  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba, &extStaging_,
-                        &extStagingMem_)) {
-    return false;
+  // endOneShot below fences this copy, so the same persistently allocated
+  // staging buffer can be filled again on the next external frame. Avoiding a
+  // device-wide idle plus allocation/free per frame is particularly important
+  // when HIP renders on a secondary adapter and Vulkan only presents it.
+  if (!extStaging_ || extStagingCap_ < size) {
+    if (extStaging_) vkDestroyBuffer(device_, extStaging_, nullptr);
+    if (extStagingMem_) vkFreeMemory(device_, extStagingMem_, nullptr);
+    extStaging_ = VK_NULL_HANDLE;
+    extStagingMem_ = VK_NULL_HANDLE;
+    if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba,
+                          &extStaging_, &extStagingMem_))
+      return false;
+    extStagingCap_ = size;
+  } else {
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, extStagingMem_, 0, size, 0, &mapped) != VK_SUCCESS)
+      return false;
+    std::memcpy(mapped, rgba, static_cast<size_t>(size));
+    vkUnmapMemory(device_, extStagingMem_);
   }
-  extStagingCap_ = size;
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -15713,6 +15774,7 @@ void VulkanRenderer::shutdown() {
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (environmentPipeline_) { vkDestroyPipeline(device_, environmentPipeline_, nullptr); environmentPipeline_ = VK_NULL_HANDLE; }
   if (wirePipeline_) { vkDestroyPipeline(device_, wirePipeline_, nullptr); wirePipeline_ = VK_NULL_HANDLE; }
+  if (wireOccludedPipeline_) { vkDestroyPipeline(device_, wireOccludedPipeline_, nullptr); wireOccludedPipeline_ = VK_NULL_HANDLE; }
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
   if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }
   if (translucentPipeline_) { vkDestroyPipeline(device_, translucentPipeline_, nullptr); translucentPipeline_ = VK_NULL_HANDLE; }
@@ -15723,7 +15785,6 @@ void VulkanRenderer::shutdown() {
   if (oitCompositeSetLayout_) { vkDestroyDescriptorSetLayout(device_, oitCompositeSetLayout_, nullptr); oitCompositeSetLayout_ = VK_NULL_HANDLE; }
   if (gpuQueryPool_) { vkDestroyQueryPool(device_, gpuQueryPool_, nullptr); gpuQueryPool_ = VK_NULL_HANDLE; }
   if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
-  if (tessWirePipeline_) { vkDestroyPipeline(device_, tessWirePipeline_, nullptr); tessWirePipeline_ = VK_NULL_HANDLE; }
   if (nativeCarrierPipeline_) { vkDestroyPipeline(device_, nativeCarrierPipeline_, nullptr); nativeCarrierPipeline_ = VK_NULL_HANDLE; }
   if (oitNativeCarrierPipeline_) { vkDestroyPipeline(device_, oitNativeCarrierPipeline_, nullptr); oitNativeCarrierPipeline_ = VK_NULL_HANDLE; }
   if (nativeCarrierShadowPipeline_) { vkDestroyPipeline(device_, nativeCarrierShadowPipeline_, nullptr); nativeCarrierShadowPipeline_ = VK_NULL_HANDLE; }

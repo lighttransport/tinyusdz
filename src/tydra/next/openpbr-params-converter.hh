@@ -86,6 +86,7 @@ inline bool BuildRealtimePbrMaterial(
     p.emission = s.emission_luminance.value.x;
     CopyShaderParam3ToOpenPBR(s.emission_color, p.emissionColor);
     p.opacity = s.opacity.value.x;
+    p.geometryThinWalled = s.thin_walled.value.x >= 0.5f;
     CopyShaderParam3ToOpenPBR(s.normal, p.normal);
     p.hasTextureInputs = AnyShaderParamHasTexture({
         &s.base_weight, &s.base_color, &s.base_roughness, &s.base_metalness,
@@ -97,7 +98,8 @@ inline bool BuildRealtimePbrMaterial(
         &s.sheen_color,
         &s.sheen_roughness, &s.thin_film_weight, &s.thin_film_thickness,
         &s.thin_film_ior, &s.emission_luminance, &s.emission_color,
-        &s.opacity, &s.normal, &s.coat_normal, &s.displacement});
+        &s.opacity, &s.thin_walled, &s.normal, &s.coat_normal,
+        &s.displacement});
     p.hasNormalInput = ShaderParamHasTexture(s.normal);
   } else {
     return false;

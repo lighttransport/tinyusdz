@@ -83,8 +83,6 @@ src/                       Core library sources (~250 .cc/.hh files)
                              stb_image, base122, miniz, …
   next/                      Stable standalone next-generation core library
                              and tests (`src/next`, `tests/next`)
-  attic/, blender/           Experimental / under-construction code not
-                             built into the main library
 
 python/                    CPython abi3 wheel (built from
                            src/python/module.c via setuptools +

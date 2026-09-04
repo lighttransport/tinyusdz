@@ -8,6 +8,7 @@
 #
 # Env: LUSDVIEW=/path/to/lusdview
 set -uo pipefail
+export LUSDVIEW_LOG=debug
 SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"

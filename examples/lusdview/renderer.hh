@@ -75,6 +75,8 @@ enum class OverlayKind {
   HipPathTrace
 };
 
+enum class CudaRtBackend { Auto, SoftwareBvh, Optix };
+
 // GLRaster/VulkanRaster/VulkanRT mandate a specific window owner; CudaRT/
 // HipRT/CpuRT are owner-agnostic overlays that run on top of whichever owner
 // (GL or Vulkan) is already active. Returns true and sets *owner for the
@@ -202,6 +204,9 @@ struct RendererCaps {
   uint64_t oitDrawCalls{0};
   uint64_t pipelineBinds{0};
   uint64_t descriptorSetBinds{0};
+  std::string rtShaderVariant{"none"};
+  double gpuRtMs{0.0};
+  double gpuTotalMs{0.0};
 
   // GPU compressed-texture format support (queried at init). Used to cap-gate
   // the `--texture-compress` mode: a requested format the device can't sample is
@@ -280,8 +285,9 @@ struct RenderFrameParams {
   // 3 guide). The VK ray-tracing path leaves meshes of hidden purposes out of
   // the TLAS entirely (a purpose toggle triggers a rebuild). Without this,
   // Caldera's guide breadcrumb planes -- hidden in raster -- engulf the RT
-  // camera ("--rt renders near-blank"). Default matches the GUI: guide hidden.
-  uint32_t purposeVisibleMask{0xBu};
+  // camera ("--rt renders near-blank"). Default matches the GUI: render and
+  // default visible; proxy and guide hidden.
+  uint32_t purposeVisibleMask{0x3u};
 
   // Surface displacement (UsdPreviewSurface inputs:displacement). When enabled, a
   // material's displacement (constant or height-map red channel) offsets the

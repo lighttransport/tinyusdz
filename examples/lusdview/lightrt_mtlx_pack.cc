@@ -303,6 +303,10 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[67 * 4 + 0] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmission : 0.0f;
   dst[67 * 4 + 1] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionDepth : 0.0f;
   dst[67 * 4 + 2] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionDispersion : 0.0f;
+  dst[67 * 4 + 3] = mat.hasLightRtOpenPBR &&
+                            mat.lightRtOpenPBR.geometryThinWalled
+                        ? 1.0f
+                        : 0.0f;
   dst[68 * 4 + 0] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionColor[0] : 1.0f;
   dst[68 * 4 + 1] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionColor[1] : 1.0f;
   dst[68 * 4 + 2] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionColor[2] : 1.0f;

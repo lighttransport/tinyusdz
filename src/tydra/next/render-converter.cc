@@ -9296,6 +9296,11 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                           &out->opacity, scene)) {
     ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
   }
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_thin_walled",
+                          &out->thin_walled, scene)) {
+    ExtractShaderParam(stage, shader_prim, "thin_walled",
+                       &out->thin_walled, scene);
+  }
   if (!ExtractShaderParam(stage, shader_prim, "geometry_normal",
                           &out->normal, scene)) {
     ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);

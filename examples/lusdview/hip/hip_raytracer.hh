@@ -35,6 +35,10 @@ class HipRayTracer {
   // kernel. Returns false (with *err set) if anything is missing. Safe to call
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
+  static bool enumerateDevices(std::vector<std::string>* names,
+                               std::string* err);
+  bool selectDevice(int index, std::string* err);
+  int deviceIndex() const { return device_; }
   bool initialized() const { return ready_; }
   // hiprtc counterpart of CudaRayTracer::reloadKernel. The scene stays live and
   // the old module is retained unless compilation and entry-point validation
@@ -50,7 +54,8 @@ class HipRayTracer {
   // without a rebuild (costs host memory; only worth it for deformable scenes).
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
              std::string* err, float displacementScale = 0.0f,
-             BuildProgress* progress = nullptr, bool retainForRefit = false);
+             BuildProgress* progress = nullptr, bool retainForRefit = false,
+             uint32_t purposeVisibleMask = 0x3u);
   bool updateMaterialConstants(int materialId,
                                const DrawMaterialCPU& material,
                                std::string* err);
@@ -76,17 +81,22 @@ class HipRayTracer {
              const PathTraceSettings* pathTrace = nullptr,
              std::vector<float>* linearRgba = nullptr,
              uint32_t* renderedSamples = nullptr,
-             float sceneTime = 0.0f, float sceneFrame = 0.0f);
+             float sceneTime = 0.0f, float sceneFrame = 0.0f,
+             uint32_t accumulationStart = 0);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
  private:
   void freeScene();
+  void freeRuntime();
 
   // Opaque HIP handles (void* to avoid leaking hipew types into the header).
   bool ready_{false};        // device selected + kernel compiled
   void* module_{nullptr};    // hipModule_t
   void* kernel_{nullptr};    // hipFunction_t (trace)
+  void* stream_{nullptr};    // non-default hipStream_t for trace + readback
+  void* hostOut_{nullptr};   // page-locked RGBA readback buffer
+  size_t hostOutCap_{0};
   int device_{0};
   uint64_t kernelGeneration_{0};
   double lastKernelCompileMs_{0.0};

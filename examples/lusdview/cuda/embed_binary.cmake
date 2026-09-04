@@ -1,0 +1,20 @@
+if(NOT DEFINED INPUT OR NOT DEFINED OUTPUT OR NOT DEFINED SYMBOL)
+  message(FATAL_ERROR "embed_binary.cmake requires INPUT, OUTPUT, and SYMBOL")
+endif()
+file(READ "${INPUT}" _hex HEX)
+string(LENGTH "${_hex}" _hex_length)
+set(_body "")
+set(_offset 0)
+while(_offset LESS _hex_length)
+  string(SUBSTRING "${_hex}" ${_offset} 2 _byte)
+  string(APPEND _body "0x${_byte},")
+  math(EXPR _offset "${_offset} + 2")
+  math(EXPR _column "(${_offset} / 2) % 16")
+  if(_column EQUAL 0)
+    string(APPEND _body "\n")
+  endif()
+endwhile()
+file(WRITE "${OUTPUT}"
+    "#pragma once\n#include <cstddef>\n"
+    "static const unsigned char ${SYMBOL}[] = {\n${_body}};\n"
+    "static constexpr std::size_t ${SYMBOL}Size = sizeof(${SYMBOL});\n")

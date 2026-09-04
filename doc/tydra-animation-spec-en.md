@@ -5,8 +5,8 @@ Three.js. This document describes **what is implemented today** and, in a
 separate section at the end, **what is still proposed**.
 
 > Source files: `src/tydra/render-data.hh` (IR structs/enums),
-> `src/tydra/render-data-anim.cc` and `src/tydra/render-animation-converter.cc`
-> (converters), `src/tydra/threejs-exporter.cc` (Three.js export).
+> `src/tydra/render-data-anim.cc` (converter),
+> `src/tydra/threejs-exporter.cc` (Three.js export).
 
 ---
 

@@ -543,6 +543,42 @@ bool TexToolsBuildDomeIbl(const float* equirectRgb, int width, int height,
   if (!out || !equirectRgb || width <= 0 || height <= 0) return false;
   *out = DomeIblCPU{};
 
+  // Retain a bounded HDR latlong for the software RT backends. Their compact
+  // texture table is byte-addressed, so Radiance RGBE preserves the useful HDR
+  // range at the same bandwidth as RGBA8. Downsampling here also makes a dome
+  // lookup substantially friendlier to the CUDA texture working set.
+  {
+    const int dstW = std::min(width, highQuality ? 2048 : 1024);
+    const int dstH = std::max(1, int((int64_t(height) * dstW) / width));
+    out->envLatlongWidth = dstW;
+    out->envLatlongHeight = dstH;
+    out->envLatlongRgbe.resize(size_t(dstW) * size_t(dstH) * 4u);
+    for (int y = 0; y < dstH; ++y) {
+      const int sy = std::min(height - 1, int((int64_t(y) * height) / dstH));
+      for (int x = 0; x < dstW; ++x) {
+        const int sx = std::min(width - 1, int((int64_t(x) * width) / dstW));
+        const float* src = equirectRgb + (size_t(sy) * width + sx) * 3u;
+        uint8_t* dst = out->envLatlongRgbe.data() +
+                       (size_t(y) * dstW + x) * 4u;
+        const float peak = std::max(src[0], std::max(src[1], src[2]));
+        if (!(peak > 1.0e-32f) || !std::isfinite(peak)) {
+          dst[0] = dst[1] = dst[2] = dst[3] = 0;
+          continue;
+        }
+        int exponent = 0;
+        const float mantissa = std::frexp(peak, &exponent);
+        const float encode = mantissa * 256.0f / peak;
+        dst[0] = static_cast<uint8_t>(std::min(255.0f,
+                                               std::max(0.0f, src[0] * encode)));
+        dst[1] = static_cast<uint8_t>(std::min(255.0f,
+                                               std::max(0.0f, src[1] * encode)));
+        dst[2] = static_cast<uint8_t>(std::min(255.0f,
+                                               std::max(0.0f, src[2] * encode)));
+        dst[3] = static_cast<uint8_t>(std::max(0, std::min(255, exponent + 128)));
+      }
+    }
+  }
+
   em_image equirect{};
   equirect.proj = EM_PROJ_EQUIRECT;
   equirect.width = width;

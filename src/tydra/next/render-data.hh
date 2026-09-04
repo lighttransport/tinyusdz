@@ -688,6 +688,7 @@ struct OpenPBRSurfaceShader {
 
   // Geometry
   ShaderParam opacity = {-1, {1, 0, 0, 0}};
+  ShaderParam thin_walled = {-1, {0, 0, 0, 0}};
   ShaderParam normal = {-1, {0, 0, 1, 0}};
   ShaderParam tangent = {-1, {1, 0, 0, 0}};
   // Scalar metadata carried by common MaterialX utility nodes feeding the
