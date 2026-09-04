@@ -3529,6 +3529,19 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
 
+    # A fresh cache must not make the default auto transparency mode pay for
+    # weighted OIT. The script reports elapsed time but intentionally has no
+    # timing threshold, so it is safe across drivers and software Vulkan.
+    add_test(
+      NAME lusdview-vulkan-cold-start-auto
+      COMMAND ${CMAKE_COMMAND} -E env
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-cold-start-auto.sh"
+      )
+    set_tests_properties(lusdview-vulkan-cold-start-auto
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                                    LABELS "lusdview;vulkan;startup;transparency")
+
     # Optional Khronos ValidationLayers smoke for the weighted-OIT command path.
     # Local developers can build the layer with
     # scripts/setup-vulkan-validation-linux.sh. CI may provide a distro package

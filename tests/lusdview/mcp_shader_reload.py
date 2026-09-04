@@ -170,7 +170,7 @@ def main():
         log = client.stderr_text()
         unavailable_tokens = ("unavailable", "no cuda", "no hip", "no vulkan",
                               "ray query unsupported", "failed to initialize",
-                              "pipeline cache is cold", "cold driver compile",
+                              "pipeline cache is cold",
                               "rt=software")
         unavailable = any(token in log.lower() for token in unavailable_tokens)
         print(("SKIP" if unavailable else "FAIL") + f": {exc}", file=sys.stderr)
