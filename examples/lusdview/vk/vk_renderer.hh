@@ -14,7 +14,10 @@
 #include "volk.h"
 
 #include <cstdint>
+#include <future>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -150,6 +153,10 @@ class VulkanRenderer final : public Renderer {
   }
   bool reloadRayTracingShader(const uint32_t* words, size_t wordCount,
                               std::string* err) override;
+  bool beginReloadRayTracingShaderAsync(
+      std::vector<uint32_t> words,
+      std::shared_ptr<AsyncShaderReloadResult> result,
+      std::string* err) override;
   bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
   bool rayTracingUsesProceduralMaterialX() const {
     return rtUsesProceduralMaterialX_;
@@ -1119,6 +1126,21 @@ class VulkanRenderer final : public Renderer {
   // `rtSupported_`, since the latter is now true for either technique.
   enum class RtTechnique { kNone, kHardware, kComputeBvh };
   RtTechnique rtTechnique_{RtTechnique::kNone};
+  struct AsyncRtReload {
+    std::future<void> worker;
+    std::mutex mutex;
+    bool active{false};
+    bool ready{false};
+    bool ok{false};
+    RtTechnique technique{RtTechnique::kNone};
+    bool pathTrace{false};
+    VkPipeline pipeline{VK_NULL_HANDLE};
+    std::string error;
+    std::shared_ptr<AsyncShaderReloadResult> result;
+  };
+  AsyncRtReload asyncRtReload_;
+  void serviceAsyncRtReload();
+  void joinAsyncRtReload();
   // Hardware ray-query shader variants are embedded and may be older than the
   // canonical light payload. Scenes containing features not representable by
   // that variant are routed to the verified compute-BVH implementation.

@@ -6305,6 +6305,7 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
     return false;
   }
   if (state->pending) {
+    if (backend == "vulkan" && state->watch) state->queuedWatchReload = true;
     if (err) *err = backend + " shader reload is still pending";
     return false;
   }
@@ -6317,42 +6318,27 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
     if (!renderer_ || backend_ != Backend::Vulkan) {
       localError = "the persistent viewer is not owned by Vulkan";
     } else {
-      std::vector<uint32_t> spirv;
       const bool softwareBvh = !renderer_->rayTracingIsHardware();
-      if (CompileLiveVulkanShader(state->source,
-                                  renderer_->rayTracingUsesFullShader(),
-                                  renderer_->rayTracingUsesProceduralMaterialX(),
-                                  softwareBvh,
-                                  softwareBvh && pathTrace_.enabled,
-                                  materialXVulkanShaderMaxSourceBytes_,
-                                  materialXVulkanCompileTimeoutSec_,
-                                  &spirv, &localError)) {
-        if (renderThreadActive_) {
-#if defined(LUSDVIEW_ENABLE_GL_THREAD)
-          // Never wait here: the UI thread may be between packet construction
-          // and submission while the render thread is waiting for that packet.
-          // The render-thread operation publishes its result atomically and the
-          // next UI tick commits the status counters/error text.
-          auto pending = std::make_shared<LiveShaderState::PendingCommit>();
-          state->pending = pending;
-          postGpu([this, spirv = std::move(spirv), pending,
-                   started]() mutable {
-            pending->ok = renderer_->reloadRayTracingShader(
-                spirv.data(), spirv.size(), &pending->error);
-            pending->elapsedMs =
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - started)
-                    .count();
-            pending->done.store(true, std::memory_order_release);
-          });
-          LOGI("Vulkan live shader reload queued on render thread");
-          return true;
-#endif
-        } else {
-          ok = renderer_->reloadRayTracingShader(spirv.data(), spirv.size(),
-                                                 &localError);
-        }
-      }
+      const bool full = renderer_->rayTracingUsesFullShader();
+      const bool procedural = renderer_->rayTracingUsesProceduralMaterialX();
+      const std::string source = state->source;
+      const size_t maxBytes = materialXVulkanShaderMaxSourceBytes_;
+      const int timeout = materialXVulkanCompileTimeoutSec_;
+      state->pending = std::make_shared<AsyncShaderReloadResult>();
+      state->phase = "compiling";
+      state->vulkanSourceJob.emplace(std::async(
+          std::launch::async,
+          [source, full, procedural, softwareBvh,
+           productionPath = softwareBvh && pathTrace_.enabled, maxBytes,
+           timeout]() {
+            LiveShaderState::VulkanSourceResult result;
+            result.ok = CompileLiveVulkanShader(
+                source, full, procedural, softwareBvh, productionPath,
+                maxBytes, timeout, &result.spirv, &result.error);
+            return result;
+          }));
+      LOGI("Vulkan live shader reload compiling asynchronously");
+      return true;
     }
   } else if (backend == "cuda") {
     if (cudaBuildStarted_ && !cudaBuildDone_.load(std::memory_order_acquire)) {
@@ -6400,12 +6386,34 @@ void App::finishLiveShaderReloads() {
                 {"hip", &liveHipKernel_}};
   for (const PendingState& item : states) {
     LiveShaderState& state = *item.state;
+    if (std::strcmp(item.backend, "vulkan") == 0 && state.vulkanSourceJob &&
+        state.vulkanSourceJob->wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+      LiveShaderState::VulkanSourceResult source = state.vulkanSourceJob->get();
+      state.vulkanSourceJob.reset();
+      if (!source.ok) {
+        state.pending->error = source.error;
+        state.pending->done.store(true, std::memory_order_release);
+      } else {
+        state.phase = "warming";
+        const std::shared_ptr<AsyncShaderReloadResult> pending = state.pending;
+        postGpu([this, words = std::move(source.spirv), pending]() mutable {
+          std::string error;
+          if (!renderer_->beginReloadRayTracingShaderAsync(
+                  std::move(words), pending, &error)) {
+            pending->error = error;
+            pending->done.store(true, std::memory_order_release);
+          }
+        });
+      }
+    }
     if (!state.pending ||
         !state.pending->done.load(std::memory_order_acquire)) {
       continue;
     }
-    const std::shared_ptr<LiveShaderState::PendingCommit> result = state.pending;
+    const std::shared_ptr<AsyncShaderReloadResult> result = state.pending;
     state.pending.reset();
+    state.phase.clear();
     state.lastCompileMs = result->elapsedMs;
     if (result->ok) {
       ++state.successes;
@@ -6422,6 +6430,12 @@ void App::finishLiveShaderReloads() {
                             : result->error;
       LOGW("%s live shader reload failed; keeping last good module: %s",
            item.backend, state.lastError.c_str());
+    }
+    if (std::strcmp(item.backend, "vulkan") == 0 &&
+        state.queuedWatchReload) {
+      state.queuedWatchReload = false;
+      std::string ignored;
+      reloadLiveShader("vulkan", std::string(), &ignored);
     }
   }
 }
@@ -6457,6 +6471,10 @@ void App::pollLiveShaderReload() {
     // the last good module and waits for the editor's next write, avoiding a
     // compile-failure loop every 250 ms.
     state.timestamp = timestamp;
+    if (state.pending && std::strcmp(item.backend, "vulkan") == 0) {
+      state.queuedWatchReload = true;
+      continue;
+    }
     std::string reloadError;
     reloadLiveShader(item.backend, std::string(), &reloadError);
   }

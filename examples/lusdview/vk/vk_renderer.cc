@@ -12727,6 +12727,208 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
 #endif
 }
 
+bool VulkanRenderer::beginReloadRayTracingShaderAsync(
+    std::vector<uint32_t> words,
+    std::shared_ptr<AsyncShaderReloadResult> result, std::string* err) {
+#if (defined(LUSDVIEW_HAVE_RT_SHADER) && LUSDVIEW_HAVE_RT_SHADER) || \
+    (defined(LUSDVIEW_HAVE_SWRT_SHADER) && LUSDVIEW_HAVE_SWRT_SHADER)
+  if (!result || words.size() < 5u || words[0] != 0x07230203u) {
+    if (err) *err = "invalid or empty SPIR-V module";
+    return false;
+  }
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  const RtTechnique technique = rtTechnique_;
+  const bool path = pathTrace_.enabled;
+  if (technique == RtTechnique::kHardware) {
+    layout = rtPipelineLayout_;
+  } else if (technique == RtTechnique::kComputeBvh) {
+    layout = swRtPipelineLayout_;
+  }
+  if (layout == VK_NULL_HANDLE || !rtActive_) {
+    if (err) *err = "an active Vulkan ray-query or compute-BVH pipeline is required";
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(asyncRtReload_.mutex);
+    if (asyncRtReload_.active) {
+      if (err) *err = "Vulkan shader reload is already warming";
+      return false;
+    }
+    asyncRtReload_.active = true;
+    asyncRtReload_.ready = false;
+    asyncRtReload_.ok = false;
+    asyncRtReload_.technique = technique;
+    asyncRtReload_.pathTrace = path;
+    asyncRtReload_.pipeline = VK_NULL_HANDLE;
+    asyncRtReload_.error.clear();
+    asyncRtReload_.result = std::move(result);
+  }
+
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(phys_, &props);
+  const size_t shaderBytes = words.size() * sizeof(uint32_t);
+  const std::string cachePath =
+      RtPipelineCachePath(props, words.data(), shaderBytes);
+  const VkDevice device = device_;
+  asyncRtReload_.worker = std::async(
+      std::launch::async,
+      [this, device, layout, technique, path, words = std::move(words),
+       cachePath]() mutable {
+        const auto started = std::chrono::steady_clock::now();
+        VkPipeline candidate = VK_NULL_HANDLE;
+        std::string localError;
+        VkShaderModule shader = VK_NULL_HANDLE;
+        VkShaderModuleCreateInfo smci{};
+        smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        smci.codeSize = words.size() * sizeof(uint32_t);
+        smci.pCode = words.data();
+        if (vkCreateShaderModule(device, &smci, nullptr, &shader) != VK_SUCCESS) {
+          localError = "vkCreateShaderModule rejected the compiled SPIR-V";
+        }
+        std::vector<uint8_t> cacheBlob;
+        if (shader != VK_NULL_HANDLE && !cachePath.empty()) {
+          std::ifstream input(cachePath, std::ios::binary);
+          if (input) {
+            input.seekg(0, std::ios::end);
+            const std::streamoff size = input.tellg();
+            if (size > 0) {
+              input.seekg(0, std::ios::beg);
+              cacheBlob.resize(static_cast<size_t>(size));
+              if (!input.read(reinterpret_cast<char*>(cacheBlob.data()), size))
+                cacheBlob.clear();
+            }
+          }
+        }
+        VkPipelineCache cache = VK_NULL_HANDLE;
+        if (shader != VK_NULL_HANDLE) {
+          VkPipelineCacheCreateInfo ci{};
+          ci.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+          ci.initialDataSize = cacheBlob.size();
+          ci.pInitialData = cacheBlob.empty() ? nullptr : cacheBlob.data();
+          vkCreatePipelineCache(device, &ci, nullptr, &cache);
+          VkComputePipelineCreateInfo info{};
+          info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+          info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+          info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+          info.stage.module = shader;
+          info.stage.pName = "main";
+          info.layout = layout;
+          const VkResult created = vkCreateComputePipelines(
+              device, cache, 1, &info, nullptr, &candidate);
+          if (created != VK_SUCCESS || candidate == VK_NULL_HANDLE) {
+            localError = "vkCreateComputePipelines rejected live shader (VkResult " +
+                         std::to_string(static_cast<int>(created)) + ")";
+          }
+        }
+        if (shader) vkDestroyShaderModule(device, shader, nullptr);
+        if (cache && candidate != VK_NULL_HANDLE && !cachePath.empty()) {
+          size_t size = 0;
+          if (vkGetPipelineCacheData(device, cache, &size, nullptr) == VK_SUCCESS &&
+              size > 0) {
+            std::vector<uint8_t> data(size);
+            if (vkGetPipelineCacheData(device, cache, &size, data.data()) == VK_SUCCESS) {
+              std::error_code ec;
+              std::filesystem::create_directories(
+                  std::filesystem::path(cachePath).parent_path(), ec);
+              const std::string temporary = cachePath + ".tmp" +
+                  std::to_string(static_cast<unsigned long long>(
+                      std::chrono::steady_clock::now().time_since_epoch().count()));
+              std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+              if (output) output.write(reinterpret_cast<const char*>(data.data()),
+                                       static_cast<std::streamsize>(size));
+              std::filesystem::rename(temporary, cachePath, ec);
+              if (ec) std::filesystem::remove(temporary, ec);
+            }
+          }
+        }
+        if (cache) vkDestroyPipelineCache(device, cache, nullptr);
+        std::lock_guard<std::mutex> lock(asyncRtReload_.mutex);
+        asyncRtReload_.pipeline = candidate;
+        asyncRtReload_.ok = candidate != VK_NULL_HANDLE;
+        asyncRtReload_.error = std::move(localError);
+        if (!asyncRtReload_.ok && asyncRtReload_.error.empty())
+          asyncRtReload_.error = "Vulkan live pipeline creation failed";
+        asyncRtReload_.ready = true;
+        if (asyncRtReload_.result)
+          asyncRtReload_.result->elapsedMs = std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - started).count();
+      });
+  LOGI("Vulkan RT live reload: cold pipeline build running asynchronously");
+  return true;
+#else
+  (void)words;
+  (void)result;
+  if (err) *err = "Vulkan RT shader support was not compiled";
+  return false;
+#endif
+}
+
+void VulkanRenderer::serviceAsyncRtReload() {
+  if (asyncRtReload_.worker.valid() &&
+      asyncRtReload_.worker.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready) {
+    // This project is built with exceptions disabled. The worker records
+    // expected Vulkan failures in AsyncRtReload, so get() is only the join.
+    asyncRtReload_.worker.get();
+  }
+  std::shared_ptr<AsyncShaderReloadResult> result;
+  VkPipeline candidate = VK_NULL_HANDLE;
+  std::string error;
+  bool commit = false;
+  {
+    std::lock_guard<std::mutex> lock(asyncRtReload_.mutex);
+    if (!asyncRtReload_.active || !asyncRtReload_.ready) return;
+    result = asyncRtReload_.result;
+    candidate = asyncRtReload_.pipeline;
+    error = asyncRtReload_.error;
+    if (asyncRtReload_.ok && candidate != VK_NULL_HANDLE &&
+        asyncRtReload_.technique == rtTechnique_ &&
+        asyncRtReload_.pathTrace == pathTrace_.enabled && rtActive_) {
+      VkPipeline* live = rtTechnique_ == RtTechnique::kHardware
+                             ? &rtPipeline_
+                             : (asyncRtReload_.pathTrace && swRtPathPipeline_
+                                    ? &swRtPathPipeline_ : &swRtPipeline_);
+      if (*live != VK_NULL_HANDLE) {
+        retiredRtPipelines_.push_back(*live);
+        *live = candidate;
+        candidate = VK_NULL_HANDLE;
+        ++rtAccumGen_;
+        commit = true;
+      }
+    }
+    asyncRtReload_.active = false;
+    asyncRtReload_.ready = false;
+    asyncRtReload_.pipeline = VK_NULL_HANDLE;
+    asyncRtReload_.result.reset();
+  }
+  if (candidate) vkDestroyPipeline(device_, candidate, nullptr);
+  if (result) {
+    result->ok = commit;
+    if (!commit) result->error = error.empty() ?
+        "Vulkan RT state changed before reload could commit" : error;
+    result->done.store(true, std::memory_order_release);
+  }
+  LOGI("Vulkan RT live reload %s", commit ? "committed" : "discarded");
+}
+
+void VulkanRenderer::joinAsyncRtReload() {
+  if (asyncRtReload_.worker.valid()) asyncRtReload_.worker.wait();
+  std::lock_guard<std::mutex> lock(asyncRtReload_.mutex);
+  if (asyncRtReload_.pipeline) {
+    vkDestroyPipeline(device_, asyncRtReload_.pipeline, nullptr);
+    asyncRtReload_.pipeline = VK_NULL_HANDLE;
+  }
+  if (asyncRtReload_.result &&
+      !asyncRtReload_.result->done.load(std::memory_order_relaxed)) {
+    asyncRtReload_.result->ok = false;
+    asyncRtReload_.result->error = "Vulkan renderer shut down during shader reload";
+    asyncRtReload_.result->done.store(true, std::memory_order_release);
+  }
+  asyncRtReload_.active = false;
+  asyncRtReload_.ready = false;
+  asyncRtReload_.result.reset();
+}
+
 void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
   lodCam_ = cam;
   // Reselect the instance LOD set for the new pose by forcing a TLAS rebuild
@@ -12735,6 +12937,10 @@ void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
 }
 
 void VulkanRenderer::destroyRt() {
+  // Pipeline layouts/descriptors used by a background compile must outlive the
+  // worker. Normal presentation never waits for this; teardown is the sole
+  // synchronization point for an uninterruptible driver compile.
+  joinAsyncRtReload();
   destroySwRt();
   destroyTlasChunks();
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
@@ -14004,6 +14210,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   for (VkPipeline pipeline : retiredRtPipelines_)
     if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
   retiredRtPipelines_.clear();
+  // Commit only after the previous frame fence has retired; the expensive
+  // driver compilation itself runs on the worker.
+  serviceAsyncRtReload();
 
   // Per-pass GPU timing. The fence above already retired the previous submit, so
   // its four timestamps are readable with no extra wait.

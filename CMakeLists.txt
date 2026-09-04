@@ -3233,6 +3233,7 @@ if(LIGHTUSD_BUILD_TESTS)
                 "$<TARGET_FILE:lusdview>" vulkan
                 "${PROJECT_SOURCE_DIR}/examples/lusdview/vk/shaders/raytrace_swbvh.comp"
                 "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/area-light-shadow.usda"
+                --async-smoke
         )
       set_tests_properties(lusdview-mcp-live-reload-vulkan-swbvh
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240

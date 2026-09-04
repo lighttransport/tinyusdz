@@ -497,10 +497,9 @@ class App
   void cancelAndJoinReconvert();   // stop a running reconvert worker
   void registerParametricPrims();  // scan stage for parametric prims for adaptive tess
   struct LiveShaderState {
-    struct PendingCommit {
-      std::atomic<bool> done{false};
+    struct VulkanSourceResult {
       bool ok{false};
-      double elapsedMs{0.0};
+      std::vector<uint32_t> spirv;
       std::string error;
     };
     std::string source;
@@ -511,7 +510,10 @@ class App
     uint64_t successes{0};
     double lastCompileMs{0.0};
     std::string lastError;
-    std::shared_ptr<PendingCommit> pending;
+    std::string phase;
+    std::shared_ptr<AsyncShaderReloadResult> pending;
+    std::optional<std::future<VulkanSourceResult>> vulkanSourceJob;
+    bool queuedWatchReload{false};
   };
   void initializeLiveShaderSources();
   void finishLiveShaderReloads();

@@ -1538,6 +1538,15 @@ and resolve its `trace` symbol first. Only then does lusdview swap handles;
 Vulkan retires the previous pipeline after its last in-flight frame completes.
 A bad edit therefore updates `last_error` but leaves the last working generation
 and all scene GPU allocations intact.
+Vulkan reloads report `pending:true` immediately, with `phase` set to
+`compiling` while `glslc` runs and `warming` while a replacement pipeline is
+built. A cache-miss pipeline is deliberately warmed on a background worker;
+the active pipeline continues rendering and the replacement is committed only
+after success and the previous frame fence retires. Poll `status` until
+`pending:false`. If a watched source changes during an in-flight Vulkan reload,
+lusdview coalesces it into one follow-up reload using the newest edit. Closing
+or disabling RT may wait for a driver compile already in progress so its Vulkan
+layouts and descriptors can be destroyed safely.
 The watch loop polls every 250 ms and consumes each write timestamp once, so a
 broken intermediate editor save does not cause a continuous compile loop.
 

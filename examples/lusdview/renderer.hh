@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +28,16 @@ struct GLFWwindow;
 struct ImDrawData;
 
 namespace lusdview {
+
+// Completion record shared between App's MCP state and a renderer-owned
+// asynchronous Vulkan pipeline build. Writers fill the ordinary fields before
+// publishing `done` with release ordering; readers acquire-load `done` first.
+struct AsyncShaderReloadResult {
+  std::atomic<bool> done{false};
+  bool ok{false};
+  double elapsedMs{0.0};
+  std::string error;
+};
 
 enum class Backend { GL, Vulkan };
 enum class TransparencyMode { Auto, Weighted, Sorted };
@@ -662,6 +673,15 @@ class Renderer {
                                       size_t /*wordCount*/,
                                       std::string* err) {
     if (err) *err = "live Vulkan shader reload is unsupported by this backend";
+    return false;
+  }
+  // Start a transactional replacement build without blocking the caller. The
+  // renderer commits a successful candidate from its owning thread and then
+  // publishes `result`. Backends without Vulkan RT leave this unsupported.
+  virtual bool beginReloadRayTracingShaderAsync(
+      std::vector<uint32_t> /*words*/,
+      std::shared_ptr<AsyncShaderReloadResult> /*result*/, std::string* err) {
+    if (err) *err = "asynchronous live shader reload is unsupported by this backend";
     return false;
   }
   // The Vulkan backend selects a compact graph-free shader for simple scenes.

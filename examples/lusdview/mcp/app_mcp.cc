@@ -1095,6 +1095,7 @@ json App::mcpShaderReload(const json& args, std::string& err) {
                 {"source", state.source},
                 {"watch", state.watch},
                 {"pending", static_cast<bool>(state.pending)},
+                {"phase", state.pending ? state.phase : "idle"},
                 {"attempts", state.attempts},
                 {"successes", state.successes},
                 {"generation", generation},

@@ -52,6 +52,8 @@ def main():
     parser.add_argument("scene", type=Path)
     parser.add_argument("--vk-device")
     parser.add_argument("--materialx-vk-shader-max-kib", type=int)
+    parser.add_argument("--async-smoke", action="store_true",
+                        help="assert non-blocking Vulkan launch only")
     args = parser.parse_args()
 
     viewer = args.viewer.resolve()
@@ -91,9 +93,26 @@ def main():
             else:
                 bad.write_text('extern "C" __global__ void not_trace() { broken }\n')
 
-            client.call("shader_reload",
-                        {"action": "reload", "backend": args.backend,
-                         "source": str(good)}, timeout=180.0)
+            launch = client.call("shader_reload",
+                                 {"action": "reload", "backend": args.backend,
+                                  "source": str(good)}, timeout=10.0)
+            launch_state = backend_state(launch, args.backend)
+            if args.backend == "vulkan":
+                if not launch_state.get("pending"):
+                    raise RuntimeError(
+                        f"Vulkan reload did not return pending: {launch_state}")
+                if launch_state.get("phase") not in ("compiling", "warming"):
+                    raise RuntimeError(
+                        f"Vulkan reload omitted async phase: {launch_state}")
+                # The old pipeline must keep the persistent process responsive
+                # while GLSL/driver work happens in the background.
+                responsive = client.call("get_scene_info", timeout=10.0)
+                if not responsive.get("loaded"):
+                    raise RuntimeError(
+                        f"viewer became unavailable during reload: {responsive}")
+                if args.async_smoke:
+                    print("PASS: Vulkan reload returned pending and viewer remained responsive")
+                    return 0
             good_state = wait_reload(
                 client, args.backend,
                 lambda s: int(s.get("successes", 0)) > initial_successes)
