@@ -219,6 +219,8 @@ jobs:
           --target lusdview_openpbr_material_test \
           --target lusdview_texture_pipeline_test \
           --target lusdview_lightrt_mtlx_eval_test \
+          --target lusdview_lightrt_mtlx_graph_connection_test \
+          --target lusdview_lightrt_mtlx_graph_evaluation_test \
           --target lusdview_geometry_primvar_test \
           --target lusdview_camera_nav_test
     - name: tests

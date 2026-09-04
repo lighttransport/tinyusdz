@@ -338,7 +338,11 @@ if(LUSDRENDER_WITH_STREAM)
     LUSDRENDER_WITH_STREAM USE_WEBSOCKET=1 NO_SSL NO_CGI)
   # nlohmann/json (used to parse browser input) needs exceptions enabled.
   set_source_files_properties(lusdr_stream.cc PROPERTIES COMPILE_OPTIONS
-    "-fexceptions")
+    "-fexceptions;$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-thread-safety-negative>")
+  # libc++ annotates std::mutex locking, but std::mutex cannot express !mu
+  # contracts (it has no operator!). This condition_variable-based server uses
+  # standard locks, not the project's annotated mutex wrapper. Disable only
+  # the experimental negative-capability warning; keep other TSA diagnostics.
   if(Threads_FOUND)
     target_link_libraries(lusdrender Threads::Threads)
   endif()
