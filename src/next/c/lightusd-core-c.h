@@ -445,6 +445,31 @@ LU_CORE_API int lu_is_valid_identifier(const char *data, size_t size);
 LU_CORE_API int lu_is_valid_namespaced_identifier(const char *data, size_t size);
 LU_CORE_API int lu_is_valid_path_string(const char *data, size_t size);
 
+/* ============================================================
+ * Crate integer decode (src/next/c/crate-int.c)
+ *
+ * pxrUSD crate integer sections: the common-prefix and delta-coded formats,
+ * plus the packed code-table size. The decode side turns untrusted crate bytes
+ * into integers; all functions bound every read against src_size and return 0
+ * on malformed input.
+ * ============================================================ */
+
+/* Packed 2-bit code-table bytes for `count` values. */
+LU_CORE_API int lu_crate_delta_code_bytes(size_t count, size_t *out);
+LU_CORE_API int lu_crate_decode_integers(const uint8_t *src, size_t src_size,
+                                         uint32_t *dst, size_t count);
+LU_CORE_API int lu_crate_decode_integers64(const uint8_t *src, size_t src_size,
+                                           uint64_t *dst, size_t count);
+LU_CORE_API int lu_crate_decode_delta_u32(const uint8_t *buffer,
+                                          size_t buffer_size, uint32_t *dst,
+                                          size_t count);
+LU_CORE_API int lu_crate_decode_delta_s32(const uint8_t *buffer,
+                                          size_t buffer_size, int32_t *dst,
+                                          size_t count);
+LU_CORE_API int lu_crate_decode_delta_u64(const uint8_t *buffer,
+                                          size_t buffer_size, uint64_t *dst,
+                                          size_t count);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

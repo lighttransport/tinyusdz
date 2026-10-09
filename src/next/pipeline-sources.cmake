@@ -17,6 +17,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/half.c                   # lu_half_to_float/lu_float_to_half (crate-format.hh)
     c/type-names.c             # built-in type metadata (type-info.cc)
     c/identifier.c             # identifier/path grammar (identifier.hh)
+    c/crate-int.c              # crate integer decode (crate-format.cc)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc

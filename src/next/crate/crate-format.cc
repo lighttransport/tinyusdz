@@ -4,6 +4,7 @@
 // LightUSD Next - Crate Format Implementation
 
 #include "crate-format.hh"
+#include "../c/lightusd-core-c.h"  // lu_crate_decode_*
 #include "safe-arithmetic.hh"
 
 // Include LZ4 from existing LightUSD
@@ -538,66 +539,12 @@ namespace {
 // Decode integers encoded with USD's integer compression
 bool DecodeIntegers(const uint8_t* src, size_t src_size,
                     uint32_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!src || src_size == 0) return false;
-
-  size_t src_idx = 0;
-  size_t dst_idx = 0;
-
-  // Read common prefix
-  if (src_idx >= src_size) return false;
-  uint32_t common = 0;
-  uint8_t common_bytes = src[src_idx++];
-  // The prefix is a uint32: more than 4 bytes is malformed input (and i*8
-  // would be an out-of-range shift -> UB).
-  if (common_bytes > 4) return false;
-
-  for (int i = 0; i < common_bytes && src_idx < src_size; i++) {
-    common |= static_cast<uint32_t>(src[src_idx++]) << (i * 8);
-  }
-
-  // Decode each integer
-  while (dst_idx < count && src_idx < src_size) {
-    uint8_t code = src[src_idx++];
-    uint8_t num_bytes = code & 0x03;
-    uint32_t value = common;
-
-    if (num_bytes > 0) {
-      uint32_t suffix = 0;
-      for (int i = 0; i < num_bytes && src_idx < src_size; i++) {
-        suffix |= static_cast<uint32_t>(src[src_idx++]) << (i * 8);
-      }
-      // Shift common and add suffix
-      value = (common << (num_bytes * 8)) | suffix;
-    }
-
-    // Handle run-length encoding
-    uint8_t run_length = (code >> 2) + 1;
-    for (int i = 0; i < run_length && dst_idx < count; i++) {
-      dst[dst_idx++] = value;
-    }
-  }
-
-  return dst_idx == count;
+  return lu_crate_decode_integers(src, src_size, dst, count) != 0;
 }
 
 bool DecodeIntegers64(const uint8_t* src, size_t src_size,
                       uint64_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!src || src_size == 0) return false;
-
-  // For 64-bit, decode as pairs of 32-bit
-  std::vector<uint32_t> lo(count), hi(count);
-
-  size_t half_size = src_size / 2;
-  if (!DecodeIntegers(src, half_size, lo.data(), count)) return false;
-  if (!DecodeIntegers(src + half_size, src_size - half_size, hi.data(), count)) return false;
-
-  for (size_t i = 0; i < count; i++) {
-    dst[i] = (static_cast<uint64_t>(hi[i]) << 32) | lo[i];
-  }
-
-  return true;
+  return lu_crate_decode_integers64(src, src_size, dst, count) != 0;
 }
 
 }  // anonymous namespace
@@ -657,12 +604,7 @@ DecompressResult DecompressIntegers(const uint8_t* src, size_t src_size,
 namespace {
 
 bool ComputeDeltaCodeBytes(size_t count, size_t* out) {
-  if (!out ||
-      count > ((std::numeric_limits<size_t>::max)() - size_t{7}) / size_t{2}) {
-    return false;
-  }
-  *out = (count * size_t{2} + size_t{7}) / size_t{8};
-  return true;
+  return lu_crate_delta_code_bytes(count, out) != 0;
 }
 
 }  // namespace
@@ -848,66 +790,7 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
 
 bool DecodeDeltaU32(const uint8_t* buffer, size_t buffer_size,
                     uint32_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!buffer || !dst || buffer_size < sizeof(int32_t)) return false;
-
-  // Read common delta
-  int32_t common_delta;
-  std::memcpy(&common_delta, buffer, sizeof(int32_t));
-
-  size_t codes_bytes = 0;
-  if (!ComputeDeltaCodeBytes(count, &codes_bytes)) return false;
-  size_t codes_start = sizeof(int32_t);
-  size_t vints_start = 0;
-  if (!safe::add(codes_start, codes_bytes, &vints_start)) return false;
-
-  if (buffer_size < vints_start) return false;
-
-  int32_t prev = 0;
-  size_t vints_pos = vints_start;
-
-  for (size_t i = 0; i < count; i++) {
-    uint8_t code_byte = buffer[codes_start + i / 4];
-    uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
-
-    int32_t delta = 0;
-    switch (code) {
-      case 0:
-        delta = common_delta;
-        break;
-      case 1: {
-        if (sizeof(int8_t) > buffer_size - vints_pos) return false;
-        int8_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int8_t));
-        delta = static_cast<int32_t>(v);
-        vints_pos += sizeof(int8_t);
-        break;
-      }
-      case 2: {
-        if (sizeof(int16_t) > buffer_size - vints_pos) return false;
-        int16_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
-        delta = static_cast<int32_t>(v);
-        vints_pos += sizeof(int16_t);
-        break;
-      }
-      case 3: {
-        if (sizeof(int32_t) > buffer_size - vints_pos) return false;
-        std::memcpy(&delta, buffer + vints_pos, sizeof(int32_t));
-        vints_pos += sizeof(int32_t);
-        break;
-      }
-    }
-
-    // Use unsigned wrapping arithmetic (int32 values stored as uint32
-    // need wrapping, e.g., -2 as uint32 = 0xFFFFFFFE).
-    uint32_t prev_u = static_cast<uint32_t>(prev);
-    uint32_t delta_u = static_cast<uint32_t>(delta);
-    dst[i] = prev_u + delta_u;
-    prev = static_cast<int32_t>(dst[i]);
-  }
-
-  return true;
+  return lu_crate_decode_delta_u32(buffer, buffer_size, dst, count) != 0;
 }
 
 std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
@@ -977,71 +860,7 @@ std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
 
 bool DecodeDeltaS32(const uint8_t* buffer, size_t buffer_size,
                     int32_t* dst, size_t count) {
-  if (count == 0) return true;
-  if (!buffer || !dst || buffer_size < sizeof(int32_t)) return false;
-
-  int32_t common_delta;
-  std::memcpy(&common_delta, buffer, sizeof(int32_t));
-
-  size_t codes_bytes = 0;
-  if (!ComputeDeltaCodeBytes(count, &codes_bytes)) return false;
-  size_t codes_start = sizeof(int32_t);
-  size_t vints_start = 0;
-  if (!safe::add(codes_start, codes_bytes, &vints_start)) return false;
-
-  if (buffer_size < vints_start) return false;
-
-  int32_t prev = 0;
-  size_t vints_pos = vints_start;
-
-  for (size_t i = 0; i < count; i++) {
-    uint8_t code_byte = buffer[codes_start + i / 4];
-    uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
-
-    int64_t delta;
-    switch (code) {
-      case 0:
-        delta = common_delta;
-        break;
-      case 1: {
-        if (sizeof(int16_t) > buffer_size - vints_pos) return false;
-        int16_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
-        delta = static_cast<int32_t>(v);
-        vints_pos += sizeof(int16_t);
-        break;
-      }
-      case 2: {
-        if (sizeof(int32_t) > buffer_size - vints_pos) return false;
-        int32_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int32_t));
-        delta = v;
-        vints_pos += sizeof(int32_t);
-        break;
-      }
-      case 3: {
-        if (sizeof(int64_t) > buffer_size - vints_pos) return false;
-        int64_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int64_t));
-        delta = v;
-        vints_pos += sizeof(int64_t);
-        break;
-      }
-      default:
-        return false;
-    }
-
-    const int64_t min_delta =
-        static_cast<int64_t>(INT32_MIN) - static_cast<int64_t>(prev);
-    const int64_t max_delta =
-        static_cast<int64_t>(INT32_MAX) - static_cast<int64_t>(prev);
-    if (delta < min_delta || delta > max_delta) return false;
-    const int64_t acc = static_cast<int64_t>(prev) + delta;
-    dst[i] = static_cast<int32_t>(acc);
-    prev = dst[i];
-  }
-
-  return true;
+  return lu_crate_decode_delta_s32(buffer, buffer_size, dst, count) != 0;
 }
 
 // ============================================================
@@ -1128,65 +947,7 @@ DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
 
 bool DecodeDeltaU64(const uint8_t* buffer, size_t buffer_size, uint64_t* dst,
                     size_t count) {
-  if (count == 0) return true;
-  if (!buffer || !dst || buffer_size < sizeof(int64_t)) return false;
-
-  // Common delta is a full 64-bit value; code widths widen relative to the
-  // 32-bit variant: code 1 = int16, code 2 = int32, code 3 = int64.
-  int64_t common_delta;
-  std::memcpy(&common_delta, buffer, sizeof(int64_t));
-
-  size_t codes_bytes = 0;
-  if (!ComputeDeltaCodeBytes(count, &codes_bytes)) return false;
-  const size_t codes_start = sizeof(int64_t);
-  size_t vints_start = 0;
-  if (!safe::add(codes_start, codes_bytes, &vints_start)) return false;
-  if (buffer_size < vints_start) return false;
-
-  uint64_t prev = 0;
-  size_t vints_pos = vints_start;
-
-  for (size_t i = 0; i < count; i++) {
-    const uint8_t code_byte = buffer[codes_start + i / 4];
-    const uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
-
-    int64_t delta = 0;
-    switch (code) {
-      case 0:
-        delta = common_delta;
-        break;
-      case 1: {
-        if (sizeof(int16_t) > buffer_size - vints_pos) return false;
-        int16_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
-        delta = static_cast<int64_t>(v);
-        vints_pos += sizeof(int16_t);
-        break;
-      }
-      case 2: {
-        if (sizeof(int32_t) > buffer_size - vints_pos) return false;
-        int32_t v;
-        std::memcpy(&v, buffer + vints_pos, sizeof(int32_t));
-        delta = static_cast<int64_t>(v);
-        vints_pos += sizeof(int32_t);
-        break;
-      }
-      case 3: {
-        if (sizeof(int64_t) > buffer_size - vints_pos) return false;
-        std::memcpy(&delta, buffer + vints_pos, sizeof(int64_t));
-        vints_pos += sizeof(int64_t);
-        break;
-      }
-    }
-
-    // Unsigned wrapping arithmetic (signed values stored as their two's
-    // complement bit pattern).
-    const uint64_t delta_u = static_cast<uint64_t>(delta);
-    dst[i] = prev + delta_u;
-    prev = dst[i];
-  }
-
-  return true;
+  return lu_crate_decode_delta_u64(buffer, buffer_size, dst, count) != 0;
 }
 
 DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,

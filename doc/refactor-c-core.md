@@ -5923,3 +5923,15 @@ Verified differential against the previous C++ implementation over 400,000
 random strings (ASCII plus valid and malformed UTF-8 injections) and a curated
 set covering the relative/absolute/variant-selection/property corners: zero
 differences. The 55-test next ctest tree passes.
+
+### Crate integer decode in C11
+
+The pxrUSD crate integer decoders moved to `src/next/c/crate-int.c`:
+`lu_crate_delta_code_bytes`, `lu_crate_decode_integers`,
+`lu_crate_decode_integers64`, `lu_crate_decode_delta_u32`,
+`lu_crate_decode_delta_s32` and `lu_crate_decode_delta_u64`. This is the
+security-critical path that turns untrusted crate bytes into integers, so it
+now sits in the C11 core with explicit bounds on every read; `crate-format.cc`
+forwards. The USDC writer's encoders are unchanged, so the USDC round-trip,
+malformed-input and crate-limit ctest suites exercise the C decoders end to end
+(55/55 pass).
