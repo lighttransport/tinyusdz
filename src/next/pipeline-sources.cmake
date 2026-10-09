@@ -15,6 +15,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     ../unicode-xid-c.c         # XID_Start/XID_Continue tables (identifier.hh)
     c/strfmt.c                 # lu_uint_to/lu_int_to (strfmt.hh)
     c/half.c                   # lu_half_to_float/lu_float_to_half (crate-format.hh)
+    c/type-names.c             # built-in type metadata (type-info.cc)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc

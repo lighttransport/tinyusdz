@@ -5894,3 +5894,18 @@ Two more leaf modules moved to `src/next/c`:
 
 Both are compiled into `lightusd_next` and the combined WASM module (they are
 in `pipeline-sources.cmake`), and the 55-test next ctest tree passes.
+
+### Built-in type metadata in C11
+
+`src/next/types/type-info.cc`'s `constexpr` table and the USD <-> TypeId name
+mapping moved to `src/next/c/type-names.c`; `type-info.cc` is now a facade that
+reinterpret_casts the C rows (guarded by a `sizeof`/`alignof` static_assert) and
+forwards the name/size/alignment/component queries. The C ABI gains
+`lu_type_name`, `lu_type_id_from_name`, `lu_type_size`, `lu_type_alignment`,
+`lu_type_is_scalar`, `lu_type_is_numeric`, `lu_type_component_type` and
+`lu_type_component_count`, so C consumers share one copy of the type system.
+
+The table uses only fixed-width C types (`sizeof(bool/int32_t/.../double)` and
+`_Alignof`), so the C port is a mechanical transform. Verified: every one of the
+64 real types round-trips name -> id -> name, the known name/size/component
+mappings match, and unknown/NULL names return Invalid.

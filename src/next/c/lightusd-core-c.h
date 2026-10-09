@@ -321,6 +321,113 @@ LU_CORE_API size_t lu_int_to(char *buf, int64_t v);
 LU_CORE_API float lu_half_to_float(uint16_t h);
 LU_CORE_API uint16_t lu_float_to_half(float value);
 
+/* ============================================================
+ * Built-in USD type metadata (src/next/c/type-names.c)
+ *
+ * The USD<->TypeId mapping and per-type layout. Metadata only: no per-type
+ * executable callbacks. The struct layout must stay identical to
+ * lightusd::next::TypeInfo (type-info.hh); a static_assert in type-info.cc
+ * checks it.
+ * ============================================================ */
+
+/* TypeId values; keep in sync with next::TypeId (type-id.hh). */
+typedef enum lu_type_id {
+  LU_TYPE_INVALID = 0,
+  LU_TYPE_BOOL = 1,
+  LU_TYPE_INT = 2,
+  LU_TYPE_UINT = 3,
+  LU_TYPE_INT64 = 4,
+  LU_TYPE_UINT64 = 5,
+  LU_TYPE_HALF = 6,
+  LU_TYPE_FLOAT = 7,
+  LU_TYPE_DOUBLE = 8,
+  LU_TYPE_STRING = 9,
+  LU_TYPE_TOKEN = 10,
+  LU_TYPE_ASSETPATH = 11,
+  LU_TYPE_INT2 = 12,
+  LU_TYPE_INT3 = 13,
+  LU_TYPE_INT4 = 14,
+  LU_TYPE_UINT2 = 15,
+  LU_TYPE_UINT3 = 16,
+  LU_TYPE_UINT4 = 17,
+  LU_TYPE_HALF2 = 18,
+  LU_TYPE_HALF3 = 19,
+  LU_TYPE_HALF4 = 20,
+  LU_TYPE_FLOAT2 = 21,
+  LU_TYPE_FLOAT3 = 22,
+  LU_TYPE_FLOAT4 = 23,
+  LU_TYPE_DOUBLE2 = 24,
+  LU_TYPE_DOUBLE3 = 25,
+  LU_TYPE_DOUBLE4 = 26,
+  LU_TYPE_QUATH = 27,
+  LU_TYPE_QUATF = 28,
+  LU_TYPE_QUATD = 29,
+  LU_TYPE_POINT3H = 30,
+  LU_TYPE_POINT3F = 31,
+  LU_TYPE_POINT3D = 32,
+  LU_TYPE_VECTOR3H = 33,
+  LU_TYPE_VECTOR3F = 34,
+  LU_TYPE_VECTOR3D = 35,
+  LU_TYPE_NORMAL3H = 36,
+  LU_TYPE_NORMAL3F = 37,
+  LU_TYPE_NORMAL3D = 38,
+  LU_TYPE_COLOR3H = 39,
+  LU_TYPE_COLOR3F = 40,
+  LU_TYPE_COLOR3D = 41,
+  LU_TYPE_COLOR4H = 42,
+  LU_TYPE_COLOR4F = 43,
+  LU_TYPE_COLOR4D = 44,
+  LU_TYPE_MATRIX2F = 45,
+  LU_TYPE_MATRIX2D = 46,
+  LU_TYPE_MATRIX3F = 47,
+  LU_TYPE_MATRIX3D = 48,
+  LU_TYPE_MATRIX4F = 49,
+  LU_TYPE_MATRIX4D = 50,
+  LU_TYPE_TEXCOORD2H = 51,
+  LU_TYPE_TEXCOORD2F = 52,
+  LU_TYPE_TEXCOORD2D = 53,
+  LU_TYPE_TEXCOORD3H = 54,
+  LU_TYPE_TEXCOORD3F = 55,
+  LU_TYPE_TEXCOORD3D = 56,
+  LU_TYPE_TIMECODE = 57,
+  LU_TYPE_EXTENT = 58,
+  LU_TYPE_DICTIONARY = 59,
+  LU_TYPE_RELATIONSHIP = 60,
+  LU_TYPE_REFERENCE = 61,
+  LU_TYPE_UCHAR = 62,
+  LU_TYPE_FRAME4D = 63,
+  LU_TYPE_PATHEXPRESSION = 64,
+  LU_TYPE_COUNT = 65,
+} lu_type_id;
+
+#define LU_TYPE_FLAG_SCALAR 1
+#define LU_TYPE_FLAG_NUMERIC 2
+
+
+typedef struct lu_type_info {
+  uint16_t id;
+  const char *name;      /* USD type name, e.g. "float3"; NULL for Invalid */
+  const char *cpp_name;  /* C++ spelling; informational */
+  size_t size;           /* 0 for variable-size types */
+  size_t alignment;
+  uint16_t component_type;
+  uint8_t component_count;
+  uint8_t flags;         /* LU_TYPE_FLAG_* */
+} lu_type_info;
+
+/* Row for `id`, or NULL when out of range. */
+LU_CORE_API const lu_type_info *lu_type_info_at(uint16_t id);
+/* USD type name for `id`, or NULL for Invalid/unknown. */
+LU_CORE_API const char *lu_type_name(uint16_t id);
+/* TypeId for a bounded type name, or LU_TYPE_INVALID when unknown. */
+LU_CORE_API uint16_t lu_type_id_from_name(const char *name, size_t len);
+LU_CORE_API size_t lu_type_size(uint16_t id);
+LU_CORE_API size_t lu_type_alignment(uint16_t id);
+LU_CORE_API int lu_type_is_scalar(uint16_t id);
+LU_CORE_API int lu_type_is_numeric(uint16_t id);
+LU_CORE_API uint16_t lu_type_component_type(uint16_t id);
+LU_CORE_API uint8_t lu_type_component_count(uint16_t id);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
