@@ -476,7 +476,82 @@ LU_CORE_API int lu_lz4_compress(const uint8_t *src, size_t src_size,
                                 uint8_t *dst, size_t dst_cap, size_t *out_size,
                                 const char **out_error);
 
-/* Bounds for the framed crate blob (`n_chunks` byte + per-chunk overhead). */
+/* ============================================================
+ * Crate value-type metadata (src/next/c/crate-typeid.c)
+ *
+ * Wire values of the SdfValueTypeName byte and per-type fixed sizes. Keep in
+ * sync with next::CrateTypeId (crate-format.hh).
+ * ============================================================ */
+
+typedef enum lu_crate_type_id {
+  LU_CRATE_TYPE_INVALID = 0,
+  LU_CRATE_TYPE_BOOL = 1,
+  LU_CRATE_TYPE_UCHAR = 2,
+  LU_CRATE_TYPE_INT = 3,
+  LU_CRATE_TYPE_UINT = 4,
+  LU_CRATE_TYPE_INT64 = 5,
+  LU_CRATE_TYPE_UINT64 = 6,
+  LU_CRATE_TYPE_HALF = 7,
+  LU_CRATE_TYPE_FLOAT = 8,
+  LU_CRATE_TYPE_DOUBLE = 9,
+  LU_CRATE_TYPE_STRING = 10,
+  LU_CRATE_TYPE_TOKEN = 11,
+  LU_CRATE_TYPE_ASSETPATH = 12,
+  LU_CRATE_TYPE_MATRIX2D = 13,
+  LU_CRATE_TYPE_MATRIX3D = 14,
+  LU_CRATE_TYPE_MATRIX4D = 15,
+  LU_CRATE_TYPE_QUATD = 16,
+  LU_CRATE_TYPE_QUATF = 17,
+  LU_CRATE_TYPE_QUATH = 18,
+  LU_CRATE_TYPE_VEC2D = 19,
+  LU_CRATE_TYPE_VEC2F = 20,
+  LU_CRATE_TYPE_VEC2H = 21,
+  LU_CRATE_TYPE_VEC2I = 22,
+  LU_CRATE_TYPE_VEC3D = 23,
+  LU_CRATE_TYPE_VEC3F = 24,
+  LU_CRATE_TYPE_VEC3H = 25,
+  LU_CRATE_TYPE_VEC3I = 26,
+  LU_CRATE_TYPE_VEC4D = 27,
+  LU_CRATE_TYPE_VEC4F = 28,
+  LU_CRATE_TYPE_VEC4H = 29,
+  LU_CRATE_TYPE_VEC4I = 30,
+  LU_CRATE_TYPE_DICTIONARY = 31,
+  LU_CRATE_TYPE_TOKENLISTOP = 32,
+  LU_CRATE_TYPE_STRINGLISTOP = 33,
+  LU_CRATE_TYPE_PATHLISTOP = 34,
+  LU_CRATE_TYPE_REFERENCELISTOP = 35,
+  LU_CRATE_TYPE_INTLISTOP = 36,
+  LU_CRATE_TYPE_INT64LISTOP = 37,
+  LU_CRATE_TYPE_UINTLISTOP = 38,
+  LU_CRATE_TYPE_UINT64LISTOP = 39,
+  LU_CRATE_TYPE_PATHVECTOR = 40,
+  LU_CRATE_TYPE_TOKENVECTOR = 41,
+  LU_CRATE_TYPE_SPECIFIER = 42,
+  LU_CRATE_TYPE_PERMISSION = 43,
+  LU_CRATE_TYPE_VARIABILITY = 44,
+  LU_CRATE_TYPE_VARIANTSELECTIONMAP = 45,
+  LU_CRATE_TYPE_TIMESAMPLES = 46,
+  LU_CRATE_TYPE_PAYLOAD = 47,
+  LU_CRATE_TYPE_DOUBLEVECTOR = 48,
+  LU_CRATE_TYPE_LAYEROFFSETVECTOR = 49,
+  LU_CRATE_TYPE_STRINGVECTOR = 50,
+  LU_CRATE_TYPE_VALUEBLOCK = 51,
+  LU_CRATE_TYPE_VALUE = 52,
+  LU_CRATE_TYPE_UNREGISTEREDVALUE = 53,
+  LU_CRATE_TYPE_UNREGISTEREDVALUELISTOP = 54,
+  LU_CRATE_TYPE_PAYLOADLISTOP = 55,
+  LU_CRATE_TYPE_TIMECODE = 56,
+  LU_CRATE_TYPE_PATHEXPRESSION = 57,
+  LU_CRATE_TYPE_RELOCATES = 58,
+  LU_CRATE_TYPE_SPLINE = 59,
+} lu_crate_type_id;
+
+/* Diagnostic name of a crate value type, or "Unknown". */
+LU_CORE_API const char *lu_crate_type_name(uint8_t id);
+/* Fixed element size in bytes; 0 for variable-size/unknown types. */
+LU_CORE_API size_t lu_crate_type_size(uint8_t id);
+
+/* Packed 2-bit code-table bytes for `count` values. */
 LU_CORE_API int lu_crate_blob_compress_bound(size_t src_size,
                                              size_t *out_bound);
 LU_CORE_API int lu_crate_blob_compress(const uint8_t *src, size_t src_size,
@@ -504,6 +579,13 @@ LU_CORE_API int lu_crate_decode_delta_s32(const uint8_t *buffer,
 LU_CORE_API int lu_crate_decode_delta_u64(const uint8_t *buffer,
                                           size_t buffer_size, uint64_t *dst,
                                           size_t count);
+/* Common-prefix integer encode: `lu_crate_encode_integers_bound` is the worst
+ * case (1 + 4*count bytes); *out_size is the exact written size. */
+LU_CORE_API int lu_crate_encode_integers_bound(size_t count, size_t *out_bound);
+LU_CORE_API int lu_crate_encode_integers(const uint32_t *values, size_t count,
+                                         uint8_t *dst, size_t dst_cap,
+                                         size_t *out_size,
+                                         const char **out_error);
 
 #ifdef __cplusplus
 }  /* extern "C" */

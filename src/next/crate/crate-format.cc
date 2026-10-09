@@ -19,111 +19,11 @@ namespace lightusd {
 namespace next {
 
 const char* CrateTypeIdName(CrateTypeId id) {
-  switch (id) {
-    case CrateTypeId::Invalid: return "Invalid";
-    case CrateTypeId::Bool: return "Bool";
-    case CrateTypeId::UChar: return "UChar";
-    case CrateTypeId::Int: return "Int";
-    case CrateTypeId::UInt: return "UInt";
-    case CrateTypeId::Int64: return "Int64";
-    case CrateTypeId::UInt64: return "UInt64";
-    case CrateTypeId::Half: return "Half";
-    case CrateTypeId::Float: return "Float";
-    case CrateTypeId::Double: return "Double";
-    case CrateTypeId::String: return "String";
-    case CrateTypeId::Token: return "Token";
-    case CrateTypeId::AssetPath: return "AssetPath";
-    case CrateTypeId::Matrix2d: return "Matrix2d";
-    case CrateTypeId::Matrix3d: return "Matrix3d";
-    case CrateTypeId::Matrix4d: return "Matrix4d";
-    case CrateTypeId::Quatd: return "Quatd";
-    case CrateTypeId::Quatf: return "Quatf";
-    case CrateTypeId::Quath: return "Quath";
-    case CrateTypeId::Vec2d: return "Vec2d";
-    case CrateTypeId::Vec2f: return "Vec2f";
-    case CrateTypeId::Vec2h: return "Vec2h";
-    case CrateTypeId::Vec2i: return "Vec2i";
-    case CrateTypeId::Vec3d: return "Vec3d";
-    case CrateTypeId::Vec3f: return "Vec3f";
-    case CrateTypeId::Vec3h: return "Vec3h";
-    case CrateTypeId::Vec3i: return "Vec3i";
-    case CrateTypeId::Vec4d: return "Vec4d";
-    case CrateTypeId::Vec4f: return "Vec4f";
-    case CrateTypeId::Vec4h: return "Vec4h";
-    case CrateTypeId::Vec4i: return "Vec4i";
-    case CrateTypeId::Dictionary: return "Dictionary";
-    case CrateTypeId::TokenListOp: return "TokenListOp";
-    case CrateTypeId::StringListOp: return "StringListOp";
-    case CrateTypeId::PathListOp: return "PathListOp";
-    case CrateTypeId::ReferenceListOp: return "ReferenceListOp";
-    case CrateTypeId::IntListOp: return "IntListOp";
-    case CrateTypeId::Int64ListOp: return "Int64ListOp";
-    case CrateTypeId::UIntListOp: return "UIntListOp";
-    case CrateTypeId::UInt64ListOp: return "UInt64ListOp";
-    case CrateTypeId::PathVector: return "PathVector";
-    case CrateTypeId::TokenVector: return "TokenVector";
-    case CrateTypeId::Specifier: return "Specifier";
-    case CrateTypeId::Permission: return "Permission";
-    case CrateTypeId::Variability: return "Variability";
-    case CrateTypeId::VariantSelectionMap: return "VariantSelectionMap";
-    case CrateTypeId::TimeSamples: return "TimeSamples";
-    case CrateTypeId::Payload: return "Payload";
-    case CrateTypeId::DoubleVector: return "DoubleVector";
-    case CrateTypeId::LayerOffsetVector: return "LayerOffsetVector";
-    case CrateTypeId::StringVector: return "StringVector";
-    case CrateTypeId::ValueBlock: return "ValueBlock";
-    case CrateTypeId::Value: return "Value";
-    case CrateTypeId::UnregisteredValue: return "UnregisteredValue";
-    case CrateTypeId::UnregisteredValueListOp: return "UnregisteredValueListOp";
-    case CrateTypeId::PayloadListOp: return "PayloadListOp";
-    case CrateTypeId::TimeCode: return "TimeCode";
-    case CrateTypeId::PathExpression: return "PathExpression";
-    case CrateTypeId::Spline: return "Spline";
-    case CrateTypeId::Relocates: return "Relocates";
-  }
-  return "Unknown";
+  return lu_crate_type_name(static_cast<uint8_t>(id));
 }
 
 size_t CrateTypeIdSize(CrateTypeId id) {
-  switch (id) {
-    case CrateTypeId::Bool: return 1;
-    case CrateTypeId::UChar: return 1;
-    case CrateTypeId::Int: return 4;
-    case CrateTypeId::UInt: return 4;
-    case CrateTypeId::Int64: return 8;
-    case CrateTypeId::UInt64: return 8;
-    case CrateTypeId::Half: return 2;
-    case CrateTypeId::Float: return 4;
-    case CrateTypeId::Double: return 8;
-    case CrateTypeId::Matrix2d: return 4 * 8;   // 4 doubles
-    case CrateTypeId::Matrix3d: return 9 * 8;   // 9 doubles
-    case CrateTypeId::Matrix4d: return 16 * 8;  // 16 doubles
-    case CrateTypeId::Quatd: return 4 * 8;      // 4 doubles
-    case CrateTypeId::Quatf: return 4 * 4;      // 4 floats
-    case CrateTypeId::Quath: return 4 * 2;      // 4 halfs
-    case CrateTypeId::Vec2d: return 2 * 8;
-    case CrateTypeId::Vec2f: return 2 * 4;
-    case CrateTypeId::Vec2h: return 2 * 2;
-    case CrateTypeId::Vec2i: return 2 * 4;
-    case CrateTypeId::Vec3d: return 3 * 8;
-    case CrateTypeId::Vec3f: return 3 * 4;
-    case CrateTypeId::Vec3h: return 3 * 2;
-    case CrateTypeId::Vec3i: return 3 * 4;
-    case CrateTypeId::Vec4d: return 4 * 8;
-    case CrateTypeId::Vec4f: return 4 * 4;
-    case CrateTypeId::Vec4h: return 4 * 2;
-    case CrateTypeId::Vec4i: return 4 * 4;
-    case CrateTypeId::TimeCode: return 8;       // double
-
-    // Variable-size types
-    case CrateTypeId::String:
-    case CrateTypeId::Token:
-    case CrateTypeId::AssetPath:
-    case CrateTypeId::Dictionary:
-    case CrateTypeId::TimeSamples:
-    default:
-      return 0;
-  }
+  return lu_crate_type_size(static_cast<uint8_t>(id));
 }
 
 DecompressResult DecompressLZ4(const uint8_t* src, size_t src_size,
@@ -304,47 +204,17 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0) return result;
-
-  // Use common=0 with 0 common bytes for simplicity.
-  // This works well for small values (typical token indices 0-100).
-  uint32_t common = 0;
-  result.push_back(0);  // common_bytes = 0
-
-  for (size_t i = 0; i < count;) {
-    // Count run of identical values
-    size_t run = 1;
-    while (i + run < count && values[i + run] == values[i]) ++run;
-
-    uint32_t value = values[i];
-    uint8_t num_bytes;
-
-    if (value == common) {
-      num_bytes = 0;
-    } else if (value <= 0xFF) {
-      num_bytes = 1;
-    } else if (value <= 0xFFFF) {
-      num_bytes = 2;
-    } else {
-      num_bytes = 3;
-    }
-
-    // Encode in chunks of up to 64 (max run-length per code byte)
-    size_t remaining = run;
-    while (remaining > 0) {
-      size_t chunk = (remaining > 64) ? 64 : remaining;
-      uint8_t code = static_cast<uint8_t>((chunk - 1) << 2) | num_bytes;
-      result.push_back(code);
-      if (num_bytes > 0) {
-        for (int b = 0; b < num_bytes; ++b) {
-          result.push_back(static_cast<uint8_t>(value >> (b * 8)));
-        }
-      }
-      remaining -= chunk;
-    }
-
-    i += run;
+  size_t bound = 0;
+  if (!lu_crate_encode_integers_bound(count, &bound)) return result;
+  result.resize(bound);
+  size_t out_size = 0;
+  const char* error = nullptr;
+  if (lu_crate_encode_integers(values, count, result.data(), bound, &out_size,
+                               &error)) {
+    result.resize(out_size);
+  } else {
+    result.clear();
   }
-
   return result;
 }
 

@@ -19,6 +19,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/identifier.c             # identifier/path grammar (identifier.hh)
     c/crate-int.c              # crate integer decode (crate-format.cc)
     c/crate-blob.c             # LZ4 + crate blob framing (crate-format.cc)
+    c/crate-typeid.c           # crate value-type name/size (crate-format.cc)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc

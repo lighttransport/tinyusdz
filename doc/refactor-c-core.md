@@ -5949,3 +5949,14 @@ every length is checked before use; `crate-format.cc`'s `DecompressResult` /
 buffers across 182 size classes (0..5 MB, mixed entropy) round-trip exactly
 through both the framed blob and the raw LZ4 wrapper, and the USDC
 round-trip / malformed suites pass.
+
+### Crate type-id metadata and integer encode in C11
+
+`src/next/c/crate-typeid.c` holds the crate value-type name/size tables
+(`lu_crate_type_name` / `lu_crate_type_size`, plus the `lu_crate_type_id` enum
+mirroring `CrateTypeId`), and `crate-int.c` gains the common-prefix integer
+encoder (`lu_crate_encode_integers[_bound]`). `crate-format.cc` forwards.
+
+`EncodeIntegers` is verified byte-identical to the previous C++ implementation
+over 300,000 random arrays (all value ranges plus run-length patterns): zero
+differences. The 55-test next ctest tree passes.

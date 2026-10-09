@@ -284,3 +284,70 @@ int lu_crate_decode_delta_u64(const uint8_t *buffer, size_t buffer_size,
   }
   return 1;
 }
+
+int lu_crate_encode_integers_bound(size_t count, size_t *out_bound) {
+  if (out_bound == NULL) return 0;
+  if (count > ((size_t)-1 - 1) / 4) return 0;
+  *out_bound = 1 + count * 4; /* common byte + (code + up to 3 value bytes) each */
+  return 1;
+}
+
+int lu_crate_encode_integers(const uint32_t *values, size_t count, uint8_t *dst,
+                             size_t dst_cap, size_t *out_size,
+                             const char **out_error) {
+  if (out_error != NULL) *out_error = NULL;
+  if (out_size != NULL) *out_size = 0;
+  if (count == 0) return 1;
+  if (values == NULL || dst == NULL) {
+    if (out_error != NULL) *out_error = "Invalid argument";
+    return 0;
+  }
+  size_t cap = 0;
+  if (!lu_crate_encode_integers_bound(count, &cap)) {
+    if (out_error != NULL) *out_error = "Integer section size overflow";
+    return 0;
+  }
+  if (dst_cap < cap) {
+    if (out_error != NULL) *out_error = "Output buffer too small";
+    return 0;
+  }
+
+  /* Common = 0 with 0 common bytes: best for small values (token indices). */
+  const uint32_t common = 0;
+  size_t pos = 0;
+  dst[pos++] = 0; /* common_bytes = 0 */
+
+  for (size_t i = 0; i < count;) {
+    size_t run = 1;
+    while (i + run < count && values[i + run] == values[i]) ++run;
+
+    const uint32_t value = values[i];
+    uint8_t num_bytes;
+    if (value == common) {
+      num_bytes = 0;
+    } else if (value <= 0xFFu) {
+      num_bytes = 1;
+    } else if (value <= 0xFFFFu) {
+      num_bytes = 2;
+    } else {
+      num_bytes = 3;
+    }
+
+    size_t remaining = run;
+    while (remaining > 0) {
+      const size_t chunk = (remaining > 64) ? 64 : remaining;
+      const uint8_t code = (uint8_t)(((chunk - 1) << 2) | num_bytes);
+      dst[pos++] = code;
+      if (num_bytes > 0) {
+        for (int b = 0; b < num_bytes; ++b) {
+          dst[pos++] = (uint8_t)(value >> (b * 8));
+        }
+      }
+      remaining -= chunk;
+    }
+    i += run;
+  }
+
+  if (out_size != NULL) *out_size = pos;
+  return 1;
+}
