@@ -6059,3 +6059,18 @@ fallback. The C++ TU is now a thin namespace forwarder. Verified byte-identical
 implementation over 2,000,000 random structure-biased buffers of length 0..219:
 zero differences. Compiles clean under `gcc`/`clang -std=c11 -Wall -Wextra
 -Wpedantic -Werror -msse2`. 55/55.
+
+### USDA lexical primitives in C11
+
+The byte-classification and number/keyword scanning core of
+`src/next/parser/lexer.cc` moved to `src/next/c/lexer.c`:
+`lu_lex_is_identifier_start` (UTF-8 XID + '_'), ASCII digit/hex classification,
+`lu_lex_match_float_special`, `lu_lex_lookup_keyword` (the keyword table, over a
+new `lu_token_type` ABI enum mirroring `next::TokenType`) and
+`lu_lex_scan_number` (the numeric-literal length scanner). The stateful `Lexer`
+class (position/line/column, token construction, the ASCII identifier fast-path
+table) stays C++. Verified by an **end-to-end token-stream differential**: a
+standalone harness dumps every token (type, line, column, value) for 4,000
+random inputs over a rich alphabet (UTF-8 bytes, quotes, `@`, `</`, `#`, `/*`,
+keywords, `inf`/`nan`, hex/float/exponent forms) against the pre-port lexer and
+the ported lexer: zero output differences. 55/55.

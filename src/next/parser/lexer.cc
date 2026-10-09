@@ -4,6 +4,7 @@
 // LightUSD Next - Lexer implementation
 
 #include "lexer.hh"
+#include "../c/lightusd-core-c.h"
 #include "../prim/identifier.hh"
 #include "../strfmt.hh"
 #include "simd-scan.hh"
@@ -19,88 +20,24 @@ namespace next {
 namespace {
 
 bool IsIdentifierStart(const char* data, size_t size, size_t pos) {
-  uint32_t cp = 0;
-  size_t width = 0;
-  return identifier_detail::DecodeUtf8(data, size, pos, &cp, &width) &&
-         identifier_detail::IsStart(cp);
+  return lu_lex_is_identifier_start(data, size, pos) != 0;
 }
 
-bool IsIdentifierContinueAscii(char c) {
-  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
-}
-
-bool IsDigit(char c) {
-  return std::isdigit(static_cast<unsigned char>(c));
-}
-
-bool IsHexDigit(char c) {
-  return std::isxdigit(static_cast<unsigned char>(c));
-}
+bool IsDigit(char c) { return lu_lex_is_digit(c) != 0; }
 
 // Length of an `inf` / `infinity` / `nan` special-float word (case-insensitive)
 // starting at p, or 0 if none. Requires a non-identifier char (or end) after the
 // word so e.g. `info` or `index` are not mistaken for `inf`.
 size_t MatchFloatSpecial(const char* p, const char* end) {
-  auto ieq = [](const char* a, const char* lit, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-      if (std::tolower(static_cast<unsigned char>(a[i])) != lit[i]) return false;
-    }
-    return true;
-  };
-  auto word_boundary = [&](size_t n) {
-    return (p + n == end) || !IsIdentifierContinueAscii(p[n]);
-  };
-  if (p + 8 <= end && ieq(p, "infinity", 8) && word_boundary(8)) return 8;
-  if (p + 3 <= end && ieq(p, "inf", 3) && word_boundary(3)) return 3;
-  if (p + 3 <= end && ieq(p, "nan", 3) && word_boundary(3)) return 3;
-  return 0;
+  return lu_lex_match_float_special(p, end);
 }
 
-int HexVal(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return -1;
-}
+int HexVal(char c) { return lu_lex_hex_val(c); }
 
-struct Keyword {
-  const char* name;
-  TokenType type;
-};
 
-const Keyword kKeywords[] = {
-  {"def", TokenType::Def},
-  {"over", TokenType::Over},
-  {"class", TokenType::Class},
-  {"true", TokenType::True},
-  {"True", TokenType::True},
-  {"false", TokenType::False},
-  {"False", TokenType::False},
-  {"None", TokenType::None},
-  {"timeSamples", TokenType::TimeSamples},
-  {"custom", TokenType::Custom},
-  {"uniform", TokenType::Uniform},
-  {"varying", TokenType::Varying},
-  {"prepend", TokenType::Prepend},
-  {"append", TokenType::Append},
-  {"delete", TokenType::Delete},
-  {"add", TokenType::Add},
-  {"reorder", TokenType::Reorder},
-  {"rel", TokenType::Rel},
-};
-
-// Keyword lookup over the raw identifier bytes: a length + first-byte gate in
-// front of the memcmp (comparing a std::string against each `const char*`
-// keyword cost a strlen per keyword per identifier on the hot path).
+// Keyword lookup lives in the C11 core (src/next/c/lexer.c).
 TokenType LookupKeyword(const char* p, size_t n) {
-  if (n < 3 || n > 11) return TokenType::Identifier;
-  for (const auto& kw : kKeywords) {
-    if (kw.name[0] == p[0] && std::strlen(kw.name) == n &&
-        std::memcmp(kw.name, p, n) == 0) {
-      return kw.type;
-    }
-  }
-  return TokenType::Identifier;
+  return static_cast<TokenType>(lu_lex_lookup_keyword(p, n));
 }
 
 // ASCII bytes that continue an identifier, derived once from the same XID
@@ -727,60 +664,12 @@ Token Lexer::scan_number() {
   size_t start_col = column_;
   size_t start = pos_;
 
-  // Sign
-  if (current_char() == '-' || current_char() == '+') {
-    advance();
-  }
-
-  // Signed inf / infinity / nan special float literal (e.g. `-inf`). Emit as a
-  // Number token; strtof/strtod/fast_float parse these directly.
-  if (size_t special = MatchFloatSpecial(data_ + pos_, data_ + length_)) {
-    for (size_t i = 0; i < special; i++) advance();
-    std::string value(data_ + start, pos_ - start);
-    return make_token(TokenType::Number, std::move(value), start_line, start_col);
-  }
-
-  // Check for hex
-  if (current_char() == '0' && (peek_char() == 'x' || peek_char() == 'X')) {
-    advance();  // '0'
-    advance();  // 'x'
-    while (IsHexDigit(current_char())) {
-      advance();
-    }
-  } else {
-    // Integer part
-    while (IsDigit(current_char())) {
-      advance();
-    }
-
-    // Decimal part. pxr's grammar is `[0-9]+\.?[0-9]*|\.[0-9]+`: a leading
-    // dot (`.5`) and a trailing dot (`1.`) are both valid float literals.
-    if (current_char() == '.') {
-      advance();  // '.'
-      while (IsDigit(current_char())) {
-        advance();
-      }
-    }
-
-    // Exponent: only consume when followed by digits (`1e` / `1e+` are NOT
-    // numbers — consuming a bare exponent silently truncated `1e3`-style
-    // typos to `1`; leave the `e` for the parser to reject).
-    if (current_char() == 'e' || current_char() == 'E') {
-      const size_t exp_pos = pos_;
-      advance();
-      if (current_char() == '+' || current_char() == '-') {
-        advance();
-      }
-      if (IsDigit(current_char())) {
-        while (IsDigit(current_char())) {
-          advance();
-        }
-      } else {
-        // rewind: not an exponent
-        while (pos_ > exp_pos) { pos_--; if (column_ > 0) column_--; }
-      }
-    }
-  }
+  // Byte-length-only core lives in the C11 core (src/next/c/lexer.c).
+  const size_t len = lu_lex_scan_number(data_ + start, data_ + length_);
+  // Numeric literals never contain a newline, so advance() would only bump the
+  // column; do it in one step (identical result, fewer calls).
+  pos_ += len;
+  column_ += len;
 
   if (pos_ - start > kMaxTokenLength) {
     set_fatal_error("Number token too large");

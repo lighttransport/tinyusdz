@@ -322,6 +322,50 @@ LU_CORE_API float lu_half_to_float(uint16_t h);
 LU_CORE_API uint16_t lu_float_to_half(float value);
 
 /* ============================================================
+ * USDA lexer token types (src/next/c/lexer.c)
+ *
+ * Mirror of next::TokenType (parser/lexer.hh); the numeric values must stay in
+ * sync. Used by lu_lex_lookup_keyword.
+ * ============================================================ */
+
+typedef enum lu_token_type {
+  LU_TOK_INVALID = 0,
+  LU_TOK_EOF = 1,
+  LU_TOK_IDENTIFIER = 2,
+  LU_TOK_STRING = 3,
+  LU_TOK_NUMBER = 4,
+  LU_TOK_PATHREF = 5,
+  LU_TOK_DEF = 6,
+  LU_TOK_OVER = 7,
+  LU_TOK_CLASS = 8,
+  LU_TOK_TRUE = 9,
+  LU_TOK_FALSE = 10,
+  LU_TOK_NONE = 11,
+  LU_TOK_OPENPAREN = 12,
+  LU_TOK_CLOSEPAREN = 13,
+  LU_TOK_OPENBRACKET = 14,
+  LU_TOK_CLOSEBRACKET = 15,
+  LU_TOK_OPENBRACE = 16,
+  LU_TOK_CLOSEBRACE = 17,
+  LU_TOK_EQUALS = 18,
+  LU_TOK_COLON = 19,
+  LU_TOK_DOT = 20,
+  LU_TOK_COMMA = 21,
+  LU_TOK_SEMICOLON = 22,
+  LU_TOK_AT = 23,
+  LU_TOK_TIMESAMPLES = 24,
+  LU_TOK_CUSTOM = 25,
+  LU_TOK_UNIFORM = 26,
+  LU_TOK_VARYING = 27,
+  LU_TOK_PREPEND = 28,
+  LU_TOK_APPEND = 29,
+  LU_TOK_DELETE = 30,
+  LU_TOK_ADD = 31,
+  LU_TOK_REORDER = 32,
+  LU_TOK_REL = 33,
+} lu_token_type;
+
+/* ============================================================
  * Built-in USD type metadata (src/next/c/type-names.c)
  *
  * The USD<->TypeId mapping and per-type layout. Metadata only: no per-type
@@ -494,6 +538,26 @@ LU_CORE_API const char *lu_simd_scan_prim_structural(const char *p,
                                                      size_t *newlines);
 /* Active backend name: "sse2" / "neon" / "scalar". */
 LU_CORE_API const char *lu_simd_scan_backend(void);
+
+/* ============================================================
+ * USDA lexical primitives (src/next/c/lexer.c)
+ *
+ * Byte classification, the inf/infinity/nan special-float word matcher, the
+ * keyword table lookup and the numeric-literal length scanner. The stateful
+ * Lexer class stays C++.
+ * ============================================================ */
+
+LU_CORE_API int lu_lex_is_identifier_start(const char *data, size_t size,
+                                           size_t pos);
+LU_CORE_API int lu_lex_is_identifier_continue_ascii(char c);
+LU_CORE_API int lu_lex_is_digit(char c);
+LU_CORE_API int lu_lex_is_hex_digit(char c);
+LU_CORE_API int lu_lex_hex_val(char c);
+LU_CORE_API size_t lu_lex_match_float_special(const char *p, const char *end);
+/* TokenType (lu_token_type) for a bounded identifier, else LU_TOK_IDENTIFIER. */
+LU_CORE_API uint8_t lu_lex_lookup_keyword(const char *p, size_t n);
+/* Byte length of the numeric literal starting at p. */
+LU_CORE_API size_t lu_lex_scan_number(const char *p, const char *end);
 
 /* ============================================================
  * Identifier / path validation (src/next/c/identifier.c)
