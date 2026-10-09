@@ -48,27 +48,15 @@ class Logger {
   Logger(const Logger&) = delete;
   Logger& operator=(const Logger&) = delete;
 
-  void setLogLevel(LogLevel level) {
-    _level = level;
-  }
+  void setLogLevel(LogLevel level);
 
-  LogLevel getLogLevel() const {
-    return _level;
-  }
+  LogLevel getLogLevel() const;
 
-  void setStream(std::ostream* stream) {
-    if (stream) {
-      _stream = stream;
-    }
-  }
+  void setStream(std::ostream* stream);
 
-  std::ostream* getStream() const {
-    return _stream;
-  }
+  std::ostream* getStream() const;
 
-  bool shouldLog(LogLevel msgLevel) const {
-    return static_cast<int>(msgLevel) >= static_cast<int>(_level);
-  }
+  bool shouldLog(LogLevel msgLevel) const;
 
   // Duplicate-message suppression. When enabled (default), a fully-composed log
   // line that was already emitted is dropped instead of being printed again.
@@ -76,50 +64,18 @@ class Logger {
   // thousands of times and repeat on every re-conversion. The dedup memory is
   // bounded; once it fills it is cleared so genuinely new messages keep
   // flowing.
-  void setDedup(bool enabled) { _dedup_enabled = enabled; }
-  bool getDedup() const { return _dedup_enabled; }
-  void setDedupCapacity(size_t cap) { _dedup_cap = cap ? cap : 1; }
-  void resetDedup() { _dedup_seen.clear(); }
+  void setDedup(bool enabled);
+  bool getDedup() const;
+  void setDedupCapacity(size_t cap);
+  void resetDedup();
 
   // Emit a fully-composed message at the given level, honoring the level
   // threshold and duplicate suppression. The macros below funnel through here.
   void emit(LogLevel level, const char* file, const char* func, int line,
-            const std::string& msg) {
-    if (!shouldLog(level)) {
-      return;
-    }
-    if (_dedup_enabled) {
-      size_t h = std::hash<std::string>{}(msg);
-      h ^= std::hash<const char*>{}(file) + 0x9e3779b97f4a7c15ULL + (h << 6) +
-           (h >> 2);
-      h ^= static_cast<size_t>(line) + 0x9e3779b97f4a7c15ULL + (h << 6) +
-           (h >> 2);
-      auto it = _dedup_seen.find(h);
-      if (it != _dedup_seen.end()) {
-        it->second++;  // count suppressed repeats (for potential diagnostics)
-        return;
-      }
-      if (_dedup_seen.size() >= _dedup_cap) {
-        _dedup_seen.clear();
-      }
-      _dedup_seen.emplace(h, 1u);
-    }
-    (*_stream) << "[" << getLevelName(level) << "] " << file << ":" << func
-               << ":" << std::to_string(line) << " " << msg << "\n";
-  }
+            const std::string& msg);
 
   // Helper to get level name
-  static const char* getLevelName(LogLevel level) {
-    switch (level) {
-      case LogLevel::Debug: return "DEBUG";
-      case LogLevel::Info: return "INFO";
-      case LogLevel::Warn: return "WARN";
-      case LogLevel::Error: return "ERROR";
-      case LogLevel::Critical: return "CRITICAL";
-      case LogLevel::Off: return "UNKNOWN";
-    }
-    return "UNKNOWN";
-  }
+  static const char* getLevelName(LogLevel level);
 
  private:
   bool _dedup_enabled = true;
@@ -181,306 +137,60 @@ class TraceManager {
   TraceManager(const TraceManager&) = delete;
   TraceManager& operator=(const TraceManager&) = delete;
 
-  void setEnabled(bool enabled) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    enabled_ = enabled;
-  }
+  void setEnabled(bool enabled) LIGHTUSD_REQUIRES_NOT(mutex_);
 
-  bool isEnabled() const {
-    return enabled_;
-  }
+  bool isEnabled() const;
 
   // Enable/disable tracing for specific tag (and optionally subtag)
-  void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    std::string key = tag;
-    if (!subtag.empty()) {
-      key += "::" + subtag;
-    }
-    tag_enabled_map_[key] = enabled;
-  }
+  void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Check if a specific tag (and optionally subtag) is enabled
-  bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const LIGHTUSD_REQUIRES_NOT(mutex_) {
-    if (!enabled_) return false;  // Global disable overrides everything
-
-    MutexLockGuard lock(mutex_);
-
-    // Check for exact match with subtag
-    std::string key = tag;
-    if (!subtag.empty()) {
-      key += "::" + subtag;
-      auto it = tag_enabled_map_.find(key);
-      if (it != tag_enabled_map_.end()) {
-        return it->second;
-      }
-    }
-
-    // Check for tag-level setting
-    auto it = tag_enabled_map_.find(tag);
-    if (it != tag_enabled_map_.end()) {
-      return it->second;
-    }
-
-    // Default to enabled if not explicitly set
-    return true;
-  }
+  bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Clear all per-tag settings
-  void clearTagSettings() LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    tag_enabled_map_.clear();
-  }
+  void clearTagSettings() LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Get all tag settings
-  std::unordered_map<std::string, bool> getTagSettings() const LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    return tag_enabled_map_;
-  }
+  std::unordered_map<std::string, bool> getTagSettings() const LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Set report format
-  void setReportFormat(TraceReportFormat format) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    report_format_ = format;
-  }
+  void setReportFormat(TraceReportFormat format) LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Get report format
-  TraceReportFormat getReportFormat() const LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    return report_format_;
-  }
+  TraceReportFormat getReportFormat() const LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Set event logging mode
-  void setEventLogging(TraceEventLogging mode) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    event_logging_ = mode;
-  }
+  void setEventLogging(TraceEventLogging mode) LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Get event logging mode
-  TraceEventLogging getEventLogging() const LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    return event_logging_;
-  }
+  TraceEventLogging getEventLogging() const LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Set log level for trace events
-  void setEventLogLevel(LogLevel level) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    event_log_level_ = level;
-  }
+  void setEventLogLevel(LogLevel level) LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Get log level for trace events
-  LogLevel getEventLogLevel() const LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    return event_log_level_;
-  }
+  LogLevel getEventLogLevel() const LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Log trace begin event
   void logTraceBegin(const std::string& tag, const std::string& subtag,
-                     const std::string& function, const std::string& file, int line) {
-    if (event_logging_ == TraceEventLogging::None) return;
-    if (!Logger::getInstance().shouldLog(event_log_level_)) return;
-
-    auto& stream = *Logger::getInstance().getStream();
-
-    if (event_logging_ == TraceEventLogging::JSON) {
-      stream << "{\"event\":\"trace_begin\",\"tag\":\"" << escapeJSON(tag) << "\"";
-      if (!subtag.empty()) {
-        stream << ",\"subtag\":\"" << escapeJSON(subtag) << "\"";
-      }
-      stream << ",\"function\":\"" << escapeJSON(function) << "\""
-             << ",\"file\":\"" << escapeJSON(file) << "\""
-             << ",\"line\":" << line
-             << ",\"timestamp_ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count()
-             << "}\n";
-    } else {
-      stream << "[TRACE_BEGIN] " << tag;
-      if (!subtag.empty()) {
-        stream << "::" << subtag;
-      }
-      stream << " in " << function << " at " << file << ":" << line << "\n";
-    }
-  }
+                     const std::string& function, const std::string& file, int line);
 
   // Log trace end event
   void logTraceEnd(const std::string& tag, const std::string& subtag,
-                   const std::string& function, double duration_ms) {
-    if (event_logging_ == TraceEventLogging::None) return;
-    if (!Logger::getInstance().shouldLog(event_log_level_)) return;
+                   const std::string& function, double duration_ms);
 
-    auto& stream = *Logger::getInstance().getStream();
+  void addRecord(const TraceRecord& record) LIGHTUSD_REQUIRES_NOT(mutex_);
 
-    if (event_logging_ == TraceEventLogging::JSON) {
-      stream << "{\"event\":\"trace_end\",\"tag\":\"" << escapeJSON(tag) << "\"";
-      if (!subtag.empty()) {
-        stream << ",\"subtag\":\"" << escapeJSON(subtag) << "\"";
-      }
-      stream << ",\"function\":\"" << escapeJSON(function) << "\""
-             << ",\"duration_ms\":" << std::fixed << std::setprecision(3) << duration_ms
-             << ",\"timestamp_ms\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count()
-             << "}\n";
-    } else {
-      stream << "[TRACE_END] " << tag;
-      if (!subtag.empty()) {
-        stream << "::" << subtag;
-      }
-      stream << " in " << function << " took "
-             << std::fixed << std::setprecision(3) << duration_ms << " ms\n";
-    }
-  }
+  void clearRecords() LIGHTUSD_REQUIRES_NOT(mutex_);
 
-  void addRecord(const TraceRecord& record) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    if (!isTagEnabled(record.tag, record.subtag)) return;
+  void printSummary(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_);
 
-    MutexLockGuard lock(mutex_);
-    std::string key = record.tag;
-    if (!record.subtag.empty()) {
-      key += "::" + record.subtag;
-    }
-    records_by_tag_[key].push_back(record);
-  }
+  void printSummaryPlainText(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_);
 
-  void clearRecords() LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-    records_by_tag_.clear();
-  }
-
-  void printSummary(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    if (report_format_ == TraceReportFormat::JSON) {
-      printSummaryJSON(out);
-    } else {
-      printSummaryPlainText(out);
-    }
-  }
-
-  void printSummaryPlainText(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-
-    out << "\n=== Trace Summary ===\n";
-    for (const auto& kv : records_by_tag_) {
-      const std::string& key = kv.first;
-      const std::vector<TraceRecord>& records = kv.second;
-
-      double total_ms = 0.0;
-      double min_ms = (std::numeric_limits<double>::max)();
-      double max_ms = 0.0;
-
-      for (const auto& record : records) {
-        total_ms += record.duration_ms;
-        min_ms = (std::min)(min_ms, record.duration_ms);
-        max_ms = (std::max)(max_ms, record.duration_ms);
-      }
-
-      double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
-
-      out << std::fixed << std::setprecision(3);
-      out << "Tag: " << key << "\n";
-      out << "  Count: " << records.size() << "\n";
-      out << "  Total: " << total_ms << " ms\n";
-      out << "  Avg: " << avg_ms << " ms\n";
-      out << "  Min: " << min_ms << " ms\n";
-      out << "  Max: " << max_ms << " ms\n";
-    }
-    out << "====================\n";
-  }
-
-  void printSummaryJSON(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-
-    out << "{\n";
-    out << "  \"trace_summary\": {\n";
-
-    bool first_tag = true;
-    for (const auto& kv : records_by_tag_) {
-      const std::string& key = kv.first;
-      const std::vector<TraceRecord>& records = kv.second;
-
-      double total_ms = 0.0;
-      double min_ms = (std::numeric_limits<double>::max)();
-      double max_ms = 0.0;
-
-      for (const auto& record : records) {
-        total_ms += record.duration_ms;
-        min_ms = (std::min)(min_ms, record.duration_ms);
-        max_ms = (std::max)(max_ms, record.duration_ms);
-      }
-
-      double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
-
-      if (!first_tag) {
-        out << ",\n";
-      }
-      first_tag = false;
-
-      out << std::fixed << std::setprecision(3);
-      out << "    \"" << escapeJSON(key) << "\": {\n";
-      out << "      \"count\": " << records.size() << ",\n";
-      out << "      \"total_ms\": " << total_ms << ",\n";
-      out << "      \"avg_ms\": " << avg_ms << ",\n";
-      out << "      \"min_ms\": " << min_ms << ",\n";
-      out << "      \"max_ms\": " << max_ms << "\n";
-      out << "    }";
-    }
-
-    out << "\n  }\n";
-    out << "}\n";
-  }
+  void printSummaryJSON(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_);
 
   // Get detailed records in JSON format
-  void printDetailedJSON(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
-    MutexLockGuard lock(mutex_);
-
-    out << "{\n";
-    out << "  \"trace_records\": [\n";
-
-    bool first_record = true;
-    for (const auto& kv : records_by_tag_) {
-      const std::vector<TraceRecord>& records = kv.second;
-
-      for (const auto& record : records) {
-        if (!first_record) {
-          out << ",\n";
-        }
-        first_record = false;
-
-        out << std::fixed << std::setprecision(3);
-        out << "    {\n";
-        out << "      \"tag\": \"" << escapeJSON(record.tag) << "\",\n";
-        out << "      \"subtag\": \"" << escapeJSON(record.subtag) << "\",\n";
-        out << "      \"duration_ms\": " << record.duration_ms << ",\n";
-        out << "      \"function\": \"" << escapeJSON(record.function_name) << "\",\n";
-        out << "      \"file\": \"" << escapeJSON(record.file_name) << "\",\n";
-        out << "      \"line\": " << record.line_number << ",\n";
-
-        // Format timestamp as ISO 8601 string
-#ifndef __EMSCRIPTEN__
-        // Emscripten has issues with time_point duration conversion
-        // Use duration_cast to handle different clock duration types
-        auto start_time_t = std::chrono::system_clock::to_time_t(
-          std::chrono::system_clock::now() +
-          std::chrono::duration_cast<std::chrono::system_clock::duration>(
-            record.start_time - std::chrono::high_resolution_clock::now()));
-
-        std::stringstream timestamp_ss;
-        timestamp_ss << std::put_time(std::gmtime(&start_time_t), "%Y-%m-%dT%H:%M:%S");
-
-        out << "      \"timestamp\": \"" << timestamp_ss.str() << "Z\"\n";
-#else
-        // Simplified timestamp for WASM builds
-        auto now = std::chrono::system_clock::now();
-        auto start_time_t = std::chrono::system_clock::to_time_t(now);
-        std::stringstream timestamp_ss;
-        timestamp_ss << std::put_time(std::gmtime(&start_time_t), "%Y-%m-%dT%H:%M:%S");
-        out << "      \"timestamp\": \"" << timestamp_ss.str() << "Z\"\n";
-#endif
-        out << "    }";
-      }
-    }
-
-    out << "\n  ]\n";
-    out << "}\n";
-  }
+  void printDetailedJSON(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_);
 
  private:
   // Helper function to escape special characters in JSON strings

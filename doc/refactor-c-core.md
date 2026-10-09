@@ -5854,3 +5854,12 @@ canary on `next_usdcat` and RELRO + `BIND_NOW` on the shared C library (the
 executable specification of the option); `next-fuzz-cabi` builds the C-ABI
 fuzzer with clang and ASan/UBSan and runs it for a bounded 60 s over the
 `tests/{usda,usdc}` corpus, uploading any reproducer.
+
+### logger.hh method bodies out-of-line
+
+`src/logger.hh` carried the `Logger`/`TraceManager`/`Trace` method bodies and
+was included by 11 units. 31 bodies moved to the new `src/logger.cc` (shared by
+the next and legacy builds); the header drops from 763 to 473 lines and
+`lightusd_next` project-header closure from 351593 to 348962. The heavy std
+headers stay in the header because its public trace/`DCOUT` macros expand
+`std::ostringstream`/`std::cout`/`std::hex` in every consumer translation unit.

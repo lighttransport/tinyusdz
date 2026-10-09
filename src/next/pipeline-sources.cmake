@@ -13,6 +13,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     writer/dtoa.cc
     ../external/zmij/zmij.cc  # zmij usdcat fast path (used by writer/dtoa.cc)
     ../unicode-xid-c.c         # XID_Start/XID_Continue tables (identifier.hh)
+    ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc
     layer/array-edit.cc
