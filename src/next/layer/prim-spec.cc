@@ -1751,5 +1751,356 @@ size_t PrimSpec::memory_usage() const {
   return size;
 }
 
+// ---------------------------------------------------------------------------
+// PrimSpecMeta accessors, moved out of prim-spec.hh so units that include it
+// do not re-parse their bodies.
+// ---------------------------------------------------------------------------
+bool PrimSpecMeta::has_ext() const { return ext_ != nullptr; }
+void PrimSpecMeta::ensure_ext() {
+    if (!ext_) ext_.reset(new PrimSpecMetaExt());
+  }
+const PrimSpecMetaExt *PrimSpecMeta::ext() const { return ext_.get(); }
+const ArcListOpEdits *PrimSpecMeta::arc_edits() const {
+    return ext_ ? ext_->arc_edits.get() : nullptr;
+  }
+void PrimSpecMeta::clear_arc_edits() {
+    if (ext_) ext_->arc_edits.reset();
+  }
+ArcListOpEdits &PrimSpecMeta::ensure_arc_edits() {
+    ensure_ext();
+    if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOpEdits());
+    return *ext_->arc_edits;
+  }
+const std::string &PrimSpecMeta::doc() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->doc : kEmpty;
+  }
+std::string &PrimSpecMeta::doc() {
+    ensure_ext();
+    return ext_->doc;
+  }
+bool PrimSpecMeta::doc_authored() const { return ext_ && ext_->doc_authored; }
+void PrimSpecMeta::set_doc_authored(bool authored ) {
+    ensure_ext();
+    ext_->doc_authored = authored;
+  }
+const std::string &PrimSpecMeta::comment() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->comment : kEmpty;
+  }
+std::string &PrimSpecMeta::comment() {
+    ensure_ext();
+    return ext_->comment;
+  }
+bool PrimSpecMeta::comment_authored() const { return ext_ && ext_->comment_authored; }
+void PrimSpecMeta::set_comment_authored(bool authored ) {
+    ensure_ext();
+    ext_->comment_authored = authored;
+  }
+const std::string &PrimSpecMeta::kind() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->kind : kEmpty;
+  }
+std::string &PrimSpecMeta::kind() {
+    ensure_ext();
+    return ext_->kind;
+  }
+bool PrimSpecMeta::kindAuthored() const { return ext_ && ext_->kind_authored; }
+void PrimSpecMeta::setKindAuthored(bool authored ) {
+    ensure_ext();
+    ext_->kind_authored = authored;
+  }
+const std::string &PrimSpecMeta::permission() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->permission : kEmpty;
+  }
+std::string &PrimSpecMeta::permission() {
+    ensure_ext();
+    return ext_->permission;
+  }
+const std::string &PrimSpecMeta::displayName() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->displayName : kEmpty;
+  }
+std::string &PrimSpecMeta::displayName() {
+    ensure_ext();
+    return ext_->displayName;
+  }
+bool PrimSpecMeta::displayNameAuthored() const {
+    return ext_ && ext_->display_name_authored;
+  }
+void PrimSpecMeta::setDisplayNameAuthored(bool authored ) {
+    ensure_ext();
+    ext_->display_name_authored = authored;
+  }
+const std::string &PrimSpecMeta::instance_prototype() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->instance_prototype : kEmpty;
+  }
+std::string &PrimSpecMeta::instance_prototype() {
+    ensure_ext();
+    return ext_->instance_prototype;
+  }
+const std::vector<std::string> &PrimSpecMeta::apiSchemas() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->apiSchemas : kEmpty;
+  }
+std::vector<std::string> &PrimSpecMeta::apiSchemas() {
+    ensure_ext();
+    return ext_->apiSchemas;
+  }
+bool PrimSpecMeta::apiSchemasAuthored() const {
+    return ext_ && ext_->apiSchemasAuthored;
+  }
+void PrimSpecMeta::setApiSchemasAuthored(bool authored ) {
+    ensure_ext();
+    ext_->apiSchemasAuthored = authored;
+  }
+const StringListOpEdits &PrimSpecMeta::apiSchemaEdits() const {
+    static const StringListOpEdits kEmpty;
+    return ext_ ? ext_->apiSchemaEdits : kEmpty;
+  }
+StringListOpEdits &PrimSpecMeta::apiSchemaEdits() {
+    ensure_ext();
+    return ext_->apiSchemaEdits;
+  }
+const std::string &PrimSpecMeta::apiSchemasQualifier() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->apiSchemasQualifier : kEmpty;
+  }
+std::string &PrimSpecMeta::apiSchemasQualifier() {
+    ensure_ext();
+    return ext_->apiSchemasQualifier;
+  }
+const std::vector<VariantSetData> &PrimSpecMeta::variantSets() const {
+    static const std::vector<VariantSetData> kEmpty;
+    return ext_ ? ext_->variantSets : kEmpty;
+  }
+std::vector<VariantSetData> &PrimSpecMeta::variantSets() {
+    ensure_ext();
+    return ext_->variantSets;
+  }
+const StringListOpEdits &PrimSpecMeta::variantSetNameEdits() const {
+    static const StringListOpEdits kEmpty;
+    return ext_ ? ext_->variantSetNameEdits : kEmpty;
+  }
+StringListOpEdits &PrimSpecMeta::variantSetNameEdits() {
+    ensure_ext();
+    return ext_->variantSetNameEdits;
+  }
+const StringListOpEdits &PrimSpecMeta::clipSetEdits() const {
+    static const StringListOpEdits kEmpty;
+    return ext_ ? ext_->clipSetEdits : kEmpty;
+  }
+StringListOpEdits &PrimSpecMeta::clipSetEdits() {
+    ensure_ext();
+    return ext_->clipSetEdits;
+  }
+bool PrimSpecMeta::primOrderAuthored() const {
+    return ext_ && ext_->primOrderAuthored;
+  }
+void PrimSpecMeta::setPrimOrderAuthored(bool authored ) {
+    ensure_ext();
+    ext_->primOrderAuthored = authored;
+  }
+bool PrimSpecMeta::propertyOrderAuthored() const {
+    return ext_ && ext_->propertyOrderAuthored;
+  }
+void PrimSpecMeta::setPropertyOrderAuthored(bool authored ) {
+    ensure_ext();
+    ext_->propertyOrderAuthored = authored;
+  }
+const std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::variantSelections()
+      const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->variantSelections : kEmpty;
+  }
+std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::variantSelections() {
+    ensure_ext();
+    return ext_->variantSelections;
+  }
+bool PrimSpecMeta::variantSelectionsAuthored() const {
+    return ext_ && ext_->variantSelectionsAuthored;
+  }
+void PrimSpecMeta::setVariantSelectionsAuthored(bool authored ) {
+    ensure_ext();
+    ext_->variantSelectionsAuthored = authored;
+  }
+const std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::relocates() const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->relocates : kEmpty;
+  }
+std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::relocates() {
+    ensure_ext();
+    return ext_->relocates;
+  }
+bool PrimSpecMeta::relocatesAuthored() const { return ext_ && ext_->relocatesAuthored; }
+void PrimSpecMeta::setRelocatesAuthored(bool authored ) {
+    ensure_ext();
+    ext_->relocatesAuthored = authored;
+  }
+const Value &PrimSpecMeta::customData() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->customData : kEmpty;
+  }
+Value &PrimSpecMeta::customData() {
+    ensure_ext();
+    return ext_->customData;
+  }
+bool PrimSpecMeta::customDataAuthored() const {
+    return ext_ && ext_->customDataAuthored;
+  }
+void PrimSpecMeta::setCustomDataAuthored(bool authored ) {
+    ensure_ext();
+    ext_->customDataAuthored = authored;
+  }
+const Value &PrimSpecMeta::assetInfo() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->assetInfo : kEmpty;
+  }
+Value &PrimSpecMeta::assetInfo() {
+    ensure_ext();
+    return ext_->assetInfo;
+  }
+bool PrimSpecMeta::assetInfoAuthored() const { return ext_ && ext_->assetInfoAuthored; }
+void PrimSpecMeta::setAssetInfoAuthored(bool authored ) {
+    ensure_ext();
+    ext_->assetInfoAuthored = authored;
+  }
+const Value &PrimSpecMeta::sdrMetadata() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->sdrMetadata : kEmpty;
+  }
+Value &PrimSpecMeta::sdrMetadata() {
+    ensure_ext();
+    return ext_->sdrMetadata;
+  }
+bool PrimSpecMeta::sdrMetadataAuthored() const {
+    return ext_ && ext_->sdrMetadataAuthored;
+  }
+void PrimSpecMeta::setSdrMetadataAuthored(bool authored ) {
+    ensure_ext();
+    ext_->sdrMetadataAuthored = authored;
+  }
+const Value &PrimSpecMeta::clips() const {
+    static const Value kEmpty;
+    return ext_ ? ext_->clips : kEmpty;
+  }
+Value &PrimSpecMeta::clips() {
+    ensure_ext();
+    return ext_->clips;
+  }
+bool PrimSpecMeta::clipsAuthored() const { return ext_ && ext_->clipsAuthored; }
+void PrimSpecMeta::setClipsAuthored(bool authored ) {
+    ensure_ext();
+    ext_->clipsAuthored = authored;
+  }
+const std::vector<PropNameId> &PrimSpecMeta::clipShadowedProps() const {
+    static const std::vector<PropNameId> kEmpty;
+    return ext_ ? ext_->clipShadowedProps : kEmpty;
+  }
+std::vector<PropNameId> &PrimSpecMeta::clipShadowedProps() {
+    ensure_ext();
+    return ext_->clipShadowedProps;
+  }
+const std::vector<std::string> &PrimSpecMeta::primOrder() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->primOrder : kEmpty;
+  }
+const std::vector<std::string> &PrimSpecMeta::displayGroupOrder() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->displayGroupOrder : kEmpty;
+  }
+std::vector<std::string> &PrimSpecMeta::editDisplayGroupOrder() {
+    ensure_ext();
+    return ext_->displayGroupOrder;
+  }
+bool PrimSpecMeta::displayGroupOrderAuthored() const {
+    return ext_ && ext_->displayGroupOrderAuthored;
+  }
+void PrimSpecMeta::setDisplayGroupOrderAuthored(bool authored ) {
+    ensure_ext();
+    ext_->displayGroupOrderAuthored = authored;
+  }
+std::vector<std::string> &PrimSpecMeta::editPrimOrder() {
+    ensure_ext();
+    return ext_->primOrder;
+  }
+const std::vector<std::string> &PrimSpecMeta::propertyOrder() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->propertyOrder : kEmpty;
+  }
+std::vector<std::string> &PrimSpecMeta::editPropertyOrder() {
+    ensure_ext();
+    return ext_->propertyOrder;
+  }
+const std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::unknownMeta() const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->unknownMeta : kEmpty;
+  }
+const std::vector<TypedExtensionField> &PrimSpecMeta::unknownFields() const {
+    static const std::vector<TypedExtensionField> kEmpty;
+    return ext_ ? ext_->unknownFields : kEmpty;
+  }
+std::vector<TypedExtensionField> &PrimSpecMeta::unknownFields() {
+    ensure_ext();
+    return ext_->unknownFields;
+  }
+std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::unknownMeta() {
+    ensure_ext();
+    return ext_->unknownMeta;
+  }
+
+// ---------------------------------------------------------------------------
+// Out-of-line accessor bodies moved out of prim-spec.hh.
+// ---------------------------------------------------------------------------
+const std::string& PrimSpec::name() const { return name_; }
+void PrimSpec::set_name(const std::string& name) { name_ = name; }
+TypeNameId PrimSpec::type_id() const { return type_id_; }
+PrimSpecifier PrimSpec::specifier() const { return specifier_; }
+void PrimSpec::set_specifier(PrimSpecifier spec) { specifier_ = spec; }
+const Path& PrimSpec::path() const { return path_; }
+void PrimSpec::set_path(const Path& path) { path_ = path; }
+uint32_t PrimSpec::asset_anchor_id() const { return asset_anchor_id_; }
+void PrimSpec::set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
+PropSlot* PrimSpec::property_mutable(PropNameId name_id) {
+    return props_.find_mutable(name_id);
+  }
+const PropIndex& PrimSpec::properties() const { return props_; }
+const std::unordered_map<uint32_t, ArrayEditData>& PrimSpec::array_edits() const {
+    static const std::unordered_map<uint32_t, ArrayEditData> kEmpty;
+    return cold_data_ ? cold_data_->array_edits : kEmpty;
+  }
+const std::unordered_map<std::string, ArcEdit>& PrimSpec::relationship_edits() const {
+    static const std::unordered_map<std::string, ArcEdit> kEmpty;
+    return cold_data_ ? cold_data_->rel_edits : kEmpty;
+  }
+const std::vector<uint32_t>& PrimSpec::child_indices() const { return child_indices_; }
+std::vector<uint32_t>& PrimSpec::mutable_child_indices() { return child_indices_; }
+void PrimSpec::clear_child_indices() { child_indices_.clear(); }
+void PrimSpec::set_child_indices(std::vector<uint32_t>&& idx) {
+    child_indices_ = std::move(idx);
+  }
+size_t PrimSpec::child_count() const { return child_indices_.size(); }
+const PrimSpecMeta& PrimSpec::meta() const { return meta_; }
+PrimSpecMeta& PrimSpec::meta() { return meta_; }
+bool PropMeta::empty() const {
+    return authored == 0 && unknownMeta.empty() && unknownFields.empty();
+  }
+bool TimeSampleStorage::empty() const { return samples_.empty(); }
+size_t ValueStorage::count() const { return values_.size(); }
+bool TypeNameId::is_valid() const { return id != UINT16_MAX; }
+bool ArcEdit::has_qualifiers() const {
+    return authored && (!is_explicit || !added.empty() || !prepended.empty() ||
+           !appended.empty() || !deleted.empty() || !ordered.empty());
+  }
+bool ArcEdit::has_authored_opinion() const {
+    return authored;
+  }
+bool StringListOpEdits::has_nonexplicit_items() const {
+    return !added.empty() || !prepended.empty() || !appended.empty() ||
+           !deleted.empty() || !ordered.empty();
+  }
+
 }  // namespace next
 }  // namespace lightusd

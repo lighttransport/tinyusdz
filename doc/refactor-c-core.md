@@ -5797,3 +5797,23 @@ patterns; 1114113 codepoints). Project-header closure for `lightusd_next`:
 Isolated compile times in the same tree: `validation/usd-validation.cc` 11.37 s,
 `layer/layer.cc` 3.29 s, `prim/path.cc` 0.96 s, `parser/lexer.cc` 1.51 s. The
 55-test next ctest tree still passes.
+
+### prim-spec.hh accessor bodies out-of-line
+
+`src/next/layer/prim-spec.hh` was the largest single contributor to per-unit
+parse work: 1344 lines included by 55 translation units, most of it inline
+`PrimSpecMeta`/`PrimSpec`/`PropMeta`/`ValueStorage`/`TimeSampleStorage`
+accessor bodies. 109 of those bodies moved to `prim-spec.cc` (comments and
+declarations stay in the header), shrinking it to 1112 lines.
+
+The transformation was mechanical but needed two guards that the first
+attempts lacked: comments are blanked before brace/semicolon scanning (a `;`
+inside a comment otherwise reset the statement boundary), and a signature is
+skipped when it contains a member-initializer-list colon (a constructor such
+as `VariantProperty(std::string, Value, uint16_t f) : name(...)` is not a simple
+accessor). Default arguments are dropped from the out-of-line definitions.
+
+Project-header closure for `lightusd_next` drops from 366271 to 353279 lines.
+Isolated compile times: `validation/usd-validation.cc` 9.67 s,
+`layer/prim-spec.cc` 6.07 s, `diff/layer-diff.cc` 3.81 s, `layer/layer.cc`
+2.89 s. The 55-test next ctest tree passes.

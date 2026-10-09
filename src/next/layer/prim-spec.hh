@@ -37,7 +37,7 @@ enum class PrimSpecifier : uint8_t {
 /// Type name ID (interned like property names)
 struct TypeNameId {
   uint16_t id = UINT16_MAX;
-  bool is_valid() const { return id != UINT16_MAX; }
+  bool is_valid() const;
 };
 
 /// Type name interning table
@@ -220,13 +220,8 @@ struct ArcEdit {
   std::vector<std::string> deleted;
   std::vector<std::string> ordered;
 
-  bool has_qualifiers() const {
-    return authored && (!is_explicit || !added.empty() || !prepended.empty() ||
-           !appended.empty() || !deleted.empty() || !ordered.empty());
-  }
-  bool has_authored_opinion() const {
-    return authored;
-  }
+  bool has_qualifiers() const;
+  bool has_authored_opinion() const;
 };
 
 /// Per-arc-type list-op edits for one PrimSpec (lazily allocated; only prims
@@ -252,10 +247,7 @@ struct StringListOpEdits {
   std::vector<std::string> deleted;
   std::vector<std::string> ordered;
 
-  bool has_nonexplicit_items() const {
-    return !added.empty() || !prepended.empty() || !appended.empty() ||
-           !deleted.empty() || !ordered.empty();
-  }
+  bool has_nonexplicit_items() const;
 };
 
 /// Fill a stronger dictionary's missing keys from a weaker one
@@ -402,306 +394,94 @@ struct PrimSpecMeta {
   PrimSpecMeta(const PrimSpecMeta& other);
   PrimSpecMeta& operator=(const PrimSpecMeta& other);
 
-  bool has_ext() const { return ext_ != nullptr; }
-  void ensure_ext() {
-    if (!ext_) ext_.reset(new PrimSpecMetaExt());
-  }
-  const PrimSpecMetaExt *ext() const { return ext_.get(); }
+  bool has_ext() const;
+  void ensure_ext();
+  const PrimSpecMetaExt *ext() const;
 
   // Arc list-op edits (Phase 7 S5). Const returns null when none authored (the
   // inline arc vectors are then implicit explicit lists); mutable allocates.
-  const ArcListOpEdits *arc_edits() const {
-    return ext_ ? ext_->arc_edits.get() : nullptr;
-  }
+  const ArcListOpEdits *arc_edits() const;
   /// Drop all arc list-op edits (used when composition consumes the arcs).
-  void clear_arc_edits() {
-    if (ext_) ext_->arc_edits.reset();
-  }
-  ArcListOpEdits &ensure_arc_edits() {
-    ensure_ext();
-    if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOpEdits());
-    return *ext_->arc_edits;
-  }
+  void clear_arc_edits();
+  ArcListOpEdits &ensure_arc_edits();
 
-  const std::string &doc() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->doc : kEmpty;
-  }
-  std::string &doc() {
-    ensure_ext();
-    return ext_->doc;
-  }
-  bool doc_authored() const { return ext_ && ext_->doc_authored; }
-  void set_doc_authored(bool authored = true) {
-    ensure_ext();
-    ext_->doc_authored = authored;
-  }
-  const std::string &comment() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->comment : kEmpty;
-  }
-  std::string &comment() {
-    ensure_ext();
-    return ext_->comment;
-  }
-  bool comment_authored() const { return ext_ && ext_->comment_authored; }
-  void set_comment_authored(bool authored = true) {
-    ensure_ext();
-    ext_->comment_authored = authored;
-  }
-  const std::string &kind() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->kind : kEmpty;
-  }
-  std::string &kind() {
-    ensure_ext();
-    return ext_->kind;
-  }
-  bool kindAuthored() const { return ext_ && ext_->kind_authored; }
-  void setKindAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->kind_authored = authored;
-  }
-  const std::string &permission() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->permission : kEmpty;
-  }
-  std::string &permission() {
-    ensure_ext();
-    return ext_->permission;
-  }
-  const std::string &displayName() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->displayName : kEmpty;
-  }
-  std::string &displayName() {
-    ensure_ext();
-    return ext_->displayName;
-  }
-  bool displayNameAuthored() const {
-    return ext_ && ext_->display_name_authored;
-  }
-  void setDisplayNameAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->display_name_authored = authored;
-  }
-  const std::string &instance_prototype() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->instance_prototype : kEmpty;
-  }
-  std::string &instance_prototype() {
-    ensure_ext();
-    return ext_->instance_prototype;
-  }
-  const std::vector<std::string> &apiSchemas() const {
-    static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->apiSchemas : kEmpty;
-  }
-  std::vector<std::string> &apiSchemas() {
-    ensure_ext();
-    return ext_->apiSchemas;
-  }
-  bool apiSchemasAuthored() const {
-    return ext_ && ext_->apiSchemasAuthored;
-  }
-  void setApiSchemasAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->apiSchemasAuthored = authored;
-  }
-  const StringListOpEdits &apiSchemaEdits() const {
-    static const StringListOpEdits kEmpty;
-    return ext_ ? ext_->apiSchemaEdits : kEmpty;
-  }
-  StringListOpEdits &apiSchemaEdits() {
-    ensure_ext();
-    return ext_->apiSchemaEdits;
-  }
-  const std::string &apiSchemasQualifier() const {
-    static const std::string kEmpty;
-    return ext_ ? ext_->apiSchemasQualifier : kEmpty;
-  }
-  std::string &apiSchemasQualifier() {
-    ensure_ext();
-    return ext_->apiSchemasQualifier;
-  }
-  const std::vector<VariantSetData> &variantSets() const {
-    static const std::vector<VariantSetData> kEmpty;
-    return ext_ ? ext_->variantSets : kEmpty;
-  }
-  std::vector<VariantSetData> &variantSets() {
-    ensure_ext();
-    return ext_->variantSets;
-  }
-  const StringListOpEdits &variantSetNameEdits() const {
-    static const StringListOpEdits kEmpty;
-    return ext_ ? ext_->variantSetNameEdits : kEmpty;
-  }
-  StringListOpEdits &variantSetNameEdits() {
-    ensure_ext();
-    return ext_->variantSetNameEdits;
-  }
-  const StringListOpEdits &clipSetEdits() const {
-    static const StringListOpEdits kEmpty;
-    return ext_ ? ext_->clipSetEdits : kEmpty;
-  }
-  StringListOpEdits &clipSetEdits() {
-    ensure_ext();
-    return ext_->clipSetEdits;
-  }
-  bool primOrderAuthored() const {
-    return ext_ && ext_->primOrderAuthored;
-  }
-  void setPrimOrderAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->primOrderAuthored = authored;
-  }
-  bool propertyOrderAuthored() const {
-    return ext_ && ext_->propertyOrderAuthored;
-  }
-  void setPropertyOrderAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->propertyOrderAuthored = authored;
-  }
+  const std::string &doc() const;
+  std::string &doc();
+  bool doc_authored() const;
+  void set_doc_authored(bool authored = true);
+  const std::string &comment() const;
+  std::string &comment();
+  bool comment_authored() const;
+  void set_comment_authored(bool authored = true);
+  const std::string &kind() const;
+  std::string &kind();
+  bool kindAuthored() const;
+  void setKindAuthored(bool authored = true);
+  const std::string &permission() const;
+  std::string &permission();
+  const std::string &displayName() const;
+  std::string &displayName();
+  bool displayNameAuthored() const;
+  void setDisplayNameAuthored(bool authored = true);
+  const std::string &instance_prototype() const;
+  std::string &instance_prototype();
+  const std::vector<std::string> &apiSchemas() const;
+  std::vector<std::string> &apiSchemas();
+  bool apiSchemasAuthored() const;
+  void setApiSchemasAuthored(bool authored = true);
+  const StringListOpEdits &apiSchemaEdits() const;
+  StringListOpEdits &apiSchemaEdits();
+  const std::string &apiSchemasQualifier() const;
+  std::string &apiSchemasQualifier();
+  const std::vector<VariantSetData> &variantSets() const;
+  std::vector<VariantSetData> &variantSets();
+  const StringListOpEdits &variantSetNameEdits() const;
+  StringListOpEdits &variantSetNameEdits();
+  const StringListOpEdits &clipSetEdits() const;
+  StringListOpEdits &clipSetEdits();
+  bool primOrderAuthored() const;
+  void setPrimOrderAuthored(bool authored = true);
+  bool propertyOrderAuthored() const;
+  void setPropertyOrderAuthored(bool authored = true);
   const std::vector<std::pair<std::string, std::string>> &variantSelections()
-      const {
-    static const std::vector<std::pair<std::string, std::string>> kEmpty;
-    return ext_ ? ext_->variantSelections : kEmpty;
-  }
-  std::vector<std::pair<std::string, std::string>> &variantSelections() {
-    ensure_ext();
-    return ext_->variantSelections;
-  }
-  bool variantSelectionsAuthored() const {
-    return ext_ && ext_->variantSelectionsAuthored;
-  }
-  void setVariantSelectionsAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->variantSelectionsAuthored = authored;
-  }
-  const std::vector<std::pair<std::string, std::string>> &relocates() const {
-    static const std::vector<std::pair<std::string, std::string>> kEmpty;
-    return ext_ ? ext_->relocates : kEmpty;
-  }
-  std::vector<std::pair<std::string, std::string>> &relocates() {
-    ensure_ext();
-    return ext_->relocates;
-  }
-  bool relocatesAuthored() const { return ext_ && ext_->relocatesAuthored; }
-  void setRelocatesAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->relocatesAuthored = authored;
-  }
-  const Value &customData() const {
-    static const Value kEmpty;
-    return ext_ ? ext_->customData : kEmpty;
-  }
-  Value &customData() {
-    ensure_ext();
-    return ext_->customData;
-  }
-  bool customDataAuthored() const {
-    return ext_ && ext_->customDataAuthored;
-  }
-  void setCustomDataAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->customDataAuthored = authored;
-  }
-  const Value &assetInfo() const {
-    static const Value kEmpty;
-    return ext_ ? ext_->assetInfo : kEmpty;
-  }
-  Value &assetInfo() {
-    ensure_ext();
-    return ext_->assetInfo;
-  }
-  bool assetInfoAuthored() const { return ext_ && ext_->assetInfoAuthored; }
-  void setAssetInfoAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->assetInfoAuthored = authored;
-  }
-  const Value &sdrMetadata() const {
-    static const Value kEmpty;
-    return ext_ ? ext_->sdrMetadata : kEmpty;
-  }
-  Value &sdrMetadata() {
-    ensure_ext();
-    return ext_->sdrMetadata;
-  }
-  bool sdrMetadataAuthored() const {
-    return ext_ && ext_->sdrMetadataAuthored;
-  }
-  void setSdrMetadataAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->sdrMetadataAuthored = authored;
-  }
-  const Value &clips() const {
-    static const Value kEmpty;
-    return ext_ ? ext_->clips : kEmpty;
-  }
-  Value &clips() {
-    ensure_ext();
-    return ext_->clips;
-  }
-  bool clipsAuthored() const { return ext_ && ext_->clipsAuthored; }
-  void setClipsAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->clipsAuthored = authored;
-  }
-  const std::vector<PropNameId> &clipShadowedProps() const {
-    static const std::vector<PropNameId> kEmpty;
-    return ext_ ? ext_->clipShadowedProps : kEmpty;
-  }
-  std::vector<PropNameId> &clipShadowedProps() {
-    ensure_ext();
-    return ext_->clipShadowedProps;
-  }
-  const std::vector<std::string> &primOrder() const {
-    static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->primOrder : kEmpty;
-  }
-  const std::vector<std::string> &displayGroupOrder() const {
-    static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->displayGroupOrder : kEmpty;
-  }
-  std::vector<std::string> &editDisplayGroupOrder() {
-    ensure_ext();
-    return ext_->displayGroupOrder;
-  }
-  bool displayGroupOrderAuthored() const {
-    return ext_ && ext_->displayGroupOrderAuthored;
-  }
-  void setDisplayGroupOrderAuthored(bool authored = true) {
-    ensure_ext();
-    ext_->displayGroupOrderAuthored = authored;
-  }
-  std::vector<std::string> &editPrimOrder() {
-    ensure_ext();
-    return ext_->primOrder;
-  }
-  const std::vector<std::string> &propertyOrder() const {
-    static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->propertyOrder : kEmpty;
-  }
-  std::vector<std::string> &editPropertyOrder() {
-    ensure_ext();
-    return ext_->propertyOrder;
-  }
-  const std::vector<std::pair<std::string, std::string>> &unknownMeta() const {
-    static const std::vector<std::pair<std::string, std::string>> kEmpty;
-    return ext_ ? ext_->unknownMeta : kEmpty;
-  }
-  const std::vector<TypedExtensionField> &unknownFields() const {
-    static const std::vector<TypedExtensionField> kEmpty;
-    return ext_ ? ext_->unknownFields : kEmpty;
-  }
-  std::vector<TypedExtensionField> &unknownFields() {
-    ensure_ext();
-    return ext_->unknownFields;
-  }
-  std::vector<std::pair<std::string, std::string>> &unknownMeta() {
-    ensure_ext();
-    return ext_->unknownMeta;
-  }
+      const;
+  std::vector<std::pair<std::string, std::string>> &variantSelections();
+  bool variantSelectionsAuthored() const;
+  void setVariantSelectionsAuthored(bool authored = true);
+  const std::vector<std::pair<std::string, std::string>> &relocates() const;
+  std::vector<std::pair<std::string, std::string>> &relocates();
+  bool relocatesAuthored() const;
+  void setRelocatesAuthored(bool authored = true);
+  const Value &customData() const;
+  Value &customData();
+  bool customDataAuthored() const;
+  void setCustomDataAuthored(bool authored = true);
+  const Value &assetInfo() const;
+  Value &assetInfo();
+  bool assetInfoAuthored() const;
+  void setAssetInfoAuthored(bool authored = true);
+  const Value &sdrMetadata() const;
+  Value &sdrMetadata();
+  bool sdrMetadataAuthored() const;
+  void setSdrMetadataAuthored(bool authored = true);
+  const Value &clips() const;
+  Value &clips();
+  bool clipsAuthored() const;
+  void setClipsAuthored(bool authored = true);
+  const std::vector<PropNameId> &clipShadowedProps() const;
+  std::vector<PropNameId> &clipShadowedProps();
+  const std::vector<std::string> &primOrder() const;
+  const std::vector<std::string> &displayGroupOrder() const;
+  std::vector<std::string> &editDisplayGroupOrder();
+  bool displayGroupOrderAuthored() const;
+  void setDisplayGroupOrderAuthored(bool authored = true);
+  std::vector<std::string> &editPrimOrder();
+  const std::vector<std::string> &propertyOrder() const;
+  std::vector<std::string> &editPropertyOrder();
+  const std::vector<std::pair<std::string, std::string>> &unknownMeta() const;
+  const std::vector<TypedExtensionField> &unknownFields() const;
+  std::vector<TypedExtensionField> &unknownFields();
+  std::vector<std::pair<std::string, std::string>> &unknownMeta();
 
  private:
   std::unique_ptr<PrimSpecMetaExt> ext_;
@@ -755,9 +535,7 @@ struct PropMeta {
   std::vector<std::pair<std::string, std::string>> unknownMeta;
   std::vector<TypedExtensionField> unknownFields;
 
-  bool empty() const {
-    return authored == 0 && unknownMeta.empty() && unknownFields.empty();
-  }
+  bool empty() const;
 };
 
 /// Value storage block
@@ -776,7 +554,7 @@ public:
   Value* get(uint32_t offset);
 
   /// Number of stored values
-  size_t count() const { return values_.size(); }
+  size_t count() const;
 
   /// Approximate memory usage in bytes
   size_t memory_usage() const;
@@ -852,7 +630,7 @@ public:
   std::vector<PropNameId> properties() const;
 
   /// Check if empty
-  bool empty() const { return samples_.empty(); }
+  bool empty() const;
 
   /// Memory usage in bytes
   size_t memory_usage() const;
@@ -924,29 +702,29 @@ public:
   // ============================================================
 
   /// Get prim name
-  const std::string& name() const { return name_; }
-  void set_name(const std::string& name) { name_ = name; }
+  const std::string& name() const;
+  void set_name(const std::string& name);
 
   /// Get type name
   const std::string& type_name() const;
-  TypeNameId type_id() const { return type_id_; }
+  TypeNameId type_id() const;
   void set_type_name(const std::string& name);
 
   /// Get specifier
-  PrimSpecifier specifier() const { return specifier_; }
-  void set_specifier(PrimSpecifier spec) { specifier_ = spec; }
+  PrimSpecifier specifier() const;
+  void set_specifier(PrimSpecifier spec);
 
   /// Get path (set during layer building)
-  const Path& path() const { return path_; }
-  void set_path(const Path& path) { path_ = path; }
+  const Path& path() const;
+  void set_path(const Path& path);
 
   /// Directory this prim's RELATIVE asset paths anchor to, as an id interned in
   /// asset-anchor.hh (0 = none -> the consumer falls back to the stage's base
   /// dir). Stamped from the resolved layer path when the layer is loaded, and
   /// carried through composition so a flattened prim still knows which layer
   /// authored it. See asset-anchor.hh.
-  uint32_t asset_anchor_id() const { return asset_anchor_id_; }
-  void set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
+  uint32_t asset_anchor_id() const;
+  void set_asset_anchor_id(uint32_t id);
 
   // ============================================================
   // Properties (O(1) lookup for common names)
@@ -956,9 +734,7 @@ public:
   const PropSlot* property(PropNameId name_id) const;
 
   /// Mutable slot lookup (flag merges during composition).
-  PropSlot* property_mutable(PropNameId name_id) {
-    return props_.find_mutable(name_id);
-  }
+  PropSlot* property_mutable(PropNameId name_id);
 
   /// Get property by name string
   const PropSlot* property(const std::string& name) const;
@@ -1017,7 +793,7 @@ public:
                                     size_t* released_elements = nullptr);
 
   /// Get property index (for iteration)
-  const PropIndex& properties() const { return props_; }
+  const PropIndex& properties() const;
 
   /// Reserve property storage
   void reserve_properties(size_t count);
@@ -1106,10 +882,7 @@ public:
   void set_array_edit(const std::string& prop_name, ArrayEditData edit);
   const ArrayEditData* array_edit(PropNameId name_id) const;
   void clear_array_edit(PropNameId name_id);
-  const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const {
-    static const std::unordered_map<uint32_t, ArrayEditData> kEmpty;
-    return cold_data_ ? cold_data_->array_edits : kEmpty;
-  }
+  const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const;
 
   // ============================================================
   // Relationships
@@ -1139,10 +912,7 @@ public:
   /// Authored list-op edits for a relationship (prepend/append/delete
   /// sublists, like ArcEdit for composition arcs). Keyed by relationship
   /// name. Empty map = no relationship carries qualifiers.
-  const std::unordered_map<std::string, ArcEdit>& relationship_edits() const {
-    static const std::unordered_map<std::string, ArcEdit> kEmpty;
-    return cold_data_ ? cold_data_->rel_edits : kEmpty;
-  }
+  const std::unordered_map<std::string, ArcEdit>& relationship_edits() const;
   ArcEdit& ensure_relationship_edit(const std::string& name);
 
   const std::vector<RelationshipOpinion>* relationship_opinion_stack(
@@ -1233,11 +1003,11 @@ public:
   // ============================================================
 
   /// Get child indices
-  const std::vector<uint32_t>& child_indices() const { return child_indices_; }
+  const std::vector<uint32_t>& child_indices() const;
 
   /// Mutable child-index storage — used by Layer stitching (the parallel USDA
   /// subtree parse rebases/resolves placeholder indices in one pass).
-  std::vector<uint32_t>& mutable_child_indices() { return child_indices_; }
+  std::vector<uint32_t>& mutable_child_indices();
 
   /// Add child index
   void add_child_index(uint32_t index);
@@ -1250,24 +1020,22 @@ public:
   /// Layer but become unreachable from this prim — used by the extracted-
   /// prototype flatten to move an instance's inline subtree onto a
   /// `/Flattened_Prototype_N` root.
-  void clear_child_indices() { child_indices_.clear(); }
+  void clear_child_indices();
 
   /// Replace the child index list wholesale (namespace reordering; e.g. the
   /// crate reader restoring authored order from primChildren).
-  void set_child_indices(std::vector<uint32_t>&& idx) {
-    child_indices_ = std::move(idx);
-  }
+  void set_child_indices(std::vector<uint32_t>&& idx);
 
   /// Get child count
-  size_t child_count() const { return child_indices_.size(); }
+  size_t child_count() const;
 
   // ============================================================
   // Metadata
   // ============================================================
 
   /// Get metadata
-  const PrimSpecMeta& meta() const { return meta_; }
-  PrimSpecMeta& meta() { return meta_; }
+  const PrimSpecMeta& meta() const;
+  PrimSpecMeta& meta();
 
   // ============================================================
   // Memory
