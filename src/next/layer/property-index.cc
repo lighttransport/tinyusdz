@@ -528,5 +528,30 @@ void PropIndex::sort() {
   sorted_ = true;
 }
 
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+bool PropNameId::is_valid() const { return id != UINT32_MAX; }
+size_t PropNameTable::size() const {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
+    return names_.size();
+  }
+bool PropSlot::is_custom() const { return flags & kFlagCustom; }
+bool PropSlot::is_uniform() const { return flags & kFlagUniform; }
+bool PropSlot::is_time_sampled() const { return flags & kFlagTimeSampled; }
+bool PropSlot::is_connection() const { return flags & kFlagConnection; }
+bool PropSlot::is_relationship() const { return flags & kFlagRelationship; }
+bool PropSlot::is_array() const { return flags & kFlagArray; }
+bool PropSlot::variability_authored() const {
+    return flags & kFlagVariabilityAuthored;
+  }
+bool PropSlot::is_varying() const { return flags & kFlagVarying; }
+const std::vector<PropSlot>& PropIndex::slots() const { return slots_; }
+size_t PropIndex::size() const { return slots_.size(); }
+bool PropIndex::is_sorted() const { return sorted_; }
+
 }  // namespace next
 }  // namespace lightusd

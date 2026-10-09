@@ -228,7 +228,7 @@ public:
   // ============================================================
 
   /// Get the type ID
-  TypeId type_id() const { return type_id_; }
+  TypeId type_id() const;
 
   /// Re-tag the semantic (role) type without touching storage — e.g.
   /// Float2 -> Texcoord2f after a crate read, where roles exist only in the
@@ -237,17 +237,17 @@ public:
 
   /// Check if empty (no value stored). A value BLOCK (`= None`) is NOT empty:
   /// it is an authored opinion that blocks weaker values and must round-trip.
-  bool is_empty() const { return type_id_ == TypeId::Invalid && !is_block_; }
+  bool is_empty() const;
 
   /// True if this is an authored value block (`= None`) — a typed opinion that
   /// carries no data but suppresses weaker opinions and emits `= None`.
-  bool is_block() const { return is_block_; }
+  bool is_block() const;
 
   /// Check if this is an array value
-  bool is_array() const { return is_array_; }
+  bool is_array() const;
 
   /// Check if this is a dictionary value
-  bool is_dictionary() const { return type_id_ == TypeId::Dictionary; }
+  bool is_dictionary() const;
 
   /// Get array size (0 if not an array)
   size_t array_size() const;
@@ -269,7 +269,7 @@ public:
   static Value MakeLazyArray(const LazyArrayRef& ref);
 
   /// True if this is an array whose payload has not been decoded yet.
-  bool is_lazy() const { return is_lazy_; }
+  bool is_lazy() const;
 
   /// Estimated dynamic bytes owned by scalar strings, string arrays, and
   /// recursive dictionaries. Numeric array payloads are accounted separately.
@@ -277,10 +277,10 @@ public:
 
   /// True if the value was materialized AND potentially mutated (so write-time
   /// byte pass-through is no longer safe).
-  bool is_dirty() const { return dirty_; }
+  bool is_dirty() const;
 
   /// Mark the value as edited (forces re-encode on write).
-  void mark_dirty() { dirty_ = true; }
+  void mark_dirty();
 
   /// Access the lazy reference (nullptr unless is_lazy()).
   const LazyArrayRef* lazy_ref() const;
@@ -444,12 +444,12 @@ struct Dict {
   Value* find(const std::string& key);
   /// Replace in place, or append while preserving insertion order.
   void set(std::string key, Value v);
-  size_t size() const { return entries_.size(); }
-  bool empty() const { return entries_.empty(); }
+  size_t size() const;
+  bool empty() const;
   // Preserve an explicitly typed dictionary wrapper in Layer JSON. This is a
   // serialization hint; USDA/USDC dictionary semantics remain unchanged.
-  bool typed_json_wrapper() const { return typed_json_wrapper_; }
-  void set_typed_json_wrapper(bool value) { typed_json_wrapper_ = value; }
+  bool typed_json_wrapper() const;
+  void set_typed_json_wrapper(bool value);
   size_t dynamic_string_memory_usage() const;
  private:
   friend class Value;  // Iterative destruction moves out nested Values.

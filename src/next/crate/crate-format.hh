@@ -280,9 +280,7 @@ struct CrateSection {
   int64_t start;      // File offset
   int64_t size;       // Section size in bytes
 
-  std::string name_str() const {
-    return std::string(name, strnlen(name, 15));
-  }
+  std::string name_str() const;
 };
 
 /// Table of contents
@@ -290,14 +288,7 @@ struct CrateTOC {
   std::vector<CrateSection> sections;
 
   /// Find section by name
-  const CrateSection* find(const char* name) const {
-    for (const auto& s : sections) {
-      if (strncmp(s.name, name, 15) == 0) {
-        return &s;
-      }
-    }
-    return nullptr;
-  }
+  const CrateSection* find(const char* name) const;
 };
 
 /// File version
@@ -306,34 +297,14 @@ struct CrateVersion {
   uint8_t minor;
   uint8_t patch;
 
-  bool is_valid() const {
-    // Check minimum version.
-    // Compare as int: major is uint8_t, so `major < 0` is always false and
-    // trips -Wtautological-unsigned-zero-compare under -Weverything. The cast
-    // keeps the check meaningful if kCrateMinVersionMajor ever rises above 0.
-    if (static_cast<int>(major) < kCrateMinVersionMajor) return false;
-    if (major == kCrateMinVersionMajor) {
-      if (minor < kCrateMinVersionMinor) return false;
-      if (minor == kCrateMinVersionMinor &&
-          static_cast<int>(patch) < kCrateMinVersionPatch)
-        return false;
-    }
-    // Check maximum version
-    if (major > kCrateMaxVersionMajor) return false;
-    if (major == kCrateMaxVersionMajor) {
-      if (minor > kCrateMaxVersionMinor) return false;
-    }
-    return true;
-  }
+  bool is_valid() const;
 
-  std::string to_string() const {
-    return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
-  }
+  std::string to_string() const;
 
   /// Crate files older than 0.7.0 store array element counts as uint32 (pxr
   /// crateFile.cpp _Write/_ReadUncompressedArray:
   /// `(ver < CrateFile::Version(0,7,0)) ? Read<uint32_t>() : Read<uint64_t>()`).
-  bool is_pre_070() const { return major == 0 && minor < 7; }
+  bool is_pre_070() const;
 };
 
 // ============================================================
@@ -343,25 +314,25 @@ struct CrateVersion {
 /// Token index
 struct TokenIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 /// String index
 struct StringIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 /// Path index
 struct PathIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 /// Fieldset index
 struct FieldsetIndex {
   uint32_t value = 0;
-  bool is_valid() const { return value != 0xFFFFFFFF; }
+  bool is_valid() const;
 };
 
 // ============================================================

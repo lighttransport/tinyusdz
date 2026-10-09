@@ -1939,5 +1939,22 @@ Value LerpValue(const Value& a, const Value& b, double t) {
   return a;  // non-interpolatable (int/bool/string/token/...) -> held
 }
 
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+TypeId Value::type_id() const { return type_id_; }
+bool Value::is_empty() const { return type_id_ == TypeId::Invalid && !is_block_; }
+bool Value::is_block() const { return is_block_; }
+bool Value::is_array() const { return is_array_; }
+bool Value::is_dictionary() const { return type_id_ == TypeId::Dictionary; }
+bool Value::is_lazy() const { return is_lazy_; }
+bool Value::is_dirty() const { return dirty_; }
+void Value::mark_dirty() { dirty_ = true; }
+size_t Dict::size() const { return entries_.size(); }
+bool Dict::empty() const { return entries_.empty(); }
+bool Dict::typed_json_wrapper() const { return typed_json_wrapper_; }
+void Dict::set_typed_json_wrapper(bool value) { typed_json_wrapper_ = value; }
+
 }  // namespace next
 }  // namespace lightusd

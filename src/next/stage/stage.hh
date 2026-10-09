@@ -220,12 +220,12 @@ public:
   const PropMeta* GetPropertyMeta(const std::string& name) const;
 
   /// Get underlying PrimSpec (for advanced use)
-  const PrimSpec* GetPrimSpec() const { return spec_; }
+  const PrimSpec* GetPrimSpec() const;
 
   /// Get the owning layer / prim index (for handle round-tripping in
   /// bindings; pairs with the (spec, layer, index) constructor).
-  const Layer* GetLayer() const { return layer_; }
-  uint32_t GetIndex() const { return index_; }
+  const Layer* GetLayer() const;
+  uint32_t GetIndex() const;
 
 private:
   // Resolves to the prototype's spec when this prim is an instance proxy
@@ -269,8 +269,8 @@ public:
   void SetRootLayer(Layer&& layer);
 
   /// Get the root layer
-  const Layer* GetRootLayer() const { return root_layer_.get(); }
-  Layer* GetRootLayer() { return root_layer_.get(); }
+  const Layer* GetRootLayer() const;
+  Layer* GetRootLayer();
 
   /// Move the root layer out of the stage (transfers ownership). Used by the
   /// pcp LayerRegistry to obtain a shareable Layer from a freshly-loaded Stage.
@@ -281,7 +281,7 @@ public:
   void AddSubLayer(Layer&& layer);
 
   /// Get sublayer count
-  size_t GetSubLayerCount() const { return sub_layers_.size(); }
+  size_t GetSubLayerCount() const;
 
   /// Get sublayer by index
   const Layer* GetSubLayer(size_t index) const;
@@ -355,14 +355,14 @@ public:
   // ============================================================
 
   /// Get stage metadata
-  const StageMeta& GetMeta() const { return meta_; }
-  StageMeta& GetMeta() { return meta_; }
+  const StageMeta& GetMeta() const;
+  StageMeta& GetMeta();
 
   /// Get up axis ("Y" or "Z")
-  const std::string& GetUpAxis() const { return meta_.upAxis; }
+  const std::string& GetUpAxis() const;
 
   /// Get meters per unit
-  double GetMetersPerUnit() const { return meta_.metersPerUnit; }
+  double GetMetersPerUnit() const;
 
   // ============================================================
   // Statistics
@@ -454,7 +454,7 @@ public:
   void SetEndTimeCode(double time);
 
   /// Get the layer builder for constructing prims
-  LayerBuilder& GetLayerBuilder() { return *layer_builder_; }
+  LayerBuilder& GetLayerBuilder();
 
   /// Build the stage (moves ownership of layer to stage)
   Stage Build();

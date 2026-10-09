@@ -1204,5 +1204,21 @@ Stage StageBuilder::Build() {
   return stage;
 }
 
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+const PrimSpec* UsdPrim::GetPrimSpec() const { return spec_; }
+const Layer* UsdPrim::GetLayer() const { return layer_; }
+uint32_t UsdPrim::GetIndex() const { return index_; }
+const Layer* Stage::GetRootLayer() const { return root_layer_.get(); }
+Layer* Stage::GetRootLayer() { return root_layer_.get(); }
+size_t Stage::GetSubLayerCount() const { return sub_layers_.size(); }
+const StageMeta& Stage::GetMeta() const { return meta_; }
+StageMeta& Stage::GetMeta() { return meta_; }
+const std::string& Stage::GetUpAxis() const { return meta_.upAxis; }
+double Stage::GetMetersPerUnit() const { return meta_.metersPerUnit; }
+LayerBuilder& StageBuilder::GetLayerBuilder() { return *layer_builder_; }
+
 }  // namespace next
 }  // namespace lightusd

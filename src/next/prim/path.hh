@@ -36,7 +36,7 @@ public:
   // ============================================================
 
   /// Check if path is empty
-  bool empty() const { return path_.empty(); }
+  bool empty() const;
 
   /// Check if this is an absolute path (starts with '/')
   bool is_absolute() const;
@@ -59,8 +59,8 @@ public:
   static Path Parse(const std::string& path_str);
 
   /// Get the full path string
-  const std::string& str() const { return path_; }
-  const char* c_str() const { return path_.c_str(); }
+  const std::string& str() const;
+  const char* c_str() const;
 
   // ============================================================
   // Path components

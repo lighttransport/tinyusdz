@@ -27,7 +27,7 @@ namespace next {
 struct PropNameId {
   uint32_t id = UINT32_MAX;
 
-  bool is_valid() const { return id != UINT32_MAX; }
+  bool is_valid() const;
   bool operator==(PropNameId other) const { return id == other.id; }
   bool operator!=(PropNameId other) const { return id != other.id; }
   bool operator<(PropNameId other) const { return id < other.id; }
@@ -56,12 +56,7 @@ public:
   PropNameId find(const char* name) const;
 
   /// Get total count of interned names
-  size_t size() const {
-#if defined(LIGHTUSD_ENABLE_THREAD)
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-#endif
-    return names_.size();
-  }
+  size_t size() const;
 
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
@@ -199,16 +194,14 @@ struct PropSlot {
   static constexpr uint16_t kFlagVariabilityAuthored = 0x0040;
   static constexpr uint16_t kFlagVarying = 0x0080;
 
-  bool is_custom() const { return flags & kFlagCustom; }
-  bool is_uniform() const { return flags & kFlagUniform; }
-  bool is_time_sampled() const { return flags & kFlagTimeSampled; }
-  bool is_connection() const { return flags & kFlagConnection; }
-  bool is_relationship() const { return flags & kFlagRelationship; }
-  bool is_array() const { return flags & kFlagArray; }
-  bool variability_authored() const {
-    return flags & kFlagVariabilityAuthored;
-  }
-  bool is_varying() const { return flags & kFlagVarying; }
+  bool is_custom() const;
+  bool is_uniform() const;
+  bool is_time_sampled() const;
+  bool is_connection() const;
+  bool is_relationship() const;
+  bool is_array() const;
+  bool variability_authored() const;
+  bool is_varying() const;
 };
 
 /// Property index for a single prim
@@ -238,17 +231,17 @@ public:
   bool remove(PropNameId name_id);
 
   /// Get all properties
-  const std::vector<PropSlot>& slots() const { return slots_; }
+  const std::vector<PropSlot>& slots() const;
 
   /// Get property count
-  size_t size() const { return slots_.size(); }
+  size_t size() const;
 
   /// Sort slots by property name (canonical, run-stable order) for binary
   /// search. No-op while already sorted.
   void sort();
 
   /// Check if sorted
-  bool is_sorted() const { return sorted_; }
+  bool is_sorted() const;
 
 private:
   std::vector<PropSlot> slots_;

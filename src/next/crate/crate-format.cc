@@ -1241,5 +1241,48 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+std::string CrateSection::name_str() const {
+    return std::string(name, strnlen(name, 15));
+  }
+const CrateSection* CrateTOC::find(const char* name) const {
+    for (const auto& s : sections) {
+      if (strncmp(s.name, name, 15) == 0) {
+        return &s;
+      }
+    }
+    return nullptr;
+  }
+bool CrateVersion::is_valid() const {
+    // Check minimum version.
+    // Compare as int: major is uint8_t, so `major < 0` is always false and
+    // trips -Wtautological-unsigned-zero-compare under -Weverything. The cast
+    // keeps the check meaningful if kCrateMinVersionMajor ever rises above 0.
+    if (static_cast<int>(major) < kCrateMinVersionMajor) return false;
+    if (major == kCrateMinVersionMajor) {
+      if (minor < kCrateMinVersionMinor) return false;
+      if (minor == kCrateMinVersionMinor &&
+          static_cast<int>(patch) < kCrateMinVersionPatch)
+        return false;
+    }
+    // Check maximum version
+    if (major > kCrateMaxVersionMajor) return false;
+    if (major == kCrateMaxVersionMajor) {
+      if (minor > kCrateMaxVersionMinor) return false;
+    }
+    return true;
+  }
+std::string CrateVersion::to_string() const {
+    return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
+  }
+bool CrateVersion::is_pre_070() const { return major == 0 && minor < 7; }
+bool TokenIndex::is_valid() const { return value != 0xFFFFFFFF; }
+bool StringIndex::is_valid() const { return value != 0xFFFFFFFF; }
+bool PathIndex::is_valid() const { return value != 0xFFFFFFFF; }
+bool FieldsetIndex::is_valid() const { return value != 0xFFFFFFFF; }
+
 }  // namespace next
 }  // namespace lightusd

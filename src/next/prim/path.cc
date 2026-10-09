@@ -180,5 +180,13 @@ const Path& Path::empty_path() {
   return empty;
 }
 
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+bool Path::empty() const { return path_.empty(); }
+const std::string& Path::str() const { return path_; }
+const char* Path::c_str() const { return path_.c_str(); }
+
 }  // namespace next
 }  // namespace lightusd

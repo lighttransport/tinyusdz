@@ -228,19 +228,17 @@ public:
   PrimSpec* prim_mutable(uint32_t index);
 
   /// Get root prim indices
-  const std::vector<uint32_t>& root_indices() const { return root_indices_; }
+  const std::vector<uint32_t>& root_indices() const;
 
   /// Replace the root prim order (namespace reordering; e.g. the crate reader
   /// restoring authored order from the pseudo-root's primChildren).
-  void set_root_indices(std::vector<uint32_t>&& idx) {
-    root_indices_ = std::move(idx);
-  }
+  void set_root_indices(std::vector<uint32_t>&& idx);
 
   /// Get all prims (flat array)
-  const std::vector<PrimSpec>& prims() const { return prims_; }
+  const std::vector<PrimSpec>& prims() const;
 
   /// Get prim count
-  size_t prim_count() const { return prims_.size(); }
+  size_t prim_count() const;
 
   /// Get children of a prim
   std::vector<const PrimSpec*> children(uint32_t prim_index) const;
@@ -249,18 +247,14 @@ public:
   // Metadata
   // ============================================================
 
-  const LayerMeta& meta() const { return meta_; }
-  LayerMeta& meta() { return meta_; }
+  const LayerMeta& meta() const;
+  LayerMeta& meta();
 
   /// Effective timeCodesPerSecond with pxr SdfLayer fallback order:
   /// authored timeCodesPerSecond, else authored framesPerSecond, else 24.
   /// Used for the automatic time scaling between layers authored at
   /// different rates (sublayer/reference arcs).
-  double effective_timeCodesPerSecond() const {
-    if (meta_.timeCodesPerSecond_set) return meta_.timeCodesPerSecond;
-    if (meta_.framesPerSecond_set) return meta_.framesPerSecond;
-    return 24.0;
-  }
+  double effective_timeCodesPerSecond() const;
 
   // ============================================================
   // Memory
@@ -338,15 +332,13 @@ public:
 
   /// True if the layer already holds a prim at `path_str` (same lookup
   /// begin_prim() uses to re-open duplicate siblings).
-  bool contains_path(const std::string& path_str) {
-    return FindExistingPrim(path_str) != UINT32_MAX;
-  }
+  bool contains_path(const std::string& path_str);
 
   /// Absolute-path prefix applied to prims begun with an EMPTY parent stack
   /// (path = prefix + "/" + name). Used by parallel subtree sub-parsers whose
   /// fragment root is not a real layer root. Empty (default) keeps the normal
   /// root behavior.
-  void set_path_prefix(std::string prefix) { path_prefix_ = std::move(prefix); }
+  void set_path_prefix(std::string prefix);
 
 private:
   /// Index of the prim already at `path_str`, or UINT32_MAX.

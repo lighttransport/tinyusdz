@@ -855,5 +855,27 @@ void LayerBuilder::finalize() {
   layer_.finalize();
 }
 
+// ---------------------------------------------------------------------------
+// Inline method bodies moved out of the header so units that include it do
+// not re-parse them.
+// ---------------------------------------------------------------------------
+const std::vector<uint32_t>& Layer::root_indices() const { return root_indices_; }
+void Layer::set_root_indices(std::vector<uint32_t>&& idx) {
+    root_indices_ = std::move(idx);
+  }
+const std::vector<PrimSpec>& Layer::prims() const { return prims_; }
+size_t Layer::prim_count() const { return prims_.size(); }
+const LayerMeta& Layer::meta() const { return meta_; }
+LayerMeta& Layer::meta() { return meta_; }
+double Layer::effective_timeCodesPerSecond() const {
+    if (meta_.timeCodesPerSecond_set) return meta_.timeCodesPerSecond;
+    if (meta_.framesPerSecond_set) return meta_.framesPerSecond;
+    return 24.0;
+  }
+bool LayerBuilder::contains_path(const std::string& path_str) {
+    return FindExistingPrim(path_str) != UINT32_MAX;
+  }
+void LayerBuilder::set_path_prefix(std::string prefix) { path_prefix_ = std::move(prefix); }
+
 }  // namespace next
 }  // namespace lightusd
