@@ -3,7 +3,7 @@
 // Tydra Next - Preview-surface material extraction
 #include "safe-arithmetic.hh"
 #include "../../next/layer/prim-spec.hh"
-#include "core/path-expression-eval.hh"
+#include "next/core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include "render-converter-internal.hh"

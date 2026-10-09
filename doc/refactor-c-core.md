@@ -12,6 +12,95 @@ explicit storage and non-template algorithms. Legacy is a deprecated, explicit
 compatibility product kept in the repository and CI. API changes are allowed;
 removing supported capabilities is not an optimization.
 
+## C11 core modules (`src/next/c`)
+
+Algorithmic leaf modules that next shares with C consumers are implemented in
+C11 under `src/next/c`, compiled into `lightusd_next` by the same target with
+`C_STANDARD 11 / C_STANDARD_REQUIRED ON / C_EXTENSIONS OFF`, and reached from C++
+through a next-local adapter header beside them. No legacy header is edited to
+make this happen: where a next consumer previously reached into
+`src/core/*`, next now owns its own copy and legacy is left alone.
+
+The first ported module is SdfPathExpression
+(`src/next/c/lightusd-core-c.h` + `src/next/c/path-expr.c`, adapted by
+`src/next/core/path-expression{,-eval}.hh`). It replaces
+`src/core/path-expression.cc` + `path-expression-eval.cc`, which were the only
+next sources that pulled the legacy value-type layer (`value-types.hh`,
+`typed-array-core.hh`, `token-type.hh`, `define-type-trait.inc`) into the next
+build. After the port, no `lightusd_next` translation unit reaches those
+headers; the remaining `tydra_next` edges enter through
+`src/tydra/shape-to-mesh.hh` and two direct includes and are separate work.
+
+Measured on one machine, Release `-O3 -DNDEBUG`, no `-g` (module-level, same
+build tree and flags, isolated single-object timings):
+
+| Metric | Before (2 C++ TUs) | After (1 C11 TU) |
+|---|---:|---:|
+| Compile time | 3.50 s | 0.63 s |
+| Object bytes (ELF) | 105,872 | 29,432 |
+| Object bytes (wasm32) | 39,024 | 20,368 |
+| Legacy headers parsed | value-types.hh, typed-array-core.hh, token-type.hh, define-type-trait.inc | none |
+
+Clean-product context from the same tree: 101 objects, 4.90 MiB text,
+9.26 MiB archive. The slowest `lightusd_next` translation unit is
+`validation/validation-context.cc` at 24.5 s (isolated), which is the schema
+inventory built from an X-macro into `std::map`/`std::vector` at static-init
+time; it is the next target, not a regression from this change.
+
+Verification performed for the port:
+
+- strict C11 (`-std=c11 -Wall -Wextra -Wpedantic -Werror`) and Emscripten C11
+  syntax checks clean;
+- differential testing against the legacy implementation: 4,179 expressions for
+  parse + canonical serialization and 802,368
+  (expression, path, predicate/ref/depth-mode) triples for matching, with **zero**
+  differences, and a clean ASan + UBSan run over both corpora;
+- new ctest `next_test_path_expression_c_core` (55 tests in the next ctest tree
+  pass, one more than before).
+
+Three behavioural differences between the C11 port and the C++ original are
+deliberately identical to the reference implementation rather than "fixed":
+`is_stretch()` is derived from empty text and empty predicate, a grouped
+sub-expression opens its parenthesis at the start of the subtree, and the
+prefix-fold test treats predicate-bearing elements as never literal.
+
+### Generated checker tables (`src/next/c/generated-schema-tables.c`)
+
+The AOUSD schema inventory was the most expensive translation unit in the
+product. `validation-context.cc` expanded two X-macros (1,228 rows: 134 schemas,
+403 properties, 691 shaders) into `std::map`/`std::vector` construction at
+static-init time, costing 19.5 s of its 23.7 s compile and 382 KB of its 482 KB
+object text.
+
+`scripts/generate-checker-definitions.py` now emits a C11 data module instead:
+one NUL-separated string arena plus index rows, name-sorted for binary search,
+with lookups in `src/next/c/validation-tables.c`. Nothing is constructed at
+startup and nothing allocates per lookup. `validation-context.cc` materializes
+the same `std::map` types lazily from the C tables on first use, so the public
+API and every observable result are unchanged: caller-loaded manifests still
+merge with the built-in inventory for conflict, cycle and ancestor checks.
+
+| Metric | Before | After |
+|---|---:|---:|
+| `validation-context.cc` compile | 24.46 s | 8.44 s |
+| its object text | 482,368 B | 106,943 B |
+| slowest TU in the product | 24.46 s | 15.76 s |
+| product object text | 5,133,796 B | 4,852,570 B |
+| clean build wall (-j32) | 33.15 s | 25.73 s |
+| new C11 objects | none | 90,840 B + 7,744 B (0.26 s) |
+
+The two generated `.inc` files are gone; the generator's `--check` gate (run by
+`lusdchecker_definition_tables`) now verifies the generated `.c`/`.h` pair.
+
+Verification for the tables: the complete generated data (schema names, parents,
+kinds, namespaces, properties, types, variability, relationship flags and
+allowed-token lists; shader identifiers, source types and ports; all 53 checker
+rule -> reference-error mappings) was dumped through the C API and compared
+against the JSON each artifact is generated from, with zero differences. The
+55-test next ctest tree passes, including `next_test_validation_registry` (which
+covers manifest merge, conflict, transaction rollback and cycle rejection) and
+the AOUSD conformance suite.
+
 ## Current build and API changes
 
 - Core C (`lightusd_c`) now links only `lightusd_next`. Rendering is a separate

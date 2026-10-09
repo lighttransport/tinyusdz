@@ -6,7 +6,7 @@
 #include "render-converter-light-linking.hh"
 #include "../../next/layer/prim-spec.hh"
 #include "render-data.hh"
-#include "core/path-expression-eval.hh"
+#include "next/core/path-expression-eval.hh"
 #include "next/stage/stage.hh"
 
 #include <algorithm>

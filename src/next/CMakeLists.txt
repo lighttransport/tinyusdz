@@ -18,10 +18,15 @@ set(LIGHTUSD_NEXT_SOURCES
     # Shared bounded JSON parser used by the next-generation URDF bridge.
     ../minijson.cc
     ../color-transform.cc
-    # Shared SdfPathExpression parser/matcher. Kept stage-neutral so next
-    # collection consumers do not need the legacy Stage representation.
-    ../core/path-expression.cc
-    ../core/path-expression-eval.cc
+    # C11 core: SdfPathExpression parsing / serialization / matching.
+    # next owns this module; the legacy src/core/path-expression*.cc pair is
+    # deliberately NOT part of this product (it would drag the legacy
+    # value-type layer, value-types.hh + typed-array-core.hh, into every next
+    # translation unit).
+    c/path-expr.c
+    # C11 core: generated checker tables (schema inventory) and their lookups.
+    c/validation-tables.c
+    c/generated-schema-tables.c
     # Type system
     types/value-view.cc
 
@@ -100,6 +105,14 @@ set(LIGHTUSD_NEXT_HEADERS
 
     # Composition policy
     composition/expression-variables.hh
+
+    # C11 core (C ABI consumed by next and by C consumers)
+    c/lightusd-core-c.h
+    c/generated-schema-tables.h
+
+    # next-local SdfPathExpression adapter over the C11 core
+    core/path-expression.hh
+    core/path-expression-eval.hh
 
     # Layer (unified PrimSpec storage)
     layer/property-index.hh
@@ -226,6 +239,14 @@ add_library(lightusd_next STATIC
 # C++17 (matches the parent project). The USDA writer formats floats via the
 # vendored dragonbox dtoa (writer/dtoa.cc), with a zmij fast path.
 target_compile_features(lightusd_next PUBLIC cxx_std_17)
+
+# The C11 core is compiled as C11 by the same target: strict standard, no
+# extensions, so the header stays a valid strict-C11 boundary for consumers.
+set_target_properties(lightusd_next PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
 
 # Silence warnings from the vendored zmij translation unit (third-party code:
 # __int128 pedantic, sign-compare, unused params -- not ours to fix).
@@ -552,6 +573,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_load_rules.cc
     )
     target_link_libraries(test_load_rules PRIVATE lightusd_next)
+
+    add_executable(test_path_expression_c_core
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_path_expression_c_core.cc
+    )
+    target_link_libraries(test_path_expression_c_core PRIVATE lightusd_next)
 
     add_executable(test_layer_diff
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer_diff.cc
@@ -1107,6 +1133,8 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_path_expression_c_core COMMAND test_path_expression_c_core
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_layer_diff COMMAND test_layer_diff
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_memory_flatten COMMAND test_memory_flatten
@@ -1156,9 +1184,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         next_test_composition
         next_test_crash_regressions
         next_test_usdc_malformed
-        next_test_crate_limits
-        next_test_load_rules
-        next_test_layer_diff
+         next_test_crate_limits
+         next_test_load_rules
+         next_test_path_expression_c_core
+         next_test_layer_diff
         next_test_memory_flatten
         next_test_validation
         next_test_aousd_conformance)

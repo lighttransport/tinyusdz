@@ -5,10 +5,13 @@
 #include "../types/spline.hh"
 #include "../prim/identifier.hh"
 #include "../../minijson.hh"
+#include "../c/lightusd-core-c.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <sstream>
+#include <vector>
 
 namespace lightusd { namespace next {
 namespace {
@@ -77,29 +80,126 @@ bool PortMap(const Json& j, std::map<std::string, std::string>* out) {
 }
 }  // namespace
 
-ValidationRegistry::ValidationRegistry() {
-  ValidationSchemaDefinition* current = nullptr;
-  const auto schema = [&](const char* name, const char* parent, const char* kind,
-                          const char* ns, const char* source) {
-    auto& s = schemas_[name];
-    s.name = name; s.parent = parent; s.kind = kind;
-    s.property_namespace = ns; s.source = source; current = &s;
-  };
-  const auto property = [&](const char* name, const char* type, bool rel,
-                            const char* variability,
-                            std::vector<std::string> tokens) {
-    current->properties[name] = {type, rel, variability, std::move(tokens)};
-  };
-  const auto shader = [&](const char* id, const char* source_type,
-                          const char* source, std::map<std::string, std::string> inputs,
-                          std::map<std::string, std::string> outputs) {
-    shaders_[{id, source_type}] = {id, source_type, source,
-                                  std::move(inputs), std::move(outputs)};
-  };
-#include "generated-definitions.inc"
+// The built-in inventory lives in the C11 core (src/next/c/generated-schema-tables.c)
+// as a string arena plus index rows, so it costs no per-schema static
+// construction and no template instantiation in this translation unit. It is
+// materialized into the same map types as before, lazily on first use, so the
+// public API and every observable result are unchanged.
+ValidationRegistry::ValidationRegistry() = default;
+
+namespace {
+
+std::string ArenaString(lu_view v) {
+  return std::string(v.data != nullptr ? v.data : "", v.len);
+}
+
+const std::map<std::string, ValidationSchemaDefinition>& BuiltinSchemaTables() {
+  static const std::map<std::string, ValidationSchemaDefinition> tables = [] {
+    std::map<std::string, ValidationSchemaDefinition> m;
+    size_t count = 0;
+    if (lu_validation_schema_count(&count) != LU_OK) return m;
+    for (size_t i = 0; i < count; i++) {
+      lu_validation_schema_view sv;
+      if (lu_validation_schema_at(i, &sv) != LU_OK) continue;
+      ValidationSchemaDefinition s;
+      s.name = ArenaString(sv.name);
+      s.parent = ArenaString(sv.parent);
+      s.kind = ArenaString(sv.kind);
+      s.property_namespace = ArenaString(sv.property_namespace);
+      s.source = ArenaString(sv.source);
+      for (size_t p = 0; p < sv.property_count; p++) {
+        lu_validation_property_view pv;
+        if (lu_validation_property_at(i, p, &pv) != LU_OK) break;
+        ValidationPropertyDefinition d;
+        d.type = ArenaString(pv.type);
+        d.variability = ArenaString(pv.variability);
+        d.relationship = pv.is_relationship != 0;
+        for (size_t t = 0; t < pv.token_count; t++) {
+          lu_view tv;
+          if (lu_validation_property_token(i, p, t, &tv) != LU_OK) break;
+          d.allowed_tokens.push_back(ArenaString(tv));
+        }
+        s.properties.emplace(ArenaString(pv.name), std::move(d));
+      }
+      m.emplace(s.name, std::move(s));
+    }
+    return m;
+  }();
+  return tables;
+}
+
+const std::map<std::pair<std::string, std::string>, ValidationShaderDefinition>&
+BuiltinShaderTables() {
+  static const std::map<std::pair<std::string, std::string>,
+                        ValidationShaderDefinition> tables = [] {
+    std::map<std::pair<std::string, std::string>, ValidationShaderDefinition> m;
+    size_t count = 0;
+    if (lu_validation_shader_count(&count) != LU_OK) return m;
+    for (size_t i = 0; i < count; i++) {
+      lu_validation_shader_view sv;
+      if (lu_validation_shader_at(i, &sv) != LU_OK) continue;
+      ValidationShaderDefinition s;
+      s.identifier = ArenaString(sv.identifier);
+      s.source_type = ArenaString(sv.source_type);
+      s.source = ArenaString(sv.source);
+      for (size_t p = 0; p < sv.input_count; p++) {
+        lu_view n, t;
+        if (lu_validation_shader_port(i, 0, p, &n, &t) != LU_OK) break;
+        s.inputs.emplace(ArenaString(n), ArenaString(t));
+      }
+      for (size_t p = 0; p < sv.output_count; p++) {
+        lu_view n, t;
+        if (lu_validation_shader_port(i, 1, p, &n, &t) != LU_OK) break;
+        s.outputs.emplace(ArenaString(n), ArenaString(t));
+      }
+      m.emplace(std::make_pair(s.identifier, s.source_type), std::move(s));
+    }
+    return m;
+  }();
+  return tables;
+}
+
+}  // namespace
+
+// Built-in and caller-loaded definitions are merged for lookups: loaded
+// entries win, everything else comes from the C11 tables.
+const ValidationSchemaDefinition* ValidationRegistry::FindSchema(
+    const std::string& name) const {
+  const auto i = schemas_.find(name);
+  if (i != schemas_.end()) return &i->second;
+  const auto& builtin = BuiltinSchemaTables();
+  const auto b = builtin.find(name);
+  return b == builtin.end() ? nullptr : &b->second;
+}
+
+const ValidationShaderDefinition* ValidationRegistry::FindShader(
+    const std::string& id, const std::string& source_type) const {
+  const auto exact = shaders_.find({id, source_type});
+  if (exact != shaders_.end()) return &exact->second;
+  const auto& builtin = BuiltinShaderTables();
+  const auto bexact = builtin.find({id, source_type});
+  if (bexact != builtin.end()) return &bexact->second;
+  if (!source_type.empty()) return nullptr;
+  // Ambiguity is resolved across loaded and built-in definitions together, so
+  // an id that exists in both with different source types needs an explicit
+  // selection, exactly as it did when both lived in one map.
+  const ValidationShaderDefinition* candidate = nullptr;
+  for (const auto& s : shaders_) {
+    if (s.first.first != id) continue;
+    if (candidate) return nullptr;
+    candidate = &s.second;
+  }
+  for (const auto& s : builtin) {
+    if (s.first.first != id) continue;
+    if (candidate) return nullptr;
+    candidate = &s.second;
+  }
+  return candidate;
 }
 
 const ValidationRegistry& GetBuiltinValidationRegistry() {
+  // The built-in inventory is now materialized lazily from the C11 core, so
+  // this registry starts empty and Lookups fall through to those tables.
   static const ValidationRegistry registry;
   return registry;
 }
@@ -110,7 +210,13 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
   if (!lightusd::minijson::Parse(text, &root) || !root["formatVersion"].is_number_integer() || root["formatVersion"].get_int() != 1 ||
       !root["schemas"].is_array())
     return nonstd::make_unexpected(std::string("expected schema manifest formatVersion 1"));
+  // Seed with exactly the set the constructor used to materialize: previously
+  // loaded overrides plus the built-in inventory. emplace keeps the loaded
+  // entry where both define the same schema name.
   auto candidate = schemas_;
+  for (const auto& entry : BuiltinSchemaTables()) {
+    candidate.emplace(entry.first, entry.second);
+  }
   std::set<std::string> names;
   for (const auto& item : root["schemas"]) {
     ValidationSchemaDefinition s;
@@ -172,6 +278,9 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadShaderDefinitions(
       !root["shaders"].is_array())
     return nonstd::make_unexpected(std::string("expected shader manifest formatVersion 1"));
   auto candidate = shaders_;
+  for (const auto& entry : BuiltinShaderTables()) {
+    candidate.emplace(entry.first, entry.second);
+  }
   std::set<std::pair<std::string, std::string>> names;
   for (const auto& item : root["shaders"]) {
     ValidationShaderDefinition s;
@@ -208,13 +317,12 @@ nonstd::expected<bool, std::string> ValidationRegistry::RegisterValidator(
   validators_.push_back(std::move(rule));
   return true;
 }
-const ValidationSchemaDefinition* ValidationRegistry::FindSchema(const std::string& name) const {
-  const auto i = schemas_.find(name);
-  return i == schemas_.end() ? nullptr : &i->second;
-}
 bool ValidationRegistry::InheritsFrom(const std::string& name, const std::string& ancestor) const {
   std::string current = name;
-  for (size_t i = 0; i <= schemas_.size(); ++i) {
+  // Loaded and built-in schemas can both form the chain, so the walk bound is
+  // the total number of distinct schema names.
+  const size_t limit = schemas_.size() + BuiltinSchemaTables().size();
+  for (size_t i = 0; i <= limit; ++i) {
     if (current == ancestor) return true;
     const auto* s = FindSchema(current);
     if (!s) return GetSchemaRegistry().InheritsFrom(current, ancestor);
@@ -230,9 +338,10 @@ const ValidationPropertyDefinition* ValidationRegistry::FindProperty(
     const size_t colon = api.find(':');
     schemas.emplace_back(api.substr(0, colon), colon == std::string::npos ? "" : api.substr(colon + 1));
   }
+  const size_t limit = schemas_.size() + BuiltinSchemaTables().size();
   for (const auto& applied : schemas) {
     std::string current = applied.first;
-    for (size_t hops = 0; hops <= schemas_.size(); ++hops) {
+    for (size_t hops = 0; hops <= limit; ++hops) {
       const auto* s = FindSchema(current);
       if (!s) break;
       std::string local = name;
@@ -249,19 +358,6 @@ const ValidationPropertyDefinition* ValidationRegistry::FindProperty(
     }
   }
   return nullptr;
-}
-const ValidationShaderDefinition* ValidationRegistry::FindShader(
-    const std::string& id, const std::string& source_type) const {
-  const auto exact = shaders_.find({id, source_type});
-  if (exact != shaders_.end()) return &exact->second;
-  if (!source_type.empty()) return nullptr;
-  const ValidationShaderDefinition* candidate = nullptr;
-  for (const auto& s : shaders_) {
-    if (s.first.first != id) continue;
-    if (candidate) return nullptr;  // ambiguous source types need an explicit selection
-    candidate = &s.second;
-  }
-  return candidate;
 }
 void ValidationRegistry::RunCallbacks(ValidationScope scope, const ValidationContext& context,
     const PrimSpec* prim, USDValidationResult* result) const {
@@ -691,11 +787,17 @@ ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
       "core.composition.propertyKindMismatch", "core.composition.error"};
     if (normative.count(rule)) { m.category = "normative"; m.specification = spec; }
   }
-  static const std::map<std::string, std::vector<std::string>> reference = {
-#include "generated-reference-errors.inc"
-  };
-  const auto i = reference.find(rule);
-  if (i != reference.end()) m.reference_errors = i->second;
+  // Rule -> specification reference errors, from the C11 core (binary search
+  // over the rule-sorted rows).
+  size_t ref_index = 0, ref_count = 0;
+  if (lu_validation_ref_error_find(lu_view{rule.data(), rule.size()}, &ref_index,
+                                   &ref_count) == LU_OK) {
+    for (size_t i = 0; i < ref_count; i++) {
+      lu_view v;
+      if (lu_validation_ref_error_item(ref_index, i, &v) != LU_OK) break;
+      m.reference_errors.emplace_back(v.data != nullptr ? v.data : "", v.len);
+    }
+  }
   return m;
 }
 } }  // namespace lightusd::next
