@@ -5935,3 +5935,17 @@ now sits in the C11 core with explicit bounds on every read; `crate-format.cc`
 forwards. The USDC writer's encoders are unchanged, so the USDC round-trip,
 malformed-input and crate-limit ctest suites exercise the C decoders end to end
 (55/55 pass).
+
+### LZ4 + crate blob framing in C11
+
+The TfFastCompression wrappers moved to `src/next/c/crate-blob.c`:
+`lu_lz4_decompress` / `lu_lz4_decompress_upto` / `lu_lz4_compress` /
+`lu_lz4_compress_bound` and the framed `lu_crate_blob_compress[ _bound]` /
+`lu_crate_blob_decompress` (n_chunks framing, per-chunk size prefix, the ~2GB
+single-block rule and the int-width guard). This is the untrusted-data
+decompression path, so every destination is a caller-provided bounded buffer and
+every length is checked before use; `crate-format.cc`'s `DecompressResult` /
+`CompressResult` wrappers own the std::vector and forward. Verified: random
+buffers across 182 size classes (0..5 MB, mixed entropy) round-trip exactly
+through both the framed blob and the raw LZ4 wrapper, and the USDC
+round-trip / malformed suites pass.

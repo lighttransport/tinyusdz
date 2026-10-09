@@ -454,6 +454,41 @@ LU_CORE_API int lu_is_valid_path_string(const char *data, size_t size);
  * on malformed input.
  * ============================================================ */
 
+/* ============================================================
+ * LZ4 + crate blob framing (src/next/c/crate-blob.c)
+ *
+ * The pxrUSD TfFastCompression layout and raw LZ4 wrappers. All functions
+ * write into a caller buffer bounded by `dst_cap`/`dst_size` and report the
+ * number of bytes written; `*out_error` is set to a static message on failure.
+ * ============================================================ */
+
+/* Decompress one LZ4 block, up to dst_cap bytes; *out_size is the actual size. */
+LU_CORE_API int lu_lz4_decompress_upto(const uint8_t *src, size_t src_size,
+                                       uint8_t *dst, size_t dst_cap,
+                                       size_t *out_size, const char **out_error);
+/* Decompress one LZ4 block that must decode to exactly dst_size bytes. */
+LU_CORE_API int lu_lz4_decompress(const uint8_t *src, size_t src_size,
+                                  uint8_t *dst, size_t dst_size,
+                                  size_t *out_size, const char **out_error);
+/* LZ4_compressBound; 0 on failure. */
+LU_CORE_API int lu_lz4_compress_bound(size_t src_size, size_t *out_bound);
+LU_CORE_API int lu_lz4_compress(const uint8_t *src, size_t src_size,
+                                uint8_t *dst, size_t dst_cap, size_t *out_size,
+                                const char **out_error);
+
+/* Bounds for the framed crate blob (`n_chunks` byte + per-chunk overhead). */
+LU_CORE_API int lu_crate_blob_compress_bound(size_t src_size,
+                                             size_t *out_bound);
+LU_CORE_API int lu_crate_blob_compress(const uint8_t *src, size_t src_size,
+                                       uint8_t *dst, size_t dst_cap,
+                                       size_t *out_size,
+                                       const char **out_error);
+/* Decompress a framed crate blob into dst_size bytes; *out_size <= dst_size. */
+LU_CORE_API int lu_crate_blob_decompress(const uint8_t *src, size_t src_size,
+                                         uint8_t *dst, size_t dst_size,
+                                         size_t *out_size,
+                                         const char **out_error);
+
 /* Packed 2-bit code-table bytes for `count` values. */
 LU_CORE_API int lu_crate_delta_code_bytes(size_t count, size_t *out);
 LU_CORE_API int lu_crate_decode_integers(const uint8_t *src, size_t src_size,

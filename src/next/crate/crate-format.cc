@@ -129,44 +129,17 @@ size_t CrateTypeIdSize(CrateTypeId id) {
 DecompressResult DecompressLZ4(const uint8_t* src, size_t src_size,
                                 size_t uncompressed_size) {
   DecompressResult result;
-
-  if (!src || src_size == 0) {
-    result.error = "Empty input";
-    return result;
-  }
-
-  if (uncompressed_size == 0) {
-    result.success = true;
-    return result;
-  }
-
-  // Sanity check - don't allocate absurd amounts
-  if (uncompressed_size > 1024 * 1024 * 1024) {  // 1GB limit
-    result.error = "Uncompressed size too large";
-    return result;
-  }
-
   result.data.resize(uncompressed_size);
-
-  int decoded = LZ4_decompress_safe(
-      reinterpret_cast<const char*>(src),
-      reinterpret_cast<char*>(result.data.data()),
-      static_cast<int>(src_size),
-      static_cast<int>(uncompressed_size));
-
-  if (decoded < 0) {
-    result.error = "LZ4 decompression failed";
+  const char* error = nullptr;
+  size_t out_size = 0;
+  if (lu_lz4_decompress(src, src_size, result.data.data(), uncompressed_size,
+                        &out_size, &error)) {
+    result.data.resize(out_size);
+    result.success = true;
+  } else {
     result.data.clear();
-    return result;
+    result.error = error ? error : "LZ4 decompression failed";
   }
-
-  if (static_cast<size_t>(decoded) != uncompressed_size) {
-    result.error = "LZ4 decompression size mismatch";
-    result.data.clear();
-    return result;
-  }
-
-  result.success = true;
   return result;
 }
 
@@ -176,28 +149,22 @@ CompressResult CompressLZ4(const uint8_t* src, size_t src_size) {
     result.success = true;
     return result;
   }
-
-  int bound = LZ4_compressBound(static_cast<int>(src_size));
-  if (bound <= 0) {
+  size_t bound = 0;
+  if (!lu_lz4_compress_bound(src_size, &bound)) {
     result.error = "LZ4_compressBound failed";
     return result;
   }
-
-  result.data.resize(static_cast<size_t>(bound));
-  int compressed = LZ4_compress_default(
-      reinterpret_cast<const char*>(src),
-      reinterpret_cast<char*>(result.data.data()),
-      static_cast<int>(src_size),
-      bound);
-
-  if (compressed <= 0) {
-    result.error = "LZ4 compression failed";
+  result.data.resize(bound);
+  const char* error = nullptr;
+  size_t out_size = 0;
+  if (lu_lz4_compress(src, src_size, result.data.data(), bound, &out_size,
+                      &error)) {
+    result.data.resize(out_size);
+    result.success = true;
+  } else {
     result.data.clear();
-    return result;
+    result.error = error ? error : "LZ4 compression failed";
   }
-
-  result.data.resize(static_cast<size_t>(compressed));
-  result.success = true;
   return result;
 }
 
@@ -216,188 +183,39 @@ static constexpr size_t kMaxLZ4ChunkSize = 0x7E000000;
 
 CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size) {
   CompressResult result;
-  if (!src || src_size == 0) {
+  size_t bound = 0;
+  if (!lu_crate_blob_compress_bound(src_size, &bound)) {
+    result.error = "LZ4_compressBound failed";
+    return result;
+  }
+  result.data.resize(bound);
+  const char* error = nullptr;
+  size_t out_size = 0;
+  if (lu_crate_blob_compress(src, src_size, result.data.data(), bound, &out_size,
+                             &error)) {
+    result.data.resize(out_size);
     result.success = true;
-    result.data.push_back(0);  // n_chunks = 0 (empty)
-    return result;
-  }
-
-  // Single chunk for data < 2GB
-  size_t n_chunks = (src_size <= kMaxLZ4ChunkSize) ? 0
-                    : (src_size + kMaxLZ4ChunkSize - 1) / kMaxLZ4ChunkSize;
-
-  // Pre-allocate: 1 byte n_chunks + per-chunk overhead
-  size_t total_bound = 1;
-  if (n_chunks == 0) {
-    int bound = LZ4_compressBound(static_cast<int>(src_size));
-    if (bound <= 0) {
-      result.error = "LZ4_compressBound failed";
-      return result;
-    }
-    total_bound += static_cast<size_t>(bound);
   } else {
-    for (size_t i = 0; i < n_chunks; i++) {
-      size_t chunk_sz = std::min(kMaxLZ4ChunkSize, src_size - i * kMaxLZ4ChunkSize);
-      int bound = LZ4_compressBound(static_cast<int>(chunk_sz));
-      if (bound <= 0) {
-        result.error = "LZ4_compressBound failed for chunk";
-        return result;
-      }
-      total_bound += static_cast<size_t>(bound) + sizeof(int32_t);
-    }
+    result.data.clear();
+    result.error = error ? error : "LZ4 compression failed";
   }
-
-  result.data.resize(total_bound);
-  size_t out_pos = 0;
-
-  if (n_chunks > 255) {
-    result.error = "Too many chunks (>255)";
-    return result;
-  }
-  result.data[out_pos++] = static_cast<uint8_t>(n_chunks);
-
-  if (n_chunks == 0) {
-    // Single chunk
-    int compressed = LZ4_compress_default(
-        reinterpret_cast<const char*>(src),
-        reinterpret_cast<char*>(result.data.data() + out_pos),
-        static_cast<int>(src_size),
-        static_cast<int>(total_bound - out_pos));
-
-    if (compressed <= 0) {
-      result.error = "LZ4 compression failed";
-      result.data.clear();
-      return result;
-    }
-    out_pos += static_cast<size_t>(compressed);
-  } else {
-    // Multi-chunk
-    size_t in_offset = 0;
-    for (size_t ci = 0; ci < n_chunks; ci++) {
-      size_t chunk_sz = std::min(kMaxLZ4ChunkSize, src_size - in_offset);
-      int32_t chunk_size_i32 = static_cast<int32_t>(chunk_sz);
-      std::memcpy(result.data.data() + out_pos, &chunk_size_i32, sizeof(int32_t));
-      out_pos += sizeof(int32_t);
-
-      int compressed = LZ4_compress_default(
-          reinterpret_cast<const char*>(src + in_offset),
-          reinterpret_cast<char*>(result.data.data() + out_pos),
-          static_cast<int>(chunk_sz),
-          static_cast<int>(total_bound - out_pos));
-
-      if (compressed <= 0) {
-        result.error = "LZ4 compression failed for chunk";
-        result.data.clear();
-        return result;
-      }
-      out_pos += static_cast<size_t>(compressed);
-      in_offset += chunk_sz;
-    }
-  }
-
-  result.data.resize(out_pos);
-  result.success = true;
   return result;
 }
 
 DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
                                      size_t uncompressed_size) {
   DecompressResult result;
-  if (!src || src_size == 0) {
-    result.success = (uncompressed_size == 0);
-    return result;
-  }
-
-  if (src_size < 1) {
-    result.error = "Crate blob too small (missing n_chunks)";
-    return result;
-  }
-
-  uint8_t n_chunks = src[0];
-  const uint8_t* data_start = src + 1;
-  size_t data_size = src_size - 1;
-
-  if (uncompressed_size == 0) {
-    result.success = true;
-    return result;
-  }
-
-  if (uncompressed_size > 1024 * 1024 * 1024) {
-    result.error = "Uncompressed size too large";
-    return result;
-  }
-
-  // LZ4 takes srcSize as `int`. A blob larger than INT_MAX would pass a
-  // NEGATIVE srcSize, making LZ4 compute an end pointer BEHIND src and read
-  // out of bounds. kMaxLZ4ChunkSize is the same bound the compress side uses.
-  if (data_size > kMaxLZ4ChunkSize) {
-    result.error = "Compressed crate blob too large";
-    return result;
-  }
-
   result.data.resize(uncompressed_size);
-  size_t out_pos = 0;
-
-  if (n_chunks == 0) {
-    // Single chunk
-    int decoded = LZ4_decompress_safe(
-        reinterpret_cast<const char*>(data_start),
-        reinterpret_cast<char*>(result.data.data()),
-        static_cast<int>(data_size),
-        static_cast<int>(uncompressed_size));
-
-    if (decoded < 0) {
-      result.error = "LZ4 decompression failed";
-      result.data.clear();
-      return result;
-    }
-    out_pos = static_cast<size_t>(decoded);
+  const char* error = nullptr;
+  size_t out_size = 0;
+  if (lu_crate_blob_decompress(src, src_size, result.data.data(),
+                               uncompressed_size, &out_size, &error)) {
+    result.data.resize(out_size);
+    result.success = true;
   } else {
-    // Multi-chunk
-    size_t in_pos = 0;
-    for (uint8_t ci = 0; ci < n_chunks; ci++) {
-      if (in_pos + sizeof(int32_t) > data_size) {
-        result.error = "Truncated crate blob (chunk header)";
-        result.data.clear();
-        return result;
-      }
-
-      int32_t chunk_size;
-      std::memcpy(&chunk_size, data_start + in_pos, sizeof(int32_t));
-      in_pos += sizeof(int32_t);
-
-      if (chunk_size <= 0 || static_cast<size_t>(chunk_size) > data_size - in_pos) {
-        result.error = "Invalid chunk size in crate blob";
-        result.data.clear();
-        return result;
-      }
-
-      size_t remaining = uncompressed_size - out_pos;
-      int decoded = LZ4_decompress_safe(
-          reinterpret_cast<const char*>(data_start + in_pos),
-          reinterpret_cast<char*>(result.data.data() + out_pos),
-          static_cast<int>(chunk_size),
-          static_cast<int>(remaining));
-
-      if (decoded < 0) {
-        result.error = "LZ4 decompression failed for chunk";
-        result.data.clear();
-        return result;
-      }
-      out_pos += static_cast<size_t>(decoded);
-      in_pos += static_cast<size_t>(chunk_size);
-    }
-  }
-
-  if (out_pos > uncompressed_size) {
-    result.error = "LZ4 decompression overflow";
     result.data.clear();
-    return result;
+    if (error) result.error = error;
   }
-
-  // Trim to actual decompressed size
-  result.data.resize(out_pos);
-  result.success = true;
   return result;
 }
 
@@ -460,13 +278,11 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 
   for (;;) {
     result.data.resize(capacity);
-    const int decoded = LZ4_decompress_safe(
-        reinterpret_cast<const char*>(data_start),
-        reinterpret_cast<char*>(result.data.data()),
-        static_cast<int>(data_size), static_cast<int>(capacity));
-
-    if (decoded >= 0) {
-      result.data.resize(static_cast<size_t>(decoded));
+    const char* decode_error = nullptr;
+    size_t decoded = 0;
+    if (lu_lz4_decompress_upto(data_start, data_size, result.data.data(),
+                               capacity, &decoded, &decode_error)) {
+      result.data.resize(decoded);
       result.success = true;
       return result;
     }
