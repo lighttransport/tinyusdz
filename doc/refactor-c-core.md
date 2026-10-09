@@ -6008,3 +6008,12 @@ differential caught: `elements()` emits an empty element for every run of
 
 Verified differential against the previous `Path` logic over 600,000 random
 paths plus 200,000 relation pairs and a curated set: zero differences.
+
+### Cubic spline segment math in C11
+
+The pure double helpers of `src/spline-eval.hh` moved to
+`src/next/c/spline.c` (`lu_hermite_h00..h11`, `lu_cubic_bezier[_deriv]`,
+`lu_solve_bezier_time_for_u`, `lu_spline_anti_regress`), shared with the
+templated evaluator (which stays C++ because it is instantiated for float and
+double over a C++ `Spline<T>`). Verified bit-identical over 800,000 random
+iterations of every helper: zero differences.

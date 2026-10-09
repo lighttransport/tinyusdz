@@ -512,6 +512,27 @@ LU_CORE_API int lu_path_element(const char *prim, size_t n, size_t index,
 LU_CORE_API int lu_path_make_relative_to(const char *p, size_t n,
                                          const char *base, size_t bn, char *out,
                                          size_t cap, size_t *out_len);
+/* ============================================================
+ * Cubic spline segment math (src/next/c/spline.c)
+ *
+ * Hermite basis, cubic Bezier evaluation/derivative, the Bezier time solver and
+ * anti-regression from src/spline-eval.hh. Pure double math; the templated knot
+ * walk stays C++.
+ * ============================================================ */
+
+LU_CORE_API double lu_hermite_h00(double u);
+LU_CORE_API double lu_hermite_h10(double u);
+LU_CORE_API double lu_hermite_h01(double u);
+LU_CORE_API double lu_hermite_h11(double u);
+LU_CORE_API double lu_cubic_bezier(double p0, double p1, double p2, double p3,
+                                   double u);
+LU_CORE_API double lu_cubic_bezier_deriv(double p0, double p1, double p2,
+                                         double p3, double u);
+LU_CORE_API double lu_solve_bezier_time_for_u(double t0, double t1, double t2,
+                                              double t3, double target_time,
+                                              int max_iter);
+LU_CORE_API void lu_spline_anti_regress(double t0, double *tw0_post,
+                                        double *tw1_pre, double t3);
 
 /* ============================================================
  * Crate integer decode (src/next/c/crate-int.c)

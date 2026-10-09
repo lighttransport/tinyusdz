@@ -90,88 +90,32 @@ struct Spline {
 namespace detail {
 
 // Cubic Hermite basis functions
-inline double H00(double u) { return 2.0*u*u*u - 3.0*u*u + 1.0; }
-inline double H10(double u) { return u*u*u - 2.0*u*u + u; }
-inline double H01(double u) { return -2.0*u*u*u + 3.0*u*u; }
-inline double H11(double u) { return u*u*u - u*u; }
+inline double H00(double u) { return lu_hermite_h00(u); }
+inline double H10(double u) { return lu_hermite_h10(u); }
+inline double H01(double u) { return lu_hermite_h01(u); }
+inline double H11(double u) { return lu_hermite_h11(u); }
 
 // Evaluate cubic Bezier at parameter u: B(u) = (1-u)^3*P0 + 3(1-u)^2*u*P1 + 3(1-u)*u^2*P2 + u^3*P3
 inline double EvalCubicBezier(double p0, double p1, double p2, double p3, double u) {
-  double iu = 1.0 - u;
-  return iu*iu*iu*p0 + 3.0*iu*iu*u*p1 + 3.0*iu*u*u*p2 + u*u*u*p3;
+  return lu_cubic_bezier(p0, p1, p2, p3, u);
 }
 
 // Derivative of cubic Bezier: B'(u) = 3[(1-u)^2(P1-P0) + 2(1-u)u(P2-P1) + u^2(P3-P2)]
 inline double EvalCubicBezierDeriv(double p0, double p1, double p2, double p3, double u) {
-  double iu = 1.0 - u;
-  return 3.0 * (iu*iu*(p1-p0) + 2.0*iu*u*(p2-p1) + u*u*(p3-p2));
+  return lu_cubic_bezier_deriv(p0, p1, p2, p3, u);
 }
 
 // Newton-Raphson + bisection to solve B_time(u) = targetTime for u in [0,1]
 // Returns u parameter. Assumes B_time is monotonically increasing after anti-regression.
 inline double SolveBezierTimeForU(double t0, double t1, double t2, double t3,
-                                   double targetTime, int maxIter = 20) {
-  // Initial guess: linear interpolation
-  double u = (t3 > t0) ? (targetTime - t0) / (t3 - t0) : 0.5;
-  u = std::max(0.0, std::min(1.0, u));
-
-  double lo = 0.0, hi = 1.0;
-
-  for (int i = 0; i < maxIter; i++) {
-    double bt = EvalCubicBezier(t0, t1, t2, t3, u);
-    double err = bt - targetTime;
-
-    if (std::abs(err) < 1e-12) break;
-
-    double dt = EvalCubicBezierDeriv(t0, t1, t2, t3, u);
-
-    if (std::abs(dt) > 1e-15) {
-      // Newton step
-      double uNew = u - err / dt;
-      if (uNew >= lo && uNew <= hi) {
-        u = uNew;
-      } else {
-        // Bisection fallback
-        u = 0.5 * (lo + hi);
-      }
-    } else {
-      u = 0.5 * (lo + hi);
-    }
-
-    // Update bisection bounds
-    double btu = EvalCubicBezier(t0, t1, t2, t3, u);
-    if (btu < targetTime) {
-      lo = u;
-    } else {
-      hi = u;
-    }
-  }
-
-  return std::max(0.0, std::min(1.0, u));
+                                  double targetTime, int maxIter = 20) {
+  return lu_solve_bezier_time_for_u(t0, t1, t2, t3, targetTime, maxIter);
 }
 
 // Anti-regression: ensure Bezier time curve is monotonic (Spec 12.5.3.5).
 // Shrink tangent widths proportionally if the time control points are non-monotonic.
 inline void AntiRegress(double t0, double &tw0_post, double &tw1_pre, double t3) {
-  // Control points in time: t0, t0 + tw0_post, t3 - tw1_pre, t3
-  double dt = t3 - t0;
-  if (dt <= 0.0) {
-    tw0_post = 0.0;
-    tw1_pre = 0.0;
-    return;
-  }
-
-  double totalWidth = tw0_post + tw1_pre;
-  if (totalWidth > dt) {
-    // Scale both widths proportionally so they fit within [t0, t3]
-    double scale = dt / totalWidth;
-    tw0_post *= scale;
-    tw1_pre *= scale;
-  }
-
-  // Ensure individual widths are non-negative
-  tw0_post = std::max(0.0, tw0_post);
-  tw1_pre = std::max(0.0, tw1_pre);
+  lu_spline_anti_regress(t0, &tw0_post, &tw1_pre, t3);
 }
 
 }  // namespace detail
