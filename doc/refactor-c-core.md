@@ -5996,3 +5996,15 @@ the per-op layouts and the row-vector multiply order. The value-reading and
 op-walking remain C++ (they depend on `UsdPrim`/`Value`). Verified bit-identical
 to the previous C++ over 500,000 random iterations of every operation
 (memcmp of the double[16] results), including the singular-inverse fallback.
+
+### USD path string algorithms in C11
+
+The decomposition behind `next::Path` moved to `src/next/c/path.c`
+(`lu_path_parent/name/property_name/prim_path/element_count/element/
+make_relative_to`, `lu_path_is_absolute/is_root/has_property`), over counted
+buffers; the `Path` class owns the std::string and forwards. One subtlety the
+differential caught: `elements()` emits an empty element for every run of
+`/` (so `"/A//B"` is `["A","","B"]`), not just non-empty segments.
+
+Verified differential against the previous `Path` logic over 600,000 random
+paths plus 200,000 relation pairs and a curated set: zero differences.

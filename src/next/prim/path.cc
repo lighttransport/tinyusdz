@@ -4,6 +4,7 @@
 // LightUSD Next - Path implementation
 
 #include "path.hh"
+#include "../c/lightusd-core-c.h"  // lu_path_*
 #include <ostream>
 
 #include "identifier.hh"
@@ -43,81 +44,54 @@ bool Path::has_property() const {
 }
 
 Path Path::parent() const {
-  if (path_.empty() || is_root()) {
-    return Path();
-  }
-
-  // Find property separator first
-  size_t dot_pos = path_.find('.');
-  std::string prim_part = (dot_pos != std::string::npos) ? path_.substr(0, dot_pos) : path_;
-
-  // Find last '/'
-  size_t last_slash = prim_part.rfind('/');
-  if (last_slash == std::string::npos) {
-    return Path();
-  }
-  if (last_slash == 0) {
-    return Path("/");
-  }
-  return Path(prim_part.substr(0, last_slash));
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  if (!lu_path_parent(path_.data(), n, &out[0], out.size(), &len)) return Path();
+  out.resize(len);
+  return Path(std::move(out));
 }
 
 std::string Path::name() const {
-  if (path_.empty()) {
-    return "";
-  }
-
-  // Get prim part (before any property)
-  size_t dot_pos = path_.find('.');
-  std::string prim_part = (dot_pos != std::string::npos) ? path_.substr(0, dot_pos) : path_;
-
-  size_t last_slash = prim_part.rfind('/');
-  if (last_slash == std::string::npos) {
-    return prim_part;
-  }
-  return prim_part.substr(last_slash + 1);
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_name(path_.data(), n, &out[0], out.size(), &len);
+  out.resize(len);
+  return out;
 }
 
 std::string Path::property_name() const {
-  size_t dot_pos = path_.find('.');
-  if (dot_pos == std::string::npos) {
-    return "";
-  }
-  return path_.substr(dot_pos + 1);
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_property_name(path_.data(), n, &out[0], out.size(), &len);
+  out.resize(len);
+  return out;
 }
 
 Path Path::prim_path() const {
-  size_t dot_pos = path_.find('.');
-  if (dot_pos == std::string::npos) {
-    return *this;
-  }
-  return Path(path_.substr(0, dot_pos));
+  const size_t n = path_.size();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_prim_path(path_.data(), n, &out[0], out.size(), &len);
+  out.resize(len);
+  return Path(std::move(out));
 }
 
 std::vector<std::string> Path::elements() const {
   std::vector<std::string> result;
-  if (path_.empty()) {
-    return result;
+  const std::string prim = prim_path().str();
+  size_t count = 0;
+  lu_path_element_count(prim.data(), prim.size(), &count);
+  result.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    std::string e(prim.size() ? prim.size() : 1, '\0');
+    size_t len = 0;
+    lu_path_element(prim.data(), prim.size(), i, &e[0], e.size(), &len);
+    e.resize(len);
+    result.push_back(std::move(e));
   }
-
-  // Get prim part only
-  std::string prim_part = prim_path().str();
-
-  size_t start = 0;
-  if (prim_part[0] == '/') {
-    start = 1;
-  }
-
-  while (start < prim_part.size()) {
-    size_t end = prim_part.find('/', start);
-    if (end == std::string::npos) {
-      result.push_back(prim_part.substr(start));
-      break;
-    }
-    result.push_back(prim_part.substr(start, end - start));
-    start = end + 1;
-  }
-
   return result;
 }
 
@@ -150,24 +124,14 @@ Path Path::append_property(const std::string& prop_name) const {
 }
 
 Path Path::make_relative_to(const Path& base) const {
-  if (!is_absolute() || !base.is_absolute()) {
-    return *this;  // Can't make relative
-  }
-
-  const std::string& base_str = base.str();
-  if (path_.find(base_str) != 0) {
-    return *this;  // Not a descendant
-  }
-
-  if (path_.size() == base_str.size()) {
-    return Path(".");
-  }
-
-  size_t offset = base_str.size();
-  if (path_[offset] == '/') {
-    offset++;
-  }
-  return Path(path_.substr(offset));
+  const size_t n = path_.size();
+  const std::string& b = base.str();
+  std::string out(n ? n : 1, '\0');
+  size_t len = 0;
+  lu_path_make_relative_to(path_.data(), n, b.data(), b.size(), &out[0],
+                           out.size(), &len);
+  out.resize(len);
+  return Path(std::move(out));
 }
 
 const Path& Path::root() {

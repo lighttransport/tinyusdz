@@ -484,6 +484,34 @@ LU_CORE_API void lu_mat4_orient(double *m, double w, double x, double y,
                                 double z);
 /* Invert; identity when singular. out may alias a. */
 LU_CORE_API void lu_mat4_invert(const double *a, double *out);
+/* ============================================================
+ * USD path string algorithms (src/next/c/path.c)
+ *
+ * Counted-buffer decomposition of a USD path. Each function writes at most
+ * `cap` bytes and sets *out_len to the full length; it returns 0 (with
+ * *out_len = needed) when the output does not fit.
+ * ============================================================ */
+
+LU_CORE_API int lu_path_is_absolute(const char *p, size_t n);
+LU_CORE_API int lu_path_is_root(const char *p, size_t n);
+LU_CORE_API int lu_path_has_property(const char *p, size_t n);
+/* Returns 1 and writes the parent, or 0 when the path has no parent (empty or
+ * root). */
+LU_CORE_API int lu_path_parent(const char *p, size_t n, char *out, size_t cap,
+                               size_t *out_len);
+LU_CORE_API int lu_path_name(const char *p, size_t n, char *out, size_t cap,
+                             size_t *out_len);
+LU_CORE_API int lu_path_property_name(const char *p, size_t n, char *out,
+                                      size_t cap, size_t *out_len);
+LU_CORE_API int lu_path_prim_path(const char *p, size_t n, char *out,
+                                  size_t cap, size_t *out_len);
+/* `prim` must already be a prim path (no property). */
+LU_CORE_API int lu_path_element_count(const char *prim, size_t n, size_t *out);
+LU_CORE_API int lu_path_element(const char *prim, size_t n, size_t index,
+                                char *out, size_t cap, size_t *out_len);
+LU_CORE_API int lu_path_make_relative_to(const char *p, size_t n,
+                                         const char *base, size_t bn, char *out,
+                                         size_t cap, size_t *out_len);
 
 /* ============================================================
  * Crate integer decode (src/next/c/crate-int.c)
