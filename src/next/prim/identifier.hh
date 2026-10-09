@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // AOUSD Unicode identifier and path validation for the standalone next core.
-// Reuses LightUSD's generated Unicode XID tables (`src/unicode-xid.hh`).
+// Reuses LightUSD's C11 Unicode XID module (src/unicode-xid-c.{c,h}).
 
 #pragma once
 

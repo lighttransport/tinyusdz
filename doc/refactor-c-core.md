@@ -5767,3 +5767,33 @@ value-type layer** (was 0 and 8). Isolated compile times in the same tree:
 `texture-cache.cc` 1.96 s. All 20 legacy translation units that include the
 changed headers were syntax-checked against the legacy include path and compile
 clean, and the next ctest tree still passes 55/55.
+
+### Header-weight compression
+
+Two of the largest contributors to per-translation-unit parse work were
+replaced after the C11 ports:
+
+- **`nonstd/expected.hpp`** (3494 lines, reaching 14 units through the pcp and
+  validation headers) is gone from the next product.
+  `src/next/expected.hh` implements the narrow slice next used: construct from a
+  value or `make_unexpected(e)`, `operator bool`, `value()`, `error()`,
+  `operator*`, and move-only value types.
+- **`unicode-xid-table.inc`** (1450 lines, included by every identifier-validating
+  unit) is now the C11 module `src/unicode-xid-c.{c,h}`, shared by the legacy
+  and next products through the same light `src/unicode-xid.hh` wrapper. The
+  table is parsed once per program instead of once per signed unit, and the
+  lookup is a plain C binary search.
+
+Both substitutions were verified exhaustively before landing: the half-to-float
+and XID changes each agree bit-for-bit over their whole domains (65536 half
+patterns; 1114113 codepoints). Project-header closure for `lightusd_next`:
+
+| Checkpoint | Closure lines |
+|---|---:|
+| after the two C11 ports | 417113 |
+| after next-local `expected` | 379645 |
+| after the XID table | 366271 |
+
+Isolated compile times in the same tree: `validation/usd-validation.cc` 11.37 s,
+`layer/layer.cc` 3.29 s, `prim/path.cc` 0.96 s, `parser/lexer.cc` 1.51 s. The
+55-test next ctest tree still passes.
