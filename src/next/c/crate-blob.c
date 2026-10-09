@@ -20,7 +20,7 @@
 
 #include <string.h>
 
-#include "lz4.h"
+#include "lz4/lz4.h"
 
 /* Maximum input size for a single LZ4 chunk (~2GB - 32MB safety margin). */
 #define LU_MAX_LZ4_CHUNK_SIZE ((size_t)0x7E000000)
