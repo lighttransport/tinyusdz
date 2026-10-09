@@ -5817,3 +5817,32 @@ Project-header closure for `lightusd_next` drops from 366271 to 353279 lines.
 Isolated compile times: `validation/usd-validation.cc` 9.67 s,
 `layer/prim-spec.cc` 6.07 s, `diff/layer-diff.cc` 3.81 s, `layer/layer.cc`
 2.89 s. The 55-test next ctest tree passes.
+
+## Hardening
+
+`LIGHTUSD_HARDENING` (default ON) applies the standard exploit-mitigation set to
+the shipped next targets -- `lightusd_next`, `tydra_next`, `lightusd_c`,
+`lightusd_render_c`, `lightusd_c_shared`, `next_usdcat`:
+
+- GCC/Clang: `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2` (only when
+  optimizing), `-fcf-protection=full` on x86, and
+  `-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack`.
+- MSVC: `/sdl /guard:cf /DYNAMICBASE /NXCOMPAT`.
+- WASM/WASI: skipped, because the flags are unsupported there and the sandbox
+  already provides most of the properties.
+
+Verified on the built `next_usdcat`: `ELF DYN (PIE)`, `GNU_RELRO`, `BIND_NOW`
+(full RELRO), `RW` non-executable `GNU_STACK`, a `__stack_chk_fail` reference,
+and `_FORTIFY_SOURCE=2` in the compile commands; the shared library has
+`GNU_RELRO` + `BIND_NOW`. This is defense in depth on top of the source-level
+bounds and budget checks, not a replacement for them.
+
+The installed C ABI -- the boundary the JavaScript/WASM, Python and engine
+bindings call -- had no fuzz coverage; every next fuzzer drove the C++
+internals. `tests/fuzzer/next_cabi_fuzzmain.cc` now loads an arbitrary buffer
+through `lightusd_stage_load_from_memory` and walks the prim/property/value
+accessors, including mistargeted calls (empty/oversized paths, NULL out-params)
+that must return errors rather than crash. It links `lightusd_c` so the FFI
+layer is instrumented with `-fsanitize=fuzzer,address,undefined`. A 40-second
+run over the 718-file `tests/{usda,usdc}` corpus completed 141,950 executions
+with no crashes.

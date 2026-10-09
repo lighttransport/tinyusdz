@@ -7,6 +7,51 @@
 cmake_minimum_required(VERSION 3.10)
 project(lightusd_next C CXX)
 
+# ---------------------------------------------------------------------------
+# Release hardening for the shipped native artifacts.
+#
+# This library parses untrusted files, so the standard exploit mitigations are
+# applied to the library and tools it ships: stack canaries, fortify'd libc
+# wrappers, control-flow protection, and full RELRO / non-executable stack.
+#
+# WASM and WASI are skipped on purpose -- the flags are unsupported there and
+# the sandbox already provides most of the properties; the option reports this
+# rather than silently dropping the hardening.
+#
+# This is defense in depth, not a substitute for the source-level bounds and
+# budget checks in the parsers.
+# ---------------------------------------------------------------------------
+option(LIGHTUSD_HARDENING
+       "Apply release hardening flags (stack protector, FORTIFY, RELRO, CFI) to shipped next targets"
+       ON)
+
+function(lightusd_next_harden tgt)
+  if(NOT LIGHTUSD_HARDENING)
+    return()
+  endif()
+  if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    return()
+  endif()
+  if(MSVC)
+    target_compile_options(${tgt} PRIVATE /sdl /guard:cf)
+    target_link_options(${tgt} PRIVATE /guard:cf /DYNAMICBASE /NXCOMPAT)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${tgt} PRIVATE -fstack-protector-strong)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i.86)$")
+      target_compile_options(${tgt} PRIVATE -fcf-protection=full)
+    endif()
+    # _FORTIFY_SOURCE requires optimization; enable it only when optimizing so
+    # the debug build does not emit the "requires -O1" diagnostic.
+    if(CMAKE_BUILD_TYPE MATCHES "Release|RelWithDebInfo|MinSizeRel")
+      target_compile_definitions(${tgt} PRIVATE _FORTIFY_SOURCE=2)
+    endif()
+    if(NOT APPLE)
+      target_link_options(${tgt} PRIVATE
+          -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
+    endif()
+  endif()
+endfunction()
+
 # Define source files
 include("${CMAKE_CURRENT_LIST_DIR}/pipeline-sources.cmake")
 set(LIGHTUSD_NEXT_SOURCES
@@ -247,6 +292,7 @@ set_target_properties(lightusd_next PROPERTIES
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
 )
+lightusd_next_harden(lightusd_next)
 
 # Silence warnings from the vendored zmij translation unit (third-party code:
 # __int128 pedantic, sign-compare, unused params -- not ours to fix).
@@ -629,6 +675,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     # symbol resolution.
     target_link_libraries(next_usdcat PRIVATE
         ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
+    lightusd_next_harden(next_usdcat)
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
@@ -729,6 +776,7 @@ option(LIGHTUSD_WITH_TYDRA "Build render conversion and its C API" ON)
 if(LIGHTUSD_WITH_TYDRA AND NOT TARGET tydra_next)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next
                      ${CMAKE_CURRENT_BINARY_DIR}/tydra_next_build)
+    lightusd_next_harden(tydra_next)
 endif()
 
 # ============================================================
@@ -769,6 +817,19 @@ set(LIGHTUSD_C_SOURCES
     ../c-api/lightusd-c-dependencies.cc
     ../c-api/lightusd-session-c.cc)
 add_library(lightusd_c STATIC ${LIGHTUSD_C_SOURCES})
+lightusd_next_harden(lightusd_c)
+
+# Fuzz the C ABI itself: the installed boundary used by JS/WASM, Python and
+# engine bindings. The C++ internals already have their own harnesses; this one
+# links lightusd_c so the FFI layer is instrumented and exercised.
+if(LIGHTUSD_NEXT_BUILD_FUZZERS)
+    target_compile_options(lightusd_c PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
+    add_executable(fuzz_next_cabi
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/next_cabi_fuzzmain.cc)
+    target_link_libraries(fuzz_next_cabi PRIVATE lightusd_c)
+    target_compile_options(fuzz_next_cabi PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    target_link_options(fuzz_next_cabi PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # Static consumers can discard unused C entry points even while the
@@ -813,6 +874,7 @@ if(LIGHTUSD_WITH_TYDRA)
         ../c-api/lightusd-render-c.cc
         ../c-api/lightusd-render-glb-c.cc)
     target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra_next)
+    lightusd_next_harden(lightusd_render_c)
     list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
     if(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
         add_executable(next_render_session_example
@@ -898,6 +960,7 @@ if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
     set_target_properties(lightusd_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
     add_library(lightusd_c_shared SHARED ${LIGHTUSD_C_SOURCES})
     target_link_libraries(lightusd_c_shared PRIVATE lightusd_next)
+    lightusd_next_harden(lightusd_c_shared)
     if(LIGHTUSD_WITH_TYDRA)
         set_target_properties(tydra_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
         target_sources(lightusd_c_shared PRIVATE
