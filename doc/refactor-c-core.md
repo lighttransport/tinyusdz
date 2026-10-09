@@ -5846,3 +5846,11 @@ that must return errors rather than crash. It links `lightusd_c` so the FFI
 layer is instrumented with `-fsanitize=fuzzer,address,undefined`. A 40-second
 run over the 718-file `tests/{usda,usdc}` corpus completed 141,950 executions
 with no crashes.
+
+The two hardening gates are enforced in `.github/workflows/linux_ci.yml`:
+`next-hardening` builds with the default `LIGHTUSD_HARDENING=ON`, runs the test
+tree, and asserts PIE + full RELRO + `BIND_NOW` + non-executable stack + a stack
+canary on `next_usdcat` and RELRO + `BIND_NOW` on the shared C library (the
+executable specification of the option); `next-fuzz-cabi` builds the C-ABI
+fuzzer with clang and ASan/UBSan and runs it for a bounded 60 s over the
+`tests/{usda,usdc}` corpus, uploading any reproducer.
