@@ -5909,3 +5909,17 @@ The table uses only fixed-width C types (`sizeof(bool/int32_t/.../double)` and
 `_Alignof`), so the C port is a mechanical transform. Verified: every one of the
 64 real types round-trips name -> id -> name, the known name/size/component
 mappings match, and unknown/NULL names return Invalid.
+
+### AOUSD identifier / path grammar in C11
+
+`src/next/prim/identifier.hh`'s UTF-8 decoder and identifier/namespaced-name/
+textual-path grammar moved to `src/next/c/identifier.c` (230 -> 52 line header).
+The lexer keeps using `identifier_detail::DecodeUtf8/IsStart/IsContinue`, which
+now forward to `lu_utf8_decode` / `lu_is_identifier_start` / `lu_is_identifier_continue`;
+the three validators (identifier, namespaced identifier, path) are exposed on the
+C ABI. The XID character classes come from the shared `unicode-xid-c.c`.
+
+Verified differential against the previous C++ implementation over 400,000
+random strings (ASCII plus valid and malformed UTF-8 injections) and a curated
+set covering the relative/absolute/variant-selection/property corners: zero
+differences. The 55-test next ctest tree passes.

@@ -428,6 +428,23 @@ LU_CORE_API int lu_type_is_numeric(uint16_t id);
 LU_CORE_API uint16_t lu_type_component_type(uint16_t id);
 LU_CORE_API uint8_t lu_type_component_count(uint16_t id);
 
+/* ============================================================
+ * Identifier / path validation (src/next/c/identifier.c)
+ *
+ * AOUSD Core Spec section 8 identifier, namespaced-property and textual path
+ * grammar, plus UTF-8 decoding. All allocation-free.
+ * ============================================================ */
+
+/* Decode one UTF-8 scalar at `offset`. Returns 0 on malformed input. */
+LU_CORE_API int lu_utf8_decode(const char *data, size_t size, size_t offset,
+                               uint32_t *codepoint, size_t *width);
+/* Identifier character classes: XID_Start (plus '_') / XID_Continue. */
+LU_CORE_API int lu_is_identifier_start(uint32_t codepoint);
+LU_CORE_API int lu_is_identifier_continue(uint32_t codepoint);
+LU_CORE_API int lu_is_valid_identifier(const char *data, size_t size);
+LU_CORE_API int lu_is_valid_namespaced_identifier(const char *data, size_t size);
+LU_CORE_API int lu_is_valid_path_string(const char *data, size_t size);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
