@@ -4,6 +4,7 @@
 // LightUSD Next - Value class implementation
 
 #include "value.hh"
+#include "../c/lightusd-core-c.h"
 #include "array-storage.hh"
 #include "type-info.hh"
 #include "interpolation.hh"
@@ -58,128 +59,49 @@ inline void DetachDict(char* s) {
 
 // Check if type uses string storage
 bool UsesStringStorage(TypeId id) {
-  return id == TypeId::String || id == TypeId::Token ||
-         id == TypeId::AssetPath || id == TypeId::PathExpression;
+  return lu_value_uses_string_storage(static_cast<uint16_t>(id)) != 0;
 }
 
 // Array element types stored as flat float components:
 // scalar floats plus all float vector/quat/matrix/color types.
 bool IsFloatBackedArray(TypeId id) {
-  switch (id) {
-    case TypeId::Float:
-    case TypeId::Float2:
-    case TypeId::Float3:
-    case TypeId::Float4:
-    case TypeId::Point3f:
-    case TypeId::Vector3f:
-    case TypeId::Normal3f:
-    case TypeId::Color3f:
-    case TypeId::Color4f:
-    case TypeId::Texcoord2f:
-    case TypeId::Texcoord3f:
-    case TypeId::Quatf:
-    case TypeId::Matrix2f:
-    case TypeId::Matrix3f:
-    case TypeId::Matrix4f:
-    // Half element types materialize into a float buffer (no 16-bit storage).
-    case TypeId::Half:
-    case TypeId::Half2:
-    case TypeId::Half3:
-    case TypeId::Half4:
-    case TypeId::Quath:
-    case TypeId::Point3h:
-    case TypeId::Vector3h:
-    case TypeId::Normal3h:
-    case TypeId::Color3h:
-    case TypeId::Color4h:
-    case TypeId::Texcoord2h:
-    case TypeId::Texcoord3h:
-      return true;
-    default:
-      return false;
-  }
+  return lu_value_is_float_backed_array(static_cast<uint16_t>(id)) != 0;
 }
 
 // Double-backed array types.
 // Int-vector element types share the flat int32 array storage with Int.
 bool IsIntBackedArray(TypeId id) {
-  switch (id) {
-    case TypeId::Int:
-    case TypeId::Int2:
-    case TypeId::Int3:
-    case TypeId::Int4:
-      return true;
-    default:
-      return false;
-  }
+  return lu_value_is_int_backed_array(static_cast<uint16_t>(id)) != 0;
 }
 
 // UInt-vector element types share the flat uint32 array storage with UInt.
 // uchar[] is widened into the same storage (bit-exact; the crate writer
 // narrows back to tightly-packed uint8).
 bool IsUIntBackedArray(TypeId id) {
-  switch (id) {
-    case TypeId::UInt:
-    case TypeId::UInt2:
-    case TypeId::UInt3:
-    case TypeId::UInt4:
-    case TypeId::UChar:
-      return true;
-    default:
-      return false;
-  }
+  return lu_value_is_uint_backed_array(static_cast<uint16_t>(id)) != 0;
 }
 
 bool IsDoubleBackedArray(TypeId id) {
-  switch (id) {
-    case TypeId::Double:
-    case TypeId::TimeCode:
-    case TypeId::Double2:
-    case TypeId::Double3:
-    case TypeId::Double4:
-    case TypeId::Point3d:
-    case TypeId::Vector3d:
-    case TypeId::Normal3d:
-    case TypeId::Color3d:
-    case TypeId::Color4d:
-    case TypeId::Texcoord2d:
-    case TypeId::Texcoord3d:
-    case TypeId::Frame4d:
-    case TypeId::Quatd:
-    case TypeId::Matrix2d:
-    case TypeId::Matrix3d:
-    case TypeId::Matrix4d:
-      return true;
-    default:
-      return false;
-  }
+  return lu_value_is_double_backed_array(static_cast<uint16_t>(id)) != 0;
 }
 
 bool FitsValueArraySize(size_t count) {
-  return count <=
-         static_cast<size_t>((std::numeric_limits<uint32_t>::max)());
+  return lu_value_fits_array_size(count) != 0;
 }
 
 bool IsValidComponentArray(size_t scalar_count, TypeId elem_type,
                            uint32_t comps_per_elem, bool storage_matches) {
-  if (!storage_matches || comps_per_elem == 0 ||
-      GetComponentCount(elem_type) != comps_per_elem ||
-      scalar_count % comps_per_elem != 0) {
-    return false;
-  }
-  return FitsValueArraySize(scalar_count / comps_per_elem);
+  return lu_value_is_valid_component_array(
+             scalar_count, static_cast<uint16_t>(elem_type), comps_per_elem,
+             storage_matches ? 1 : 0) != 0;
 }
 
 size_t ComponentArraySize(size_t scalar_count, size_t components) {
-  if (components == 0 || scalar_count % components != 0) return 0;
-  return scalar_count / components;
+  return lu_value_component_array_size(scalar_count, components);
 }
 
 bool IsValueArrayType(TypeId id) {
-  return IsFloatBackedArray(id) || IsDoubleBackedArray(id) ||
-         IsIntBackedArray(id) || IsUIntBackedArray(id) ||
-         id == TypeId::Int64 || id == TypeId::UInt64 || id == TypeId::Bool ||
-         UsesStringStorage(id);
+  return lu_value_is_array_type(static_cast<uint16_t>(id)) != 0;
 }
 
 bool FinalizeLazyDecode(const LazyArrayRef& ref, Value* decoded) {

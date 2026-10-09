@@ -4,6 +4,7 @@
 // Read-only array views for next::Value.
 
 #include "value-view.hh"
+#include "../c/lightusd-core-c.h"
 
 #include "type-info.hh"
 #include "../crate/lazy-array.hh"
@@ -17,12 +18,11 @@ namespace next {
 namespace {
 
 TypeId ScalarComponent(TypeId id) {
-  const TypeId c = GetComponentType(id);
-  return c == TypeId::Invalid ? id : c;
+  return static_cast<TypeId>(lu_scalar_component(static_cast<uint16_t>(id)));
 }
 
 bool RequiresLazyComponentReorder(TypeId id) {
-  return id == TypeId::Quatf || id == TypeId::Quatd || id == TypeId::Quath;
+  return lu_requires_lazy_component_reorder(static_cast<uint16_t>(id)) != 0;
 }
 
 template <typename T>
@@ -67,18 +67,7 @@ bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
 // Scalar byte size / alignment for the borrowable POD component types. Returns 0
 // for unsupported types (which are therefore not borrowable).
 size_t ScalarByteSize(TypeId comp) {
-  switch (comp) {
-    case TypeId::Float:
-    case TypeId::Int:
-    case TypeId::UInt:
-      return 4;
-    case TypeId::Double:
-    case TypeId::Int64:
-    case TypeId::UInt64:
-      return 8;
-    default:
-      return 0;
-  }
+  return lu_scalar_byte_size(static_cast<uint16_t>(comp));
 }
 
 template <typename T>

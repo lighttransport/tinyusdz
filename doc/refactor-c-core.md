@@ -6037,3 +6037,14 @@ plain `lu_spline_knot` value array (the C++ `SplineKnot` adds a `std::string`,
 so the caller marshals the numeric fields). Verified bit-identical over 200,000
 randomized knot sequences (0..8 knots, random times/values/duals/interp/algo):
 zero differences. The Value-typed `EvaluateSplineData` bridge stays C++.
+
+### Value array/storage type queries in C11
+
+The Value-free type predicates of `types/value.cc` and `types/value-view.cc`
+moved to `src/next/c/value-storage.c`: which backing storage an array element
+type uses (`lu_value_is_{float,int,uint,double}_backed_array`), string-storage,
+`lu_value_is_array_type`, the component-array validity/size checks, and the
+scalar-component / byte-size mapping (`lu_scalar_component`,
+`lu_scalar_byte_size`, `lu_requires_lazy_component_reorder`). Verified over the
+full 0..69 TypeId range, the 2^32 array-size boundary, and 500,000 random
+component-array cases: zero differences. Next-only. 55/55.

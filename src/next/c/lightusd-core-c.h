@@ -450,6 +450,34 @@ LU_CORE_API void lu_slerp_quatd(double *out, const double *a, const double *b,
                                 double t);
 
 /* ============================================================
+ * Value array/storage type queries (src/next/c/value-storage.c)
+ *
+ * Value-free type predicates of src/next/types/value.cc and value-view.cc:
+ * which backing storage an array element type uses, the scalar-component and
+ * byte-size mapping, and the array-size validity checks. Pure functions of
+ * lu_type_id.
+ * ============================================================ */
+
+LU_CORE_API int lu_value_uses_string_storage(uint16_t id);
+LU_CORE_API int lu_value_is_float_backed_array(uint16_t id);
+LU_CORE_API int lu_value_is_int_backed_array(uint16_t id);
+LU_CORE_API int lu_value_is_uint_backed_array(uint16_t id);
+LU_CORE_API int lu_value_is_double_backed_array(uint16_t id);
+LU_CORE_API int lu_value_fits_array_size(size_t count);
+LU_CORE_API int lu_value_is_valid_component_array(size_t scalar_count,
+                                                  uint16_t elem_type,
+                                                  uint32_t comps_per_elem,
+                                                  int storage_matches);
+LU_CORE_API size_t lu_value_component_array_size(size_t scalar_count,
+                                                 size_t components);
+LU_CORE_API int lu_value_is_array_type(uint16_t id);
+/* Scalar component type of an element type, or the type itself when scalar. */
+LU_CORE_API uint16_t lu_scalar_component(uint16_t id);
+LU_CORE_API int lu_requires_lazy_component_reorder(uint16_t id);
+/* Byte size of a borrowable POD scalar component, or 0 if unsupported. */
+LU_CORE_API size_t lu_scalar_byte_size(uint16_t comp);
+
+/* ============================================================
  * Identifier / path validation (src/next/c/identifier.c)
  *
  * AOUSD Core Spec section 8 identifier, namespaced-property and textual path
