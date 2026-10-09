@@ -6027,3 +6027,13 @@ float/double quaternion slerp (`lu_slerp_quatf/quatd`). The Value-typed
 `InterpolateValues` and bracket search stay C++. Verified bit-identical over
 1,000,000 random iterations of every kernel plus the full 0..69 TypeId range of
 the predicate: zero differences. Next-only (no legacy coupling). 55/55.
+
+### Spline AutoEase tangents in C11
+
+`SplineData`'s AutoEase tangent recomputation (`next::ComputeAutoEaseTangents`,
+the ts/knotData.cpp `_UpdateTangentAutoEase` port) moved to
+`src/next/c/spline.c` as `lu_spline_compute_auto_ease`, operating in place on a
+plain `lu_spline_knot` value array (the C++ `SplineKnot` adds a `std::string`,
+so the caller marshals the numeric fields). Verified bit-identical over 200,000
+randomized knot sequences (0..8 knots, random times/values/duals/interp/algo):
+zero differences. The Value-typed `EvaluateSplineData` bridge stays C++.

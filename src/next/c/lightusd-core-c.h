@@ -555,6 +555,28 @@ LU_CORE_API double lu_solve_bezier_time_for_u(double t0, double t1, double t2,
 LU_CORE_API void lu_spline_anti_regress(double t0, double *tw0_post,
                                         double *tw1_pre, double t3);
 
+/* Numeric view of one spline knot, mirroring the fields the auto-ease
+ * algorithm reads/writes. The C++ SplineKnot adds a std::string, so this is a
+ * plain-C value type the caller marshals to/from. */
+typedef struct lu_spline_knot {
+  double time;
+  double value;
+  double pre_value;       /* dual-valued knot: value approaching from before */
+  uint8_t dual;
+  uint8_t interp;         /* interpolation of the segment AFTER this knot */
+  uint8_t pre_algo;       /* TsTangentAlgorithm: 0=None, 1=Custom, 2=AutoEase */
+  uint8_t post_algo;
+  double pre_tan_width;
+  double pre_tan_slope;
+  double post_tan_width;
+  double post_tan_slope;
+} lu_spline_knot;
+
+/* Recompute the pre/post tangent slope+width of every AutoEase (algo==2) knot
+ * from its neighbors, in place. Zeroes the tangent at a discontinuity. Matches
+ * next::ComputeAutoEaseTangents (which forwards here). */
+LU_CORE_API void lu_spline_compute_auto_ease(lu_spline_knot *knots, size_t n);
+
 /* ============================================================
  * Crate integer decode (src/next/c/crate-int.c)
  *

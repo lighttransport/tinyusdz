@@ -13,6 +13,7 @@
 #include <limits>
 
 #include "../../spline-eval.hh"  // shared header-only evaluator (std-only)
+#include "../c/lightusd-core-c.h"
 #include "../crate/crate-format.hh"  // FloatToHalf/HalfToFloat (round-to-even)
 #include "../writer/dtoa.hh"
 
@@ -676,53 +677,30 @@ bool DecodeSplineBinary(const uint8_t* data, size_t size, SplineData* out,
 
 namespace {
 
-// Recompute tangents for knots whose tangent algorithm is AutoEase (2). pxr
-// treats the authored slope/width on such knots as placeholders and derives
-// the real tangents from the neighbors (ts/knotData.cpp _UpdateTangentAutoEase):
-// slope 0 at any discontinuity/extremum, otherwise an ease-blend of the
-// neighbor slopes; width = 1/3 the distance to the adjacent knot. Done only for
-// evaluation — the crate blob keeps the authored placeholders + algorithm byte,
-// exactly as pxr stores them, so pxr recomputes on read too.
 void ComputeAutoEaseTangents(SplineData& sd) {
-  const std::vector<SplineKnot> in = sd.knots;  // recompute from authored values
-  const size_t n = in.size();
-  auto blend_slope = [&](size_t i) -> double {
-    const double prev_t = in[i - 1].time, next_t = in[i + 1].time, t = in[i].time;
-    const double prev_v = in[i - 1].value;
-    const double knot_v = in[i].value;
-    const double next_v = in[i + 1].dual ? in[i + 1].pre_value : in[i + 1].value;
-    const double prev_slope = (knot_v - prev_v) / (t - prev_t);
-    const double next_slope = (next_v - knot_v) / (next_t - t);
-    if (prev_slope * next_slope <= 0.0) return 0.0;  // extremum -> flat
-    const double f = (t - prev_t) / (next_t - prev_t);
-    const double u = f - 0.5;
-    const double g = 0.5 + u * (0.5 + 2.0 * u * u);
-    double slope = prev_slope + g * (next_slope - prev_slope);
-    if (next_slope > 0.0)
-      slope = std::min({slope, 3.0 * next_slope, 3.0 * prev_slope});
-    else
-      slope = std::max({slope, 3.0 * next_slope, 3.0 * prev_slope});
-    return slope;
-  };
+  const size_t n = sd.knots.size();
+  if (n == 0) return;
+  std::vector<lu_spline_knot> k(n);
   for (size_t i = 0; i < n; ++i) {
-    const bool want_pre = (in[i].pre_algo == 2);
-    const bool want_post = (in[i].post_algo == 2);
-    if (!want_pre && !want_post) continue;
-    const bool has_prev = (i > 0);
-    const bool has_next = (i + 1 < n);
-    // Discontinuity: an endpoint, a dual-valued knot, or an adjacent value
-    // block (interp 0 == none) forces a flat tangent.
-    const bool disc = !has_prev || !has_next || in[i].dual ||
-                      in[i].interp == 0 || (has_prev && in[i - 1].interp == 0);
-    const double slope = disc ? 0.0 : blend_slope(i);
-    if (want_pre && has_prev) {
-      sd.knots[i].pre_tan_slope = slope;
-      sd.knots[i].pre_tan_width = (in[i].time - in[i - 1].time) / 3.0;
-    }
-    if (want_post && has_next) {
-      sd.knots[i].post_tan_slope = slope;
-      sd.knots[i].post_tan_width = (in[i + 1].time - in[i].time) / 3.0;
-    }
+    const SplineKnot& s = sd.knots[i];
+    k[i].time = s.time;
+    k[i].value = s.value;
+    k[i].pre_value = s.pre_value;
+    k[i].dual = s.dual ? 1u : 0u;
+    k[i].interp = static_cast<uint8_t>(s.interp);
+    k[i].pre_algo = static_cast<uint8_t>(s.pre_algo);
+    k[i].post_algo = static_cast<uint8_t>(s.post_algo);
+    k[i].pre_tan_width = s.pre_tan_width;
+    k[i].pre_tan_slope = s.pre_tan_slope;
+    k[i].post_tan_width = s.post_tan_width;
+    k[i].post_tan_slope = s.post_tan_slope;
+  }
+  lu_spline_compute_auto_ease(k.data(), n);
+  for (size_t i = 0; i < n; ++i) {
+    sd.knots[i].pre_tan_width = k[i].pre_tan_width;
+    sd.knots[i].pre_tan_slope = k[i].pre_tan_slope;
+    sd.knots[i].post_tan_width = k[i].post_tan_width;
+    sd.knots[i].post_tan_slope = k[i].post_tan_slope;
   }
 }
 

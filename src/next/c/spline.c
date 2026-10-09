@@ -86,3 +86,59 @@ void lu_spline_anti_regress(double t0, double *tw0_post, double *tw1_pre,
   *tw0_post = fmax(0.0, *tw0_post);
   *tw1_pre = fmax(0.0, *tw1_pre);
 }
+
+
+/* ------------------------------------------------------------------
+ * AutoEase tangents (ComputeAutoEaseTangents / ts/knotData.cpp)
+ *
+ * Faithful port of next::ComputeAutoEaseTangents. Reads only the authored
+ * time/value/pre_value/dual/interp/algo fields, so it is safe to run in place:
+ * the tangent fields it writes are never read back by the algorithm.
+ * ------------------------------------------------------------------ */
+
+static double lu_ae_blend_slope(const lu_spline_knot *in, size_t i) {
+  const double prev_t = in[i - 1].time;
+  const double next_t = in[i + 1].time;
+  const double t = in[i].time;
+  const double prev_v = in[i - 1].value;
+  const double knot_v = in[i].value;
+  const double next_v =
+      in[i + 1].dual ? in[i + 1].pre_value : in[i + 1].value;
+  const double prev_slope = (knot_v - prev_v) / (t - prev_t);
+  const double next_slope = (next_v - knot_v) / (next_t - t);
+  if (prev_slope * next_slope <= 0.0) return 0.0; /* extremum -> flat */
+  const double f = (t - prev_t) / (next_t - prev_t);
+  const double u = f - 0.5;
+  const double g = 0.5 + u * (0.5 + 2.0 * u * u);
+  double slope = prev_slope + g * (next_slope - prev_slope);
+  if (next_slope > 0.0)
+    slope = fmin(fmin(slope, 3.0 * next_slope), 3.0 * prev_slope);
+  else
+    slope = fmax(fmax(slope, 3.0 * next_slope), 3.0 * prev_slope);
+  return slope;
+}
+
+void lu_spline_compute_auto_ease(lu_spline_knot *knots, size_t n) {
+  if (knots == NULL || n == 0) return;
+  const lu_spline_knot *in = knots; /* read-only alias: tangent writes only */
+  for (size_t i = 0; i < n; ++i) {
+    const int want_pre = (in[i].pre_algo == 2);
+    const int want_post = (in[i].post_algo == 2);
+    if (!want_pre && !want_post) continue;
+    const int has_prev = (i > 0);
+    const int has_next = (i + 1 < n);
+    /* Discontinuity: endpoint, dual-valued knot, or an adjacent value block
+     * (interp 0 == none) forces a flat tangent. */
+    const int disc = !has_prev || !has_next || in[i].dual ||
+                     in[i].interp == 0 || (has_prev && in[i - 1].interp == 0);
+    const double slope = disc ? 0.0 : lu_ae_blend_slope(in, i);
+    if (want_pre && has_prev) {
+      knots[i].pre_tan_slope = slope;
+      knots[i].pre_tan_width = (in[i].time - in[i - 1].time) / 3.0;
+    }
+    if (want_post && has_next) {
+      knots[i].post_tan_slope = slope;
+      knots[i].post_tan_width = (in[i + 1].time - in[i].time) / 3.0;
+    }
+  }
+}
