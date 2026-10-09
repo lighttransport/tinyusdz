@@ -16,6 +16,8 @@
 #include <cmath>
 #include <vector>
 
+#include "next/c/lightusd-core-c.h"  // lu_cubic_bezier / lu_hermite_*
+
 namespace lightusd {
 
 // AOUSD Core Spec 7.4.2.4.1
