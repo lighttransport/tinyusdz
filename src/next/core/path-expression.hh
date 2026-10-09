@@ -235,7 +235,7 @@ inline ParsedPathExpression &ParsedPathExpression::operator=(
 
 inline ParsedPathExpression ParsedPathExpression::Parse(const std::string &text,
                                                         std::string *err) {
-  ParsedPathExpression out(nullptr_t{});
+  ParsedPathExpression out(std::nullptr_t{});
 
   lu_view view;
   view.data = text.empty() ? nullptr : text.data();

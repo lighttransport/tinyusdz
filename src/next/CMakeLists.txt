@@ -773,6 +773,15 @@ endif()
 # Tydra Next (render data conversion). Keep its target definition in its own
 # directory so standalone next-core and top-level consumers cannot drift.
 option(LIGHTUSD_WITH_TYDRA "Build render conversion and its C API" ON)
+
+# Declared BEFORE the tydra_next subdirectory: cmake/lightusd-render-support.cmake
+# (included there) selects POSITION_INDEPENDENT_CODE for the shared subdivision
+# objects from this variable. Declaring it afterwards left them non-PIC, which
+# only surfaced with a compiler that emits PC32 relocations (clang) when linking
+# the shared C ABI.
+option(LIGHTUSD_NEXT_BUILD_SHARED_C_API
+       "Build the portable shared C ABI in addition to static libraries"
+       ON)
 if(LIGHTUSD_WITH_TYDRA AND NOT TARGET tydra_next)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next
                      ${CMAKE_CURRENT_BINARY_DIR}/tydra_next_build)
@@ -803,9 +812,6 @@ if(LIGHTUSD_NEXT_BUILD_EXAMPLES)
 endif()
 # Used by the Python binding and any other language binding.
 # ============================================================
-option(LIGHTUSD_NEXT_BUILD_SHARED_C_API
-       "Build the portable shared C ABI in addition to static libraries"
-       ON)
 option(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE
        "Build the public C API consumer example"
        OFF)

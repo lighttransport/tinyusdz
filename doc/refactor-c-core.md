@@ -5863,3 +5863,18 @@ the next and legacy builds); the header drops from 763 to 473 lines and
 `lightusd_next` project-header closure from 351593 to 348962. The heavy std
 headers stay in the header because its public trace/`DCOUT` macros expand
 `std::ostringstream`/`std::cout`/`std::hex` in every consumer translation unit.
+
+The sanitizer sweep is enforced in `.github/workflows/linux_ci.yml`:
+`next-asan-ubsan` builds the next product with clang and
+`-DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON` and runs the whole next ctest
+tree under ASan/UBSan (locally: 51/51 pass). The first run of this configuration
+caught two real defects that the default GCC build missed:
+
+- an unqualified `nullptr_t` in the `path-expression.hh` adapter (GCC's libstdc++
+  leaks it into the global namespace, clang does not);
+- `LIGHTUSD_NEXT_BUILD_SHARED_C_API` was read by
+  `cmake/lightusd-render-support.cmake` (included from the `tydra/next`
+  subdirectory) before it was declared, so the shared subdivision objects never
+  got `POSITION_INDEPENDENT_CODE`. GCC emitted PLT relocations and linked anyway;
+  clang emitted PC32 relocations and refused. The option is now declared before
+  the subdirectory.

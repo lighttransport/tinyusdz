@@ -251,6 +251,34 @@ jobs:
         name: cabi-fuzz-artifacts
         path: /tmp/cabi-artifacts
 
+  # Sanitizer sweep over the whole next test tree. The C ABI fuzzer job above
+  # only exercises the FFI surface; this runs every next ctest (parser, crate,
+  # pcp, composition, validation, tydra) under AddressSanitizer and
+  # UndefinedBehaviorSanitizer. Hardening is off so nothing masks ASan/UBSan.
+  next-asan-ubsan:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: configure (clang, ASan + UBSan)
+      run: |
+        CXX=clang++ CC=clang cmake -B build_asan -S . -G Ninja \
+          -DLIGHTUSD_NATIVE_PRODUCT=next \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON \
+          -DLIGHTUSD_HARDENING=Off \
+          -DLIGHTUSD_WITH_TYDRA=On \
+          -DLIGHTUSD_BUILD_TESTS=On
+    - name: build
+      run: cmake --build build_asan -j2
+    - name: tests
+      run: |
+        cd build_asan && \
+        UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+        ASAN_OPTIONS=abort_on_error=1 \
+        ctest --output-on-failure
+
   # Verify the shipped next artifacts carry the release hardening set
   # (LIGHTUSD_HARDENING defaults ON). The assertions are the executable
   # specification of the option: if a flag silently stops being applied, this
