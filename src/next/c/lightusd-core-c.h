@@ -461,6 +461,29 @@ LU_CORE_API int lu_decimal_to_u64_checked(const char *s, uint64_t *out);
 /* Bounded "is this a decimal integer token" check. */
 LU_CORE_API int lu_is_decimal_int_token(const char *s, size_t len,
                                         int allow_neg);
+/* ============================================================
+ * 4x4 double transform math (src/next/c/mat4.c)
+ *
+ * Row-vector (USD/legacy) convention, bit-identical to the legacy evaluator:
+ * reduced-argument sin_pi/cos_pi rather than sin/cos of deg*pi/180. Pure
+ * double[16] math, no allocation.
+ * ============================================================ */
+
+LU_CORE_API void lu_mat4_identity(double *m);
+/* result = a * b (row-vector convention). result may alias neither input. */
+LU_CORE_API void lu_mat4_mul(double *result, const double *a, const double *b);
+LU_CORE_API double lu_cos_pi(double x);
+LU_CORE_API double lu_sin_pi(double x);
+LU_CORE_API void lu_mat4_translation(double *m, double x, double y, double z);
+LU_CORE_API void lu_mat4_scale(double *m, double x, double y, double z);
+LU_CORE_API void lu_mat4_rot_x(double *m, double deg);
+LU_CORE_API void lu_mat4_rot_y(double *m, double deg);
+LU_CORE_API void lu_mat4_rot_z(double *m, double deg);
+LU_CORE_API void lu_mat4_rot_axis(double *m, char axis, double deg);
+LU_CORE_API void lu_mat4_orient(double *m, double w, double x, double y,
+                                double z);
+/* Invert; identity when singular. out may alias a. */
+LU_CORE_API void lu_mat4_invert(const double *a, double *out);
 
 /* ============================================================
  * Crate integer decode (src/next/c/crate-int.c)

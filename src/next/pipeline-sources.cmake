@@ -22,6 +22,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/crate-typeid.c           # crate value-type name/size (crate-format.cc)
     c/crate-delta-encode.c     # crate delta encoders (crate-format.cc)
     c/decimal.c                # decimal integer parsing (value-parser-numeric.hh)
+    c/mat4.c                   # 4x4 double transform math (xform-eval.cc)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc

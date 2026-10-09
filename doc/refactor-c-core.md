@@ -5985,3 +5985,14 @@ keep the NUL-terminated input, optional-sign, saturation (or overflow-failure)
 semantics exactly; the `fast_float`-based float-token coercion stays C++ and
 forwards nothing. Verified differential against the old C++ over 600,000 random
 strings plus the integer/boundary cases: zero differences.
+
+### 4x4 transform math in C11
+
+The leaf matrix/trig routines of `xform-eval.cc` moved to
+`src/next/c/mat4.c` (`lu_mat4_identity/mul/translation/scale/rot_x/y/z/rot_axis/
+orient/invert`, `lu_cos_pi`, `lu_sin_pi`). They reproduce the legacy evaluator
+exactly: the reduced-argument `sin_pi`/`cos_pi` (not `sin/cos` of deg*pi/180),
+the per-op layouts and the row-vector multiply order. The value-reading and
+op-walking remain C++ (they depend on `UsdPrim`/`Value`). Verified bit-identical
+to the previous C++ over 500,000 random iterations of every operation
+(memcmp of the double[16] results), including the singular-inverse fallback.
