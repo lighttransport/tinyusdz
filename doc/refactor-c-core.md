@@ -5731,3 +5731,39 @@ environment prerequisite, unchanged from the pre-port baseline). The row added
 to `next-loading-behavior-parity.test.mjs` for `refs-customdata-001.usdc` was
 verified by mutation: flipping its expectation makes the suite fail, so the
 fixture is genuinely exercised by both the wasm32 and memory64 profiles.
+
+### Removing the legacy value-type layer from `tydra_next`
+
+After the two ports above, `lightusd_next` was free of
+`value-types.hh`/`typed-array-core.hh`/`token-type.hh`, but eight `tydra_next`
+translation units still reached them through five legacy headers, each of which
+needed only two or three POD vector aliases from a ~3000-line header:
+
+| Legacy header | Needed | Fix |
+|---|---|---|
+| `src/tydra/shape-to-mesh.hh` | `value::float2`, `float3` | local aliases; also dropped an unused `math-util.inc` include and added the `<map>`/`<utility>` it was silently relying on |
+| `src/tydra/tangent-quantize.hh` | `value::float3` | local aliases |
+| `src/tydra/mikktspace-tangent.hh` | `value::float2/3/4` | local aliases |
+| `src/tydra/fast-mikktspace.hh` | `value::float2/3` | local aliases |
+| `src/tydra/next/texture-cache.cc` | `value::half` decode | next's `HalfToFloat` from `next/crate/crate-format.hh` |
+
+`texture-util.hh`'s resize API was split into `src/tydra/resize-image.hh` so the
+one next-side consumer (`texture-cache.cc`) no longer includes
+`image-writer.hh`, which reaches `lightusd.hh` and the legacy layer.
+
+`value-types-basic.hh` is *not* usable as the shared answer: it declares the
+same `kXxx` constants and a different `half` as `value-types.hh`, so including
+both in one translation unit is a redefinition error. The `using` aliases are
+re-declarable precisely because they name the same `std::array<float, N>` type,
+which is why the local-alias approach composes with either header.
+
+The half-to-float substitution was verified exhaustively before swapping: legacy
+`value::half_to_float` and next `HalfToFloat` agree on all 65,536 half bit
+patterns.
+
+Result: **0 of 103 `lightusd_next` and 0 of `tydra_next` objects reach the legacy
+value-type layer** (was 0 and 8). Isolated compile times in the same tree:
+`render-converter.cc` 5.68 s, `render-converter-material.cc` 3.82 s,
+`texture-cache.cc` 1.96 s. All 20 legacy translation units that include the
+changed headers were syntax-checked against the legacy include path and compile
+clean, and the next ctest tree still passes 55/55.

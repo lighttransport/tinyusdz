@@ -18,8 +18,8 @@
 #include "ptx-loader.hh"
 #include "next/reader/usdz-reader.hh"
 #include "safe-arithmetic.hh"
-#include "tydra/texture-util.hh"
-#include "value-types.hh"
+#include "tydra/resize-image.hh"  // ResizeImage / ResizeFilter only
+#include "next/crate/crate-format.hh"  // HalfToFloat
 
 namespace lightusd {
 namespace tydra {
@@ -223,9 +223,7 @@ bool ToDecoded(::lightusd::Image* src, bool force_rgba,
       }
       uint16_t h = 0;
       std::memcpy(&h, src->data.data() + index * sizeof(uint16_t), sizeof(h));
-      ::lightusd::value::half halfValue{};
-      halfValue.value = h;
-      return ::lightusd::value::half_to_float(halfValue);
+      return ::lightusd::next::HalfToFloat(h);
     };
     for (size_t i = 0; i < npix; ++i) {
       const size_t s = i * ch;

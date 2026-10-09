@@ -7,7 +7,7 @@
 
 #include "render-converter-internal.hh"
 #include "render-extract.hh"
-#include "value-types.hh"
+#include "next/types/vec-pod.hh"  // value::float2 / float3 only
 
 #include <algorithm>
 #include <string>
