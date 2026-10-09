@@ -5878,3 +5878,19 @@ caught two real defects that the default GCC build missed:
   got `POSITION_INDEPENDENT_CODE`. GCC emitted PLT relocations and linked anyway;
   clang emitted PC32 relocations and refused. The option is now declared before
   the subdirectory.
+
+### Integer formatting and half-float conversion in C11
+
+Two more leaf modules moved to `src/next/c`:
+
+- `strfmt.c` (`lu_uint_to` / `lu_int_to`) is the C core of `strfmt.hh`; the C++
+  wrappers forward. Verified byte-identical to `ss << v` under the classic
+  locale over 2,000,000 values plus the zero/max/INT64_MIN boundaries.
+- `half.c` (`lu_half_to_float` / `lu_float_to_half`) is the C core of
+  `crate-format.hh`. Verified against the previous inline implementation:
+  exhaustive over all 65,536 half patterns for widening, all 65,536 round-trips
+  through float for narrowing, and 8,000,000 sampled float bit patterns for
+  narrowing. Zero differences.
+
+Both are compiled into `lightusd_next` and the combined WASM module (they are
+in `pipeline-sources.cmake`), and the 55-test next ctest tree passes.

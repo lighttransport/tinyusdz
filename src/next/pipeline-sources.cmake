@@ -13,6 +13,8 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     writer/dtoa.cc
     ../external/zmij/zmij.cc  # zmij usdcat fast path (used by writer/dtoa.cc)
     ../unicode-xid-c.c         # XID_Start/XID_Continue tables (identifier.hh)
+    c/strfmt.c                 # lu_uint_to/lu_int_to (strfmt.hh)
+    c/half.c                   # lu_half_to_float/lu_float_to_half (crate-format.hh)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc

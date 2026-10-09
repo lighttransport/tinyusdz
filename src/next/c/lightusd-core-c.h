@@ -302,6 +302,25 @@ LU_CORE_API int lu_validation_ref_error_find(lu_view rule, size_t *index,
 LU_CORE_API int lu_validation_ref_error_item(size_t rule_index, size_t item,
                                              lu_view *out);
 
+/* ============================================================
+ * Integer formatting (src/next/c/strfmt.c)
+ *
+ * Locale-independent, libc-free decimal formatting. Byte-identical to
+ * `ss << v` under the classic locale. `buf` needs >= 20 bytes for lu_uint_to
+ * and >= 21 for lu_int_to; the return value is the number of bytes written
+ * (no NUL terminator).
+ * ============================================================ */
+
+LU_CORE_API size_t lu_uint_to(char *buf, uint64_t v);
+LU_CORE_API size_t lu_int_to(char *buf, int64_t v);
+
+/* ============================================================
+ * IEEE 754 half <-> float (src/next/c/half.c)
+ * ============================================================ */
+
+LU_CORE_API float lu_half_to_float(uint16_t h);
+LU_CORE_API uint16_t lu_float_to_half(float value);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
