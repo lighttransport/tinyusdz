@@ -415,62 +415,18 @@ class DeltaHistogram {
 
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
-  if (count == 0) return result;
-  size_t codes_bytes = 0;
-  if (!values || !ComputeDeltaCodeBytes(count, &codes_bytes)) return result;
-
-  // Compute deltas
-  std::vector<int32_t> deltas(count);
-  int32_t prev = 0;
-  for (size_t i = 0; i < count; i++) {
-    deltas[i] = static_cast<int32_t>(static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
-    prev = static_cast<int32_t>(values[i]);
+  if (count == 0 || !values) return result;
+  size_t bound = 0;
+  if (!lu_crate_encode_delta_u32_bound(count, &bound)) return result;
+  result.resize(bound);
+  size_t out_size = 0;
+  const char* error = nullptr;
+  if (lu_crate_encode_delta_u32(values, count, result.data(), bound, &out_size,
+                                &error)) {
+    result.resize(out_size);
+  } else {
+    result.clear();
   }
-
-  // Find most common delta
-  DeltaHistogram freq(count);
-  for (size_t i = 0; i < count; i++) freq.add(deltas[i]);
-  const int32_t common_delta = freq.most_common();
-
-  // Write common delta
-  result.resize(sizeof(int32_t));
-  std::memcpy(result.data(), &common_delta, sizeof(int32_t));
-
-  // Codes: 2 bits per value, packed LSB-first into bytes
-  size_t codes_start = result.size();
-  result.resize(codes_start + codes_bytes, 0);
-
-  // Variable-length integer data appended at end
-  std::vector<uint8_t> vints;
-
-  for (size_t i = 0; i < count; i++) {
-    int32_t d = deltas[i];
-    uint8_t code;
-    if (d == common_delta) {
-      code = 0;
-    } else if (d >= INT8_MIN && d <= INT8_MAX) {
-      code = 1;
-      int8_t v = static_cast<int8_t>(d);
-      vints.push_back(*reinterpret_cast<const uint8_t*>(&v));
-    } else if (d >= INT16_MIN && d <= INT16_MAX) {
-      code = 2;
-      int16_t v = static_cast<int16_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int16_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int16_t));
-    } else {
-      code = 3;
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int32_t));
-      std::memcpy(vints.data() + pos, &d, sizeof(int32_t));
-    }
-
-    // Pack code LSB-first: code for value[i] at bits [(i%4)*2, (i%4)*2+1]
-    result[codes_start + i / 4] |= (code << ((i % 4) * 2));
-  }
-
-  // Append variable-length integers
-  result.insert(result.end(), vints.begin(), vints.end());
   return result;
 }
 
@@ -481,66 +437,18 @@ bool DecodeDeltaU32(const uint8_t* buffer, size_t buffer_size,
 
 std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
   std::vector<uint8_t> result;
-  if (count == 0) return result;
-  size_t codes_bytes = 0;
-  if (!values || !ComputeDeltaCodeBytes(count, &codes_bytes)) return result;
-
-  // Compute deltas (promote to int64_t to avoid signed overflow UB)
-  std::vector<int64_t> deltas(count);
-  int32_t prev = 0;
-  for (size_t i = 0; i < count; i++) {
-    deltas[i] =
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev);
-    prev = values[i];
+  if (count == 0 || !values) return result;
+  size_t bound = 0;
+  if (!lu_crate_encode_delta_s32_bound(count, &bound)) return result;
+  result.resize(bound);
+  size_t out_size = 0;
+  const char* error = nullptr;
+  if (lu_crate_encode_delta_s32(values, count, result.data(), bound, &out_size,
+                                &error)) {
+    result.resize(out_size);
+  } else {
+    result.clear();
   }
-
-  // The shared/common delta header is only int32; wider deltas use code 3.
-  DeltaHistogram freq(count);
-  for (int64_t delta : deltas) {
-    if (delta >= INT32_MIN && delta <= INT32_MAX) {
-      freq.add(static_cast<int32_t>(delta));
-    }
-  }
-  const int32_t common_delta = freq.most_common();
-
-  // Write common delta
-  result.resize(sizeof(int32_t));
-  std::memcpy(result.data(), &common_delta, sizeof(int32_t));
-
-  size_t codes_start = result.size();
-  result.resize(codes_start + codes_bytes, 0);
-
-  std::vector<uint8_t> vints;
-
-  // For i32: small = int16_t, medium = int32_t, full = int64_t
-  for (size_t i = 0; i < count; i++) {
-    const int64_t d = deltas[i];
-    uint8_t code;
-    if (d == common_delta) {
-      code = 0;
-    } else if (d >= INT16_MIN && d <= INT16_MAX) {
-      code = 1;
-      int16_t v = static_cast<int16_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int16_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int16_t));
-    } else if (d >= INT32_MIN && d <= INT32_MAX) {
-      code = 2;
-      const int32_t v = static_cast<int32_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int32_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int32_t));
-    } else {
-      code = 3;
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int64_t));
-      std::memcpy(vints.data() + pos, &d, sizeof(int64_t));
-    }
-
-    result[codes_start + i / 4] |= (code << ((i % 4) * 2));
-  }
-
-  result.insert(result.end(), vints.begin(), vints.end());
   return result;
 }
 

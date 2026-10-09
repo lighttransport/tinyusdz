@@ -5960,3 +5960,18 @@ encoder (`lu_crate_encode_integers[_bound]`). `crate-format.cc` forwards.
 `EncodeIntegers` is verified byte-identical to the previous C++ implementation
 over 300,000 random arrays (all value ranges plus run-length patterns): zero
 differences. The 55-test next ctest tree passes.
+
+### Crate delta encoders in C11
+
+`EncodeDeltaU32` / `EncodeDeltaS32` and the most-common-delta selector moved to
+`src/next/c/crate-delta-encode.c`. The selector keeps the original two-mode
+strategy (short arrays sort a copy; long ones tally the common [-32768, 32767]
+range in a flat table and the rest in an open-addressing table) and the same
+tie-break (most frequent, ties to the smallest delta), so the encoded bytes are
+unchanged. The C++ wrappers own the std::vector and forward.
+
+Verified byte-identical to the previous C++ implementation over 20,000 random
+arrays covering both histogram modes (counts below and above the 2048 sorted
+threshold), run-length patterns, wide jumps and INT32_MIN/INT32_MAX: zero
+differences. The USDC writer/round-trip suites (which use these encoders) pass,
+55/55.

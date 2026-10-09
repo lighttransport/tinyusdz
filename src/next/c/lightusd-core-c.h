@@ -587,6 +587,22 @@ LU_CORE_API int lu_crate_encode_integers(const uint32_t *values, size_t count,
                                          size_t *out_size,
                                          const char **out_error);
 
+/* Delta-coded integer encode (src/next/c/crate-delta-encode.c). The bound is
+ * the worst case: 4 + code bytes + one full-width value per element
+ * (u32 -> i32, s32 -> i64). *out_size is the exact written size. */
+LU_CORE_API int lu_crate_encode_delta_u32_bound(size_t count,
+                                                size_t *out_bound);
+LU_CORE_API int lu_crate_encode_delta_s32_bound(size_t count,
+                                                size_t *out_bound);
+LU_CORE_API int lu_crate_encode_delta_u32(const uint32_t *values, size_t count,
+                                          uint8_t *dst, size_t dst_cap,
+                                          size_t *out_size,
+                                          const char **out_error);
+LU_CORE_API int lu_crate_encode_delta_s32(const int32_t *values, size_t count,
+                                          uint8_t *dst, size_t dst_cap,
+                                          size_t *out_size,
+                                          const char **out_error);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
