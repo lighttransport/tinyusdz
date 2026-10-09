@@ -5700,3 +5700,34 @@ next-only scene-core WASM module. The verifier checks that each entry belongs to
 the MCP family, has no accidental RenderStream match, and carries the explicit
 decision. They are reported separately from both parity mappings and unresolved
 product gaps; this is a scope decision, not a claim of method-level parity.
+
+## WASM module regeneration after the C11 core port
+
+All WASM modules that `web/js` consumes were rebuilt from the merged tree
+(GNU C++/Emscripten, MinSizeRel `-Oz`, SIMD on). Sizes before -> after:
+
+| Module | Tree | Before | After |
+|---|---|---:|---:|
+| `lightusd_next.wasm` | `web/build_ninja_next` | 2.28 MB | 2.28 MB |
+| `lightusd_next_64.wasm` | `web/build_ninja_next64` | 2.67 MB | 2.53 MB |
+| `lightusd_combined.wasm` | `web/build_ninja` | 6.96 MB | 6.96 MB |
+| `lightusd_combined_64.wasm` | `web/build_ninja_combined64` | 7.69 MB | 7.69 MB |
+| `lightusd_mcp.wasm` | `web/build_ninja_mcp` | 1.22 MB | 1.40 MB |
+| `lightusd_mcp_64.wasm` | `web/build_ninja_mcp64` | 1.28 MB | 1.46 MB |
+| `lightusd.wasm` (legacy) | `web/build_legacy` | 6.96 MB | 6.50 MB |
+
+The memory64 next module is 140 KB smaller than the artifact it replaces, which
+is the same direction as the per-object measurement above (wasm32 objects for
+the affected TUs fell from 846 KB to 379 KB). The MCP and legacy modules also
+moved because their previous artifacts predate recent dev work, not because of
+this port.
+
+Two build trees (`build_ninja_mcp*`) had to be reconfigured before building:
+their `build.ninja` referenced a build directory that no longer exists.
+
+Full regression against the regenerated modules: `web/js npm test` passes 57
+suites with 2 failures, both the missing `mujoco_menagerie` dataset (an
+environment prerequisite, unchanged from the pre-port baseline). The row added
+to `next-loading-behavior-parity.test.mjs` for `refs-customdata-001.usdc` was
+verified by mutation: flipping its expectation makes the suite fail, so the
+fixture is genuinely exercised by both the wasm32 and memory64 profiles.
