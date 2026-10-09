@@ -1464,12 +1464,12 @@ void test_stage_session_payloads_and_cancel() {
   loaded_snapshot = {};
   before_reload = {};
   StageSnapshot retained_for_take = session.GetSnapshot();
-  nonstd::expected<Stage, OperationStatus> busy_take =
+  lightusd::next::expected<Stage, OperationStatus> busy_take =
       session.CloseAndTakeStage();
   assert(!busy_take && busy_take.error() == OperationStatus::Busy);
   assert(session.IsOpen());
   retained_for_take = {};
-  nonstd::expected<Stage, OperationStatus> taken_result =
+  lightusd::next::expected<Stage, OperationStatus> taken_result =
       session.CloseAndTakeStage();
   assert(taken_result);
   Stage taken = std::move(*taken_result);

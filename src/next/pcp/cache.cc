@@ -14,11 +14,11 @@ Cache::~Cache() = default;
 Cache::Cache(Cache &&) noexcept = default;
 Cache &Cache::operator=(Cache &&) noexcept = default;
 
-nonstd::expected<Cache, std::string> Cache::Open(
+expected<Cache, std::string> Cache::Open(
     AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
     const std::string &root_identifier, const CompositionOptions &options) {
   if (!root_layer) {
-    return nonstd::make_unexpected(std::string("pcp::Cache::Open: null root layer"));
+    return make_unexpected(std::string("pcp::Cache::Open: null root layer"));
   }
   Cache cache;
   cache.impl_->resolver = &resolver;
@@ -39,7 +39,7 @@ nonstd::expected<Cache, std::string> Cache::Open(
   uint32_t root_stack =
       cache.impl_->InternLayerStack(root_layer, root_identifier, &warn, &err);
   if (root_stack == Impl::kInvalidStack) {
-    return nonstd::make_unexpected(err.empty()
+    return make_unexpected(err.empty()
                                        ? std::string("pcp::Cache::Open: failed "
                                                      "to build root layer stack")
                                        : err);

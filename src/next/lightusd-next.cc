@@ -1030,16 +1030,16 @@ StageChangeSet StageSession::GetLastChangeSet() const {
   std::lock_guard<std::mutex> lock(impl_->publication_mu);
   return impl_->last_changes;
 }
-nonstd::expected<Stage, OperationStatus> StageSession::CloseAndTakeStage() {
-  if (!impl_) return nonstd::make_unexpected(OperationStatus::InvalidArgument);
+expected<Stage, OperationStatus> StageSession::CloseAndTakeStage() {
+  if (!impl_) return make_unexpected(OperationStatus::InvalidArgument);
   if (StageOperationActive(impl_.get())) {
-    return nonstd::make_unexpected(OperationStatus::Busy);
+    return make_unexpected(OperationStatus::Busy);
   }
   std::lock_guard<std::recursive_mutex> operation_lock(impl_->operation_mu);
   StageOperationScope operation_scope(impl_.get());
   std::lock_guard<std::mutex> publish_lock(impl_->publication_mu);
   if (!impl_->stage || impl_->stage.use_count() != 1) {
-    return nonstd::make_unexpected(OperationStatus::Busy);
+    return make_unexpected(OperationStatus::Busy);
   }
   impl_->open = false;
   impl_->cache.reset();
@@ -1054,7 +1054,7 @@ nonstd::expected<Stage, OperationStatus> StageSession::CloseAndTakeStage() {
     out = std::move(*impl_->stage);
     impl_->stage.reset(new Stage());
   }
-  return nonstd::expected<Stage, OperationStatus>(std::move(out));
+  return expected<Stage, OperationStatus>(std::move(out));
 }
 StageSessionOptions StageSession::GetOptions() const {
   if (!impl_) return {};

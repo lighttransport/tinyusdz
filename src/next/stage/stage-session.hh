@@ -155,7 +155,7 @@ class StageSession {
   // Transfer the composed Stage out of a one-shot session. This fails with
   // Busy when an external snapshot still owns the Stage instead of silently
   // cloning a potentially huge scene.
-  nonstd::expected<Stage, OperationStatus> CloseAndTakeStage();
+  expected<Stage, OperationStatus> CloseAndTakeStage();
   StageSessionOptions GetOptions() const;
   std::string GetRootIdentifier() const;
   bool IsOpen() const;

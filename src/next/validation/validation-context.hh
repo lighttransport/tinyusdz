@@ -4,7 +4,7 @@
 #include "usd-validation.hh"
 #include "../eval/attribute-eval.hh"
 #include "../resource-limits.hh"
-#include "../../nonstd/expected.hpp"
+#include "../expected.hh"
 #include <functional>
 #include <map>
 #include <set>
@@ -51,7 +51,7 @@ struct ValidatorDefinition {
   std::vector<std::string> keywords, schema_types;
   ValidationScope scope{ValidationScope::Prim};
   ValidationRuleMetadata metadata;
-  std::function<nonstd::expected<USDValidationResult, std::string>(
+  std::function<expected<USDValidationResult, std::string>(
       const ValidationContext&, const PrimSpec*)> callback;
 };
 
@@ -60,11 +60,11 @@ struct ValidatorDefinition {
 class ValidationRegistry {
  public:
   ValidationRegistry();
-  nonstd::expected<bool, std::string> LoadSchemaDefinitions(
+  expected<bool, std::string> LoadSchemaDefinitions(
       const std::string& json);
-  nonstd::expected<bool, std::string> LoadShaderDefinitions(
+  expected<bool, std::string> LoadShaderDefinitions(
       const std::string& json);
-  nonstd::expected<bool, std::string> RegisterValidator(ValidatorDefinition rule);
+  expected<bool, std::string> RegisterValidator(ValidatorDefinition rule);
   const std::vector<ValidatorDefinition>& validators() const { return validators_; }
   const ValidationSchemaDefinition* FindSchema(const std::string& name) const;
   bool InheritsFrom(const std::string& name, const std::string& ancestor) const;

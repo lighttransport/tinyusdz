@@ -204,12 +204,12 @@ const ValidationRegistry& GetBuiltinValidationRegistry() {
   return registry;
 }
 
-nonstd::expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
+expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
     const std::string& text) {
   Json root;
   if (!lightusd::minijson::Parse(text, &root) || !root["formatVersion"].is_number_integer() || root["formatVersion"].get_int() != 1 ||
       !root["schemas"].is_array())
-    return nonstd::make_unexpected(std::string("expected schema manifest formatVersion 1"));
+    return make_unexpected(std::string("expected schema manifest formatVersion 1"));
   // Seed with exactly the set the constructor used to materialize: previously
   // loaded overrides plus the built-in inventory. emplace keeps the loaded
   // entry where both define the same schema name.
@@ -233,7 +233,7 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
         (s.kind != "concrete" && s.kind != "abstract" && s.kind != "singleApply" &&
          s.kind != "multipleApply" && s.kind != "nonApplied") ||
         !item["properties"].is_array())
-      return nonstd::make_unexpected(std::string("invalid or duplicate schema definition: ") + s.name);
+      return make_unexpected(std::string("invalid or duplicate schema definition: ") + s.name);
     for (const auto& p : item["properties"]) {
       ValidationPropertyDefinition d;
       const std::string name = p["name"].get_string();
@@ -246,11 +246,11 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
           (!d.variability.empty() && d.variability != "uniform" && d.variability != "varying") ||
           (p.contains("allowedTokens") && !StringArray(p["allowedTokens"], &d.allowed_tokens)) ||
           !s.properties.emplace(name, d).second)
-        return nonstd::make_unexpected(std::string("invalid property definition: ") + s.name + "." + name);
+        return make_unexpected(std::string("invalid property definition: ") + s.name + "." + name);
     }
     const auto found = candidate.find(s.name);
     if (found != candidate.end() && !SameSchema(found->second, s))
-      return nonstd::make_unexpected(std::string("conflicting schema definition: ") + s.name);
+      return make_unexpected(std::string("conflicting schema definition: ") + s.name);
     candidate[s.name] = std::move(s);
   }
   for (const auto& pair : candidate) {
@@ -258,11 +258,11 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
     std::string name = pair.first;
     while (!name.empty()) {
       if (!seen.insert(name).second)
-        return nonstd::make_unexpected(std::string("cyclic schema inheritance: ") + name);
+        return make_unexpected(std::string("cyclic schema inheritance: ") + name);
       auto i = candidate.find(name);
       if (i == candidate.end()) {
         if (GetSchemaRegistry().IsKnownSchema(name)) break;
-        return nonstd::make_unexpected(std::string("undefined schema ancestor: ") + name);
+        return make_unexpected(std::string("undefined schema ancestor: ") + name);
       }
       name = i->second.parent;
     }
@@ -271,12 +271,12 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
   return true;
 }
 
-nonstd::expected<bool, std::string> ValidationRegistry::LoadShaderDefinitions(
+expected<bool, std::string> ValidationRegistry::LoadShaderDefinitions(
     const std::string& text) {
   Json root;
   if (!lightusd::minijson::Parse(text, &root) || !root["formatVersion"].is_number_integer() || root["formatVersion"].get_int() != 1 ||
       !root["shaders"].is_array())
-    return nonstd::make_unexpected(std::string("expected shader manifest formatVersion 1"));
+    return make_unexpected(std::string("expected shader manifest formatVersion 1"));
   auto candidate = shaders_;
   for (const auto& entry : BuiltinShaderTables()) {
     candidate.emplace(entry.first, entry.second);
@@ -291,29 +291,29 @@ nonstd::expected<bool, std::string> ValidationRegistry::LoadShaderDefinitions(
         (item.contains("sourceType") && !item["sourceType"].is_string()) ||
         (item.contains("source") && !item["source"].is_string()) ||
         !PortMap(item["inputs"], &s.inputs) || !PortMap(item["outputs"], &s.outputs))
-      return nonstd::make_unexpected(std::string("invalid or duplicate shader definition: ") + s.identifier);
+      return make_unexpected(std::string("invalid or duplicate shader definition: ") + s.identifier);
     const auto old = candidate.find(key);
     if (old != candidate.end() &&
         (old->second.inputs != s.inputs || old->second.outputs != s.outputs))
-      return nonstd::make_unexpected(std::string("conflicting shader definition: ") + s.identifier);
+      return make_unexpected(std::string("conflicting shader definition: ") + s.identifier);
     candidate[key] = std::move(s);
   }
   shaders_ = std::move(candidate);
   return true;
 }
 
-nonstd::expected<bool, std::string> ValidationRegistry::RegisterValidator(
+expected<bool, std::string> ValidationRegistry::RegisterValidator(
     ValidatorDefinition rule) {
   if (rule.id.empty() || !rule.callback)
-    return nonstd::make_unexpected(std::string("validator needs an id and callback"));
+    return make_unexpected(std::string("validator needs an id and callback"));
   size_t count = 0;
   const auto* builtins = GetValidationRuleTable(&count);
   for (size_t i = 0; i < count; ++i)
     if (rule.id == builtins[i].id)
-      return nonstd::make_unexpected(std::string("reserved validator id: ") + rule.id);
+      return make_unexpected(std::string("reserved validator id: ") + rule.id);
   for (const auto& existing : validators_)
     if (existing.id == rule.id)
-      return nonstd::make_unexpected(std::string("duplicate validator id: ") + rule.id);
+      return make_unexpected(std::string("duplicate validator id: ") + rule.id);
   validators_.push_back(std::move(rule));
   return true;
 }

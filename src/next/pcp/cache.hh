@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-#include "nonstd/expected.hpp"
+#include "../expected.hh"
 
 namespace lightusd {
 namespace next {
@@ -85,7 +85,7 @@ class Cache {
   /// the root layer stack [root, sublayers...]. `resolver` is borrowed and must
   /// outlive the cache. `root_identifier` is the root layer's resolved file path
   /// (used as the anchor for resolving its references/sublayers); may be empty.
-  static nonstd::expected<Cache, std::string> Open(
+  static expected<Cache, std::string> Open(
       AssetResolver &resolver, std::shared_ptr<Layer> root_layer,
       const std::string &root_identifier = "",
       const CompositionOptions &options = {});
