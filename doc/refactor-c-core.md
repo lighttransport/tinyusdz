@@ -6048,3 +6048,14 @@ scalar-component / byte-size mapping (`lu_scalar_component`,
 `lu_scalar_byte_size`, `lu_requires_lazy_component_reorder`). Verified over the
 full 0..69 TypeId range, the 2^32 array-size boundary, and 500,000 random
 component-array cases: zero differences. Next-only. 55/55.
+
+### SIMD byte scanning in C11
+
+`src/next/parser/simd-scan.cc` moved to `src/next/c/simd-scan.c`: the array/prim
+structural-byte scanners with their SSE2 baseline, runtime-dispatched AVX2
+kernel (GCC/Clang `target("avx2,popcnt")`), AArch64 NEON path and scalar
+fallback. The C++ TU is now a thin namespace forwarder. Verified byte-identical
+(returned stop offset + newline/comma tallies) against the pre-port
+implementation over 2,000,000 random structure-biased buffers of length 0..219:
+zero differences. Compiles clean under `gcc`/`clang -std=c11 -Wall -Wextra
+-Wpedantic -Werror -msse2`. 55/55.

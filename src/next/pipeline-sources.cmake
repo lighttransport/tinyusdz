@@ -58,6 +58,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     parser/ascii-parser-utils.cc
     parser/ascii-parser-variants.cc
     parser/simd-scan.cc
+    c/simd-scan.c              # SIMD byte scanning (parser/simd-scan.cc)
     composition/composition.cc
     resolver/asset-resolver.cc
     pipeline/flatten.cc

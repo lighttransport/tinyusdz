@@ -478,6 +478,24 @@ LU_CORE_API int lu_requires_lazy_component_reorder(uint16_t id);
 LU_CORE_API size_t lu_scalar_byte_size(uint16_t comp);
 
 /* ============================================================
+ * SIMD byte scanning for the USDA parser (src/next/c/simd-scan.c)
+ *
+ * Bulk-skip "boring" array/prim bytes to the next structurally-interesting
+ * byte. Byte-identical to the scalar scan; the SIMD kernels only change speed.
+ * `newlines`/`commas` accumulate tallies over the scanned-over prefix.
+ * ============================================================ */
+
+LU_CORE_API const char *lu_simd_scan_array_structural(const char *p,
+                                                      const char *end,
+                                                      size_t *newlines,
+                                                      size_t *commas);
+LU_CORE_API const char *lu_simd_scan_prim_structural(const char *p,
+                                                     const char *end,
+                                                     size_t *newlines);
+/* Active backend name: "sse2" / "neon" / "scalar". */
+LU_CORE_API const char *lu_simd_scan_backend(void);
+
+/* ============================================================
  * Identifier / path validation (src/next/c/identifier.c)
  *
  * AOUSD Core Spec section 8 identifier, namespaced-property and textual path
