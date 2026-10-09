@@ -5975,3 +5975,13 @@ arrays covering both histogram modes (counts below and above the 2048 sorted
 threshold), run-length patterns, wide jumps and INT32_MIN/INT32_MAX: zero
 differences. The USDC writer/round-trip suites (which use these encoders) pass,
 55/55.
+
+### Decimal integer parsing in C11
+
+The pure-digit decimal helpers from `value-parser-numeric.hh` moved to
+`src/next/c/decimal.c` (`lu_decimal_to_i64/i32/u64/u32`,
+`lu_decimal_to_i64_checked` / `u64_checked`, `lu_is_decimal_int_token`). They
+keep the NUL-terminated input, optional-sign, saturation (or overflow-failure)
+semantics exactly; the `fast_float`-based float-token coercion stays C++ and
+forwards nothing. Verified differential against the old C++ over 600,000 random
+strings plus the integer/boundary cases: zero differences.

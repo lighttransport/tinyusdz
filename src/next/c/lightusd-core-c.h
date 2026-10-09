@@ -444,6 +444,23 @@ LU_CORE_API int lu_is_identifier_continue(uint32_t codepoint);
 LU_CORE_API int lu_is_valid_identifier(const char *data, size_t size);
 LU_CORE_API int lu_is_valid_namespaced_identifier(const char *data, size_t size);
 LU_CORE_API int lu_is_valid_path_string(const char *data, size_t size);
+/* ============================================================
+ * Decimal integer parsing (src/next/c/decimal.c)
+ *
+ * ASCII-parser numeric helpers. NUL-terminated input, optional leading sign,
+ * saturation (or overflow failure for the checked variants).
+ * ============================================================ */
+
+LU_CORE_API int64_t lu_decimal_to_i64(const char *s);
+LU_CORE_API int32_t lu_decimal_to_i32(const char *s);
+LU_CORE_API uint64_t lu_decimal_to_u64(const char *s);
+LU_CORE_API uint32_t lu_decimal_to_u32(const char *s);
+/* 0 on overflow (pxr errors on out-of-range integer literals). */
+LU_CORE_API int lu_decimal_to_i64_checked(const char *s, int64_t *out);
+LU_CORE_API int lu_decimal_to_u64_checked(const char *s, uint64_t *out);
+/* Bounded "is this a decimal integer token" check. */
+LU_CORE_API int lu_is_decimal_int_token(const char *s, size_t len,
+                                        int allow_neg);
 
 /* ============================================================
  * Crate integer decode (src/next/c/crate-int.c)

@@ -21,6 +21,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/crate-blob.c             # LZ4 + crate blob framing (crate-format.cc)
     c/crate-typeid.c           # crate value-type name/size (crate-format.cc)
     c/crate-delta-encode.c     # crate delta encoders (crate-format.cc)
+    c/decimal.c                # decimal integer parsing (value-parser-numeric.hh)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc

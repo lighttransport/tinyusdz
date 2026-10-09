@@ -14,6 +14,8 @@
 
 namespace lightusd {
 namespace next {
+#include "../c/lightusd-core-c.h"  // lu_decimal_to_*
+
 namespace value_parser_detail {
 
 template <class T>
@@ -64,110 +66,28 @@ inline bool CoerceFloatTokenToU64(const std::string& s, double hi_excl,
 // Also rejects hex and a sign that doesn't match the type — DecimalTo* would
 // silently stop at the first non-digit instead.
 inline bool IsDecimalIntToken(const std::string& s, bool allow_neg) {
-  size_t i = 0;
-  if (i < s.size() && (s[i] == '+' || (allow_neg && s[i] == '-'))) ++i;
-  if (i >= s.size()) return false;
-  for (; i < s.size(); ++i) {
-    if (s[i] < '0' || s[i] > '9') return false;
-  }
-  return true;
+  return lu_is_decimal_int_token(s.data(), s.size(), allow_neg ? 1 : 0) != 0;
 }
 
-inline int64_t DecimalToI64(const char* s) {
-  if (!s) return 0;
-  bool neg = false;
-  if (*s == '+' || *s == '-') {
-    neg = (*s == '-');
-    ++s;
-  }
-  const uint64_t lim =
-      neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
-          : static_cast<uint64_t>(INT64_MAX);
-  uint64_t v = 0;
-  while (*s >= '0' && *s <= '9') {
-    const uint64_t d = static_cast<uint64_t>(*s - '0');
-    if (v > (lim - d) / 10u) {
-      v = lim;
-      break;
-    }
-    v = v * 10u + d;
-    ++s;
-  }
-  return neg ? static_cast<int64_t>(0u - v) : static_cast<int64_t>(v);
-}
+inline int64_t DecimalToI64(const char* s) { return lu_decimal_to_i64(s); }
 
 // 32-bit forms SATURATE at the type range (matching the 64-bit helpers'
 // saturation) instead of silently truncating bits: `int i = 1e23` must not
 // come back as -1.
-inline int32_t DecimalToI32(const char* s) {
-  const int64_t v = DecimalToI64(s);
-  if (v > INT32_MAX) return INT32_MAX;
-  if (v < INT32_MIN) return INT32_MIN;
-  return static_cast<int32_t>(v);
-}
+inline int32_t DecimalToI32(const char* s) { return lu_decimal_to_i32(s); }
 
-inline uint64_t DecimalToU64(const char* s) {
-  if (!s) return 0;
-  if (*s == '+') ++s;
-  uint64_t v = 0;
-  while (*s >= '0' && *s <= '9') {
-    const uint64_t d = static_cast<uint64_t>(*s - '0');
-    if (v > (UINT64_MAX - d) / 10u) {
-      v = UINT64_MAX;
-      break;
-    }
-    v = v * 10u + d;
-    ++s;
-  }
-  return v;
-}
+inline uint64_t DecimalToU64(const char* s) { return lu_decimal_to_u64(s); }
 
-inline uint32_t DecimalToU32(const char* s) {
-  const uint64_t v = DecimalToU64(s);
-  return v > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(v);
-}
+inline uint32_t DecimalToU32(const char* s) { return lu_decimal_to_u32(s); }
 
 // Overflow-CHECKED variants for scalar value parsing: pxr errors on
 // out-of-range integer literals; silent saturation corrupts data.
 inline bool DecimalToI64Checked(const char* s, int64_t* out) {
-  if (!s || !out) return false;
-  bool neg = false;
-  if (*s == '+' || *s == '-') {
-    neg = (*s == '-');
-    ++s;
-  }
-  const uint64_t lim = neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
-                           : static_cast<uint64_t>(INT64_MAX);
-  uint64_t v = 0;
-  while (*s >= '0' && *s <= '9') {
-    const uint64_t d = static_cast<uint64_t>(*s - '0');
-    if (v > (lim - d) / 10u) return false;  // would overflow
-    v = v * 10u + d;
-    ++s;
-  }
-  if (neg) {
-    // -(2^63) can't be produced by negating an int64; build it directly.
-    *out = (v == static_cast<uint64_t>(INT64_MAX) + 1u)
-               ? INT64_MIN
-               : -static_cast<int64_t>(v);
-  } else {
-    *out = static_cast<int64_t>(v);
-  }
-  return true;
+  return lu_decimal_to_i64_checked(s, out) != 0;
 }
 
 inline bool DecimalToU64Checked(const char* s, uint64_t* out) {
-  if (!s || !out) return false;
-  if (*s == '+') ++s;
-  uint64_t v = 0;
-  while (*s >= '0' && *s <= '9') {
-    const uint64_t d = static_cast<uint64_t>(*s - '0');
-    if (v > (UINT64_MAX - d) / 10u) return false;
-    v = v * 10u + d;
-    ++s;
-  }
-  *out = v;
-  return true;
+  return lu_decimal_to_u64_checked(s, out) != 0;
 }
 
 }  // namespace value_parser_detail
