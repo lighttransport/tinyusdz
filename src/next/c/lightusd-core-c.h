@@ -429,6 +429,27 @@ LU_CORE_API uint16_t lu_type_component_type(uint16_t id);
 LU_CORE_API uint8_t lu_type_component_count(uint16_t id);
 
 /* ============================================================
+ * Time-sample interpolation primitives (src/next/c/interpolation.c)
+ *
+ * Value-free numeric core of src/next/types/interpolation.cc: the
+ * linearly-interpolatable type predicate and the scalar/vector lerp and
+ * quaternion slerp kernels. The Value-typed InterpolateValues stays C++.
+ * ============================================================ */
+
+LU_CORE_API int lu_type_is_linear_interpolatable(uint16_t id);
+LU_CORE_API float lu_lerp_f(float a, float b, float t);
+LU_CORE_API double lu_lerp_d(double a, double b, double t);
+LU_CORE_API void lu_lerp_fn(float *out, const float *a, const float *b,
+                            float t, size_t n);
+LU_CORE_API void lu_lerp_dn(double *out, const double *a, const double *b,
+                            double t, size_t n);
+/* out/a/b are 4-element xyzw quaternions. */
+LU_CORE_API void lu_slerp_quatf(float *out, const float *a, const float *b,
+                                float t);
+LU_CORE_API void lu_slerp_quatd(double *out, const double *a, const double *b,
+                                double t);
+
+/* ============================================================
  * Identifier / path validation (src/next/c/identifier.c)
  *
  * AOUSD Core Spec section 8 identifier, namespaced-property and textual path

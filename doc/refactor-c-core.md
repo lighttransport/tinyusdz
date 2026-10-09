@@ -6017,3 +6017,13 @@ The pure double helpers of `src/spline-eval.hh` moved to
 templated evaluator (which stays C++ because it is instantiated for float and
 double over a C++ `Spline<T>`). Verified bit-identical over 800,000 random
 iterations of every helper: zero differences.
+
+### Time-sample interpolation primitives in C11
+
+The Value-free numeric core of `src/next/types/interpolation.cc` moved to
+`src/next/c/interpolation.c`: `lu_type_is_linear_interpolatable` (over
+`lu_type_id`), the scalar/vector lerp kernels (`lu_lerp_f/d/fn/dn`) and the
+float/double quaternion slerp (`lu_slerp_quatf/quatd`). The Value-typed
+`InterpolateValues` and bracket search stay C++. Verified bit-identical over
+1,000,000 random iterations of every kernel plus the full 0..69 TypeId range of
+the predicate: zero differences. Next-only (no legacy coupling). 55/55.

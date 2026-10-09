@@ -24,6 +24,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/decimal.c                # decimal integer parsing (value-parser-numeric.hh)
     c/mat4.c                   # 4x4 double transform math (xform-eval.cc)
     c/path.c                   # USD path string algorithms (path.cc)
+    c/interpolation.c          # lerp/slerp interpolation kernels (interpolation.cc)
     c/spline.c                 # cubic spline segment math (spline-eval.hh)
     ../logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
