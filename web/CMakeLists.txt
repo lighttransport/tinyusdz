@@ -584,6 +584,11 @@ endif()
 
 
 add_executable(${BUILD_TARGET} ${SOURCES})
+if(LIGHTUSD_WASM_PRODUCT STREQUAL "combined")
+  # The compatibility product compiles the shared next C core directly.
+  set_target_properties(${BUILD_TARGET} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endif()
 add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})

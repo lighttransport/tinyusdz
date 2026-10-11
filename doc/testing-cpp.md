@@ -895,6 +895,33 @@ Run it explicitly when changing shared code or the next product:
 - These checks are a required regression gate in addition to the default
   native suite; passing one does not replace the other.
 
+The standalone suite also checks the shared C11 array grammar and its C++
+adapter: bounded/truncated input, element/scalar limits, eager versus retained
+source arrays, integer boundaries, and all 65,536 binary16 encodings. TypeInfo
+tests check stable pointers and field parity with the C table. On GCC/Clang,
+`next_c11_syntax` compiles every first-party C core source (including generated
+schema data) with `-std=c11 -Wall -Wextra -Wpedantic -Werror`.
+
+For C-core size measurements, configure a Ninja tree with
+`CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then use the shared measurement harness:
+
+```bash
+scripts/bench-core-port.sh --build-dir build_ninja/next-release --repeat 3
+scripts/bench-core-port.sh --build-dir web/build_ninja --wasm --repeat 3
+```
+
+The wrapper discovers transitive objects and linked artifacts from Ninja's
+actual target commands. It writes `core-port.json` in that build directory,
+including source/cache fingerprints, compiler versions, clean-build timing,
+object sections, and raw/gzip WASM sizes. Use `--output` for a different report,
+`--target` for another target, `--size-tool` to override section inspection, and
+`--artifact` to include an additional linked file. Runs clean the selected
+target before rebuilding; preserve baseline artifacts elsewhere first. Run
+before/after timing passes without competing builds, and keep compiler, flags,
+features, SIMD, memory width, and threading identical. Compare repeated load
+and export timings as well as size; investigate repeatable regressions above
+5% rather than accepting a smaller binary on size alone.
+
 #### AOUSD Core supplemental inputs
 
 The official [Core supplemental repository](https://github.com/aousd/core-spec-supplemental-public)

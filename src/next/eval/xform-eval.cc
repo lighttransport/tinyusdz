@@ -31,10 +31,6 @@ namespace {
 
 void SetIdentity(double* m) { lu_mat4_identity(m); }
 
-void MatrixMultiply(double* result, const double* a, const double* b) {
-  lu_mat4_mul(result, a, b);
-}
-
 // --- Bit-exact xform evaluation -------------------------------------------
 //
 // To produce world/local matrices that are byte-identical to the legacy
@@ -43,20 +39,6 @@ void MatrixMultiply(double* result, const double* a, const double* b) {
 // trig (NOT std::sin/cos(deg * pi/180)), the per-op matrix layouts, and the
 // `cm = op * cm` / `world = local * parent` (row-vector) multiply order.
 
-constexpr double kPi = 3.141592653589793238462643383279502884e+00;
-
-inline bool IsCloseD(double a, double b, double eps) {
-  double d = a - b;
-  if (std::fabs(d) <= eps) return true;
-  return std::fabs(d) <= (eps * std::fmax(std::fabs(a), std::fabs(b)));
-}
-
-// cos(pi*x) — verbatim port of lightusd::math::cos_pi_imp<double>.
-inline double CosPi(double x) { return lu_cos_pi(x); }
-
-// sin(pi*x) — verbatim port of lightusd::math::sin_pi_imp<double>.
-inline double SinPi(double x) { return lu_sin_pi(x); }
-
 void MakeTranslationD(double* m, double x, double y, double z) {
   lu_mat4_translation(m, x, y, z);
 }
@@ -64,11 +46,6 @@ void MakeTranslationD(double* m, double x, double y, double z) {
 void MakeScaleD(double* m, double x, double y, double z) {
   lu_mat4_scale(m, x, y, z);
 }
-
-// angle in degrees; layout matches src/xform.cc XformEvaluator::RotateX/Y/Z.
-void MakeRotXD(double* m, double deg) { lu_mat4_rot_x(m, deg); }
-void MakeRotYD(double* m, double deg) { lu_mat4_rot_y(m, deg); }
-void MakeRotZD(double* m, double deg) { lu_mat4_rot_z(m, deg); }
 
 // dst = a * b (row-vector convention), via the existing bit-compatible multiply.
 void MatMulD(double* dst, const double* a, const double* b) {

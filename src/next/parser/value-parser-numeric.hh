@@ -12,9 +12,10 @@
 #include <string>
 #include <system_error>
 
+#include "../c/lightusd-core-c.h"  // lu_decimal_to_*
+
 namespace lightusd {
 namespace next {
-#include "../c/lightusd-core-c.h"  // lu_decimal_to_*
 
 namespace value_parser_detail {
 

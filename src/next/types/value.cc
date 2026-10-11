@@ -1259,35 +1259,6 @@ const double* Value::as_double3() const {
 
 namespace {
 
-// Same conversion as crate-format.hh HalfToFloat (kept local: the types
-// layer must not depend on the crate reader).
-inline float HalfBitsToFloat(uint16_t h) {
-  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
-  uint32_t exponent = (h >> 10) & 0x1Fu;
-  uint32_t mantissa = h & 0x3FFu;
-  uint32_t bits;
-  if (exponent == 0) {
-    if (mantissa == 0) {
-      bits = sign;  // +/- 0
-    } else {
-      // Subnormal half -> normalized float
-      exponent = 127 - 15 + 1;
-      while ((mantissa & 0x400u) == 0) {
-        mantissa <<= 1;
-        exponent--;
-      }
-      mantissa &= 0x3FFu;
-      bits = sign | (exponent << 23) | (mantissa << 13);
-    }
-  } else if (exponent == 0x1Fu) {
-    bits = sign | 0x7F800000u | (mantissa << 13);  // inf / nan
-  } else {
-    bits = sign | ((exponent - 15 + 127) << 23) | (mantissa << 13);
-  }
-  float f;
-  std::memcpy(&f, &bits, sizeof(f));
-  return f;
-}
 
 inline int HalfLaneCount(TypeId id) {
   switch (id) {
@@ -1313,7 +1284,7 @@ bool Value::ToFloatLanes(int lanes, float* out) const {
   if (!out || is_array_) return false;
   if (HalfLaneCount(type_id_) == lanes) {
     const uint16_t* bits = reinterpret_cast<const uint16_t*>(storage_);
-    for (int i = 0; i < lanes; ++i) out[i] = HalfBitsToFloat(bits[i]);
+    for (int i = 0; i < lanes; ++i) out[i] = lu_half_to_float(bits[i]);
     return true;
   }
   switch (lanes) {

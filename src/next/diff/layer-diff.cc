@@ -4,6 +4,7 @@
 // LightUSD Next - Layer / PrimSpec diff (see layer-diff.hh).
 
 #include "layer-diff.hh"
+#include "../c/lightusd-core-c.h"
 
 #include <algorithm>
 #include <cmath>
@@ -124,33 +125,7 @@ bool AssetPathStringsEquivalentForDiff(const std::string &lhs_path,
 // ULP / eps tolerant scalar comparison.
 // ---------------------------------------------------------------------------
 
-float HalfBitsToFloat(uint16_t h) {
-  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
-  uint32_t exp = (h >> 10) & 0x1Fu;
-  uint32_t man = h & 0x3FFu;
-  uint32_t bits;
-  if (exp == 0) {
-    if (man == 0) {
-      bits = sign;  // +-0
-    } else {
-      // Subnormal half -> normalized float.
-      exp = 127 - 15 + 1;
-      while (!(man & 0x400u)) {
-        man <<= 1;
-        --exp;
-      }
-      man &= 0x3FFu;
-      bits = sign | (exp << 23) | (man << 13);
-    }
-  } else if (exp == 31) {
-    bits = sign | 0x7F800000u | (man << 13);  // inf / nan
-  } else {
-    bits = sign | ((exp - 15 + 127) << 23) | (man << 13);
-  }
-  float out;
-  std::memcpy(&out, &bits, sizeof(out));
-  return out;
-}
+
 
 bool UlpsEqual(float a, float b, uint32_t maxUlps) {
   if (std::isnan(a) || std::isnan(b)) {
@@ -346,7 +321,7 @@ bool NumericPodAlmostEqual(const Value &l, const Value &r,
     std::memcpy(&ha, lb + i * sizeof(uint16_t), sizeof(uint16_t));
     std::memcpy(&hb, rb + i * sizeof(uint16_t), sizeof(uint16_t));
     if (ha == hb) continue;  // bitwise-equal half
-    if (!ScalarAlmostEqual(HalfBitsToFloat(ha), HalfBitsToFloat(hb), o)) {
+    if (!ScalarAlmostEqual(lu_half_to_float(ha), lu_half_to_float(hb), o)) {
       return false;
     }
   }

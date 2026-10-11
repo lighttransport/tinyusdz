@@ -223,13 +223,13 @@ struct SliceParser {
 
   bool parse_bool(bool* out) {
     skip_ws();
-    if (p + 4 <= end && std::memcmp(p, "true", 4) == 0 &&
+    if (end - p >= 4 && std::memcmp(p, "true", 4) == 0 &&
         (p + 4 == end || !SliceIsIdentifierContinue(*(p + 4)))) {
       p += 4;
       *out = true;
       return true;
     }
-    if (p + 5 <= end && std::memcmp(p, "false", 5) == 0 &&
+    if (end - p >= 5 && std::memcmp(p, "false", 5) == 0 &&
         (p + 5 == end || !SliceIsIdentifierContinue(*(p + 5)))) {
       p += 5;
       *out = false;
@@ -377,38 +377,65 @@ struct SliceParser {
 // it can't drive a multi-GB vector even from a large/streamed input.
 constexpr size_t kMaxArrayScalars = size_t(1) << 30;  // ~1.07e9 scalars
 
-template <class T, class ParseOne>
-bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) {
-  if (!sp->consume('[')) return false;
-  out->clear();
-  if (sp->at_array_end()) return sp->finish_array();
-  while (true) {
-    T v{};
-    if (!parse_one(sp, &v)) return false;
-    if (out->size() >= kMaxArrayScalars) return false;
-    out->push_back(v);
-    if (sp->maybe_consume(',')) {
-      // Trailing comma before ']' is valid USDA ([0, 1, 2,]).
-      if (sp->at_array_end()) return sp->finish_array();
-      continue;
-    }
-    return sp->finish_array();
-  }
+// One adapter per scalar converter, independent of tuple/matrix dimensions.
+// Count-only instantiations validate without materializing any values.
+template <class T, bool Materialize = true, class ParseOne>
+bool WalkArray(SliceParser* sp, unsigned rows, unsigned columns,
+               std::vector<T>* out, size_t max_elements, size_t* out_count,
+               ParseOne parse_one) {
+  struct Context {
+    std::vector<T>* out;
+    ParseOne parse;
+  } context{out, parse_one};
+  if constexpr (Materialize) out->clear();
+  const auto read = [](void* user, lu_view remaining, size_t max_values,
+                       size_t* out_values) -> size_t {
+    auto& ctx = *static_cast<Context*>(user);
+    SliceParser scalar{remaining.data, remaining.data + remaining.len};
+    size_t count = 0;
+    const char* last_value = remaining.data;
+    do {
+      T value{};
+      if (!ctx.parse(&scalar, &value)) break;
+      if constexpr (Materialize) ctx.out->push_back(std::move(value));
+      ++count;
+      last_value = scalar.p;
+      if (count == max_values || !scalar.maybe_consume(',')) break;
+    } while (true);
+    *out_values = count;
+    // Leave the final separator to the C grammar. It accepts a trailing comma
+    // or retries/rejects a malformed scalar without committing a failed parse.
+    return static_cast<size_t>(last_value - remaining.data);
+  };
+  const bool ok = lu_usda_walk_array(
+      {sp->p, static_cast<size_t>(sp->end - sp->p)}, rows, columns,
+      max_elements, Materialize ? kMaxArrayScalars : SIZE_MAX,
+      read, &context, out_count) != 0;
+  if (ok) sp->p = sp->end;
+  return ok;
 }
 
-template <class ScalarT, uint32_t N, class ParseOne>
-bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
-                     ParseOne parse_one) {
+template <class T, class ParseOne>
+bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) {
+  return WalkArray(sp, 0, 1, out, SIZE_MAX, nullptr, parse_one);
+}
+
+// Keep tuple scalar conversion inlined: row callbacks regress comment-heavy
+// WASM arrays. Count-only traversal still shares the bounded C grammar.
+template <class ScalarT, uint32_t FixedColumns, class ParseOne>
+bool ParseTupleArrayImpl(SliceParser* sp, std::vector<ScalarT>* out,
+                         ParseOne parse_one, uint32_t columns) {
+  if constexpr (FixedColumns != 0) columns = FixedColumns;
   if (!sp->consume('[')) return false;
   out->clear();
   if (sp->at_array_end()) return sp->finish_array();
   while (true) {
     if (!sp->consume('(')) return false;
-    for (uint32_t i = 0; i < N; i++) {
+    for (uint32_t i = 0; i < columns; i++) {
       ScalarT v{};
       if (!parse_one(sp, &v)) return false;
       out->push_back(v);
-      if (i + 1 < N && !sp->consume(',')) return false;
+      if (i + 1 < columns && !sp->consume(',')) return false;
     }
     if (!sp->consume(')')) return false;
     if (out->size() > kMaxArrayScalars) return false;
@@ -421,6 +448,26 @@ bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
 }
 
 template <class ScalarT, uint32_t N, class ParseOne>
+bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
+                     ParseOne parse_one) {
+#if defined(__wasm__) && !defined(__wasm64__)
+  // wasm32 benefits from sharing tuple dimensions. Keep the unrolled form on
+  // native/memory64, where a runtime dimension slows comment-heavy arrays.
+  return ParseTupleArrayImpl<ScalarT, 0>(sp, out, parse_one, N);
+#else
+  return ParseTupleArrayImpl<ScalarT, N>(sp, out, parse_one, N);
+#endif
+}
+
+// Keep matrix scalar conversion inlined: crossing the C callback boundary for
+// each short row regresses large native matrix-array loads. Counting still
+// shares the C grammar; this existing optimized path keeps its scalar ceiling.
+template <class ScalarT, uint32_t N, class ParseOne>
+#if !defined(__wasm__) && (defined(__GNUC__) || defined(__clang__))
+// Keep one hot matrix loop instead of duplicating it in the large dispatcher
+// and its compiler-generated specializations.
+__attribute__((noinline))
+#endif
 bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
                       ParseOne parse_one) {
   if (!sp->consume('[')) return false;
@@ -557,94 +604,23 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
 
 template <class T, class ParseOne>
 bool CountScalarArray(const char* data, size_t len, size_t max_elements,
-                     size_t* out_count,
-                     ParseOne parse_one) {
-  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+                      size_t* out_count, ParseOne parse_one) {
   SliceParser sp{data, data + len};
-  size_t count = 0;
-  if (!sp.consume('[')) return false;
-  if (sp.at_array_end()) {
-    if (out_count) *out_count = 0;
-    return sp.finish_array();
-  }
-
-  while (true) {
-    T v{};
-    if (!parse_one(&sp, &v)) {
-      return false;
-    }
-    ++count;
-    if (count > max_elements) return false;
-    if (sp.maybe_consume(',')) {
-      continue;
-    }
-    return sp.finish_array() && (out_count != nullptr) &&
-           (*out_count = count, true);
-  }
+  return WalkArray<T, false>(&sp, 0, 1, nullptr, max_elements, out_count, parse_one);
 }
 
 template <class T, uint32_t N, class ParseOne>
 bool CountTupleArray(const char* data, size_t len, size_t max_elements,
                      size_t* out_count, ParseOne parse_one) {
-  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
   SliceParser sp{data, data + len};
-  if (!sp.consume('[')) return false;
-  if (sp.at_array_end()) {
-    if (out_count) *out_count = 0;
-    return sp.finish_array();
-  }
-
-  size_t count = 0;
-  while (true) {
-    if (!sp.consume('(')) return false;
-    for (uint32_t i = 0; i < N; i++) {
-      T v{};
-      if (!parse_one(&sp, &v)) return false;
-      if (i + 1 < N && !sp.consume(',')) return false;
-    }
-    if (!sp.consume(')')) return false;
-    ++count;
-    if (count > max_elements) return false;
-    if (sp.maybe_consume(',')) {
-      continue;
-    }
-    return sp.finish_array() && (out_count != nullptr) && (*out_count = count, true);
-  }
+  return WalkArray<T, false>(&sp, 0, N, nullptr, max_elements, out_count, parse_one);
 }
 
 template <class T, uint32_t N, class ParseOne>
 bool CountMatrixArray(const char* data, size_t len, size_t max_elements,
-                      size_t* out_count,
-                      ParseOne parse_one) {
-  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+                      size_t* out_count, ParseOne parse_one) {
   SliceParser sp{data, data + len};
-  if (!sp.consume('[')) return false;
-  if (sp.at_array_end()) {
-    if (out_count) *out_count = 0;
-    return sp.finish_array();
-  }
-
-  size_t count = 0;
-  while (true) {
-    if (!sp.consume('(')) return false;
-    for (uint32_t r = 0; r < N; r++) {
-      if (!sp.consume('(')) return false;
-      for (uint32_t c = 0; c < N; c++) {
-        T v{};
-        if (!parse_one(&sp, &v)) return false;
-        if (c + 1 < N && !sp.consume(',')) return false;
-      }
-      if (!sp.consume(')')) return false;
-      if (r + 1 < N && !sp.consume(',')) return false;
-    }
-    if (!sp.consume(')')) return false;
-    ++count;
-    if (count > max_elements) return false;
-    if (sp.maybe_consume(',')) {
-      continue;
-    }
-    return sp.finish_array() && (out_count != nullptr) && (*out_count = count, true);
-  }
+  return WalkArray<T, false>(&sp, N, N, nullptr, max_elements, out_count, parse_one);
 }
 
 bool ParseUsdaArrayElementCount(const char* data, size_t len,
@@ -655,6 +631,7 @@ bool ParseUsdaArrayElementCount(const char* data, size_t len,
     max_elements = std::numeric_limits<size_t>::max();
   }
   *out_count = 0;
+  if (!data || len < 2) return false;
 
   auto parse_f = [](SliceParser* s, float* v) { return s->parse_float(v); };
   auto parse_d = [](SliceParser* s, double* v) { return s->parse_double(v); };
@@ -682,9 +659,9 @@ bool ParseUsdaArrayElementCount(const char* data, size_t len,
   switch (element_type) {
     case TypeId::Float:
     case TypeId::Half:
-    case TypeId::TimeCode:
       return CountScalarArray<float>(data, len, max_elements, out_count,
                                     parse_f);
+    case TypeId::TimeCode:
     case TypeId::Double:
       return CountScalarArray<double>(data, len, max_elements, out_count,
                                      parse_d);

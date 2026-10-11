@@ -6074,3 +6074,83 @@ standalone harness dumps every token (type, line, column, value) for 4,000
 random inputs over a rich alphabet (UTF-8 bytes, quotes, `@`, `</`, `#`, `/*`,
 keywords, `inf`/`nan`, hex/float/exponent forms) against the pre-port lexer and
 the ported lexer: zero output differences. 55/55.
+
+### Counted USDA array traversal and C/C++ ABI cleanup
+
+The next array parser now shares an allocation-free C11 cursor/grammar in
+`c/array-parser.c` for scalar materialization and scalar/tuple/matrix
+counting. Callbacks receive bounded spans and value limits; C++ retains scalar
+conversion and ownership. Callbacks process scalar runs or complete tuple rows,
+keeping conversion loops inlined. A per-component callback experiment was
+rejected for runtime overhead. Tuple and matrix materialization retain C++
+conversion loops: row callbacks regressed comment-heavy WASM tuples and native
+matrix loads. Tuple dimensions share a runtime C++ helper on wasm32; native and
+memory64 keep fixed-dimension specializations after memory64 testing showed a
+regression with runtime dimensions.
+Native simple-array and parallel parsing remain available.
+On GCC/Clang native builds, the matrix loop stays outside the large dispatcher
+to avoid an inlining regression in large file loads.
+
+The cleanup also removes unused delta/matrix helpers, uses the existing C half
+decoder instead of duplicate C++ decoders, and checks remaining input length
+without forming out-of-range lookahead pointers. Lazy timecode counting now
+uses double precision, matching materialization. C and C++ enum correspondences
+are checked at compile time. `GetTypeInfo` constructs real C++ records in fixed
+static storage instead of aliasing C records as a different effective type;
+returned pointers remain stable and no heap allocation is added. The numeric
+parser includes the C ABI header outside its C++ namespace, avoiding distinct
+namespace-local C types in callback signatures (caught by UBSan).
+
+Generated schema strings use a byte initializer that is valid under strict C11
+translation limits. The 30,885-byte arena is unchanged, including its final
+NUL; offsets account for UTF-8 bytes. The combined WASM target explicitly uses
+C11 for the same sources. `bench-core-port.sh` now delegates to the common JSON
+measurement harness, discovers actual target artifacts, and performs real clean
+builds instead of reporting potentially incremental builds as clean timings.
+
+Size checkpoint against `c454dfd10`, using GCC 13.3 Release for native and
+Emscripten 4.0.14 MinSizeRel (`-Oz`) for next-only WASM. WASM keeps SIMD and EXR
+enabled, threads disabled, and the existing assertions settings for each
+memory width. Features and public APIs are unchanged.
+
+| Artifact / section bytes | Before | After | Reduction |
+| --- | ---: | ---: | ---: |
+| Native archive text + data | 5,002,689 | 5,000,707 | 1,982 |
+| Native archive file | 9,533,948 | 9,534,344 | -396 |
+| wasm32 raw | 2,392,374 | 2,388,718 | 3,656 |
+| wasm32 gzip | 957,045 | 956,795 | 250 |
+| memory64 raw | 2,657,980 | 2,656,880 | 1,100 |
+| memory64 gzip | 1,004,934 | 1,005,036 | -102 |
+
+The alias-safe TypeInfo bridge adds 3,152 native BSS bytes, included when
+assessing memory cost. The wasm32 parser object drops from 94,810 to 90,395
+text+data bytes, with 906 bytes added by the C walker. Including the TypeInfo
+bridge and every other affected object, total wasm32 object text+data drops by
+2,008 bytes. These are modest size savings: the native archive file grows by
+396 bytes, and memory64 gzip grows by 102 bytes despite the smaller raw module.
+Keeping the faster materializers takes priority over those small compressed-size
+differences. Unused-helper removal is source simplification, not a claimed
+linked-code win.
+
+Validation includes 56 passing standalone Debug checks and 52 passing optimized
+ASan/UBSan checks; each suite skips two optional AOUSD tests whose supplemental
+inputs are absent. LeakSanitizer is disabled because the sandbox does not permit
+its process inspection. The GCC/Clang strict-C11 gate and generated-file check
+pass. Both next and combined WASM products build in wasm32 and memory64.
+Each full web profile passed 57 checks, with two setup failures caused by the
+missing local MuJoCo Menagerie dataset. Loading and layer-export behavior parity
+are rerun on the final binaries after the performance adjustments. The Pixar
+comparison's 706 fixture statuses/difference counts match the unchanged
+baseline; its existing compatibility differences are not claimed as passes.
+An additional direct baseline/final `next_usdcat --rewrite-layer` comparison
+across 718 USDA/USDC fixtures finds no exit-status or stdout differences.
+
+Runtime probes use alternating baseline/changed runs, output hashes, 10- and
+50,000-element float/int/float3/matrix4d WASM arrays, comment-heavy tuple arrays,
+native eager/lazy loads, and roughly 5 MB serial/four-thread CLI rewrites.
+Node's default tiering produces substantial timing variance, so suspect cases
+are also checked with `--no-liftoff` (optimized compilation before timing) and
+paired modules. The retained native matrix loop measured 35.6 versus 37.0 ms
+for loading in a seven-run pinned-core recheck; the apparent memory64 integer
+export regression did not reproduce in a five-run paired optimized check
+(1.91 versus 1.81 ms). No general throughput or clean-build speedup is claimed.

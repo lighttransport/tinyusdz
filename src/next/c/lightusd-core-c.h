@@ -369,9 +369,8 @@ typedef enum lu_token_type {
  * Built-in USD type metadata (src/next/c/type-names.c)
  *
  * The USD<->TypeId mapping and per-type layout. Metadata only: no per-type
- * executable callbacks. The struct layout must stay identical to
- * lightusd::next::TypeInfo (type-info.hh); a static_assert in type-info.cc
- * checks it.
+ * executable callbacks. C++ TypeInfo descriptors are constructed field by
+ * field from these records; they do not alias the C storage.
  * ============================================================ */
 
 /* TypeId values; keep in sync with next::TypeId (type-id.hh). */
@@ -554,6 +553,28 @@ LU_CORE_API int lu_lex_is_digit(char c);
 LU_CORE_API int lu_lex_is_hex_digit(char c);
 LU_CORE_API int lu_lex_hex_val(char c);
 LU_CORE_API size_t lu_lex_match_float_special(const char *p, const char *end);
+/* Shared array grammar. rows=0, columns=1 denotes scalars; rows=0,
+ * columns=2..4 denotes tuples; rows=columns=2..4 denotes matrices.
+ * The callback reads up to max_values comma-separated scalars, returning its
+ * consumed byte count (zero on failure) and the number of values read. It stops
+ * before the separator following the last requested value. A shorter batch is
+ * allowed for scalar arrays; tuple/matrix rows require exactly columns values.
+ * It may append to caller-owned storage. Batching keeps conversions inlined
+ * inside the caller rather than making an indirect call for every component.
+ * Returns 1 only after consuming the complete array, otherwise 0. out_count
+ * is optional, zeroed on entry and published only on success. Callback side
+ * effects on failure are not rolled back: discard partial output. Limits are
+ * literal ceilings (zero allows only an empty array). No allocation or ownership
+ * crosses this boundary; callback spans are borrowed for the duration of the call.
+ */
+typedef size_t (*lu_usda_read_values)(void *user, lu_view remaining,
+                                      size_t max_values, size_t *out_values);
+LU_CORE_API int lu_usda_walk_array(lu_view input, unsigned rows,
+                                   unsigned columns, size_t max_elements,
+                                   size_t max_scalars,
+                                   lu_usda_read_values read_values, void *user,
+                                   size_t *out_count);
+
 /* TokenType (lu_token_type) for a bounded identifier, else LU_TOK_IDENTIFIER. */
 LU_CORE_API uint8_t lu_lex_lookup_keyword(const char *p, size_t n);
 /* Byte length of the numeric literal starting at p. */

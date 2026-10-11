@@ -42,14 +42,14 @@ int lu_lex_hex_val(char c) {
  * the word so e.g. `info` / `index` are not mistaken for `inf`. */
 size_t lu_lex_match_float_special(const char *p, const char *end) {
   size_t i;
-  if (p + 8 <= end) {
+  if (end - p >= 8) {
     static const char kInfinity[] = "infinity";
     for (i = 0; i < 8; i++)
       if (tolower((unsigned char)p[i]) != kInfinity[i]) break;
     if (i == 8 && ((p + 8 == end) || !lu_lex_is_identifier_continue_ascii(p[8])))
       return 8;
   }
-  if (p + 3 <= end) {
+  if (end - p >= 3) {
     if (tolower((unsigned char)p[0]) == 'i' &&
         tolower((unsigned char)p[1]) == 'n' &&
         tolower((unsigned char)p[2]) == 'f' &&

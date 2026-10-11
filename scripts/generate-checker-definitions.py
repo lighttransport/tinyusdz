@@ -120,11 +120,6 @@ ROW_TYPES = {
 }
 
 
-def _c_string(text):
-    """C string literal for one arena entry, split at NUL-free run boundaries."""
-    return json.dumps(text or '', ensure_ascii=True)
-
-
 def emit_c(schema, shader, references):
     """Return (header_text, source_text) for the C11 data module."""
     strings = []
@@ -133,7 +128,7 @@ def emit_c(schema, shader, references):
     def off(text):
         text = text or ''
         if text not in offsets:
-            offsets[text] = sum(len(s) + 1 for s in strings)
+            offsets[text] = sum(len(s.encode('utf-8')) + 1 for s in strings)
             strings.append(text)
         return offsets[text]
 
@@ -219,14 +214,13 @@ def emit_c(schema, shader, references):
               '',
               '#include "generated-schema-tables.h"',
               '',
-              '/* NUL-separated arena: every row field is an offset into it. Each',
-               ' * entry below is a text literal immediately followed by an',
-               ' * explicit NUL literal, so the separators are really present',
-               ' * (plain string concatenation would join them into one string). */',
-              'const char lu_validation_strings[] =']
-    for i, s in enumerate(strings):
-        source.append('    %s "\\0" /* %d */' % (_c_string(s), i))
-    source.append('    ;')
+              '/* NUL-separated UTF-8 arena, with no overlength C string literals. */',
+              'const char lu_validation_strings[] = {']
+    arena = b''.join(s.encode('utf-8') + b'\0' for s in strings) + b'\0'
+    for i in range(0, len(arena), 24):
+        source.append('    ' + ', '.join('(char)0x%02x' % b if b > 127 else str(b)
+                                       for b in arena[i:i + 24]) + ',')
+    source.append('};')
     source.append('')
 
     source.append('const uint32_t lu_validation_token_offsets[] = {')

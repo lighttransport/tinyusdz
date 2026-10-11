@@ -620,6 +620,13 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_load_rules PRIVATE lightusd_next)
 
+    add_executable(test_array_parser ../../tests/next/test_array_parser.cc)
+    target_link_libraries(test_array_parser PRIVATE lightusd_next)
+    add_executable(test_array_parser_c ../../tests/next/test_array_parser_c.c)
+    target_link_libraries(test_array_parser_c PRIVATE lightusd_next)
+    set_target_properties(test_array_parser_c PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
     add_executable(test_path_expression_c_core
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_path_expression_c_core.cc
     )
@@ -1202,6 +1209,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+      add_test(NAME next_c11_syntax
+          COMMAND ${CMAKE_COMMAND} -DC_COMPILER=${CMAKE_C_COMPILER}
+              -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/../..
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/check-c11.cmake)
+    endif()
+    add_test(NAME next_test_array_parser COMMAND test_array_parser)
+    add_test(NAME next_test_array_parser_c COMMAND test_array_parser_c)
     add_test(NAME next_test_path_expression_c_core COMMAND test_path_expression_c_core
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_layer_diff COMMAND test_layer_diff

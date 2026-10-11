@@ -19,6 +19,77 @@ namespace next {
 
 namespace {
 
+// C/C++ enum values are an ABI contract.
+static_assert(static_cast<unsigned>(TokenType::Invalid) == LU_TOK_INVALID,
+              "TokenType::Invalid ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Eof) == LU_TOK_EOF,
+              "TokenType::Eof ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Identifier) == LU_TOK_IDENTIFIER,
+              "TokenType::Identifier ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::String) == LU_TOK_STRING,
+              "TokenType::String ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Number) == LU_TOK_NUMBER,
+              "TokenType::Number ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::PathRef) == LU_TOK_PATHREF,
+              "TokenType::PathRef ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Def) == LU_TOK_DEF,
+              "TokenType::Def ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Over) == LU_TOK_OVER,
+              "TokenType::Over ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Class) == LU_TOK_CLASS,
+              "TokenType::Class ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::True) == LU_TOK_TRUE,
+              "TokenType::True ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::False) == LU_TOK_FALSE,
+              "TokenType::False ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::None) == LU_TOK_NONE,
+              "TokenType::None ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::OpenParen) == LU_TOK_OPENPAREN,
+              "TokenType::OpenParen ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::CloseParen) == LU_TOK_CLOSEPAREN,
+              "TokenType::CloseParen ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::OpenBracket) == LU_TOK_OPENBRACKET,
+              "TokenType::OpenBracket ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::CloseBracket) == LU_TOK_CLOSEBRACKET,
+              "TokenType::CloseBracket ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::OpenBrace) == LU_TOK_OPENBRACE,
+              "TokenType::OpenBrace ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::CloseBrace) == LU_TOK_CLOSEBRACE,
+              "TokenType::CloseBrace ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Equals) == LU_TOK_EQUALS,
+              "TokenType::Equals ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Colon) == LU_TOK_COLON,
+              "TokenType::Colon ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Dot) == LU_TOK_DOT,
+              "TokenType::Dot ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Comma) == LU_TOK_COMMA,
+              "TokenType::Comma ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Semicolon) == LU_TOK_SEMICOLON,
+              "TokenType::Semicolon ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::At) == LU_TOK_AT,
+              "TokenType::At ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::TimeSamples) == LU_TOK_TIMESAMPLES,
+              "TokenType::TimeSamples ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Custom) == LU_TOK_CUSTOM,
+              "TokenType::Custom ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Uniform) == LU_TOK_UNIFORM,
+              "TokenType::Uniform ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Varying) == LU_TOK_VARYING,
+              "TokenType::Varying ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Prepend) == LU_TOK_PREPEND,
+              "TokenType::Prepend ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Append) == LU_TOK_APPEND,
+              "TokenType::Append ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Delete) == LU_TOK_DELETE,
+              "TokenType::Delete ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Add) == LU_TOK_ADD,
+              "TokenType::Add ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Reorder) == LU_TOK_REORDER,
+              "TokenType::Reorder ABI mismatch");
+static_assert(static_cast<unsigned>(TokenType::Rel) == LU_TOK_REL,
+              "TokenType::Rel ABI mismatch");
+
+
 bool IsIdentifierStart(const char* data, size_t size, size_t pos) {
   return lu_lex_is_identifier_start(data, size, pos) != 0;
 }
