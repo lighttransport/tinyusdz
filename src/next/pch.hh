@@ -9,3 +9,5 @@
 #include "composition/composition.hh"
 #include "validation/usd-validation.hh"
 #include "validation/validation-context.hh"
+
+#include "../external/fast_float/include/fast_float/fast_float.h"
