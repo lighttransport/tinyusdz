@@ -1859,7 +1859,10 @@ class LightUSDLoader extends Loader {
               initOptions.onLightUSDDebug = this._makeDebugMemoryCallback(null, this.debugMemory_);
             }
 
+            if (options.locateFeature) initOptions.locateFeature = options.locateFeature;
             this.native_ = await initLightUSDNative(initOptions);
+            if (options.preloadEXR) await this.native_?.loadEXR?.();
+            if (options.preloadValidator) await this.native_?.loadValidator?.();
             if (!this.native_) {
                 throw new Error('LightUSDLoader: Failed to initialize native module.');
             }

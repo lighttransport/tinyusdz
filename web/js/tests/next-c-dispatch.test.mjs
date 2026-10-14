@@ -9,6 +9,8 @@ const {default: createModule} = await import(wasm64
   ? '../src/lightusd/lightusd_next_64.js'
   : '../src/lightusd/lightusd_next.js');
 const module = await createModule();
+await module.loadValidator();
+await module.loadEXR();
 const encode = text => new TextEncoder().encode(text);
 const assertAggregateHeadroomRejectsBeforeBuild = (stream, aggregateMethod,
   itemMethod, itemCount) => {
@@ -1509,19 +1511,11 @@ try {
 } finally {
   module._lightusd_next_alloc = originalImageAlloc;
 }
-const exrEnabled = typeof module._lightusd_next_encoded_image_data === 'function';
-assert.deepEqual(imageAllocSizes, [6], exrEnabled
-  ? 'EXR encodes once without allocating a second WASM output buffer'
-  : 'disabled EXR only stages the input before returning unsupported');
-if (exrEnabled) {
-  assert.ok(encodedExr instanceof Uint8Array && encodedExr.length > 32,
-    'next-only image encoder writes bounded EXR output');
-  assert.deepEqual(Array.from(encodedExr.subarray(0, 4)), [0x76, 0x2f, 0x31, 0x01]);
-  assert.throws(() => stream.encodeImageNative(new Uint8Array([0, 0]), 1, 1, 2, 'exr'),
-    /image encoding failed/, 'EXR rejects unsupported two-channel pixels');
-} else {
-  assert.equal(encodedExr, null, 'EXR stays explicitly unsupported when disabled');
-}
+assert.deepEqual(imageAllocSizes, [], 'EXR uses its independent module allocator');
+assert.ok(encodedExr instanceof Uint8Array && encodedExr.length > 32);
+assert.deepEqual(Array.from(encodedExr.subarray(0, 4)), [0x76, 0x2f, 0x31, 0x01]);
+assert.throws(() => stream.encodeImageNative(new Uint8Array([0, 0]), 1, 1, 2, 'exr'),
+  /EXR codec failed/, 'EXR rejects unsupported two-channel pixels');
 assert.deepEqual(stream.encodeImageNative(pngPixels, 0, 1, 4, 'png'),
   {success: false, error: 'Invalid image dimensions.'});
 assert.throws(() => stream.encodeImageNative(pngPixels, 1, 1, 4),

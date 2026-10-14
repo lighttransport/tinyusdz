@@ -1,3 +1,4 @@
+#include "escape-string.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
@@ -196,35 +197,6 @@ void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
 }
 
 // Escape a string for USDA output
-std::string EscapeString(const std::string& s) {
-  std::string result;
-  result.reserve(s.size() + 2);
-  result += '"';
-  for (char c : s) {
-    switch (c) {
-      case '"':  result += "\\\""; break;
-      case '\\': result += "\\\\"; break;
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default: {
-        // Match the value printer: \xNN-escape control bytes.
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (uc < 0x20 || uc == 0x7f) {
-          static const char* hexd = "0123456789abcdef";
-          result += "\\x";
-          result += hexd[uc >> 4];
-          result += hexd[uc & 0xf];
-        } else {
-          result.push_back(c);
-        }
-        break;
-      }
-    }
-  }
-  result += '"';
-  return result;
-}
 
 // Prefix every line of `s` after the first with `prefix`. Used to re-indent a
 // multi-line dictionary value (from PrintValue) under its metadata key so the
@@ -262,17 +234,17 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   std::vector<std::string> lines;
 
   if (meta.defaultPrim_set || !meta.defaultPrim.empty()) {
-    lines.push_back(opts.indent + "defaultPrim = " + EscapeString(meta.defaultPrim));
+    lines.push_back(opts.indent + "defaultPrim = " + EscapeUSDAString(meta.defaultPrim));
   }
 
   if ((meta.doc_set || !meta.doc.empty()) && opts.include_comments) {
-    lines.push_back(opts.indent + "doc = " + EscapeString(meta.doc));
+    lines.push_back(opts.indent + "doc = " + EscapeUSDAString(meta.doc));
   }
 
   if ((meta.comment_set || !meta.comment.empty()) && opts.include_comments) {
     // Comments are spelled as a BARE string literal (pxr 26.x rejects
     // `comment = "..."` as a non-metadata field).
-    lines.push_back(opts.indent + EscapeString(meta.comment));
+    lines.push_back(opts.indent + EscapeUSDAString(meta.comment));
   }
 
   if (meta.hasOwnedSubLayers_set) {
@@ -280,7 +252,7 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
                     (meta.hasOwnedSubLayers ? "true" : "false"));
   }
   if (meta.owner_set || !meta.owner.empty()) {
-    lines.push_back(opts.indent + "owner = " + EscapeString(meta.owner));
+    lines.push_back(opts.indent + "owner = " + EscapeUSDAString(meta.owner));
   }
   if (meta.autoPlay_set) {
     lines.push_back(opts.indent + std::string("autoPlay = ") +
@@ -288,7 +260,7 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
   if (meta.playbackMode_set) {
     lines.push_back(opts.indent + "playbackMode = " +
-                    EscapeString(meta.playbackMode));
+                    EscapeUSDAString(meta.playbackMode));
   }
 
   if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
@@ -308,7 +280,7 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (meta.upAxis_set || meta.upAxis != "Y") {
-    lines.push_back(opts.indent + "upAxis = " + EscapeString(meta.upAxis));
+    lines.push_back(opts.indent + "upAxis = " + EscapeUSDAString(meta.upAxis));
   }
 
   if (meta.framesPerSecond_set) {
@@ -351,12 +323,12 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
 
   if (meta.colorManagementSystem_set || !meta.colorManagementSystem.empty()) {
     lines.push_back(opts.indent + "colorManagementSystem = " +
-                    EscapeString(meta.colorManagementSystem));
+                    EscapeUSDAString(meta.colorManagementSystem));
   }
 
   if (meta.renderSettingsPrimPath_set || !meta.renderSettingsPrimPath.empty()) {
     lines.push_back(opts.indent + "renderSettingsPrimPath = " +
-                    EscapeString(meta.renderSettingsPrimPath));
+                    EscapeUSDAString(meta.renderSettingsPrimPath));
   }
 
   {
@@ -438,35 +410,35 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     os << s << "\n";
   };
   if (m->authored & PropMeta::kInterpolation)
-    kv("interpolation = " + EscapeString(m->interpolation));
+    kv("interpolation = " + EscapeUSDAString(m->interpolation));
   if (m->authored & PropMeta::kElementSize)
     kv("elementSize = " + IntToStr(static_cast<long long>(m->elementSize)));
   if (m->authored & PropMeta::kColorSpace)
-    kv("colorSpace = " + EscapeString(m->colorSpace));
+    kv("colorSpace = " + EscapeUSDAString(m->colorSpace));
   if (m->authored & PropMeta::kCustomData)
     kv(DictMetaLine("customData", m->customData, md, opts));
   if (m->authored & PropMeta::kDisplayName)
-    kv("displayName = " + EscapeString(m->displayName));
+    kv("displayName = " + EscapeUSDAString(m->displayName));
   if (m->authored & PropMeta::kDisplayGroup)
-    kv("displayGroup = " + EscapeString(m->displayGroup));
+    kv("displayGroup = " + EscapeUSDAString(m->displayGroup));
   if (m->authored & PropMeta::kDoc)
-    kv("doc = " + EscapeString(m->doc));
+    kv("doc = " + EscapeUSDAString(m->doc));
   if (m->authored & PropMeta::kComment)
-    kv(EscapeString(m->comment));  // bare string literal = comment (pxr form)
+    kv(EscapeUSDAString(m->comment));  // bare string literal = comment (pxr form)
   if (m->authored & PropMeta::kPermission)
     kv("permission = " + m->permission);  // unquoted token
   if (m->authored & PropMeta::kHidden)
     kv(std::string("hidden = ") + (m->hidden ? "true" : "false"));
   if (m->authored & PropMeta::kRenderType)
-    kv("renderType = " + EscapeString(m->renderType));
+    kv("renderType = " + EscapeUSDAString(m->renderType));
   if (m->authored & PropMeta::kConnectability)
-    kv("connectability = " + EscapeString(m->connectability));
+    kv("connectability = " + EscapeUSDAString(m->connectability));
   if (m->authored & PropMeta::kOutputName)
-    kv("outputName = " + EscapeString(m->outputName));
+    kv("outputName = " + EscapeUSDAString(m->outputName));
   if (m->authored & PropMeta::kBindMaterialAs)
-    kv("bindMaterialAs = " + EscapeString(m->bindMaterialAs));
+    kv("bindMaterialAs = " + EscapeUSDAString(m->bindMaterialAs));
   if (m->authored & PropMeta::kKind)
-    kv("kind = " + EscapeString(m->kind));
+    kv("kind = " + EscapeUSDAString(m->kind));
   if (m->authored & PropMeta::kWeight) {
     kv("weight = " + dtos(m->weight));
   }
@@ -476,7 +448,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     std::string s = "allowedTokens = [";
     for (size_t i = 0; i < m->allowedTokens.size(); ++i) {
       if (i) s += ", ";
-      s += EscapeString(m->allowedTokens[i]);
+      s += EscapeUSDAString(m->allowedTokens[i]);
     }
     s += "]";
     kv(s);
@@ -938,7 +910,7 @@ void WriteVariantSets(StreamWriter& os,
       // pxr, which never emits the empty block.
       os << "\n";
       WriteIndent(os, frame.depth, opts.indent);
-      os << "variantSet " << EscapeString(vs.name) << " = {\n";
+      os << "variantSet " << EscapeUSDAString(vs.name) << " = {\n";
       frame.variant_index = 0;
       frame.phase = VariantPhase::BeginVariant;
       continue;
@@ -962,7 +934,7 @@ void WriteVariantSets(StreamWriter& os,
       const PrimSpec* holder = frame.holder;
 
       WriteIndent(os, depth + 1, opts.indent);
-      os << EscapeString(var.name);
+      os << EscapeUSDAString(var.name);
 
       // Variant OPTION metadata: composition arcs / active / hidden / doc
       // authored on the option itself (inline or on the holder prim).
@@ -1057,14 +1029,14 @@ void WriteVariantSets(StreamWriter& os,
         }
         if (!o_doc.empty() && opts.include_comments) {
           WriteIndent(os, depth + 2, opts.indent);
-          os << "doc = " << EscapeString(o_doc) << "\n";
+          os << "doc = " << EscapeUSDAString(o_doc) << "\n";
         }
         if (!o_sels.empty()) {
           WriteIndent(os, depth + 2, opts.indent);
           os << "variants = {\n";
           for (const auto& kv : o_sels) {
             WriteIndent(os, depth + 3, opts.indent);
-            os << "string " << kv.first << " = " << EscapeString(kv.second)
+            os << "string " << kv.first << " = " << EscapeUSDAString(kv.second)
                << "\n";
           }
           WriteIndent(os, depth + 2, opts.indent);
@@ -1235,7 +1207,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
     os << " " << type_name;
   }
 
-  os << " " << EscapeString(spec.name());
+  os << " " << EscapeUSDAString(spec.name());
 
   // All prim metadata goes in the parenthesized header section so it re-parses
   // (the parser reads prim metadata from `( ... )`, never from the prim body).
@@ -1306,22 +1278,22 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
     else if (meta.instanceable_authored) kv("instanceable = false");
     if (!meta.permission().empty()) kv("permission = " + meta.permission());
     if (meta.kindAuthored() || !meta.kind().empty())
-      kv("kind = " + EscapeString(meta.kind()));
+      kv("kind = " + EscapeUSDAString(meta.kind()));
     if (meta.displayNameAuthored() || !meta.displayName().empty())
-      kv("displayName = " + EscapeString(meta.displayName()));
+      kv("displayName = " + EscapeUSDAString(meta.displayName()));
     if (meta.displayGroupOrderAuthored() ||
         !meta.displayGroupOrder().empty()) {
       std::string value = "displayGroupOrder = [";
       for (size_t i = 0; i < meta.displayGroupOrder().size(); ++i) {
         if (i) value += ", ";
-        value += EscapeString(meta.displayGroupOrder()[i]);
+        value += EscapeUSDAString(meta.displayGroupOrder()[i]);
       }
       value += "]";
       kv(value);
     }
-    if (has_doc) kv("doc = " + EscapeString(meta.doc()));
+    if (has_doc) kv("doc = " + EscapeUSDAString(meta.doc()));
     // Bare string literal = comment (pxr 26.x rejects `comment = "..."`).
-    if (has_comment) kv(EscapeString(meta.comment()));
+    if (has_comment) kv(EscapeUSDAString(meta.comment()));
     if (meta.apiSchemasAuthored() || !meta.apiSchemas().empty()) {
       const StringListOpEdits& edits = meta.apiSchemaEdits();
       auto write_api_op = [&](const char* qualifier,
@@ -1331,7 +1303,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
         s += "apiSchemas = [";
         for (size_t i = 0; i < schemas.size(); ++i) {
           if (i) s += ", ";
-          s += EscapeString(schemas[i]);
+          s += EscapeUSDAString(schemas[i]);
         }
         s += "]";
         kv(s);
@@ -1389,7 +1361,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
         s += "clipSets = [";
         for (size_t i = 0; i < names.size(); ++i) {
           if (i) s += ", ";
-          s += EscapeString(names[i]);
+          s += EscapeUSDAString(names[i]);
         }
         s += "]";
         kv(s);
@@ -1470,7 +1442,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
       os << "variants = {\n";
       for (const auto& sel : sels) {
         WriteIndent(os, md + 1, opts.indent);
-        os << "string " << sel.first << " = " << EscapeString(sel.second) << "\n";
+        os << "string " << sel.first << " = " << EscapeUSDAString(sel.second) << "\n";
       }
       WriteIndent(os, md, opts.indent);
       os << "}\n";
@@ -1519,7 +1491,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
         os << qualifier << "variantSets = [";
         for (size_t i = 0; i < names.size(); ++i) {
           if (i) os << ", ";
-          os << EscapeString(names[i]);
+          os << EscapeUSDAString(names[i]);
         }
         os << "]\n";
       };
@@ -1537,7 +1509,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
       os << "prepend variantSets = [";
       for (size_t i = 0; i < meta.variantSets().size(); ++i) {
         if (i) os << ", ";
-        os << EscapeString(meta.variantSets()[i].name);
+        os << EscapeUSDAString(meta.variantSets()[i].name);
       }
       os << "]\n";
     }
@@ -1559,7 +1531,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
     os << "reorder " << field << " = [";
     for (size_t i = 0; i < names.size(); ++i) {
       if (i) os << ", ";
-      os << EscapeString(names[i]);
+      os << EscapeUSDAString(names[i]);
     }
     os << "]\n";
   };
@@ -1701,7 +1673,7 @@ void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {
   os << "reorder rootPrims = [";
   for (size_t i = 0; i < meta.rootPrimOrder.size(); ++i) {
     if (i) os << ", ";
-    os << EscapeString(meta.rootPrimOrder[i]);
+    os << EscapeUSDAString(meta.rootPrimOrder[i]);
   }
   os << "]\n\n";
 }

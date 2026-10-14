@@ -397,10 +397,6 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
     binding-next.cc binding-next-scene.cc
     binding-next-layer.cc
-    binding-next-checker.cc
-    ${PROJECT_SOURCE_DIR}/../tools/lusdchecker/lusdchecker.cc
-    ${PROJECT_SOURCE_DIR}/../tools/lusdchecker/checker-memory.cc
-    ${PROJECT_SOURCE_DIR}/../tools/lusdchecker/report.cc
     binding-next-api.cc
     binding-next-image.cc
     binding-next-assets.cc
@@ -419,23 +415,38 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     binding-next-render-material-output.cc)
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
     COMPILE_DEFINITIONS "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
+  target_sources(lightusd_next_wasm PRIVATE binding-exr-bridge.cc)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
+    COMPILE_DEFINITIONS "LIGHTUSD_EXR_EXTERNAL=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-loader.cc PROPERTIES
+    COMPILE_DEFINITIONS "LIGHTUSD_EXR_EXTERNAL=1")
   if (LIGHTUSD_WASM_WITH_EXR)
-    file(GLOB TINYEXR_V3_SOURCES
-      ${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src/*.c)
-    set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
-      INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src"
-      COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
-    target_sources(lightusd_next_wasm PRIVATE
-      ${TINYEXR_V3_SOURCES})
-    set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
-      COMPILE_DEFINITIONS "LIGHTUSD_WITH_EXR=1;LIGHTUSD_EXR_V3=1;LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
-    set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-loader.cc PROPERTIES
-      COMPILE_DEFINITIONS "LIGHTUSD_WITH_EXR=1;LIGHTUSD_EXR_V3=1")
-    target_include_directories(lightusd_next_wasm PRIVATE
-      "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/include"
-      "${PROJECT_SOURCE_DIR}/../src/external/tinyexr/src")
-    target_compile_definitions(lightusd_next_wasm PRIVATE LIGHTUSD_NEXT_WASM_WITH_EXR=1)
+    file(GLOB TINYEXR_V3_SOURCES ../src/external/tinyexr/src/*.c)
+    add_executable(lightusd_exr_wasm EXCLUDE_FROM_ALL binding-exr.c
+      ../src/imageio/exr-codec.c ${TINYEXR_V3_SOURCES})
+    target_include_directories(lightusd_exr_wasm PRIVATE
+      ../src/external/tinyexr/include ../src/external/tinyexr/src)
+    target_compile_definitions(lightusd_exr_wasm PRIVATE EXR_NO_JPH EXR_NO_ZSTD)
+    set_target_properties(lightusd_exr_wasm PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   endif()
+  add_executable(lightusd_validator_wasm EXCLUDE_FROM_ALL
+    binding-validator.cc binding-validation.cc
+    ../tools/lusdchecker/lusdchecker.cc
+    ../tools/lusdchecker/checker-memory.cc ../tools/lusdchecker/checker-options.cc
+    ../tools/lusdchecker/report.cc)
+  target_compile_definitions(lightusd_validator_wasm PRIVATE LUSDCHECKER_MEMORY_ONLY=1)
+  target_link_libraries(lightusd_validator_wasm PRIVATE lightusd_validation)
+  target_include_directories(lightusd_validator_wasm PRIVATE ../src)
+  target_compile_options(lightusd_validator_wasm PRIVATE -fno-exceptions -fno-rtti)
+
+  # Distribution build includes optional artifacts without linking them into core.
+  add_custom_target(lightusd_next_distribution ALL
+    DEPENDS lightusd_next_wasm lightusd_validator_wasm)
+  if(TARGET lightusd_exr_wasm)
+    add_dependencies(lightusd_next_distribution lightusd_exr_wasm)
+  endif()
+
   # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
   target_sources(lightusd_next_wasm PRIVATE
     ${PROJECT_SOURCE_DIR}/../src/sha256.cc
@@ -528,6 +539,31 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
                  SUFFIX ".js"
                  RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
                  LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+  set(VALIDATOR_OUTPUT lightusd_validator)
+  if(LIGHTUSD_WASM64)
+    string(APPEND VALIDATOR_OUTPUT "_64")
+  endif()
+  # Independent memory and exports: no dynamic-linking retention in scene core.
+  string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
+                 "${PROJECT_SOURCE_DIR}/validator-api.js"
+                 VALIDATOR_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+  set_target_properties(lightusd_validator_wasm PROPERTIES
+    OUTPUT_NAME ${VALIDATOR_OUTPUT} SUFFIX ".js"
+    RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+    LINK_FLAGS "${VALIDATOR_LINK_FLAGS}")
+  set_property(TARGET lightusd_validator_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/validator-api.js")
+  if(TARGET lightusd_exr_wasm)
+    string(REPLACE "validator" "exr" EXR_OUTPUT "${VALIDATOR_OUTPUT}")
+    string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js"
+                   "${PROJECT_SOURCE_DIR}/exr-api.js"
+                   EXR_LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+    set_target_properties(lightusd_exr_wasm PROPERTIES
+      OUTPUT_NAME ${EXR_OUTPUT} SUFFIX ".js"
+      RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${EXR_LINK_FLAGS}")
+    set_property(TARGET lightusd_exr_wasm APPEND PROPERTY LINK_DEPENDS
+      "${PROJECT_SOURCE_DIR}/exr-api.js")
+  endif()
   return()
 endif()
 

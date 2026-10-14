@@ -70,8 +70,6 @@ set(LIGHTUSD_NEXT_SOURCES
     # translation unit).
     c/path-expr.c
     # C11 core: generated checker tables (schema inventory) and their lookups.
-    c/validation-tables.c
-    c/generated-schema-tables.c
     # Type system
     types/value-view.cc
 
@@ -123,11 +121,6 @@ set(LIGHTUSD_NEXT_SOURCES
     pcp/cache-storage.cc
 
     # AOUSD Core validation
-    validation/usd-validation.cc
-    validation/usd-validation-report.cc
-    validation/usd-validation-physics.cc
-    validation/validation-context.cc
-    validation/validation-stage-physics.cc
 
     # High-level API
     lightusd-next.cc
@@ -274,12 +267,40 @@ set(LZ4_SOURCES
 list(TRANSFORM LIGHTUSD_NEXT_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 list(TRANSFORM LIGHTUSD_NEXT_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
-# Create static library
-add_library(lightusd_next STATIC
-    ${LIGHTUSD_NEXT_SOURCES}
-    ${LIGHTUSD_NEXT_HEADERS}
-    ${LZ4_SOURCES}
+# C-only primitives are independently linkable without a C++ runtime.
+set(LIGHTUSD_CORE_C_SOURCES ${LIGHTUSD_NEXT_SOURCES})
+list(FILTER LIGHTUSD_CORE_C_SOURCES INCLUDE REGEX "\\.c$")
+list(FILTER LIGHTUSD_NEXT_SOURCES EXCLUDE REGEX "\\.c$")
+add_library(lightusd_core_c STATIC ${LIGHTUSD_CORE_C_SOURCES} ${LZ4_SOURCES})
+set_target_properties(lightusd_core_c PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(UNIX)
+  target_link_libraries(lightusd_core_c PUBLIC m)
+endif()
+target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+lightusd_next_harden(lightusd_core_c)
+add_library(lightusd_next STATIC ${LIGHTUSD_NEXT_SOURCES} ${LIGHTUSD_NEXT_HEADERS})
+target_link_libraries(lightusd_next PUBLIC lightusd_core_c)
+
+# Validation is an explicit component: resolver/core consumers must not pull it in.
+add_library(lightusd_validation STATIC
+    c/validation-tables.c
+    c/generated-schema-tables.c
+    validation/usd-validation.cc
+    validation/usd-validation-report.cc
+    validation/usd-validation-physics.cc
+    validation/validation-context.cc
+    validation/validation-stage-physics.cc
 )
+target_link_libraries(lightusd_validation PUBLIC lightusd_next)
+target_compile_features(lightusd_validation PRIVATE cxx_std_17)
+set_target_properties(lightusd_validation PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+lightusd_next_harden(lightusd_validation)
+if(NOT MSVC)
+  target_compile_options(lightusd_validation PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions;-fno-rtti>)
+endif()
 
 # C++17 (matches the parent project). The USDA writer formats floats via the
 # vendored dragonbox dtoa (writer/dtoa.cc), with a zmij fast path.
@@ -622,8 +643,24 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     add_executable(test_array_parser ../../tests/next/test_array_parser.cc)
     target_link_libraries(test_array_parser PRIVATE lightusd_next)
+    add_executable(test_c11_leaves ../../tests/next/test_c11_leaves.c)
+    target_link_libraries(test_c11_leaves PRIVATE lightusd_core_c)
+    target_include_directories(test_c11_leaves PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(test_c11_leaves PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    add_test(NAME next_c11_leaves COMMAND test_c11_leaves)
+    file(GLOB exr_test_sources ../external/tinyexr/src/*.c)
+    add_executable(test_exr_codec ../../tests/next/test_exr_codec.c
+      ../imageio/exr-codec.c ${exr_test_sources})
+    target_include_directories(test_exr_codec PRIVATE ../external/tinyexr/include ../external/tinyexr/src)
+    target_compile_definitions(test_exr_codec PRIVATE EXR_NO_JPH EXR_NO_ZSTD)
+    set_target_properties(test_exr_codec PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    if(UNIX)
+      target_link_libraries(test_exr_codec PRIVATE m)
+    endif()
+    add_test(NAME next_exr_codec COMMAND test_exr_codec)
     add_executable(test_array_parser_c ../../tests/next/test_array_parser_c.c)
-    target_link_libraries(test_array_parser_c PRIVATE lightusd_next)
+    target_link_libraries(test_array_parser_c PRIVATE lightusd_core_c)
+    target_include_directories(test_array_parser_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(test_array_parser_c PROPERTIES
         C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
@@ -644,18 +681,18 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     add_executable(test_validation_registry
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation_registry.cc)
-    target_link_libraries(test_validation_registry PRIVATE lightusd_next)
+    target_link_libraries(test_validation_registry PRIVATE lightusd_validation)
     add_test(NAME next_test_validation_registry COMMAND test_validation_registry)
 
     add_executable(test_validation
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc
     )
-    target_link_libraries(test_validation PRIVATE lightusd_next)
+    target_link_libraries(test_validation PRIVATE lightusd_validation)
 
     add_executable(test_aousd_conformance
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_conformance.cc
     )
-    target_link_libraries(test_aousd_conformance PRIVATE lightusd_next)
+    target_link_libraries(test_aousd_conformance PRIVATE lightusd_validation)
 
     # Sampled-value oracle for the AOUSD supplemental value_resolution cases
     # (self-skips with exit 77 when the corpus is unavailable).
@@ -830,6 +867,12 @@ set(LIGHTUSD_C_SOURCES
     ../c-api/lightusd-c-dependencies.cc
     ../c-api/lightusd-session-c.cc)
 add_library(lightusd_c STATIC ${LIGHTUSD_C_SOURCES})
+add_library(lightusd_validation_c STATIC
+    ../c-api/lightusd-validation-c.cc)
+target_link_libraries(lightusd_validation_c PUBLIC lightusd_c lightusd_validation)
+target_include_directories(lightusd_validation_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(lightusd_validation_c PRIVATE cxx_std_17)
+lightusd_next_harden(lightusd_validation_c)
 lightusd_next_harden(lightusd_c)
 
 # Fuzz the C ABI itself: the installed boundary used by JS/WASM, Python and
@@ -854,7 +897,7 @@ endif()
 # core dependency through the exported target so a find_package consumer gets
 # a complete link interface instead of an unresolved lightusd_next archive.
 target_link_libraries(lightusd_c PUBLIC lightusd_next)
-set(LIGHTUSD_C_TARGETS lightusd_c)
+set(LIGHTUSD_C_TARGETS lightusd_c lightusd_validation_c)
 if(LIGHTUSD_NEXT_BUILD_EXAMPLES)
     add_executable(variant-lister
         ../../examples/variant-lister/variant-lister-next.cc)
@@ -970,9 +1013,9 @@ endif()
 # separate copies of next into two DLLs: their interned property IDs would
 # refer to different name tables. WITH_TYDRA=OFF produces a core-only DLL.
 if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
-    set_target_properties(lightusd_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    add_library(lightusd_c_shared SHARED ${LIGHTUSD_C_SOURCES})
-    target_link_libraries(lightusd_c_shared PRIVATE lightusd_next)
+    set_target_properties(lightusd_next lightusd_core_c lightusd_validation PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_library(lightusd_c_shared SHARED ${LIGHTUSD_C_SOURCES} ../c-api/lightusd-validation-c.cc)
+    target_link_libraries(lightusd_c_shared PRIVATE lightusd_next lightusd_validation)
     lightusd_next_harden(lightusd_c_shared)
     if(LIGHTUSD_WITH_TYDRA)
         set_target_properties(tydra_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -991,9 +1034,12 @@ endif()
 # Only the C boundary and thin ownership facades are installed for consumers.
 include(GNUInstallDirs)
 set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
-install(TARGETS lightusd_next lightusd_c EXPORT LightUSDTargets
+set_target_properties(lightusd_validation_c PROPERTIES EXPORT_NAME validation_c)
+set_target_properties(lightusd_validation PROPERTIES EXPORT_NAME validation)
+install(TARGETS lightusd_core_c lightusd_next lightusd_c lightusd_validation lightusd_validation_c EXPORT LightUSDTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES ../c-api/lightusd-c.h ../c-api/lightusd-cpp.hh
+install(FILES ../c-api/lightusd-validation-c.h ../c-api/lightusd-validation-cpp.hh
+              ../c-api/lightusd-c.h ../c-api/lightusd-cpp.hh
               ../c-api/lightusd-session-c.h ../c-api/lightusd-session-cpp.hh
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(LIGHTUSD_WITH_TYDRA)
@@ -1130,7 +1176,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         target_link_libraries(test_lightusd_c PRIVATE lightusd_c_shared)
         target_compile_definitions(test_lightusd_c PRIVATE LIGHTUSD_C_USE_SHARED=1)
     else()
-        target_link_libraries(test_lightusd_c PRIVATE lightusd_c)
+        target_link_libraries(test_lightusd_c PRIVATE lightusd_validation_c)
     endif()
     set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11)
     if(NOT MSVC)

@@ -334,9 +334,7 @@ class Stage {
     if (!out) return LIGHTUSD_ERR_INVALID_ARG;
     return lightusd_stage_export_usdc(handle_, out->put());
   }
-  lightusd_status validate_core(size_t* errors, size_t* warnings) const {
-    return lightusd_stage_validate_core(handle_, errors, warnings);
-  }
+
   lightusd_status flatten(Stage* out) const {
     if (!out) return LIGHTUSD_ERR_INVALID_ARG;
     lightusd_stage* flattened = nullptr;

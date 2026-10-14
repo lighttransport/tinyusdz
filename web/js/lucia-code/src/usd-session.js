@@ -1228,6 +1228,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async validate() {
+    await this.module.loadValidator?.();
     // The embind method takes an options JSON string even when no validation
     // options are requested. Passing an explicit empty object also keeps this
     // path compatible with native builds that do not provide a JS default.

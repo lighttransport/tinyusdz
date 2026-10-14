@@ -1132,9 +1132,7 @@ int NextConverterExportBuffer(void* object, uint8_t* out, uint32_t cap);
 uint8_t* NextValidateJSON(const uint8_t* data, uint32_t size,
                           const uint8_t* filename, uint32_t filename_size,
                           const uint8_t* options, uint32_t options_size);
-uint8_t* NextCheckJSON(const uint8_t* data, uint32_t size,
-    const uint8_t* filename, uint32_t filename_size,
-    const uint8_t* options, uint32_t options_size, const void* asset_store);
+
 uint8_t* NextDiffJSON(const lightusd_next_diff_options* options,
                       const uint8_t* left, uint32_t left_size,
                       const uint8_t* left_name, uint32_t left_name_size,

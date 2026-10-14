@@ -268,22 +268,14 @@ EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_next_converter_export_data(
       lightusd::web_next::NextConverterExportData(slot->object));
 }
 
-EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_validate_json(
-    const uint8_t* data, uint32_t size, const uint8_t* filename,
-    uint32_t filename_size, const uint8_t* options_json,
-    uint32_t options_size) {
-  return lightusd::web_next::NextValidateJSON(
-      data, size, filename, filename_size, options_json, options_size);
-}
-
-EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_check_json(
-    const uint8_t* data, uint32_t size, const uint8_t* filename,
-    uint32_t filename_size, const uint8_t* options_json,
-    uint32_t options_size, uint32_t asset_store) {
-  const Slot* store = asset_store ? Lookup(asset_store) : nullptr;
-  if (asset_store && (!store || store->kind != 5)) return nullptr;
-  return lightusd::web_next::NextCheckJSON(data, size, filename, filename_size,
-      options_json, options_size, store ? store->object : nullptr);
+EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_asset_store_snapshot(uint32_t handle) {
+  const Slot* store = Lookup(handle);
+  if (!store || store->kind != 5) return nullptr;
+  const auto text = static_cast<const lightusd::web_next::NextAssetStore*>(store->object)->snapshotMetadata();
+  if (text.size() > (size_t(64) << 20)) return nullptr;
+  auto* output = static_cast<uint8_t*>(std::malloc(text.size() + 1));
+  if (output) std::memcpy(output, text.c_str(), text.size() + 1);
+  return output;
 }
 
 EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_next_diff_json(

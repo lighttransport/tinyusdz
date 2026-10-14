@@ -11,9 +11,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#ifndef LUSDCHECKER_MEMORY_ONLY
 #include <fstream>
 #include <filesystem>
 #include <iostream>
+#endif
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -28,7 +30,8 @@
 #include "next/resolver/asset-resolver.hh"
 #include "next/validation/usd-validation.hh"
 #include "report.hh"
-#include "checker.hh"
+#include "checker-options.hh"
+using lusdchecker::KeywordToGroups;
 #include "next/layer/asset-anchor.hh"
 #include <deque>
 #include <set>
@@ -47,420 +50,12 @@ using lightusd::next::ValidationOptions;
 constexpr int kExitValid = 0;
 constexpr int kExitInvalid = 1;
 constexpr int kExitError = 2;
-constexpr size_t kDefaultMaxMemoryMb = 1024;
+using lusdchecker::Split;
 
-struct Args {
-  const lusdchecker::Environment* environment = nullptr;
-  std::string input;
-  std::string output = "stdout";
-  ValidationOptions groups;
-  size_t max_memory_mb = kDefaultMaxMemoryMb;
-  bool json = false;
-  bool sarif = false;
-  std::string baseline;
-  std::string profile = "default";
-  bool group_selection = false;
-  bool dump_rules = false;
-  std::vector<std::string> keywords;
-  bool all_samples = false;
-  size_t max_samples = 10000;
-  std::vector<std::string> schema_files, shader_files;
-  bool strict = false;
-  bool strict_parse = false;
-  bool composed = false;
-  bool require_all_groups = false;
-  bool verbose = false;
-  bool usdchecker_compat = false;
-  bool root_package_only = false;
-  // Variant sweep (usdchecker parity). With --composed the checker validates
-  // every combination of authored variant selections (capped) unless
-  // --skip-variants; --variants/--variant-sets restrict the sweep.
-  bool skip_variants = false;
-  bool disable_variant_limit = false;
-  bool no_asset_checks = false;
-  std::vector<std::string> variant_sets;  // --variant-sets NAME (repeatable)
-  // Each --variants occurrence is one validation pass of set:variant pairs.
-  std::vector<std::vector<std::pair<std::string, std::string>>>
-      variant_selections;
-};
+using Args = lusdchecker::CheckerOptions;
 
 constexpr size_t kVariantValidationLimit = 1000;
 
-ValidationOptions AllAvailableGroups() {
-  return lightusd::next::MakeValidateAllOptions();
-}
-
-void PrintUsage(std::ostream& os) {
-  os << "Usage: lusdchecker [options] FILE\n"
-        "\n"
-        "Validate USDA, USDC, USDZ, or MaterialX (.mtlx) against AOUSD Core\n"
-        "1.0.1 and LightUSD's structural schema rules. FILE may be '-' for\n"
-        "stdin.\n"
-        "\n"
-        "Options:\n"
-        "  -g, --groups LIST     Comma-separated rule groups: "
-        "core,geom,shade,\n"
-        "                        lux,physics,render,package,crate,arkit (default: "
-        "all\n"
-        "                        defect-class groups; arkit is opt-in)\n"
-        "      --core-only       Run AOUSD Core rules only\n"
-        "      --all             Run all defect-class rule groups (default)\n"
-        "      --arkit           ARKit/RealityKit USDZ profile "
-        "(arkit + core,\n"
-        "                        geom,shade,package), like usdchecker "
-        "--arkit\n"
-        "  -t, --strict          Treat validation and parser warnings as "
-        "failure\n"
-        "      --profile NAME    default, strict, or aousd-core-1.0.1\n"
-        "      --all-time-samples Validate coherent values at all sample times\n"
-        "      --max-samples N   Maximum sampled times (default: 10000)\n"
-        "      --schema-definitions FILE  Load schema JSON manifest (repeatable)\n"
-        "      --shader-definitions FILE  Load shader JSON manifest (repeatable)\n"
-        "      --strict-parse    Reject non-conforming/unsupported format "
-        "data\n"
-        "      --composed        Compose external arcs and validate the "
-        "flattened stage\n"
-        "      --require-all-groups\n"
-        "                        Fail if a requested group is inapplicable\n"
-        "      --usdchecker-compat\n"
-        "                        Report usdchecker-mapped rules at OpenUSD\n"
-        "                        usdchecker severities (several warnings\n"
-        "                        become errors)\n"
-        "      --no-asset-checks Skip referenceable-asset checks, like\n"
-        "                        usdchecker --noAssetChecks\n"
-        "  -p, --root-package-only\n"
-        "                        Do not follow or validate dependencies\n"
-        "                        outside the given file/package\n"
-        "  -s, --skip-variants   With --composed, validate only the\n"
-        "                        authored variant selections instead of\n"
-        "                        every combination\n"
-        "      --variants LIST   ','-separated set:variant pairs checked\n"
-        "                        together; repeat for separate passes\n"
-        "                        (implies --composed)\n"
-        "      --variant-sets NAME\n"
-        "                        Validate every variant of the named set\n"
-        "                        (repeatable; implies --composed)\n"
-        "      --disable-variant-validation-limit\n"
-        "                        Lift the 1000-combination sweep cap\n"
-        "  -d, --dump-rules      Dump the rule registry (id, group, doc)\n"
-        "  -v, --verbose         Report per-pass progress on stderr\n"
-        "      --json            Emit stable machine-readable JSON\n"
-        "      --sarif           Emit SARIF 2.1.0\n"
-        "      --baseline FILE   Fail only on new findings versus a JSON report\n"
-        "  -o, --out FILE        Write report to FILE, stdout, or stderr\n"
-        "      --max-memory-mb N Bound input/parser memory (default: 1024)\n"
-        "  -h, --help            Show this help\n"
-        "      --version         Show validator/spec version\n"
-        "      --list-groups     List rule groups and their coverage\n"
-        "\n"
-        "Exit status: 0 valid, 1 validation failed, 2 usage/I/O/parse error.\n";
-}
-
-bool ParseSize(const std::string& text, size_t* value) {
-  if (!value || text.empty() || text[0] == '-') return false;
-  errno = 0;
-  char* end = nullptr;
-  const unsigned long long parsed = std::strtoull(text.c_str(), &end, 10);
-  if (errno != 0 || !end || *end != '\0' || parsed == 0 ||
-      parsed > std::numeric_limits<size_t>::max()) {
-    return false;
-  }
-  *value = static_cast<size_t>(parsed);
-  return true;
-}
-
-std::vector<std::string> Split(const std::string& text, char separator) {
-  std::vector<std::string> values;
-  size_t start = 0;
-  while (start <= text.size()) {
-    const size_t end = text.find(separator, start);
-    values.emplace_back(text.substr(
-        start, end == std::string::npos ? std::string::npos : end - start));
-    if (end == std::string::npos) break;
-    start = end + 1;
-  }
-  return values;
-}
-
-// Map an OpenUSD usdchecker validator keyword to lightusd group names, so
-// `--include-keywords UsdGeomValidators` style invocations work verbatim.
-// Returns an empty list for a non-keyword (regular group name).
-std::vector<std::string> KeywordToGroups(const std::string& keyword) {
-  std::string lower = keyword;
-  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  if (lower == "usdcorevalidators") return {"core"};
-  if (lower == "usdgeomvalidators") return {"geom"};
-  if (lower == "usdshadevalidators") return {"shade"};
-  if (lower == "usdskelvalidators") return {"geom"};   // skel runs under geom
-  if (lower == "usdluxvalidators") return {"lux"};
-  if (lower == "usdphysicsvalidators") return {"physics"};
-  if (lower == "usdutilsvalidators" || lower == "usdzvalidators")
-    return {"package", "crate"};
-  if (lower == "usdgeomsubset") return {"geom", "shade"};
-  return {};
-}
-
-bool SetGroups(const std::string& text, ValidationOptions* groups,
-               std::string* error) {
-  if (!groups) return false;
-  *groups = ValidationOptions();
-  groups->core = false;
-  std::vector<std::string> names;
-  for (const std::string& entry : Split(text, ',')) {
-    const std::vector<std::string> mapped = KeywordToGroups(entry);
-    if (!mapped.empty()) {
-      names.insert(names.end(), mapped.begin(), mapped.end());
-    } else {
-      names.push_back(entry);
-    }
-  }
-  for (const std::string& name : names) {
-    bool* flag = nullptr;
-    if (name == "core")
-      flag = &groups->core;
-    else if (name == "geom")
-      flag = &groups->geom;
-    else if (name == "shade")
-      flag = &groups->shade;
-    else if (name == "lux")
-      flag = &groups->lux;
-    else if (name == "physics")
-      flag = &groups->physics;
-    else if (name == "render")
-      flag = &groups->render;
-    else if (name == "package")
-      flag = &groups->package;
-    else if (name == "crate")
-      flag = &groups->crate;
-    else if (name == "arkit")
-      flag = &groups->arkit;
-    else {
-      if (error) *error = "unknown or empty validation group: '" + name + "'";
-      return false;
-    }
-    *flag = true;
-  }
-  return true;
-}
-
-enum class ParseArgsResult { Run, ExitSuccess, Error };
-
-ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
-                          std::string* error) {
-  if (!args) return ParseArgsResult::Error;
-  for (int i = 1; i < argc; ++i) {
-    const std::string arg(argv[i]);
-    const auto next_value = [&](const char* option, std::string* value) {
-      if (i + 1 >= argc) {
-        if (error) *error = std::string("missing value for ") + option;
-        return false;
-      }
-      *value = argv[++i];
-      return true;
-    };
-    if (arg == "-h" || arg == "--help") {
-      PrintUsage(std::cout);
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--version") {
-      std::cout << "lusdchecker 0.1 (" << GetAOUSDCoreSpecVersionString()
-                << ")\n";
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--list-groups") {
-      std::cout
-          << "core      AOUSD layer, composition, metadata, and value rules\n"
-          << "geom      UsdGeom, UsdSkel, and UsdVol structural rules\n"
-          << "shade     UsdShade, preview-surface, and MaterialX rules\n"
-          << "lux       UsdLux structural and value rules\n"
-          << "physics   UsdPhysics placement, joint, and extension rules\n"
-          << "render    UsdRender settings/product/var structural rules\n"
-          << "package   USDZ layout, path, portability, and dependency rules\n"
-          << "crate     USDC decode and cross-table structural rules\n"
-          << "arkit     ARKit/RealityKit USDZ delivery profile (opt-in; not "
-             "part of --all)\n";
-      return ParseArgsResult::ExitSuccess;
-    } else if (arg == "--profile") {
-      if (!next_value("--profile", &args->profile)) return ParseArgsResult::Error;
-    } else if (arg == "--all-time-samples") {
-      args->all_samples = true;
-    } else if (arg == "--max-samples") {
-      std::string value;
-      if (!next_value("--max-samples", &value) || !ParseSize(value, &args->max_samples)) {
-        *error = "--max-samples requires a positive integer";
-        return ParseArgsResult::Error;
-      }
-    } else if (arg == "--schema-definitions" || arg == "--shader-definitions") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value)) return ParseArgsResult::Error;
-      (arg == "--schema-definitions" ? args->schema_files : args->shader_files).push_back(value);
-    } else if (arg == "--json") {
-      args->json = true;
-    } else if (arg == "--sarif") {
-      args->sarif = true;
-    } else if (arg == "--baseline") {
-      if (!next_value("--baseline", &args->baseline) || args->baseline.empty())
-        return ParseArgsResult::Error;
-    } else if (arg == "-t" || arg == "--strict") {
-      args->strict = true;
-    } else if (arg == "--strict-parse") {
-      args->strict_parse = true;
-    } else if (arg == "--composed") {
-      args->composed = true;
-    } else if (arg == "--require-all-groups") {
-      args->require_all_groups = true;
-    } else if (arg == "--usdchecker-compat") {
-      args->usdchecker_compat = true;
-    } else if (arg == "--no-asset-checks" || arg == "--noAssetChecks") {
-      args->no_asset_checks = true;
-    } else if (arg == "-p" || arg == "--root-package-only" ||
-               arg == "--rootPackageOnly") {
-      args->root_package_only = true;
-    } else if (arg == "-s" || arg == "--skip-variants" ||
-               arg == "--skipVariants") {
-      args->skip_variants = true;
-    } else if (arg == "--disable-variant-validation-limit" ||
-               arg == "--disableVariantValidationLimit") {
-      args->disable_variant_limit = true;
-    } else if (arg == "-v" || arg == "--verbose") {
-      args->verbose = true;
-    } else if (arg == "-d" || arg == "--dump-rules" || arg == "--dumpRules") {
-      args->dump_rules = true;
-    } else if (arg == "--variants") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value)) {
-        return ParseArgsResult::Error;
-      }
-      std::vector<std::pair<std::string, std::string>> pairs;
-      for (const std::string& entry : Split(value, ',')) {
-        const size_t colon = entry.find(':');
-        if (colon == std::string::npos || colon == 0 ||
-            colon + 1 >= entry.size()) {
-          if (error) {
-            *error = "--variants entries must be set:variant pairs, got '" +
-                     entry + "'";
-          }
-          return ParseArgsResult::Error;
-        }
-        pairs.emplace_back(entry.substr(0, colon), entry.substr(colon + 1));
-      }
-      args->variant_selections.push_back(std::move(pairs));
-      args->composed = true;
-    } else if (arg == "--variant-sets" || arg == "--variantSets") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value)) {
-        return ParseArgsResult::Error;
-      }
-      for (const std::string& name : Split(value, ',')) {
-        if (!name.empty()) args->variant_sets.push_back(name);
-      }
-      args->composed = true;
-    } else if (arg == "--include-keywords" || arg == "--includeKeywords") {
-      args->group_selection = true;
-      std::string value;
-      if (!next_value(arg.c_str(), &value)) return ParseArgsResult::Error;
-      args->keywords = Split(value, ',');
-      args->groups = ValidationOptions(); args->groups.core = false;
-      std::string groups;
-      for (const auto& keyword : args->keywords) {
-        if (keyword.empty()) { *error = "empty validator keyword"; return ParseArgsResult::Error; }
-        for (const auto& group : KeywordToGroups(keyword)) {
-          if (!groups.empty()) groups += ',';
-          groups += group;
-        }
-      }
-      if (!groups.empty() && !SetGroups(groups, &args->groups, error)) return ParseArgsResult::Error;
-    } else if (arg == "--core-only") {
-      args->group_selection = true;
-      args->groups = ValidationOptions();
-    } else if (arg == "--all") {
-      args->groups = AllAvailableGroups();
-    } else if (arg == "--arkit") {
-      // The ARKit profile: the ARKit-only rules plus the base rule groups that
-      // OpenUSD's `usdchecker --arkit` always runs (stage metadata, prim
-      // encapsulation, textures, material bindings, package layout).
-      args->groups.arkit = true;
-      args->groups.core = true;
-      args->groups.geom = true;
-      args->groups.shade = true;
-      args->groups.package = true;
-    } else if (arg == "-g" || arg == "--groups") {
-      args->group_selection = true;
-      std::string value;
-      if (!next_value(arg.c_str(), &value) ||
-          !SetGroups(value, &args->groups, error)) {
-        return ParseArgsResult::Error;
-      }
-    } else if (arg == "-o" || arg == "--out") {
-      if (!next_value(arg.c_str(), &args->output)) {
-        return ParseArgsResult::Error;
-      }
-    } else if (arg == "--max-memory-mb") {
-      std::string value;
-      if (!next_value(arg.c_str(), &value) ||
-          !ParseSize(value, &args->max_memory_mb)) {
-        if (error && error->empty()) {
-          *error = "--max-memory-mb requires a positive integer";
-        }
-        return ParseArgsResult::Error;
-      }
-    } else if (!arg.empty() && arg[0] == '-' && arg != "-") {
-      if (error) *error = "unknown option: " + arg;
-      return ParseArgsResult::Error;
-    } else if (!args->input.empty()) {
-      if (error) *error = "only one input file may be specified";
-      return ParseArgsResult::Error;
-    } else {
-      args->input = arg;
-    }
-  }
-  if (args->input.empty() && !args->dump_rules) {
-    if (error) *error = "an input FILE is required";
-    return ParseArgsResult::Error;
-  }
-  // The ARKit profile's package-layout rules (arkit.package.fileExtension /
-  // .rootLayer) live in the package container check, which only runs when the
-  // package group reads the raw bytes. Selecting `arkit` therefore implies
-  // `package`, so `-g arkit` on a .usdz enforces the ARKit package rules rather
-  // than silently skipping them while still reporting arkit as checked. (The
-  // `--arkit` flag already sets this explicitly.)
-  if (args->profile != "default" && args->profile != "strict" &&
-      args->profile != "aousd-core-1.0.1") {
-    *error = "unknown validation profile: " + args->profile;
-    return ParseArgsResult::Error;
-  }
-  if (args->profile != "default") {
-    if (args->group_selection || args->root_package_only || args->skip_variants ||
-        !args->variant_sets.empty() || !args->variant_selections.empty() || args->no_asset_checks) {
-      *error = "full validation profiles cannot be combined with coverage-reducing options";
-      return ParseArgsResult::Error;
-    }
-    const bool arkit = args->groups.arkit;
-    args->groups = args->profile == "strict" ? AllAvailableGroups() : ValidationOptions();
-    args->groups.package = true;
-    args->groups.crate = true;
-    args->groups.arkit = arkit;
-    args->composed = true;
-    args->strict_parse = true;
-    args->all_samples = true;
-    args->strict = args->profile == "strict";
-    args->groups.require_complete = args->strict;
-    args->groups.normative_only = args->profile == "aousd-core-1.0.1";
-    if (args->groups.normative_only && arkit) {
-      *error = "AOUSD Core profile cannot include the ARKit delivery profile";
-      return ParseArgsResult::Error;
-    }
-    args->groups.stage_presence_checks = !args->groups.normative_only;
-    args->groups.asset_checks = !args->groups.normative_only;
-  }
-  if (args->groups.arkit) args->groups.package = true;
-  // Applied after the loop: --groups/--all/--core-only rebuild the options
-  // struct, which would otherwise silently discard an earlier
-  // --no-asset-checks depending on flag order.
-  args->groups.asset_checks = !args->no_asset_checks && !args->groups.normative_only;
-  args->groups.validator_keywords = args->keywords;
-  return ParseArgsResult::Run;
-}
 
 std::string JsonEscape(const std::string& text) {
   static const char kHex[] = "0123456789abcdef";
@@ -626,6 +221,7 @@ int ReportError(const Args& args, const std::string& rule, const std::string& me
     *args.environment->report = std::move(report);
     return kExitError;
   }
+#ifndef LUSDCHECKER_MEMORY_ONLY
   std::ofstream file;
   std::ostream* output = args.output == "stderr" ? &std::cerr : &std::cout;
   if (args.output != "stdout" && args.output != "stderr") {
@@ -636,10 +232,16 @@ int ReportError(const Args& args, const std::string& rule, const std::string& me
   if (args.json || args.sarif)
     *output << (args.sarif ? lusdchecker::ToSarif(report).dump(2) : report.dump()) << '\n';
   else *output << "lusdchecker: " << rule << ": " << message << '\n';
+#endif
   return kExitError;
 }
 
 bool ReadStdin(size_t limit, std::string* data, std::string* error) {
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  (void)limit; (void)data;
+  if (error) *error = "stdin is unavailable in memory-only validation";
+  return false;
+#else
   if (!data) return false;
   char buffer[64 * 1024];
   while (std::cin) {
@@ -659,11 +261,16 @@ bool ReadStdin(size_t limit, std::string* data, std::string* error) {
     return false;
   }
   return true;
+#endif
 }
 
 bool ReadFile(const std::string& filename, size_t limit, std::string* data,
               std::string* error, const lusdchecker::Environment* environment = nullptr) {
   if (environment) return environment->read(filename, limit, data, error);
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  if (error) *error = "filesystem is unavailable in memory-only validation";
+  return false;
+#else
   if (!data) return false;
   std::ifstream stream(filename, std::ios::binary | std::ios::ate);
   if (!stream) {
@@ -683,12 +290,15 @@ bool ReadFile(const std::string& filename, size_t limit, std::string* data,
     return false;
   }
   return true;
+#endif
 }
 
 std::shared_ptr<Layer> LoadInput(const std::string& path, std::string* warnings,
     std::string* errors, const lightusd::next::pcp::LayerLoadOptions& options,
     const lusdchecker::Environment* environment) {
+#ifndef LUSDCHECKER_MEMORY_ONLY
   if (!environment) return lightusd::next::pcp::LoadLayerFromFile(path, warnings, errors, options);
+#endif
   std::string bytes;
   if (!ReadFile(path, options.max_memory, &bytes, errors, environment)) return {};
   return lightusd::next::pcp::LoadLayerFromMemory(path,
@@ -1244,36 +854,31 @@ void ValidateCrate(const uint8_t* bytes, size_t size,
 
 std::string ResolveDependencyPath(const std::string& anchor,
                                   const std::string& asset) {
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  using Resolver = lightusd::next::AssetResolver;
+  return Resolver::NormalizePath(Resolver::JoinPath(Resolver::GetDirectory(anchor), asset));
+#else
   namespace fs = std::filesystem;
   fs::path path(asset);
   if (path.is_relative()) path = fs::path(anchor).parent_path() / path;
   return path.lexically_normal().string();
+#endif
 }
 
 bool HasResolvableUdimTile(const std::string& resolved_template,
     const lusdchecker::Environment* environment) {
-  namespace fs = std::filesystem;
-  constexpr char kUdimToken[] = "<UDIM>";
-  constexpr int kFirstUdimTile = 1001;
-  constexpr int kLastUdimTile = 1100;
-
-  const fs::path path(resolved_template);
-  const std::string filename = path.filename().string();
-  const size_t token_pos = filename.find(kUdimToken);
-  if (token_pos == std::string::npos) return false;
-
-  const fs::path directory = path.parent_path().empty()
-                                 ? fs::path(".")
-                                 : path.parent_path();
-  const std::string prefix = filename.substr(0, token_pos);
-  const std::string suffix =
-      filename.substr(token_pos + std::strlen(kUdimToken));
-  for (int tile = kFirstUdimTile; tile <= kLastUdimTile; ++tile) {
-    const std::string candidate =
-        prefix + std::to_string(tile) + suffix;
-    std::error_code ec;
-    if (environment ? environment->resolver->Exists((directory / candidate).string())
-                    : (fs::exists(directory / candidate, ec) && !ec)) return true;
+  const size_t slash = resolved_template.find_last_of("/\\");
+  const size_t token = resolved_template.find("<UDIM>", slash == std::string::npos ? 0 : slash + 1);
+  if (token == std::string::npos) return false;
+  for (int tile = 1001; tile <= 1100; ++tile) {
+    std::string candidate = resolved_template;
+    candidate.replace(token, 6, std::to_string(tile));
+    if (environment) {
+      if (environment->resolver->Exists(candidate)) return true;
+    }
+#ifndef LUSDCHECKER_MEMORY_ONLY
+    else { std::error_code ec; if (std::filesystem::exists(candidate, ec) && !ec) return true; }
+#endif
   }
   return false;
 }
@@ -1454,8 +1059,10 @@ void ValidateDependencyResolution(const Layer& layer,
     if (asset.is_package) exists = asset.exists && package_exists(asset);
     else if (authored.find("<UDIM>") != std::string::npos) exists = HasResolvableUdimTile(resolved, environment);
     else {
-      std::error_code ec;
-      exists = environment ? asset.exists : std::filesystem::is_regular_file(resolved, ec);
+      exists = asset.exists;
+#ifndef LUSDCHECKER_MEMORY_ONLY
+      if (!environment) { std::error_code ec; exists = std::filesystem::is_regular_file(resolved, ec); }
+#endif
     }
     if (!exists) {
       if (require_complete) {
@@ -1534,23 +1141,20 @@ void MergeDedupedIssues(USDValidationResult* dst,
 
 }  // namespace
 
-int lusdchecker::RunChecker(int argc, char** argv,
+int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     const lightusd::next::ValidationRegistry& initial_registry,
     const Environment* environment) {
-  Args args;
   args.environment = environment;
+#ifdef LUSDCHECKER_MEMORY_ONLY
+  if (!environment || !environment->report) return kExitError;
+#endif
   if (environment && (!environment->read || !environment->resolver))
     return ReportError(args, "checker.usage", "checker environment requires a reader and resolver");
-  args.groups = AllAvailableGroups();
   std::string error;
-  const ParseArgsResult parsed = ParseArgs(argc, argv, &args, &error);
-  if (parsed == ParseArgsResult::ExitSuccess) return kExitValid;
-  if (parsed == ParseArgsResult::Error) {
-    return ReportError(args, "checker.usage", error);
-  }
+  if (!args.usage_error.empty()) return ReportError(args, "checker.usage", args.usage_error);
 
   if (args.json && args.sarif) {
-    std::cerr << "lusdchecker: --json and --sarif are mutually exclusive\n";
+    return ReportError(args, "checker.usage", "--json and --sarif are mutually exclusive");
     return kExitError;
   }
   if (args.max_memory_mb >
@@ -1580,6 +1184,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
       known |= std::find(rule.keywords.begin(), rule.keywords.end(), keyword) != rule.keywords.end();
     if (!known) return ReportError(args, "checker.usage", "unknown validator keyword: " + keyword);
   }
+#ifndef LUSDCHECKER_MEMORY_ONLY
   if (args.dump_rules) {
     size_t count = 0;
     const auto* rules = lightusd::next::GetValidationRuleTable(&count);
@@ -1592,6 +1197,8 @@ int lusdchecker::RunChecker(int argc, char** argv,
       std::cout << "[extension:" << rule.id << "]:\n\tDoc: " << rule.description << '\n';
     return kExitValid;
   }
+
+#endif
 
   lightusd::next::pcp::LayerLoadOptions load_options;
   load_options.max_memory = max_memory;
@@ -1760,8 +1367,10 @@ int lusdchecker::RunChecker(int argc, char** argv,
       for (const auto& item : discovered)
         if (!item.second.selected.empty()) effective[item.first] = item.second.selected;
       const bool new_selection = expanded.emplace(pass.base, SelectionKey(effective)).second;
+#ifndef LUSDCHECKER_MEMORY_ONLY
       if (args.verbose) std::cerr << "lusdchecker: variant pass " << variant_pass_count << " "
                                  << SelectionDescription(effective) << '\n';
+#endif
       if (composed && new_selection) {
         any_pass_composed = true;
         validate_stage(std::move(composed), SelectionDescription(effective));
@@ -1826,7 +1435,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
   if (args.composed && args.groups.core && !args.root_package_only &&
       args.input != "-") {
     std::unordered_set<std::string> visited;
-    visited.insert(std::filesystem::path(args.input).lexically_normal().string());
+    visited.insert(ResolveDependencyPath("", args.input));
     AuditLayerTypesRecursive(*layer, args.input, load_options, &visited,
                              &result, environment);
   }
@@ -1948,7 +1557,11 @@ int lusdchecker::RunChecker(int argc, char** argv,
     }
     if (!baseline_ok && error.empty()) error = "baseline must be a lusdchecker JSON report";
   } else {
+#ifdef LUSDCHECKER_MEMORY_ONLY
+    baseline_ok = lusdchecker::ApplyBaselineReport(&report, nullptr, &error);
+#else
     baseline_ok = lusdchecker::ApplyBaseline(&report, args.baseline, &error);
+#endif
   }
   if (!baseline_ok) return ReportError(args, "checker.baseline", error);
 
@@ -1958,6 +1571,7 @@ int lusdchecker::RunChecker(int argc, char** argv,
     return passed ? kExitValid : kExitInvalid;
   }
 
+#ifndef LUSDCHECKER_MEMORY_ONLY
   std::ofstream file_output;
   std::ostream* output = &std::cout;
   if (args.output == "stderr") {
@@ -1994,5 +1608,6 @@ int lusdchecker::RunChecker(int argc, char** argv,
     std::cerr << "lusdchecker: error: failed while writing report\n";
     return kExitError;
   }
+#endif
   return report["gatePassed"].get_bool() ? kExitValid : kExitInvalid;
 }

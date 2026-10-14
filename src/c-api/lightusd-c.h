@@ -361,11 +361,7 @@ LIGHTUSD_API lightusd_status lightusd_stage_export_usda(const lightusd_stage* st
 /* Crate bytes; use lightusd_string_view() for (data, len). */
 LIGHTUSD_API lightusd_status lightusd_stage_export_usdc(const lightusd_stage* stage,
                                             lightusd_string** out);
-/* AOUSD Core validation of the stage's root layer. Validation findings are
- * reported as counts; a successfully checked but invalid layer still returns
- * LIGHTUSD_OK. */
-LIGHTUSD_API lightusd_status lightusd_stage_validate_core(
-    const lightusd_stage* stage, size_t* errors, size_t* warnings);
+
 /* Flatten composition into a new single-layer stage. */
 LIGHTUSD_API lightusd_status lightusd_stage_flatten(const lightusd_stage* stage,
                                         lightusd_stage** out);

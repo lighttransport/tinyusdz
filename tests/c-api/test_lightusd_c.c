@@ -1,3 +1,4 @@
+#include "lightusd-validation-c.h"
 /* SPDX-License-Identifier: Apache-2.0
  * Smoke test for the lightusd_c C API (pure C11).
  * Authors a stage, round-trips it through USDA/USDC, and reads it back.

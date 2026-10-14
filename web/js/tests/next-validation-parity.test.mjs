@@ -16,6 +16,8 @@ const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
                         : '../src/lightusd/lightusd_next.js';
 const {default: createNextModule} = await import(new URL(nextGlue, import.meta.url));
 const nextModule = await createNextModule();
+await nextModule.loadValidator();
+await nextModule.loadEXR();
 const legacy = new legacyModule.LightUSDLoaderNative();
 const functionInventory = JSON.parse(fs.readFileSync(new URL(
   './next-module-function-api-inventory.json', import.meta.url), 'utf8'));

@@ -329,10 +329,11 @@ function isHDRFormat(mimeType) {
  * @param {string} mimeType - MIME type
  * @returns {THREE.DataTexture|null}
  */
-function decodeHDRTexture(data, mimeType) {
+async function decodeHDRTexture(data, mimeType) {
     const buffer = data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
 
     if (mimeType === 'image/x-exr') {
+        await _lightusd?.loadEXR?.();
         // Use EXR decoder with LightUSD fallback
         const result = decodeEXRWithFallback(buffer, _lightusd, {
             outputFormat: 'float16',
@@ -530,7 +531,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                                 const mimeType = getMimeType(altImgData);
                                 // Check if HDR format - use specialized decoder
                                 if (isHDRFormat(mimeType)) {
-                                    texture = decodeHDRTexture(altImgData.data, mimeType);
+                                    texture = await decodeHDRTexture(altImgData.data, mimeType);
                                 } else {
                                     const blob = new Blob([altImgData.data], { type: mimeType });
                                     const blobUrl = URL.createObjectURL(blob);
@@ -578,7 +579,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
 
                 // Check if HDR format - use specialized decoder
                 if (isHDRFormat(mimeType)) {
-                    texture = decodeHDRTexture(imgData.data, mimeType);
+                    texture = await decodeHDRTexture(imgData.data, mimeType);
                 } else {
                     // Standard image - use Blob and TextureLoader
                     const blob = new Blob([imgData.data], { type: mimeType });

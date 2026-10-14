@@ -1,3 +1,4 @@
+#include "lightusd-validation-cpp.hh"
 // SPDX-License-Identifier: Apache-2.0
 #include "lightusd-cpp.hh"
 
@@ -55,7 +56,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   size_t errors = 0, warnings = 0;
-  if (stage.validate_core(&errors, &warnings) != LIGHTUSD_OK || errors != 0)
+  if (lightusd::api::validate_core(stage, &errors, &warnings) != LIGHTUSD_OK || errors != 0)
     return 1;
   lightusd::api::String crate;
   if (stage.export_usdc(&crate) != LIGHTUSD_OK) return 1;

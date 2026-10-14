@@ -8,6 +8,8 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <optional>
+#include <string_view>
 
 namespace lightusd { namespace next {
 
@@ -24,6 +26,27 @@ struct ValidationSchemaDefinition {
 struct ValidationShaderDefinition {
   std::string identifier, source_type, source;
   std::map<std::string, std::string> inputs, outputs;
+};
+
+// Borrowed views: built-ins reference the immutable C arena; custom definitions
+// reference their owning registry. Any registry mutation invalidates its views.
+struct ValidationPropertyView {
+  std::string_view type, variability;
+  bool relationship{false};
+};
+struct ValidationSchemaView {
+  std::string_view name, parent, kind, property_namespace, source;
+  size_t index{0};
+  const ValidationSchemaDefinition* custom{nullptr};
+  std::optional<ValidationPropertyView> property(const std::string& name) const;
+};
+struct ValidationShaderView {
+  std::string_view identifier, source_type, source;
+  size_t index{0};
+  const ValidationShaderDefinition* custom{nullptr};
+  size_t port_count(bool output) const;
+  std::pair<std::string_view, std::string_view> port(bool output, size_t index) const;
+  std::optional<std::string_view> input_type(std::string_view name) const;
 };
 
 enum class ValidationScope { Layer, Stage, Prim };
@@ -66,11 +89,11 @@ class ValidationRegistry {
       const std::string& json);
   expected<bool, std::string> RegisterValidator(ValidatorDefinition rule);
   const std::vector<ValidatorDefinition>& validators() const { return validators_; }
-  const ValidationSchemaDefinition* FindSchema(const std::string& name) const;
+  std::optional<ValidationSchemaView> FindSchema(const std::string& name) const;
   bool InheritsFrom(const std::string& name, const std::string& ancestor) const;
-  const ValidationPropertyDefinition* FindProperty(
+  std::optional<ValidationPropertyView> FindProperty(
       const PrimSpec& prim, const std::string& name) const;
-  const ValidationShaderDefinition* FindShader(
+  std::optional<ValidationShaderView> FindShader(
       const std::string& id, const std::string& source_type = "") const;
   void RunCallbacks(ValidationScope scope, const ValidationContext& context,
                     const PrimSpec* prim, USDValidationResult* result) const;

@@ -31,7 +31,7 @@ int main() {
   assert(a.FindShader("VendorNode"));
   assert(!b.FindShader("VendorNode"));
   assert(!a.LoadShaderDefinitions(R"({"formatVersion":1,"shaders":[{"identifier":"VendorNode","sourceType":"test","inputs":{"value":"double"},"outputs":{"out":"float"}}]})"));
-  assert(a.FindShader("VendorNode")->inputs.at("value") == "float");
+  assert(a.FindShader("VendorNode")->input_type("value") == "float");
   size_t calls = 0;
   ValidatorDefinition rule;
   rule.id = "test.callback"; rule.keywords = {"Test"}; rule.schema_types = {"Sphere"};

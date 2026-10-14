@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "report.hh"
+#ifndef LUSDCHECKER_MEMORY_ONLY
 #include <fstream>
+#endif
 #include <set>
 #include <vector>
 
@@ -33,6 +35,7 @@ std::string Uri(const std::string& path) {
 }
 }  // namespace
 
+#ifndef LUSDCHECKER_MEMORY_ONLY
 bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
   Json baseline;
   if (!path.empty()) {
@@ -57,6 +60,7 @@ bool ApplyBaseline(Json* report, const std::string& path, std::string* error) {
   return ApplyBaselineReport(report, path.empty() ? nullptr : &baseline, error);
 }
 
+#endif
 bool ApplyBaselineReport(Json* report, const Json* baseline, std::string* error) {
   std::set<std::string> accepted;
   if (baseline) {

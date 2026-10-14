@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <utility>
 #include "sha256.hh"
+#include "minijson.hh"
 
 namespace lightusd::web_next {
 
@@ -445,6 +446,26 @@ int NextAssetStore::clear() {
   memory_bytes_ = 0;
   metadata_bytes_ = 0;
   return 0;
+}
+
+std::string NextAssetStore::snapshotMetadata() const {
+  using lightusd::minijson::Value;
+  Value result;
+  result["assets"] = Value::array();
+  for (const auto& asset : assets_) {
+    Value entry;
+    entry["name"] = asset.first;
+    entry["size"] = uint64_t(asset.second);
+    result["assets"].push_back(std::move(entry));
+  }
+  result["aliases"] = Value::object();
+  for (const auto& alias : aliases_) result["aliases"][alias.first] = aliasTarget_(alias.first);
+  const auto& config = resolver_.GetConfig();
+  result["workingDirectory"] = config.working_directory;
+  result["searchPaths"] = Value::array();
+  for (const auto& path : config.search_paths) result["searchPaths"].push_back(path);
+  result["allowParentPaths"] = config.allow_parent_paths;
+  return result.dump();
 }
 
 int NextAssetStore::copyAssetsTo(

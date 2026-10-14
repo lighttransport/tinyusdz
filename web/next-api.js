@@ -91,56 +91,91 @@
       if (input) Module['_lightusd_next_free'](input);
     }
   };
-  const validateEncoder = new TextEncoder();
-  const validateBytes = (bytes, filename, options, checker = false, assetHandle = 0) => {
-    if (!ArrayBuffer.isView(bytes)) throw new TypeError('validateFromBinary: expected byte view');
-    if (typeof filename !== 'string' || typeof options !== 'string') {
-      throw new TypeError('validateFromBinary: expected filename and options strings');
+  const optionalFeatures = new Map();
+  const loadFeature = name => {
+    if (!optionalFeatures.has(name)) {
+      const pending = (async () => {
+        const probe = Module['_lightusd_next_alloc'](1);
+        if (!probe) throw new RangeError('feature width probe failed');
+        const suffix = typeof probe === 'bigint' ? '_64' : '';
+        Module['_lightusd_next_free'](probe);
+        const file = `lightusd_${name}${suffix}.js`;
+        const url = Module['locateFeature'] ? Module['locateFeature'](file)
+          : new URL(file, import.meta.url).href;
+        const factory = (await import(/* @vite-ignore */ url)).default;
+        return factory({locateFile: file => Module['locateFeature']
+          ? Module['locateFeature'](file) : new URL(file, url).href});
+      })();
+      optionalFeatures.set(name, pending);
+      pending.catch(() => { if (optionalFeatures.get(name) === pending) optionalFeatures.delete(name); });
     }
-    let source = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (source.length > 0x40000000) throw new RangeError('validateFromBinary: input exceeds 1 GiB');
-    if (source.buffer === Module.HEAPU8.buffer) source = source.slice();
-    const name = validateEncoder.encode(filename);
-    if (checker && name.length > 65536) throw new RangeError('checkUSD: filename exceeds 64 KiB');
-    const config = validateEncoder.encode(options);
-    if (checker && config.length > 0x1000000) throw new RangeError('checkUSD: options exceed 16 MiB');
-    const total = source.length + name.length + config.length;
-    if (total > 0xffffffff) throw new RangeError('validateFromBinary: input too large');
-    let input = 0, output = 0;
-    try {
-      input = Module['_lightusd_next_alloc'](Math.max(total, 1));
-      if (!input) throw new RangeError('validateFromBinary: allocation failed');
-      const base = Number(input);
-      Module.HEAPU8.set(source, base);
-      Module.HEAPU8.set(name, base + source.length);
-      Module.HEAPU8.set(config, base + source.length + name.length);
-      const pointer = offset => typeof input === 'bigint' ? input + BigInt(offset)
-                                                          : input + offset;
-      const call = (data, namePtr, configPtr) => checker
-        ? Module['_lightusd_next_check_json'](data, source.length, namePtr, name.length, configPtr, config.length, assetHandle)
-        : Module['_lightusd_next_validate_json'](data, source.length, namePtr, name.length, configPtr, config.length);
-      try { output = call(input, pointer(source.length), pointer(source.length + name.length)); }
-      catch (error) {
-        if (!(error instanceof TypeError)) throw error;
-        output = call(BigInt(input), BigInt(pointer(source.length)),
-          BigInt(pointer(source.length + name.length)));
-      }
-      if (!output) throw new RangeError('validateFromBinary: validation allocation failed');
-      return UTF8ToString(Number(output));
-    } finally {
-      if (output) Module['_lightusd_next_free'](output);
-      if (input) Module['_lightusd_next_free'](input);
-    }
+    return optionalFeatures.get(name);
   };
-  Module['validateFromBinary'] = (bytes, filename, options) => validateBytes(bytes, filename, options);
-  // Standalone lusdchecker engine. No implicit filesystem/network access.
+  let exr;
+  Module['loadEXR'] = () => loadFeature('exr').then(value => {
+    exr = value;
+    Module['exrBridge'] = (op, ptr, size, width, height, channels, bits, budget, out, pointerBytes) => {
+      let allocated = 0;
+      try {
+        if (ptr > Module.HEAPU8.length - size || size < 0) return -1;
+        const result = exr.codec(op, Module.HEAPU8.subarray(ptr, ptr + size), width, height,
+          channels, bits, Math.min(budget, 0x20000000));
+        if (result.data.length) {
+          allocated = Module['_lightusd_next_alloc'](result.data.length);
+          if (!allocated) return -4;
+          Module.HEAPU8.set(result.data, Number(allocated));
+        }
+        const view = new DataView(Module.HEAPU8.buffer);
+        if (pointerBytes === 8) {
+          view.setBigUint64(out, BigInt(allocated), true);
+          view.setBigUint64(out + 8, BigInt(result.data.length), true);
+        } else {
+          view.setUint32(out, Number(allocated), true);
+          view.setUint32(out + 4, result.data.length, true);
+        }
+        for (const [i, v] of [result.width, result.height, result.channels, result.bits].entries())
+          view.setUint32(out + pointerBytes * 2 + i * 4, v, true);
+        return 0;
+      } catch (error) {
+        if (allocated) Module['_lightusd_next_free'](allocated);
+        return -7;
+      }
+    };
+    return value;
+  });
+  Module['decodeEXR'] = (bytes, format = 'float32') => {
+    if (!exr) throw new Error('EXR feature not loaded; await module.loadEXR() first');
+    return exr.decodeEXR(bytes, format);
+  };
+  let validator;
+  Module['loadValidator'] = () => loadFeature('validator').then(value => (validator = value));
+  const requireValidator = () => {
+    if (!validator) throw new Error('Validation feature not loaded; await module.loadValidator() first');
+    return validator;
+  };
+  Module['validateFromBinary'] = (bytes, filename, options) =>
+    requireValidator().validateFromBinary(bytes, filename, options);
   Module['checkUSD'] = (bytes, filename, options = {}, assetStore = null) => {
+    const feature = requireValidator();
     if (!options || typeof options !== 'object' || Array.isArray(options))
       throw new TypeError('checkUSD: options must be an object');
+    if (!ArrayBuffer.isView(bytes)) throw new TypeError('checkUSD: expected byte view');
     const store = assetStore === null ? null : live.get(assetStore);
     if (assetStore !== null && (!store?.handle || store.kind !== 5))
       throw new TypeError('checkUSD: assetStore must be a live NextAssetStore');
-    return JSON.parse(validateBytes(bytes, filename, JSON.stringify(options), true, store?.handle || 0));
+    // Asset queries may grow the core heap; snapshot a heap-backed root first.
+    if (bytes.buffer === Module.HEAPU8.buffer)
+      bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength).slice();
+    let snapshot = null;
+    if (store) {
+      const ptr = Module['_lightusd_next_asset_store_snapshot'](store.handle);
+      if (!ptr) throw new RangeError('checkUSD: asset metadata exceeds limits');
+      let metadata;
+      try { metadata = JSON.parse(UTF8ToString(Number(ptr))); }
+      finally { Module['_lightusd_next_free'](ptr); }
+      snapshot = {metadata, read: name => assetStore.readMemoryAsset(name)};
+    }
+    return JSON.parse(feature.runValidation(bytes, filename, JSON.stringify(options), true, snapshot));
   };
   defineClass('NextUSDZConverterNative', 1);
   defineClass('NextAssetStore', 5);
@@ -1216,48 +1251,18 @@
       return JSON.stringify({parse_ok: false, ok: false,
         error: 'No Layer is loaded. Use loadAsLayerFromBinary first.'});
     }
-    // Export the current authored state, then validate directly from the
-    // document's retained C bytes. Only the small filename/options block is
-    // staged in WASM; do not decode USDA to a JS string and re-encode/copy the
-    // entire layer merely to call the same synchronous C validator.
+    const feature = requireValidator();
     const size = Module['_lightusd_next_layer_export_usda_size'](state.handle);
-    if (size < 0) {
-      return JSON.stringify({parse_ok: false, ok: false,
-        error: layerError(state) || 'Layer export failed'});
-    }
-    if (!Number.isSafeInteger(size) || size > 0x20000000) {
+    if (size < 0) return JSON.stringify({parse_ok: false, ok: false,
+      error: layerError(state) || 'Layer export failed'});
+    if (!Number.isSafeInteger(size) || size > 0x20000000)
       throw new RangeError('validateLoadedLayer: USDA exceeds 512 MiB limit');
-    }
-    const data = Module['_lightusd_next_layer_export_usda_data'](state.handle);
-    if (!data && size) throw new RangeError('validateLoadedLayer: retained USDA is missing');
-    const filename = validateEncoder.encode('<layer-document>.usda');
-    const config = validateEncoder.encode(options);
-    const total = filename.length + config.length;
-    let input = 0, output = 0;
+    const ptr = Module['_lightusd_next_layer_export_usda_data'](state.handle);
+    if (!ptr && size) throw new RangeError('validateLoadedLayer: retained USDA is missing');
     ++state.busy;
-    try {
-      input = Module['_lightusd_next_alloc'](Math.max(total, 1));
-      if (!input) throw new RangeError('validateLoadedLayer: allocation failed');
-      const base = Number(input);
-      Module.HEAPU8.set(filename, base);
-      Module.HEAPU8.set(config, base + filename.length);
-      const pointer = offset => typeof input === 'bigint' ? input + BigInt(offset)
-                                                          : input + offset;
-      const call = (source, filenamePtr, configPtr) => Module['_lightusd_next_validate_json'](
-        source, size, filenamePtr, filename.length, configPtr, config.length);
-      try {
-        output = call(data, pointer(0), pointer(filename.length));
-      } catch (error) {
-        if (!(error instanceof TypeError)) throw error;
-        output = call(BigInt(data), BigInt(pointer(0)), BigInt(pointer(filename.length)));
-      }
-      if (!output) throw new RangeError('validateLoadedLayer: validation allocation failed');
-      return UTF8ToString(Number(output));
-    } finally {
-      if (output) Module['_lightusd_next_free'](output);
-      if (input) Module['_lightusd_next_free'](input);
-      --state.busy;
-    }
+    try { return feature.validateFromBinary(Module.HEAPU8.subarray(Number(ptr), Number(ptr) + size),
+      '<layer-document>.usda', options); }
+    finally { --state.busy; }
   }});
   Object.defineProperty(Module.LayerDocument.prototype, 'exportUSDC', {value: function() {
     const state = layerState(this);
@@ -3034,6 +3039,7 @@ def Xform "root"
   Object.defineProperty(Module.RenderStream.prototype, 'encodeImageNative', {
     value: function(pixels, width, height, channels, format) {
       const name = 'encodeImageNative';
+
       const state = live.get(this);
       if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
       if (arguments.length !== 5) throw new TypeError(name + ': wrong argument count');
@@ -3053,6 +3059,11 @@ def Xform "root"
       if (typeof format === 'string') formatBytes = imageEncoder.encode(format);
       else if (ArrayBuffer.isView(format)) formatBytes = converterByteView(format, name);
       else throw new TypeError(name + ': expected format string or byte view');
+      if (formatBytes.length === 3 && formatBytes[0] === 101 &&
+          formatBytes[1] === 120 && formatBytes[2] === 114) {
+        if (!exr) throw new Error('EXR feature not loaded; await module.loadEXR() first');
+        return exr.encode(source, w, h, c, 8);
+      }
       const total = source.length + formatBytes.length;
       if (total > 0xffffffff) throw new RangeError(name + ': input too large');
       ++state.busy;

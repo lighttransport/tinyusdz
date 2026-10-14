@@ -3586,7 +3586,7 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                "apiSchemas instance `" + schema.instance_name +
                    "` is not a valid namespaced identifier");
     }
-    const auto* definition = registry.FindSchema(schema.name);
+    const auto definition = registry.FindSchema(schema.name);
     // The exported source manifest records classes without an explicit
     // apiSchemaType as abstract. APISchemaBase descendants default to
     // singleApply in OpenUSD; explicit nonApplied definitions stay non-applied.
@@ -5776,8 +5776,8 @@ USDValidationResult ValidateLayerLocal(const Layer &layer,
         const PrimSpec* prim = layer.prim_at_path(issue.location);
         if (!prim) return false;
         const auto& registry = options.registry ? *options.registry : GetBuiltinValidationRegistry();
-        const auto* shader = registry.FindShader(GetShaderInfoId(*prim));
-        return shader && !shader->outputs.empty();
+        const auto shader = registry.FindShader(GetShaderInfoId(*prim));
+        return shader && shader->port_count(true) != 0;
       }), result.issues.end());
 
   if (options.normative_only) {

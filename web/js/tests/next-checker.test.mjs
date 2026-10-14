@@ -7,6 +7,8 @@ import {spawnSync} from 'node:child_process';
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
 const {default: factory} = await import(wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js');
 const module = await factory();
+await module.loadValidator();
+await module.loadEXR();
 const encode = text => new TextEncoder().encode(text);
 const header = '#usda 1.0\n(\n defaultPrim = "World"\n upAxis = "Y"\n metersPerUnit = 1\n)\n';
 const clean = header + 'def Xform "World" {}\n';

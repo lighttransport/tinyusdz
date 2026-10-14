@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
   rule.scope = ValidationScope::Prim;
   rule.metadata.category = "recommendation";
   rule.callback = [](const ValidationContext&, const PrimSpec* prim)
-      -> nonstd::expected<USDValidationResult, std::string> {
+      -> lightusd::next::expected<USDValidationResult, std::string> {
     USDValidationResult result;
     result.checked_groups.core = false;
     if (!prim->property("pipeline:tag"))

@@ -70,6 +70,7 @@ class NextAssetStore {
     return payload_budget_;
   }
   int clear();
+  std::string snapshotMetadata() const;
   // Import a snapshot into another resolver without copying payload bytes.
   // Aliases are materialized as additional keys sharing the same immutable data.
   int copyAssetsTo(lightusd::next::AssetResolver* destination,

@@ -1,3 +1,4 @@
+#include "escape-string.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
@@ -44,36 +45,6 @@ inline void ReserveArrayHeadroom(std::string& o, size_t want) {
 }
 
 // Escape a string for USDA output
-std::string EscapeString(const std::string& s) {
-  std::string result;
-  result.reserve(s.size() + 2);
-  result += '"';
-  for (char c : s) {
-    switch (c) {
-      case '"':  result += "\\\""; break;
-      case '\\': result += "\\\\"; break;
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default: {
-        // Control bytes written raw make the output unreadable by next's own
-        // loader (format sniffing rejects them); emit \xNN like pxr does.
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (uc < 0x20 || uc == 0x7f) {
-          static const char* hexd = "0123456789abcdef";
-          result += "\\x";
-          result += hexd[uc >> 4];
-          result += hexd[uc & 0xf];
-        } else {
-          result += c;
-        }
-        break;
-      }
-    }
-  }
-  result += '"';
-  return result;
-}
 
 // Forward decl: recursive dictionary printer (defined after PrintValue).
 std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
@@ -523,7 +494,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         if (type_id == TypeId::AssetPath) {
           out.append(FormatAssetPathForUsda((*a)[i]));
         } else {
-          out.append(EscapeString((*a)[i]));
+          out.append(EscapeUSDAString((*a)[i]));
         }
       }
       if (limit < a->size()) out.append(", ...");
@@ -733,7 +704,7 @@ void PrintValueInto(std::string& out, const Value& value,
           for (size_t i = 0; i < limit; ++i) {
             if (i) out += ", ";
             if (type_id == TypeId::AssetPath) out += FormatAssetPathForUsda((*a)[i]);
-            else out += EscapeString((*a)[i]);
+            else out += EscapeUSDAString((*a)[i]);
           }
           if (limit < a->size()) out += ", ...";
         }
@@ -859,13 +830,13 @@ void PrintValueInto(std::string& out, const Value& value,
     case TypeId::String:
     case TypeId::PathExpression: {  // SdfPathExpression prints as a string
       const std::string* v = value.as_string();
-      out += v ? EscapeString(*v) : "None";
+      out += v ? EscapeUSDAString(*v) : "None";
       return;
     }
 
     case TypeId::Token: {
       const std::string* v = value.as_token();
-      out += v ? EscapeString(*v) : "None";
+      out += v ? EscapeUSDAString(*v) : "None";
       return;
     }
 
@@ -1315,7 +1286,7 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
       }
       return true;
     };
-    return ident(k) ? k : EscapeString(k);
+    return ident(k) ? k : EscapeUSDAString(k);
   };
 
   struct Frame {

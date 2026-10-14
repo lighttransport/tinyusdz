@@ -7,6 +7,9 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     types/value.cc
     types/array-storage.cc
     types/value-dict.cc
+    c/string-index.c
+    c/usda-string.c
+    writer/escape-string.cc
     core/string-index.cc
     types/spline.cc
     types/interpolation.cc

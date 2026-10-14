@@ -80,126 +80,117 @@ bool PortMap(const Json& j, std::map<std::string, std::string>* out) {
 }
 }  // namespace
 
-// The built-in inventory lives in the C11 core (src/next/c/generated-schema-tables.c)
-// as a string arena plus index rows, so it costs no per-schema static
-// construction and no template instantiation in this translation unit. It is
-// materialized into the same map types as before, lazily on first use, so the
-// public API and every observable result are unchanged.
+// Built-in data is read directly from the immutable C11 tables.
 ValidationRegistry::ValidationRegistry() = default;
-
 namespace {
-
-std::string ArenaString(lu_view v) {
-  return std::string(v.data != nullptr ? v.data : "", v.len);
+std::string_view View(lu_view v) { return {v.data ? v.data : "", v.len}; }
+lu_view View(const std::string& s) { return {s.data(), s.size()}; }
+size_t BuiltinSchemaCount() { size_t n = 0; lu_validation_schema_count(&n); return n; }
+std::optional<ValidationSchemaView> BuiltinSchema(const std::string& name) {
+  size_t i; lu_validation_schema_view v;
+  if (lu_validation_schema_find(View(name), &i) != LU_OK ||
+      lu_validation_schema_at(i, &v) != LU_OK) return {};
+  return ValidationSchemaView{View(v.name), View(v.parent), View(v.kind),
+    View(v.property_namespace), View(v.source), i, nullptr};
 }
-
-const std::map<std::string, ValidationSchemaDefinition>& BuiltinSchemaTables() {
-  static const std::map<std::string, ValidationSchemaDefinition> tables = [] {
-    std::map<std::string, ValidationSchemaDefinition> m;
-    size_t count = 0;
-    if (lu_validation_schema_count(&count) != LU_OK) return m;
-    for (size_t i = 0; i < count; i++) {
-      lu_validation_schema_view sv;
-      if (lu_validation_schema_at(i, &sv) != LU_OK) continue;
-      ValidationSchemaDefinition s;
-      s.name = ArenaString(sv.name);
-      s.parent = ArenaString(sv.parent);
-      s.kind = ArenaString(sv.kind);
-      s.property_namespace = ArenaString(sv.property_namespace);
-      s.source = ArenaString(sv.source);
-      for (size_t p = 0; p < sv.property_count; p++) {
-        lu_validation_property_view pv;
-        if (lu_validation_property_at(i, p, &pv) != LU_OK) break;
-        ValidationPropertyDefinition d;
-        d.type = ArenaString(pv.type);
-        d.variability = ArenaString(pv.variability);
-        d.relationship = pv.is_relationship != 0;
-        for (size_t t = 0; t < pv.token_count; t++) {
-          lu_view tv;
-          if (lu_validation_property_token(i, p, t, &tv) != LU_OK) break;
-          d.allowed_tokens.push_back(ArenaString(tv));
-        }
-        s.properties.emplace(ArenaString(pv.name), std::move(d));
-      }
-      m.emplace(s.name, std::move(s));
+ValidationShaderView BuiltinShader(size_t i) {
+  lu_validation_shader_view v{}; lu_validation_shader_at(i, &v);
+  return {View(v.identifier), View(v.source_type), View(v.source), i, nullptr};
+}
+ValidationShaderView CustomShader(const ValidationShaderDefinition& s) {
+  return {s.identifier, s.source_type, s.source, 0, &s};
+}
+bool SameBuiltinSchema(const ValidationSchemaView& v, const ValidationSchemaDefinition& s) {
+  lu_validation_schema_view row{}; lu_validation_schema_at(v.index, &row);
+  if (v.parent != s.parent || v.kind != s.kind || v.property_namespace != s.property_namespace ||
+      row.property_count != s.properties.size()) return false;
+  for (const auto& p : s.properties) {
+    size_t index; lu_validation_property_view pv{};
+    if (lu_validation_property_find(v.index, View(p.first), &index) != LU_OK ||
+        lu_validation_property_at(v.index, index, &pv) != LU_OK) return false;
+    const auto& d = p.second;
+    if (View(pv.type) != d.type || View(pv.variability) != d.variability ||
+        (pv.is_relationship != 0) != d.relationship || pv.token_count != d.allowed_tokens.size()) return false;
+    for (size_t t = 0; t < pv.token_count; ++t) {
+      lu_view token{}; lu_validation_property_token(v.index, index, t, &token);
+      if (View(token) != d.allowed_tokens[t]) return false;
     }
-    return m;
-  }();
-  return tables;
+  }
+  return true;
 }
-
-const std::map<std::pair<std::string, std::string>, ValidationShaderDefinition>&
-BuiltinShaderTables() {
-  static const std::map<std::pair<std::string, std::string>,
-                        ValidationShaderDefinition> tables = [] {
-    std::map<std::pair<std::string, std::string>, ValidationShaderDefinition> m;
-    size_t count = 0;
-    if (lu_validation_shader_count(&count) != LU_OK) return m;
-    for (size_t i = 0; i < count; i++) {
-      lu_validation_shader_view sv;
-      if (lu_validation_shader_at(i, &sv) != LU_OK) continue;
-      ValidationShaderDefinition s;
-      s.identifier = ArenaString(sv.identifier);
-      s.source_type = ArenaString(sv.source_type);
-      s.source = ArenaString(sv.source);
-      for (size_t p = 0; p < sv.input_count; p++) {
-        lu_view n, t;
-        if (lu_validation_shader_port(i, 0, p, &n, &t) != LU_OK) break;
-        s.inputs.emplace(ArenaString(n), ArenaString(t));
-      }
-      for (size_t p = 0; p < sv.output_count; p++) {
-        lu_view n, t;
-        if (lu_validation_shader_port(i, 1, p, &n, &t) != LU_OK) break;
-        s.outputs.emplace(ArenaString(n), ArenaString(t));
-      }
-      m.emplace(std::make_pair(s.identifier, s.source_type), std::move(s));
+bool SameShader(const ValidationShaderView& v, const ValidationShaderDefinition& s) {
+  for (bool output : {false, true}) {
+    const auto& ports = output ? s.outputs : s.inputs;
+    if (v.port_count(output) != ports.size()) return false;
+    for (size_t i = 0; i < v.port_count(output); ++i) {
+      const auto p = v.port(output, i);
+      const auto it = ports.find(std::string(p.first));
+      if (it == ports.end() || it->second != p.second) return false;
     }
-    return m;
-  }();
-  return tables;
+  }
+  return true;
 }
-
-}  // namespace
-
-// Built-in and caller-loaded definitions are merged for lookups: loaded
-// entries win, everything else comes from the C11 tables.
-const ValidationSchemaDefinition* ValidationRegistry::FindSchema(
-    const std::string& name) const {
+} // namespace
+std::optional<ValidationPropertyView> ValidationSchemaView::property(const std::string& name) const {
+  if (custom) {
+    const auto p = custom->properties.find(name);
+    if (p == custom->properties.end()) return {};
+    return ValidationPropertyView{p->second.type, p->second.variability, p->second.relationship};
+  }
+  size_t p; lu_validation_property_view v{};
+  if (lu_validation_property_find(index, View(name), &p) != LU_OK ||
+      lu_validation_property_at(index, p, &v) != LU_OK) return {};
+  return ValidationPropertyView{View(v.type), View(v.variability), v.is_relationship != 0};
+}
+size_t ValidationShaderView::port_count(bool output) const {
+  if (custom) return (output ? custom->outputs : custom->inputs).size();
+  lu_validation_shader_view v{}; lu_validation_shader_at(index, &v);
+  return output ? v.output_count : v.input_count;
+}
+std::pair<std::string_view, std::string_view> ValidationShaderView::port(bool output, size_t p) const {
+  if (p >= port_count(output)) return {};
+  if (custom) {
+    const auto& ports = output ? custom->outputs : custom->inputs;
+    auto it = ports.begin(); std::advance(it, p); return {it->first, it->second};
+  }
+  lu_view name{}, type{}; lu_validation_shader_port(index, output ? 1 : 0, p, &name, &type);
+  return {View(name), View(type)};
+}
+std::optional<std::string_view> ValidationShaderView::input_type(std::string_view name) const {
+  for (size_t i = 0; i < port_count(false); ++i) {
+    const auto p = port(false, i); if (p.first == name) return p.second;
+  }
+  return {};
+}
+std::optional<ValidationSchemaView> ValidationRegistry::FindSchema(const std::string& name) const {
   const auto i = schemas_.find(name);
-  if (i != schemas_.end()) return &i->second;
-  const auto& builtin = BuiltinSchemaTables();
-  const auto b = builtin.find(name);
-  return b == builtin.end() ? nullptr : &b->second;
+  if (i == schemas_.end()) return BuiltinSchema(name);
+  const auto& s = i->second;
+  return ValidationSchemaView{s.name, s.parent, s.kind, s.property_namespace, s.source, 0, &s};
 }
-
-const ValidationShaderDefinition* ValidationRegistry::FindShader(
+std::optional<ValidationShaderView> ValidationRegistry::FindShader(
     const std::string& id, const std::string& source_type) const {
   const auto exact = shaders_.find({id, source_type});
-  if (exact != shaders_.end()) return &exact->second;
-  const auto& builtin = BuiltinShaderTables();
-  const auto bexact = builtin.find({id, source_type});
-  if (bexact != builtin.end()) return &bexact->second;
-  if (!source_type.empty()) return nullptr;
-  // Ambiguity is resolved across loaded and built-in definitions together, so
-  // an id that exists in both with different source types needs an explicit
-  // selection, exactly as it did when both lived in one map.
-  const ValidationShaderDefinition* candidate = nullptr;
+  if (exact != shaders_.end()) return CustomShader(exact->second);
+  size_t index;
+  if (lu_validation_shader_find(View(id), View(source_type), &index) == LU_OK) return BuiltinShader(index);
+  if (!source_type.empty()) return {};
+  std::optional<ValidationShaderView> candidate;
   for (const auto& s : shaders_) {
     if (s.first.first != id) continue;
-    if (candidate) return nullptr;
-    candidate = &s.second;
+    if (candidate) return {};
+    candidate = CustomShader(s.second);
   }
-  for (const auto& s : builtin) {
-    if (s.first.first != id) continue;
-    if (candidate) return nullptr;
-    candidate = &s.second;
+  size_t count = 0; lu_validation_shader_count(&count);
+  for (size_t i = 0; i < count; ++i) {
+    const auto s = BuiltinShader(i);
+    if (s.identifier != id || shaders_.count({std::string(s.identifier), std::string(s.source_type)})) continue;
+    if (candidate) return {};
+    candidate = s;
   }
   return candidate;
 }
-
 const ValidationRegistry& GetBuiltinValidationRegistry() {
-  // The built-in inventory is now materialized lazily from the C11 core, so
-  // this registry starts empty and Lookups fall through to those tables.
   static const ValidationRegistry registry;
   return registry;
 }
@@ -210,13 +201,7 @@ expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
   if (!lightusd::minijson::Parse(text, &root) || !root["formatVersion"].is_number_integer() || root["formatVersion"].get_int() != 1 ||
       !root["schemas"].is_array())
     return make_unexpected(std::string("expected schema manifest formatVersion 1"));
-  // Seed with exactly the set the constructor used to materialize: previously
-  // loaded overrides plus the built-in inventory. emplace keeps the loaded
-  // entry where both define the same schema name.
   auto candidate = schemas_;
-  for (const auto& entry : BuiltinSchemaTables()) {
-    candidate.emplace(entry.first, entry.second);
-  }
   std::set<std::string> names;
   for (const auto& item : root["schemas"]) {
     ValidationSchemaDefinition s;
@@ -251,7 +236,10 @@ expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
     const auto found = candidate.find(s.name);
     if (found != candidate.end() && !SameSchema(found->second, s))
       return make_unexpected(std::string("conflicting schema definition: ") + s.name);
-    candidate[s.name] = std::move(s);
+    const auto builtin = BuiltinSchema(s.name);
+    if (builtin && !SameBuiltinSchema(*builtin, s))
+      return make_unexpected(std::string("conflicting schema definition: ") + s.name);
+    if (!builtin) candidate[s.name] = std::move(s);
   }
   for (const auto& pair : candidate) {
     std::set<std::string> seen;
@@ -261,6 +249,7 @@ expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
         return make_unexpected(std::string("cyclic schema inheritance: ") + name);
       auto i = candidate.find(name);
       if (i == candidate.end()) {
+        if (const auto builtin = BuiltinSchema(name)) { name = builtin->parent; continue; }
         if (GetSchemaRegistry().IsKnownSchema(name)) break;
         return make_unexpected(std::string("undefined schema ancestor: ") + name);
       }
@@ -278,9 +267,6 @@ expected<bool, std::string> ValidationRegistry::LoadShaderDefinitions(
       !root["shaders"].is_array())
     return make_unexpected(std::string("expected shader manifest formatVersion 1"));
   auto candidate = shaders_;
-  for (const auto& entry : BuiltinShaderTables()) {
-    candidate.emplace(entry.first, entry.second);
-  }
   std::set<std::pair<std::string, std::string>> names;
   for (const auto& item : root["shaders"]) {
     ValidationShaderDefinition s;
@@ -296,7 +282,11 @@ expected<bool, std::string> ValidationRegistry::LoadShaderDefinitions(
     if (old != candidate.end() &&
         (old->second.inputs != s.inputs || old->second.outputs != s.outputs))
       return make_unexpected(std::string("conflicting shader definition: ") + s.identifier);
-    candidate[key] = std::move(s);
+    size_t index;
+    const bool builtin = lu_validation_shader_find(View(s.identifier), View(s.source_type), &index) == LU_OK;
+    if (builtin && !SameShader(BuiltinShader(index), s))
+      return make_unexpected(std::string("conflicting shader definition: ") + s.identifier);
+    if (!builtin) candidate[key] = std::move(s);
   }
   shaders_ = std::move(candidate);
   return true;
@@ -321,43 +311,43 @@ bool ValidationRegistry::InheritsFrom(const std::string& name, const std::string
   std::string current = name;
   // Loaded and built-in schemas can both form the chain, so the walk bound is
   // the total number of distinct schema names.
-  const size_t limit = schemas_.size() + BuiltinSchemaTables().size();
+  const size_t limit = schemas_.size() + BuiltinSchemaCount();
   for (size_t i = 0; i <= limit; ++i) {
     if (current == ancestor) return true;
-    const auto* s = FindSchema(current);
+    const auto s = FindSchema(current);
     if (!s) return GetSchemaRegistry().InheritsFrom(current, ancestor);
     if (s->parent.empty()) break;
     current = s->parent;
   }
   return false;
 }
-const ValidationPropertyDefinition* ValidationRegistry::FindProperty(
+std::optional<ValidationPropertyView> ValidationRegistry::FindProperty(
     const PrimSpec& prim, const std::string& name) const {
   std::vector<std::pair<std::string, std::string>> schemas = {{prim.type_name(), ""}};
   for (const auto& api : prim.meta().apiSchemas()) {
     const size_t colon = api.find(':');
     schemas.emplace_back(api.substr(0, colon), colon == std::string::npos ? "" : api.substr(colon + 1));
   }
-  const size_t limit = schemas_.size() + BuiltinSchemaTables().size();
+  const size_t limit = schemas_.size() + BuiltinSchemaCount();
   for (const auto& applied : schemas) {
     std::string current = applied.first;
     for (size_t hops = 0; hops <= limit; ++hops) {
-      const auto* s = FindSchema(current);
+      const auto s = FindSchema(current);
       if (!s) break;
       std::string local = name;
       if (s->kind == "multipleApply") {
         if (applied.second.empty()) break;
-        const std::string prefix = s->property_namespace + ":" + applied.second;
+        const std::string prefix = std::string(s->property_namespace) + ":" + applied.second;
         if (local == prefix) local = "__INSTANCE_NAME__";
         else if (Starts(local, prefix + ":")) local = local.substr(prefix.size() + 1);
         else break;
       }
-      auto property = s->properties.find(local);
-      if (property != s->properties.end()) return &property->second;
+      auto property = s->property(local);
+      if (property) return property;
       current = s->parent;
     }
   }
-  return nullptr;
+  return {};
 }
 void ValidationRegistry::RunCallbacks(ValidationScope scope, const ValidationContext& context,
     const PrimSpec* prim, USDValidationResult* result) const {
@@ -412,18 +402,18 @@ void ValidateRegisteredProperties(const Layer& layer, const ValidationOptions& o
     }
     if (!options.core) continue;
     for (const auto& name : prim.relationship_names()) {
-      const auto* definition = registry.FindProperty(prim, name);
+      const auto definition = registry.FindProperty(prim, name);
       if (definition && !definition->relationship)
         AddWarning(result, "core.schema.propertyKind", prim.path().str() + "." + name,
                    "Schema requires an attribute, authored a relationship");
     }
     for (const auto& slot : prim.properties().slots()) {
       const std::string name(GetPropNameTable().get(slot.name_id));
-      const auto* d = registry.FindProperty(prim, name);
+      const auto d = registry.FindProperty(prim, name);
       // Supplemental implemented schema definitions not in the pinned manifest.
       const auto* builtin = d ? nullptr : GetSchemaRegistry().FindProperty(prim, name);
       if (!d && !builtin) continue;
-      const std::string expected = d ? d->type : builtin->type_name;
+      const std::string expected = d ? std::string(d->type) : builtin->type_name;
       const bool rel = d ? d->relationship : expected == "rel";
       if (rel != slot.is_relationship()) {
         AddWarning(result, "core.schema.propertyKind", prim.path().str() + "." + name,
@@ -602,11 +592,11 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
       AddWarning(result, "shade.shader.implementationSource", prim.path().str() + ".info:implementationSource",
                  "Invalid shader implementation source: " + implementation); continue;
     }
-    std::vector<const ValidationShaderDefinition*> definitions;
+    std::vector<ValidationShaderView> definitions;
     const std::string id = Text(prim, "info:id");
     if (implementation == "id") {
-      const auto* d = registry.FindShader(id);
-      if (d) definitions.push_back(d);
+      const auto d = registry.FindShader(id);
+      if (d) definitions.push_back(*d);
       else if (options.require_complete)
         Incomplete(result, "checker.coverage.shader", prim.path().str(), "No shader definition for '" + id + "'");
     } else {
@@ -617,8 +607,8 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
         if (Starts(name, "info:") && EndsWith(name, suffix) && name.size() > 5 + suffix.size()) {
           const std::string source_type = name.substr(5, name.size() - 5 - suffix.size());
           source_types.insert(source_type);
-          const auto* d = registry.FindShader(id, source_type);
-          if (d) definitions.push_back(d);
+          const auto d = registry.FindShader(id, source_type);
+          if (d) definitions.push_back(*d);
           else if (options.require_complete)
             Incomplete(result, "checker.coverage.shader", prim.path().str() + "." + name,
                        "No exported shader definition for source type '" + source_type + "'");
@@ -628,8 +618,10 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
         AddWarning(result, "shade.shader.sourceType", prim.path().str(), "Source-based shader has no source type");
     }
     std::map<std::string, std::string> expected;
-    for (const auto* d : definitions) {
-      for (const auto& input : d->inputs) {
+    for (const auto& d : definitions) {
+      for (size_t i = 0; i < d.port_count(false); ++i) {
+        const auto port = d.port(false, i);
+        const std::pair<std::string, std::string> input{port.first, port.second};
         const auto old = expected.find(input.first);
         if (old != expected.end() && old->second != input.second)
           AddWarning(result, "shade.shader.sourceTypeConflict", prim.path().str() + ".inputs:" + input.first,

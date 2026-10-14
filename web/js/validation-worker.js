@@ -1,7 +1,7 @@
 // Shared by web/js and web/demo. Validation is synchronous inside WASM, so
 // run it in a disposable worker to keep the UI responsive and cancellable.
-import nextGlue from './src/lightusd/lightusd_next.js?url';
-import nextWasm from './src/lightusd/lightusd_next.wasm?url';
+import nextGlue from './src/lightusd/lightusd_validator.js?url';
+import nextWasm from './src/lightusd/lightusd_validator.wasm?url';
 import legacyGlue from './src/lightusd/lightusd.js?url';
 import legacyWasm from './src/lightusd/lightusd.wasm?url';
 let module, backend;
@@ -23,12 +23,11 @@ self.onmessage = async ({data}) => {
       try { result = JSON.parse(native.validateFromBinary(data.bytes, data.filename, JSON.stringify(data.options))); }
       finally { native.delete(); }
     } else {
-      const store = new module.NextAssetStore();
-      try {
-        store.setMemoryLimitBytes(512 * 1024 * 1024);
-        for (const asset of data.assets) store.registerMemoryAsset(asset.identifier, asset.bytes);
-        result = module.checkUSD(data.bytes, data.filename, data.options, store);
-      } finally { store.delete(); }
+      const assets = new Map(data.assets.map(asset => [asset.identifier, asset.bytes]));
+      const metadata = {assets: [...assets].map(([name, bytes]) => ({name, size: bytes.byteLength})),
+        aliases: {}, workingDirectory: '', searchPaths: [], allowParentPaths: false};
+      result = JSON.parse(module.runValidation(data.bytes, data.filename,
+        JSON.stringify(data.options), true, {metadata, read: name => assets.get(name)}));
     }
     self.postMessage({id: data.id, result});
   } catch (error) { self.postMessage({id: data.id, error: error.message}); }

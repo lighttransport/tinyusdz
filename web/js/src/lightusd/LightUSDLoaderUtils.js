@@ -858,6 +858,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 return this.loadKTX2Texture(uri, textureId, uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
             } else if (lowerUri.endsWith('.exr')) {
+                await LightUSDLoaderUtils._lightusd?.loadEXR?.();
                 // EXR: Use EXRLoader
                 return new EXRLoader().loadAsync(uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
@@ -913,6 +914,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
                     // Check if HDR/EXR format - use specialized decoders
                     if (mimeType === 'image/x-exr') {
+                        await LightUSDLoaderUtils._lightusd?.loadEXR?.();
                         // EXR: Use LightUSD fallback decoder
                         const texture = this.decodeEXRFromBuffer(texImage.data, 'float16');
                         if (texture) {
@@ -3157,6 +3159,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             let texture = null;
 
             if (lowerUri.endsWith('.exr')) {
+                await LightUSDLoaderUtils._lightusd?.loadEXR?.();
                 // Use EXR decoder with LightUSD fallback
                 texture = this.decodeEXRFromBuffer(buffer, 'float16');
 
@@ -3313,6 +3316,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             const buffer = await response.arrayBuffer();
 
             if (lowerFile.endsWith('.exr')) {
+                await LightUSDLoaderUtils._lightusd?.loadEXR?.();
                 // Use EXR decoder with LightUSD fallback
                 texture = this.decodeEXRFromBuffer(buffer, 'float16');
 

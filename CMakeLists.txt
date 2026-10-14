@@ -1069,7 +1069,8 @@ if(LIGHTUSD_WITH_EXR)
       INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/external/tinyexr/include;${PROJECT_SOURCE_DIR}/src/external/tinyexr/src"
       COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
 
-    list(APPEND LIGHTUSD_DEP_SOURCES ${TINYEXR_V3_SOURCES})
+    list(APPEND LIGHTUSD_DEP_SOURCES ${TINYEXR_V3_SOURCES}
+      ${PROJECT_SOURCE_DIR}/src/imageio/exr-codec.c)
 
   else()
     # TinyEXR v1 API (legacy; deprecated, kept behind LIGHTUSD_USE_TINYEXR_V3=OFF).
