@@ -279,7 +279,12 @@ if(UNIX)
 endif()
 target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 lightusd_next_harden(lightusd_core_c)
+option(LIGHTUSD_NEXT_USE_PCH "Use a precompiled header for native next C++ sources" OFF)
 add_library(lightusd_next STATIC ${LIGHTUSD_NEXT_SOURCES} ${LIGHTUSD_NEXT_HEADERS})
+if(LIGHTUSD_NEXT_USE_PCH)
+  target_precompile_headers(lightusd_next PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
+endif()
 target_link_libraries(lightusd_next PUBLIC lightusd_core_c)
 
 # Validation is an explicit component: resolver/core consumers must not pull it in.
