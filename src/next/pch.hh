@@ -11,3 +11,4 @@
 #include "validation/validation-context.hh"
 
 #include "../external/fast_float/include/fast_float/fast_float.h"
+#include "./parser/value-parser-numeric.hh"
