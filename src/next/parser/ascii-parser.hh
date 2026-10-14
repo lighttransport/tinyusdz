@@ -30,11 +30,6 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type, std::string* canonical,
 // (moved below includes)
 
 /// Error information from parsing
-struct ParseError {
-  size_t line = 0;
-  size_t column = 0;
-  std::string message;
-};
 
 /// USDA ASCII Parser
 /// Parses USD ASCII format files into a Stage

@@ -7,7 +7,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
-#include "../parser/ascii-parser.hh"
+#include "../parser/parse-options.hh"
 #include <string>
 
 namespace lightusd {

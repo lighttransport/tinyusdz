@@ -11,7 +11,7 @@
 
 #include "../crate/crate-limits.hh"
 #include "../layer/layer.hh"
-#include "../parser/ascii-parser.hh"
+#include "../parser/parse-options.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../../security-policy.hh"
 #include "../../safe-arithmetic.hh"

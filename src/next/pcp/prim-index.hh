@@ -14,7 +14,7 @@
 #pragma once
 
 #include "../crate/crate-limits.hh"
-#include "../parser/ascii-parser.hh"
+#include "../parser/parse-options.hh"
 #include "arc-types.hh"
 #include "../composition/expression-variables.hh"
 #include "namespace-mapping.hh"

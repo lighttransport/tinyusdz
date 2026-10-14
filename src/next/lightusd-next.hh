@@ -48,7 +48,7 @@
 // Parsers
 #include "parser/lexer.hh"
 #include "parser/value-parser.hh"
-#include "parser/ascii-parser.hh"
+#include "parser/parse-options.hh"
 
 // Readers
 #include "reader/usda-reader.hh"

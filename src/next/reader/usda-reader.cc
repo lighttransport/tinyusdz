@@ -4,6 +4,7 @@
 // LightUSD Next - USDA Reader implementation
 
 #include "usda-reader.hh"
+#include "../parser/ascii-parser.hh"
 #include "../strfmt.hh"
 
 #include <fstream>

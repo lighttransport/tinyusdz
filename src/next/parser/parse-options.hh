@@ -64,5 +64,12 @@ struct ParseOptions {
 };
 
 
+  // Error information from parsing (lightweight)
+  struct ParseError {
+    size_t line = 0;
+    size_t column = 0;
+    std::string message;
+  };
 }  // namespace next
 }  // namespace lightusd
+
