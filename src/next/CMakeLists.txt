@@ -279,7 +279,7 @@ if(UNIX)
 endif()
 target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 lightusd_next_harden(lightusd_core_c)
-option(LIGHTUSD_NEXT_USE_PCH "Use a precompiled header for native next C++ sources" OFF)
+option(LIGHTUSD_NEXT_USE_PCH "Use a precompiled header for native next C++ sources" ON)
 add_library(lightusd_next STATIC ${LIGHTUSD_NEXT_SOURCES} ${LIGHTUSD_NEXT_HEADERS})
 if(LIGHTUSD_NEXT_USE_PCH)
   target_precompile_headers(lightusd_next PRIVATE

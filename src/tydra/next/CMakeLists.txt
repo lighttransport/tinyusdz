@@ -67,7 +67,7 @@ add_library(tydra_next STATIC
     ${TYDRA_NEXT_SOURCES}
     ${TYDRA_NEXT_HEADERS}
 )
-option(TYDRA_NEXT_USE_PCH "Use a precompiled header for tydra/next C++ sources" OFF)
+option(TYDRA_NEXT_USE_PCH "Use a precompiled header for tydra/next C++ sources" ON)
 if(TYDRA_NEXT_USE_PCH)
   target_precompile_headers(tydra_next PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
