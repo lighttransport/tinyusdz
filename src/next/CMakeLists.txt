@@ -114,7 +114,9 @@ set(LIGHTUSD_NEXT_SOURCES
     ../mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
+
     pcp/cache-arcs.cc
+    pcp/cache-arcs-process.cc
     pcp/cache-relocates.cc
     pcp/cache-layers.cc
     pcp/cache-opinions.cc
