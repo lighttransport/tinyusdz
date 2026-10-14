@@ -1265,7 +1265,7 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     options.max_layer_memory = max_memory;
     options.variant_overrides = overrides;
     options.variant_observer = [&](const std::string& path,
-        const lightusd::next::VariantSetData& set, const std::string& chosen) {
+        const lightusd::next::PrimVariantSetData& set, const std::string& chosen) {
       auto& choice = discovered[path + "{" + set.name + "}"];
       choice.key = path + "{" + set.name + "}";
       choice.set_name = set.name; choice.selected = chosen;

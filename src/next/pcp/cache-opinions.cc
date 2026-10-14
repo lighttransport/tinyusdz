@@ -23,7 +23,7 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
         PropertyOpinion item;
         // Inline variants keep a pointer to their authored option. Locate its
         // owning spec instead of attributing a weak-layer option to the root.
-        auto locate = [&](auto&& self, const std::vector<VariantSetData>& sets,
+        auto locate = [&](auto&& self, const std::vector<PrimVariantSetData>& sets,
                           std::string* suffix, size_t depth) -> bool {
           if (depth > 256) return false;
           for (const auto& set : sets) for (const auto& variant : set.variants) {
@@ -131,7 +131,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     for (const Src &s : srcs) {
       // Variant source: graft the selected variant's inline opinions
       // (properties + relationships) with fill-absent semantics. Variant child
-      // prims are not yet modeled (VariantData has no child storage).
+      // prims are not yet modeled (PrimVariantData has no child storage).
       if (s.variant) {
         // Prim-state opinions from the selected option (authored, so a
         // weaker source's default cannot flip them back). Fill-absent like
@@ -332,11 +332,11 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     // Use a const view for the emptiness checks so we never allocate the meta ext
     // just to clear an absent field.
     {
-      const PrimSpecMeta &cm = out->meta();
+      const PrimMetadata &cm = out->meta();
       if (!cm.variantSelection.empty()) out->meta().variantSelection.clear();
       if (!cm.variantSets().empty()) out->meta().variantSets().clear();
       if (cm.variantSetNameEdits().authored) {
-        out->meta().variantSetNameEdits() = StringListOpEdits();
+        out->meta().variantSetNameEdits() = StringListOps();
       }
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }

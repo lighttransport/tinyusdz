@@ -44,7 +44,7 @@ void ValidateTimeSamplesProp(const PrimSpec &ps, const std::string &prop_name,
   if (!samples) {
     return;
   }
-  // NOTE: next TimeSampleStorage keeps samples sorted with last-wins upsert,
+  // NOTE: next TimeSampleBlock keeps samples sorted with last-wins upsert,
   // so the legacy "strictly increasing" violation is normally unrepresentable;
   // the check is kept as a defensive guard.
   bool have_prev = false;

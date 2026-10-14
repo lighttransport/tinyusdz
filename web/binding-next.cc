@@ -446,10 +446,10 @@ class NextFlattenSession {
     std::string encoded;
     if (!asset.empty()) encoded = "@" + asset + "@";
     encoded += "<" + target + ">";
-    tn::PrimSpecMeta& meta = prim->meta();
+    tn::PrimMetadata& meta = prim->meta();
     std::vector<std::string>* arcs = nullptr;
-    tn::ArcEdit* edit = nullptr;
-    tn::ArcListOpEdits& all_edits = meta.ensure_arc_edits();
+    tn::ArcListOp* edit = nullptr;
+    tn::ArcListOps& all_edits = meta.ensure_arc_edits();
     if (kind == 0) { arcs = &meta.references; edit = &all_edits.references; }
     else if (kind == 1) { arcs = &meta.payloads; edit = &all_edits.payloads; }
     else if (kind == 2) { arcs = &meta.inherits; edit = &all_edits.inherits; }
@@ -460,7 +460,7 @@ class NextFlattenSession {
     }
     if (list_op == 0) {
       *arcs = {encoded};
-      *edit = tn::ArcEdit();
+      *edit = tn::ArcListOp();
       edit->authored = true;
     } else {
       edit->authored = true;

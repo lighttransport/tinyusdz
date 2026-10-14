@@ -185,8 +185,8 @@ struct Src {
   // defining specifier, but an ancestral one composes in plain strength order.
   bool ancestral = false;
   // For Variant sources: the selected variant's inline opinions (lives inside a
-  // shared layer's PrimSpecMeta, so the pointer is stable). null otherwise.
-  const VariantData *variant = nullptr;
+  // shared layer's PrimMetadata, so the pointer is stable). null otherwise.
+  const PrimVariantData *variant = nullptr;
   // Composed expression-variable context visible at this source. Shared so
   // propagating a source to thousands of descendants stays cheap.
   std::shared_ptr<const Value> expression_variables;

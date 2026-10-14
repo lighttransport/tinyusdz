@@ -34,7 +34,7 @@ namespace validation_detail {
 // True if `ps` authors any composition arc (used to gate locality-dependent
 // rules; a composed prim may pull opinions from another layer).
 bool HasCompositionArc(const PrimSpec &ps) {
-  const PrimSpecMeta &m = ps.meta();
+  const PrimMetadata &m = ps.meta();
   if (!m.references.empty() || !m.payloads.empty() || !m.inherits.empty() ||
       !m.specializes.empty()) {
     return true;
@@ -43,7 +43,7 @@ bool HasCompositionArc(const PrimSpec &ps) {
       !m.variantSets().empty()) {
     return true;
   }
-  const ArcListOpEdits *edits = m.arc_edits();
+  const ArcListOps *edits = m.arc_edits();
   if (edits && (edits->references.has_authored_opinion() ||
                 edits->payloads.has_authored_opinion() ||
                 edits->inherits.has_authored_opinion() ||
@@ -60,7 +60,7 @@ bool IsOverride(const PrimSpec &ps) {
 // Gather every authored arc string of one arc field (inline explicit list +
 // any list-op edit buckets).
 std::vector<std::string> GatherArcStrings(const std::vector<std::string> &inline_items,
-                                          const ArcEdit *edit) {
+                                          const ArcListOp *edit) {
   std::vector<std::string> items = inline_items;
   if (edit) {
     items.insert(items.end(), edit->prepended.begin(), edit->prepended.end());
@@ -183,13 +183,13 @@ void ValidateVariantSetsAndSelections(const PrimSpec &ps,
                                       const std::string &prim_location,
                                       USDValidationResult *result) {
   // NOTE (structural approximation): variant OPTION bodies (properties/child
-  // prims inside a variant) are stored as VariantData / graft layers in
+  // prims inside a variant) are stored as PrimVariantData / graft layers in
   // next-core rather than PrimSpecs, and are not deep-validated here. Only
   // set / variant / selection names are checked (legacy additionally walks
   // the variant PrimSpec bodies).
   std::set<std::string> local_sets;
   std::map<std::string, std::set<std::string>> local_variants;
-  for (const VariantSetData &vs : ps.meta().variantSets()) {
+  for (const PrimVariantSetData &vs : ps.meta().variantSets()) {
     local_sets.insert(vs.name);
     if (vs.name.empty() || !IsValidIdentifier(vs.name)) {
       AddError(result, "core.composition.variantSet", prim_location,
@@ -200,7 +200,7 @@ void ValidateVariantSetsAndSelections(const PrimSpec &ps,
       AddWarning(result, "core.composition.variantSet", prim_location,
                  "variant set `" + vs.name + "` has no variants");
     }
-    for (const VariantData &variant : vs.variants) {
+    for (const PrimVariantData &variant : vs.variants) {
       local_variants[vs.name].insert(variant.name);
       if (variant.name.empty() || !IsValidIdentifier(variant.name)) {
         AddError(result, "core.composition.variantSet", prim_location,
@@ -252,7 +252,7 @@ void ValidateVariantSetsAndSelections(const PrimSpec &ps,
   }
 }
 
-// next-core stores relocates per-prim (PrimSpecMeta::relocates); validated
+// next-core stores relocates per-prim (PrimMetadata::relocates); validated
 // under the legacy core.layer.layerRelocates rule ids at the prim location.
 void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
                        USDValidationResult *result) {
@@ -289,11 +289,11 @@ void ValidateCompositionMetadata(const PrimSpec &ps,
                                  const std::string &prim_location,
                                  const PrimSpecifierByPath &prim_specifiers,
                                  USDValidationResult *result) {
-  const PrimSpecMeta &m = ps.meta();
-  const ArcListOpEdits *edits = m.arc_edits();
+  const PrimMetadata &m = ps.meta();
+  const ArcListOps *edits = m.arc_edits();
 
   // NOTE: invalid list-edit qualifiers are unrepresentable in next-core
-  // (ArcEdit qualifiers are typed), so the legacy "invalid list-edit
+  // (ArcListOp qualifiers are typed), so the legacy "invalid list-edit
   // qualifier" errors have no equivalent here.
   for (const std::string &ref : GatherArcStrings(
            m.references, edits ? &edits->references : nullptr)) {
@@ -420,14 +420,14 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
 void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
                           const std::vector<AppliedSchema> &applied_schemas,
                           USDValidationResult *result, const ValidationRegistry& registry) {
-  const PrimSpecMeta &m = ps.meta();
+  const PrimMetadata &m = ps.meta();
 
   if (!m.kind().empty() && !IsValidNamespacedIdentifier(m.kind())) {
     AddError(result, "core.prim.kind", prim_location,
              "kind `" + m.kind() + "` is not a valid token");
   }
 
-  const ArcListOpEdits *edits = m.arc_edits();
+  const ArcListOps *edits = m.arc_edits();
   const bool has_ref_or_payload =
       !m.references.empty() || !m.payloads.empty() ||
       (edits && (edits->references.has_authored_opinion() ||
@@ -477,7 +477,7 @@ void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
 void ValidateMaterialXReferenceConventions(const PrimSpec &ps,
                                            const std::string &prim_location,
                                            USDValidationResult *result) {
-  const ArcListOpEdits *edits = ps.meta().arc_edits();
+  const ArcListOps *edits = ps.meta().arc_edits();
   for (const std::string &ref : GatherArcStrings(
            ps.meta().references, edits ? &edits->references : nullptr)) {
     const CompositionArc arc = Compositor::ParseReference(ref);

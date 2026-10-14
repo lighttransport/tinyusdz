@@ -245,10 +245,10 @@
       // schema type). The effective (composed) list is written explicitly;
       // authored list-op sublists additionally round-trip via the next-private
       // `<arc>_listOp` companion fields below.
-      const ArcListOpEdits* arc_edits = prim.meta().arc_edits();
+      const ArcListOps* arc_edits = prim.meta().arc_edits();
       auto add_ref_listop_field = [&](const char* name,
                                       const std::vector<std::string>& arcs,
-                                      bool is_payload, const ArcEdit* e) {
+                                      bool is_payload, const ArcListOp* e) {
         if (arcs.empty() && !(e && e->authored)) return;
         uint64_t blk = StoreReferenceListOp(arcs, is_payload, e);
         CrateField f;
@@ -261,7 +261,7 @@
       };
       auto add_path_listop_field = [&](const char* name,
                                        const std::vector<std::string>& arcs,
-                                       const ArcEdit* e) {
+                                       const ArcListOp* e) {
         if (arcs.empty() && !(e && e->authored)) return;
         uint64_t blk = StorePathArcListOp(arcs, e);
         CrateField f;
@@ -395,7 +395,7 @@
         fields_.push_back(f);
       }
       // variantSelection: a VariantSelectionMap of each set's selected variant.
-      // The reader rebuilds the VariantSetData from this plus the bracketed
+      // The reader rebuilds the PrimVariantSetData from this plus the bracketed
       // holder prims, so no separate variantSets token field is emitted. (The
       // bracketed holder/child prims carry the variant CONTENT and are emitted
       // above for unflattened layers.)
@@ -404,7 +404,7 @@
       // reference), in which case it has selections but no local sets.
       {
         // Selections can live in three places depending on how the layer was
-        // produced: VariantSetData::selected (crate reader / authoring API,
+        // produced: PrimVariantSetData::selected (crate reader / authoring API,
         // the authoritative per-set form), the plural variantSelections()
         // list (USDA parser), or the legacy single "set=sel" string. Merge
         // all three, per-set `selected` first (matches RecordSelections).
@@ -471,10 +471,10 @@
             decl_sets.push_back(vs.name);
           }
         }
-        const StringListOpEdits& authored_variant_sets =
+        const StringListOps& authored_variant_sets =
             prim.meta().variantSetNameEdits();
         if (authored_variant_sets.authored) {
-          StringListOpEdits edits = authored_variant_sets;
+          StringListOps edits = authored_variant_sets;
           auto contains = [&](const std::string& name) {
             const std::vector<std::string>* lists[] = {
                 &edits.explicit_items, &edits.added, &edits.prepended,
@@ -500,7 +500,7 @@
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
           // Variant declarations imply a composable prepend, matching the
           // USDA writer. Explicit authoring would erase weaker set names.
-          StringListOpEdits inferred;
+          StringListOps inferred;
           inferred.authored = true;
           inferred.is_explicit = false;
           inferred.prepended = decl_sets;

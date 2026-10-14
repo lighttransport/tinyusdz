@@ -15,7 +15,7 @@ void MergeWeakerDictionary(Value* stronger, const Value& weaker,
 void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker);
 std::string ResolveWeakerPathExpressionText(const std::string& stronger,
                                             const std::string& weaker);
-void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit);
+void ApplyRelationshipEdit(std::vector<Path>* values, const ArcListOp& edit);
 bool PrimHasComposableArcs(const PrimSpec& p);
 bool PathInSubtree(const std::string& path, const std::string& root,
                    const std::string& root_slash);

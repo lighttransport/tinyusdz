@@ -306,8 +306,8 @@ void Connect(tn::PrimSpec *prim, const std::string &name, tn::TypeId type_id,
   }
   prim->set_property_type_name(name, type_name);
   prim->set_connection_targets(name, {tn::Path(target)});
-  tn::ArcEdit &edit = prim->ensure_connection_edit(name);
-  edit = tn::ArcEdit();
+  tn::ArcListOp &edit = prim->ensure_connection_edit(name);
+  edit = tn::ArcListOp();
   edit.authored = true;
   edit.is_explicit = true;
 }

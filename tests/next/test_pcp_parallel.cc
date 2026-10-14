@@ -164,12 +164,12 @@ static Scene GenScene(int n_root, int n_assets, bool exotic, uint32_t seed) {
         break;
       case 4:  // variant (exotic) else reference
         if (exotic) {
-          VariantSetData vss;
+          PrimVariantSetData vss;
           vss.name = "v";
-          VariantData hi;
+          PrimVariantData hi;
           hi.name = "hi";
           hi.properties.push_back({"vprop", Value::MakeFloat3(3, 3, 3)});
-          VariantData lo;
+          PrimVariantData lo;
           lo.name = "lo";
           lo.properties.push_back({"vprop", Value::MakeFloat3(9, 9, 9)});
           vss.variants.push_back(std::move(hi));

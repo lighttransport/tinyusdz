@@ -69,7 +69,7 @@
   // Items come from next's canonical arc strings
   // ("@asset@<prim>?layerOffset=offset:scale"; empty asset = internal arc).
   uint64_t StoreReferenceListOp(const std::vector<std::string>& arcs,
-                                bool is_payload, const ArcEdit* edits) {
+                                bool is_payload, const ArcListOp* edits) {
     std::vector<uint8_t> blob;
     std::vector<size_t> embedded_reps;
     auto put_bytes = [&](const void* d, size_t n) {
@@ -200,7 +200,7 @@
   // inheritPaths / specializes: PathListOp built from arc strings
   // ("</Base>"), optionally carrying non-explicit list-op sublists natively.
   uint64_t StorePathArcListOp(const std::vector<std::string>& arcs,
-                              const ArcEdit* edits) {
+                              const ArcListOp* edits) {
     auto strip = [](const std::vector<std::string>& in) {
       std::vector<std::string> out;
       out.reserve(in.size());
@@ -280,7 +280,7 @@
   }
 
   CrateField MakeStringListOpField(const std::string& field_name,
-                                   const StringListOpEdits& edits) {
+                                   const StringListOps& edits) {
     std::vector<uint8_t> raw;
     raw.reserve(1 + 5 * 8 +
                 4 * (edits.explicit_items.size() + edits.added.size() +
@@ -326,7 +326,7 @@
   }
 
   CrateField MakeTokenListOpField(const std::string& field_name,
-                                  const StringListOpEdits& edits) {
+                                  const StringListOps& edits) {
     std::vector<uint8_t> raw;
     raw.reserve(1 + 5 * 8 +
                 4 * (edits.explicit_items.size() + edits.added.size() +
@@ -708,7 +708,7 @@
       // Preserve unknown USDA metadata as an interoperable unregistered
       // value, rather than silently dropping it during crate conversion.
       if (std::any_of(pm.unknownFields.begin(), pm.unknownFields.end(),
-                      [&](const TypedExtensionField& field) {
+                      [&](const DecodedExtensionField& field) {
                         return field.name == raw.first;
                       })) continue;
       CrateField f;
@@ -815,7 +815,7 @@
             if (!p.str().empty()) targets.push_back(p.str());
           // An authored-empty list is a connection BLOCK (`.connect = None`):
           // emit an explicit-empty PathListOp so it round-trips.
-          const ArcEdit* edit = prim.connection_edit(conn_name);
+          const ArcListOp* edit = prim.connection_edit(conn_name);
           uint64_t blk = (edit && edit->authored)
                              ? StorePathArcListOp(targets, edit)
                              : StorePathListOp(targets);
@@ -887,7 +887,7 @@
       }
       // Authored list-op edits encode natively via sublist header bits
       // (StorePathArcListOp), like the composition-arc fields.
-      const ArcEdit* rel_edit = nullptr;
+      const ArcListOp* rel_edit = nullptr;
       {
         const auto& edits = prim.relationship_edits();
         auto eit = edits.find(rel_name);

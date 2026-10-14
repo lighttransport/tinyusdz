@@ -346,9 +346,9 @@ std::unique_ptr<Layer> Compositor::ComposeSublayers(const Layer& root_layer,
 
 void Compositor::CollectArcDeletes(const Layer& layer) {
   for (const PrimSpec& prim : layer.prims()) {
-    const ArcListOpEdits* e = prim.meta().arc_edits();
+    const ArcListOps* e = prim.meta().arc_edits();
     if (!e) continue;
-    auto take = [&](const ArcEdit& a) {
+    auto take = [&](const ArcListOp& a) {
       if (!a.authored || a.deleted.empty()) return;
       auto& set = pending_arc_deletes_[prim.path().str()];
       set.insert(a.deleted.begin(), a.deleted.end());
@@ -498,7 +498,7 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   if (options_.resolve_variants) {
     if (prim.meta().has_ext()) {
       prim.meta().variantSets().clear();
-      prim.meta().variantSetNameEdits() = StringListOpEdits();
+      prim.meta().variantSetNameEdits() = StringListOps();
       prim.meta().variantSelections().clear();
     }
     prim.meta().variantSelection.clear();
@@ -849,7 +849,7 @@ void FlattenLayer(Layer& layer) {
     // See note above: avoid allocating an empty ext just to clear variantSets.
     if (meta.has_ext()) {
       meta.variantSets().clear();
-      meta.variantSetNameEdits() = StringListOpEdits();
+      meta.variantSetNameEdits() = StringListOps();
       meta.variantSelections().clear();
     }
   }

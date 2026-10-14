@@ -91,7 +91,7 @@ struct LayerMeta {
   // authored order; the USDA writer re-emits it verbatim.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
   // Decodable unregistered USDC fields retained by name and typed value.
-  std::vector<TypedExtensionField> unknownFields;
+  std::vector<DecodedExtensionField> unknownFields;
 
   /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
   /// layer (a sublayer): stage metadata resolves through the whole root

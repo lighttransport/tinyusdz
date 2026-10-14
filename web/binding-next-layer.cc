@@ -209,11 +209,11 @@ minijson::Value LayerPrimJSON(const tn::Layer& layer, uint32_t index,
     case tn::PrimSpecifier::Over: result["specifier"] = "over"; break;
     case tn::PrimSpecifier::Class: result["specifier"] = "class"; break;
   }
-  const tn::PrimSpecMeta& prim_meta = prim->meta();
-  const tn::ArcListOpEdits* arc_edits = prim_meta.arc_edits();
+  const tn::PrimMetadata& prim_meta = prim->meta();
+  const tn::ArcListOps* arc_edits = prim_meta.arc_edits();
   const auto encode_path_ops = [&](const char* field,
                                    const std::vector<std::string>& paths,
-                                   const tn::ArcEdit* edit,
+                                   const tn::ArcListOp* edit,
                                    bool structured = false) {
     if ((!edit || !edit->authored) && paths.empty()) return true;
     minijson::Value operations = minijson::Value::array();
@@ -282,7 +282,7 @@ minijson::Value LayerPrimJSON(const tn::Layer& layer, uint32_t index,
       !encode_path_ops("payloads", prim_meta.payloads,
                        arc_edits ? &arc_edits->payloads : nullptr, true))
     return minijson::Value();
-  const tn::StringListOpEdits& variant_edits = prim_meta.variantSetNameEdits();
+  const tn::StringListOps& variant_edits = prim_meta.variantSetNameEdits();
   if (variant_edits.authored || !prim_meta.variantSets().empty()) {
     minijson::Value operations = minijson::Value::array();
     const auto append = [&](const char* op, const std::vector<std::string>& items) {
@@ -308,7 +308,7 @@ minijson::Value LayerPrimJSON(const tn::Layer& layer, uint32_t index,
         return minijson::Value();
     } else {
       std::vector<std::string> names;
-      for (const tn::VariantSetData& set : prim_meta.variantSets())
+      for (const tn::PrimVariantSetData& set : prim_meta.variantSets())
         names.push_back(set.name);
       if (!append("prepend", names)) return minijson::Value();
     }
@@ -526,7 +526,7 @@ minijson::Value LayerPrimJSON(const tn::Layer& layer, uint32_t index,
     rel["type"] = "relationship";
     const auto* targets = prim->relationship(name);
     const auto edit_it = prim->relationship_edits().find(name);
-    const tn::ArcEdit* edit = edit_it == prim->relationship_edits().end()
+    const tn::ArcListOp* edit = edit_it == prim->relationship_edits().end()
         ? nullptr : &edit_it->second;
     const std::vector<std::string>* edit_targets = nullptr;
     const char* list_qualifier = "resetToExplicit";
@@ -934,7 +934,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
   tn::PrimSpec* prim = builder->current();
   const auto parse_path_ops = [&](const char* field,
                                   std::vector<std::string>* effective,
-                                  tn::ArcEdit* edit,
+                                  tn::ArcListOp* edit,
                                   bool structured = false) {
     const minijson::Value& operations = encoded[field];
     if (operations.is_null()) return true;
@@ -1010,7 +1010,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
         items.push_back("<" + encoded_path.get_string() + ">");
       }
       if (qualifier.empty() || qualifier == "resetToExplicit") {
-        *edit = tn::ArcEdit();
+        *edit = tn::ArcListOp();
         edit->authored = true;
         *effective = std::move(items);
       } else {
@@ -1054,7 +1054,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
   };
   if (!encoded["inherits"].is_null() || !encoded["specializes"].is_null() ||
       !encoded["references"].is_null() || !encoded["payloads"].is_null()) {
-    tn::ArcListOpEdits& edits = prim->meta().ensure_arc_edits();
+    tn::ArcListOps& edits = prim->meta().ensure_arc_edits();
     if (!parse_path_ops("inherits", &prim->meta().inherits, &edits.inherits) ||
         !parse_path_ops("specializes", &prim->meta().specializes,
                         &edits.specializes) ||
@@ -1073,7 +1073,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
       builder->end_prim();
       return false;
     }
-    tn::StringListOpEdits& edits = prim->meta().variantSetNameEdits();
+    tn::StringListOps& edits = prim->meta().variantSetNameEdits();
     for (const minijson::Value& operation : encoded_sets) {
       if (!operation.is_object() || !operation["op"].is_string() ||
           !operation["items"].is_array()) {
@@ -1092,13 +1092,13 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
       }
       const std::string op = operation["op"].get_string();
       if (op.empty() || op == "resetToExplicit") {
-        edits = tn::StringListOpEdits();
+        edits = tn::StringListOps();
         edits.authored = true;
         edits.is_explicit = true;
         edits.explicit_items = std::move(names);
       } else {
         if (edits.is_explicit) {
-          edits = tn::StringListOpEdits();
+          edits = tn::StringListOps();
         }
         edits.authored = true;
         edits.is_explicit = false;
@@ -1132,7 +1132,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
       names = std::move(ordered);
     }
     for (const std::string& name : names) {
-      tn::VariantSetData set;
+      tn::PrimVariantSetData set;
       set.name = name;
       prim->meta().variantSets().push_back(std::move(set));
     }
@@ -1156,7 +1156,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
         prim->meta().variantSelections().emplace_back(item.key, selected);
         if (prim->meta().variantSelection.empty())
           prim->meta().variantSelection = item.key + "=" + selected;
-        for (tn::VariantSetData& set : prim->meta().variantSets()) {
+        for (tn::PrimVariantSetData& set : prim->meta().variantSets()) {
           if (set.name == item.key) set.selected = selected;
         }
       }
@@ -1247,12 +1247,12 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
             (blocked || value_type == "pathVector");
         prim->set_relationship_targets(prop_name, std::move(targets));
         if (explicit_empty) {
-          tn::ArcEdit& edit = prim->ensure_relationship_edit(prop_name);
+          tn::ArcListOp& edit = prim->ensure_relationship_edit(prop_name);
           edit.authored = true;
           edit.is_explicit = true;
           edit.is_value_block = blocked;
         } else if (list_qualifier != "resetToExplicit") {
-          tn::ArcEdit& edit = prim->ensure_relationship_edit(prop_name);
+          tn::ArcListOp& edit = prim->ensure_relationship_edit(prop_name);
           edit.authored = true;
           edit.is_explicit = false;
           const std::vector<tn::Path>* authored_targets = prim->relationship(prop_name);

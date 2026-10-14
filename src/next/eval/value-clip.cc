@@ -341,7 +341,7 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
             [](const ValueClipSet& a, const ValueClipSet& b) {
               return a.name < b.name;
             });
-  const StringListOpEdits& edits = prim.GetPrimSpec()->meta().clipSetEdits();
+  const StringListOps& edits = prim.GetPrimSpec()->meta().clipSetEdits();
   if (edits.authored) {
     std::vector<std::string> weaker;
     weaker.reserve(out->size());

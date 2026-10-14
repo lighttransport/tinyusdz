@@ -142,8 +142,8 @@ private:
                         bool is_array);
   bool ParseVariantSetBody(const std::string& variant_set_name);
   bool ParseVariantSetBodyInto(const std::string& variant_set_name,
-                               std::vector<VariantSetData>& target, int depth);
-  bool ParseVariantOption(VariantData* out, int depth);
+                               std::vector<PrimVariantSetData>& target, int depth);
+  bool ParseVariantOption(PrimVariantData* out, int depth);
   // Read one composition-arc reference into canonical "@asset@</prim>" /
   // "</prim>" form (with an optional `?layerOffset=off:scale` suffix). Shared by
   // prim-metadata arcs and variant-option arcs. Returns false if no arc token.

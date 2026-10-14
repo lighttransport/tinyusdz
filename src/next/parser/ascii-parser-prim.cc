@@ -696,19 +696,19 @@ bool AsciiParser::Impl::ParseAttribute(
       if (cur) {
         if (explicit_connection) {
           cur->set_connection_targets(attr_name, std::move(targets));
-          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
-          edit = ArcEdit();
+          ArcListOp& edit = cur->ensure_connection_edit(attr_name);
+          edit = ArcListOp();
           edit.authored = true;
           edit.is_explicit = true;
         } else {
-          const ArcEdit* prior_edit = cur->connection_edit(attr_name);
+          const ArcListOp* prior_edit = cur->connection_edit(attr_name);
           const bool explicit_base =
               prior_edit && prior_edit->authored && prior_edit->is_explicit &&
               cur->connection(attr_name) && !cur->connection(attr_name)->empty();
           cur->apply_connection_list_op(attr_name, targets, connection_op);
-          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
+          ArcListOp& edit = cur->ensure_connection_edit(attr_name);
           if (explicit_base) {
-            edit = ArcEdit();
+            edit = ArcListOp();
             edit.authored = true;
             edit.is_explicit = true;
             ParsePropertyMetadata(attr_name);
@@ -876,8 +876,8 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       if (!prim->relationship(rel_name)) {
         prim->set_relationship_targets(rel_name, {});
       }
-      ArcEdit& e = prim->ensure_relationship_edit(rel_name);
-      e = ArcEdit();
+      ArcListOp& e = prim->ensure_relationship_edit(rel_name);
+      e = ArcListOp();
       e.authored = true;
       e.is_explicit = explicit_list;
       e.is_value_block = value_block;
@@ -893,7 +893,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       // (`prepend rel r = <...>` used to flatten to an explicit list and
       // `delete` edits vanished entirely).
       if (!explicit_list && !explicit_base) {
-        ArcEdit& e = prim->ensure_relationship_edit(rel_name);
+        ArcListOp& e = prim->ensure_relationship_edit(rel_name);
         e.authored = true;
         e.is_explicit = false;
         std::vector<std::string>* sub = nullptr;
@@ -920,8 +920,8 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
       } else {
         // A later bare (explicit) authoring replaces any recorded edits.
         if (prim->relationship_edits().count(rel_name)) {
-          ArcEdit& e = prim->ensure_relationship_edit(rel_name);
-          e = ArcEdit();
+          ArcListOp& e = prim->ensure_relationship_edit(rel_name);
+          e = ArcListOp();
           e.authored = true;
         }
       }

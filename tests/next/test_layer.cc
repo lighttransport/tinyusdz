@@ -592,7 +592,7 @@ void test_layer_metadata_memory_usage() {
   nested.set("samples", Value::MakeDoubleArray(std::vector<double>(16384, 0.0)));
   layer.meta().customLayerData = Value::MakeDictionary(std::move(nested));
   layer.meta().rootPrimOrder.emplace_back(64u * 1024u, 'r');
-  TypedExtensionField extension;
+  DecodedExtensionField extension;
   extension.name = "largeExtension";
   extension.value = Value(std::string(64u * 1024u, 'e'));
   layer.meta().unknownFields.push_back(std::move(extension));
@@ -621,10 +621,10 @@ void test_prim_metadata_memory_usage() {
   assert(layer.memory_usage() >= empty_bytes + 550u * 1024u &&
          "prim/property cold metadata must count toward the layer budget");
   const size_t before_variant = layer.memory_usage();
-  VariantData option;
+  PrimVariantData option;
   option.name = "longOption";
   option.doc = std::string(96u * 1024u, 'v');
-  VariantSetData set;
+  PrimVariantSetData set;
   set.name = "detail";
   set.variants.push_back(std::move(option));
   prim->meta().variantSets().push_back(std::move(set));
@@ -637,7 +637,7 @@ void test_prim_metadata_memory_usage() {
   const size_t with_content = layer.memory_usage();
   assert(with_content >= before_content + 256u * 1024u &&
          "retained variant content Layer must count toward the budget");
-  VariantData shared_option;
+  PrimVariantData shared_option;
   shared_option.name = "sharedContent";
   shared_option.content = content;
   prim->meta().variantSets().front().variants.push_back(

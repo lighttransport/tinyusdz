@@ -22,7 +22,7 @@ namespace {
 
 enum class Arc { Reference, Payload, Inherit, Specialize };
 
-std::vector<std::string>& ArcList(next::PrimSpecMeta& m, Arc arc) {
+std::vector<std::string>& ArcList(next::PrimMetadata& m, Arc arc) {
   switch (arc) {
     case Arc::Reference: return m.references;
     case Arc::Payload: return m.payloads;
@@ -31,8 +31,8 @@ std::vector<std::string>& ArcList(next::PrimSpecMeta& m, Arc arc) {
   }
 }
 
-const next::ArcEdit* ArcEdits(const next::PrimSpecMeta& m, Arc arc) {
-  const next::ArcListOpEdits* e = m.arc_edits();
+const next::ArcListOp* ArcEdits(const next::PrimMetadata& m, Arc arc) {
+  const next::ArcListOps* e = m.arc_edits();
   if (!e) return nullptr;
   switch (arc) {
     case Arc::Reference: return &e->references;
@@ -78,12 +78,12 @@ json ArcToJSON(const std::string& arc, const char* qualifier) {
   return j;
 }
 
-json ListArcs(const next::PrimSpecMeta& m, Arc arc) {
+json ListArcs(const next::PrimMetadata& m, Arc arc) {
   json out = json::array();
-  const next::ArcEdit* edits = ArcEdits(m, arc);
+  const next::ArcListOp* edits = ArcEdits(m, arc);
   const bool qualified = edits && edits->has_qualifiers();
   if (!qualified) {
-    for (const std::string& a : ArcList(const_cast<next::PrimSpecMeta&>(m), arc)) {
+    for (const std::string& a : ArcList(const_cast<next::PrimMetadata&>(m), arc)) {
       out.push_back(ArcToJSON(a, nullptr));
     }
     return out;
@@ -150,12 +150,12 @@ bool AddArc(Context& ctx, const json& args, json& result, std::string& err,
       (offset != 0.0 || scale != 1.0)) {
     text += "?layerOffset=" + std::to_string(offset) + ":" + std::to_string(scale);
   }
-  next::PrimSpecMeta& m = spec->meta();
-  const next::ArcEdit* edits = ArcEdits(m, arc);
+  next::PrimMetadata& m = spec->meta();
+  const next::ArcListOp* edits = ArcEdits(m, arc);
   if (edits && edits->has_qualifiers()) {
     // Keep the authored list-op form: add to its prepend list.
-    next::ArcListOpEdits& e = m.ensure_arc_edits();
-    next::ArcEdit& target = arc == Arc::Reference ? e.references
+    next::ArcListOps& e = m.ensure_arc_edits();
+    next::ArcListOp& target = arc == Arc::Reference ? e.references
                             : arc == Arc::Payload ? e.payloads
                             : arc == Arc::Inherit ? e.inherits
                                                   : e.specializes;

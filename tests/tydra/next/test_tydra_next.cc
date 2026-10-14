@@ -5662,7 +5662,7 @@ def Xform "World"
   std::cout << "  Geometry release vs animated arrays: PASSED\n";
 }
 
-// Regression: ConvertAnimation iterates TimeSampleStorage's raw (time,
+// Regression: ConvertAnimation iterates TimeSampleBlock's raw (time,
 // value_offset) pairs directly (it is sorted with last-wins upsert). A USDA
 // file whose timeSamples keys are authored OUT OF ORDER must still produce
 // monotonically increasing AnimationClip keyframes.

@@ -64,8 +64,8 @@ void Cache::Impl::ProcessDeferredVariants(std::vector<Src> *main_list,
       bool applied_any = false;
       for (size_t ei = 0; ei < deferred_variants_.size(); ++ei) {
         if (!owned(deferred_variants_[ei])) continue;
-        const VariantSetData *vss = nullptr;
-        for (const VariantSetData &v :
+        const PrimVariantSetData *vss = nullptr;
+        for (const PrimVariantSetData &v :
              deferred_variants_[ei].spec->meta().variantSets()) {
           if (v.name == deferred_variants_[ei].set_name) {
             vss = &v;
@@ -90,8 +90,8 @@ void Cache::Impl::ProcessDeferredVariants(std::vector<Src> *main_list,
                                  static_cast<ptrdiff_t>(ei));
         --ei;
 
-        const VariantData *vd = nullptr;
-        for (const VariantData &o : vss->variants) {
+        const PrimVariantData *vd = nullptr;
+        for (const PrimVariantData &o : vss->variants) {
           if (o.name == chosen) {
             vd = &o;
             break;
@@ -165,7 +165,7 @@ void Cache::Impl::ProcessDeferredVariants(std::vector<Src> *main_list,
   }
 
 void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame,
-                          const std::string &set_name, const VariantData *vd,
+                          const std::string &set_name, const PrimVariantData *vd,
                           const PrimSpec &owner, int vdepth,
                           const std::string &layer_id,
                           std::vector<Src> *out, std::vector<Src> *spec_out,
@@ -178,7 +178,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           if (vd->content) {
             // Stable variant-content identity: (authoring layer, host stack,
             // host site, variantSet, variantName). The previous pointer-derived id aliased
-            // after a VariantData was freed and reallocated (stale instance
+            // after a PrimVariantData was freed and reallocated (stale instance
             // keys), and never matched across two parses of the same asset.
             const std::string variant_anchor = RealAnchorOf(
                 layer_id.empty() ? layer_stacks[src.stack_idx].identifier
@@ -255,13 +255,13 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           // through the holder graft below (the holder prim carries the
           // nested sets in its own meta).
           if (vdepth < 16) {
-            for (const VariantSetData &nvs : vd->variantSets) {
+            for (const PrimVariantSetData &nvs : vd->variantSets) {
               std::string chosen;
               auto nsit = sels->find(nvs.name);
               if (nsit != sels->end()) chosen = nsit->second;
               if (chosen.empty()) chosen = nvs.selected;
               if (chosen.empty()) continue;
-              for (const VariantData &nvd : nvs.variants) {
+              for (const PrimVariantData &nvd : nvs.variants) {
                 if (nvd.name == chosen) {
                   ApplyVariantOption(src, frame, nvs.name, &nvd, owner,
                                      vdepth + 1, layer_id, out, spec_out, sels,
@@ -362,10 +362,10 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
         // set rather than nested inside v1).
         for (size_t pass = 0; pass < spec->meta().variantSets().size(); ++pass) {
           bool changed = false;
-          for (const VariantSetData& set : spec->meta().variantSets()) {
+          for (const PrimVariantSetData& set : spec->meta().variantSets()) {
             auto selected = sels->find(set.name);
             if (selected == sels->end()) continue;
-            for (const VariantData& option : set.variants) {
+            for (const PrimVariantData& option : set.variants) {
               if (option.name != selected->second) continue;
               for (const auto& opinion : option.variantSelections) {
                 // `sels` is strength-ordered and pre-seeded with caller
@@ -391,7 +391,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
         // and splices the result back here (pxr computes selections across
         // the whole index before applying each node's sets —
         // TrickyVariantWeakerSelection).
-        for (const VariantSetData &vss : spec->meta().variantSets()) {
+        for (const PrimVariantSetData &vss : spec->meta().variantSets()) {
           if (sels->count(vss.name) || FallbackSelection(vss)) continue;
           deferred_variants_.push_back(DeferredVariant{
               out, spec_out, out->size(), spec_out->size(), src, spec,
@@ -400,13 +400,13 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
 
         // Crate representation: pxr-authored crates store variant content as
         // bracketed HOLDER prims ("/Prim/{set=sel}/..." in the SAME layer stack)
-        // and a VariantSetData that carries only {name, selected} -- no inline
-        // VariantData.content, so SelectVariants() above finds nothing. For each
+        // and a PrimVariantSetData that carries only {name, selected} -- no inline
+        // PrimVariantData.content, so SelectVariants() above finds nothing. For each
         // selected set, graft the selected holder as a Variant source mapped onto
         // the host, so its descendants compose as the host's children (matching
         // the USDA content path). USDA-authored variants have no holder prim at
         // this site, so Specs() is empty and this is a no-op for them.
-        for (const VariantSetData &vss : spec->meta().variantSets()) {
+        for (const PrimVariantSetData &vss : spec->meta().variantSets()) {
           auto sit = sels->find(vss.name);
           const std::string *selection =
               sit != sels->end() ? &sit->second : FallbackSelection(vss);

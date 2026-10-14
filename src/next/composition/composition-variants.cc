@@ -27,7 +27,7 @@ namespace next {
 // (recursive, selection from the nested set's own `selected`).
 void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
                                  const std::string& anchor_path, int depth,
-                                 const VariantData& variant) {
+                                 const PrimVariantData& variant) {
   if (depth > options_.max_depth) return;
 
   for (const auto& vp : variant.properties) {
@@ -44,7 +44,7 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
       }
     }
   }
-  const PrimSpecMeta& prim_meta = prim.meta();
+  const PrimMetadata& prim_meta = prim.meta();
   if (!variant.doc.empty() && prim_meta.doc().empty()) {
     prim.meta().doc() = variant.doc;
   }
@@ -122,7 +122,7 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
                                const std::string& anchor_path, int depth,
                                size_t pending_graft_begin) {
   if (!options_.resolve_variants) return true;
-  const PrimSpecMeta& prim_meta = prim.meta();
+  const PrimMetadata& prim_meta = prim.meta();
 
   // Apply EACH variant set's selected variant (a prim may select several sets).
   // Variant opinions are weaker than local opinions already on the prim, so use
@@ -147,13 +147,13 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
   for (const std::string& set_name : set_names) {
     // Re-look up the set each iteration; a prior iteration may have
     // reallocated the vector.
-    auto find_set = [&prim_meta](const std::string& n) -> const VariantSetData* {
+    auto find_set = [&prim_meta](const std::string& n) -> const PrimVariantSetData* {
       for (const auto& s : prim_meta.variantSets()) {
         if (s.name == n) return &s;
       }
       return nullptr;
     };
-    const VariantSetData* vs_p = find_set(set_name);
+    const PrimVariantSetData* vs_p = find_set(set_name);
     if (!vs_p) continue;
 
     std::string chosen = vs_p->selected;
@@ -183,11 +183,11 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
 
     // Copy the selected option out before applying it: ApplyOneVariant mutates
     // `prim`, which owns the vector `variant` would otherwise point into (and
-    // the whole recursion below reads through that reference). VariantData
+    // the whole recursion below reads through that reference). PrimVariantData
     // copies are shallow in practice — Values are COW and `content` is a
     // shared_ptr<Layer>.
     bool have_variant = false;
-    VariantData selected_variant;
+    PrimVariantData selected_variant;
     for (const auto& variant : vs_p->variants) {
       if (variant.name != chosen) continue;
       selected_variant = variant;

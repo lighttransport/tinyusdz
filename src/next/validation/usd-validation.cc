@@ -12,10 +12,10 @@
 //    such as lusdchecker, not by Layer-only validation.
 //  - API-schema validation uses next's compact built-in inventory rather than
 //    OpenUSD's dynamically discovered plugin registry.
-//  - Invalid list-edit qualifiers: next ArcEdit qualifiers are typed enums;
+//  - Invalid list-edit qualifiers: next ArcListOp qualifiers are typed enums;
 //    an invalid qualifier is rejected at parse time and cannot be
 //    represented.
-//  - layerRelocates live per-prim in next (PrimSpecMeta::relocates); they are
+//  - layerRelocates live per-prim in next (PrimMetadata::relocates); they are
 //    validated at the prim location under the legacy core.layer.layerRelocates
 //    rule ids.
 
@@ -1061,8 +1061,8 @@ bool IsSelfContainedLayer(const Layer &layer) {
     return false;
   }
   for (const PrimSpec &ps : layer.prims()) {
-    const PrimSpecMeta &m = ps.meta();
-    const ArcListOpEdits *edits = m.arc_edits();
+    const PrimMetadata &m = ps.meta();
+    const ArcListOps *edits = m.arc_edits();
     for (const std::vector<std::string> &arcs :
          {GatherArcStrings(m.references,
                            edits ? &edits->references : nullptr),
@@ -1894,7 +1894,7 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
   struct Action {
     ActionKind kind{ActionKind::ValidateLayer};
     const Layer *layer{nullptr};
-    const std::vector<VariantSetData> *sets{nullptr};
+    const std::vector<PrimVariantSetData> *sets{nullptr};
     bool is_root_layer{false};
     std::string location;
   };
@@ -1964,7 +1964,7 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
                           std::string()});
     const std::vector<PrimSpec> &prims = action.layer->prims();
     for (auto prim_it = prims.rbegin(); prim_it != prims.rend(); ++prim_it) {
-      const std::vector<VariantSetData> &sets = prim_it->meta().variantSets();
+      const std::vector<PrimVariantSetData> &sets = prim_it->meta().variantSets();
       if (sets.empty()) continue;
       const std::string owner = MapVariantContentLocation(
           action.location, prim_it->path().str());

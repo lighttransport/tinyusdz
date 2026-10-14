@@ -160,7 +160,7 @@
     // ApplyVariants reads first). The legacy variantSelection string carries only
     // ONE set, so without this a MULTI-set selection loaded from USDC loses every
     // set after the first. (emplace keeps the first/strongest opinion per set.)
-    for (const VariantSetData &vss : spec.meta().variantSets()) {
+    for (const PrimVariantSetData &vss : spec.meta().variantSets()) {
       if (!vss.selected.empty()) record(vss.name, vss.selected);
     }
     if (!spec.meta().variantSelection.empty()) {
@@ -177,17 +177,17 @@
   // name is part of the stable variant-content identity used for instancing).
   struct SelectedVariant {
     const std::string *set_name;
-    const VariantData *vd;
+    const PrimVariantData *vd;
   };
 
   // The fallback option for a variantSet nothing selects: the first candidate
   // (in configured order) the set actually defines, or null. See
   // CompositionOptions::variant_fallbacks.
-  const std::string *FallbackSelection(const VariantSetData &vss) const {
+  const std::string *FallbackSelection(const PrimVariantSetData &vss) const {
     auto it = options.variant_fallbacks.find(vss.name);
     if (it == options.variant_fallbacks.end()) return nullptr;
     for (const std::string &candidate : it->second) {
-      for (const VariantData &vd : vss.variants) {
+      for (const PrimVariantData &vd : vss.variants) {
         if (vd.name == candidate) return &vd.name;
       }
     }
@@ -201,7 +201,7 @@
       const PrimSpec &spec,
       const std::map<std::string, std::string> &sels) const {
     std::vector<SelectedVariant> out;
-    for (const VariantSetData &vss : spec.meta().variantSets()) {
+    for (const PrimVariantSetData &vss : spec.meta().variantSets()) {
       auto sit = sels.find(vss.name);
       // No authored selection anywhere: fall back to a registered global default
       // (pxr's variant fallbacks; `standin -> render`). Consulted here only, so
@@ -210,7 +210,7 @@
       const std::string *chosen =
           sit != sels.end() ? &sit->second : FallbackSelection(vss);
       if (!chosen) continue;  // no selection for this set
-      for (const VariantData &vd : vss.variants) {
+      for (const PrimVariantData &vd : vss.variants) {
         if (vd.name == *chosen) {
           out.push_back({&vss.name, &vd});
           break;
@@ -232,7 +232,7 @@
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
       for (const SpecRef &sr : SpecsFor(s)) {
-        const PrimSpecMeta &m = sr.spec->meta();
+        const PrimMetadata &m = sr.spec->meta();
         // `instanceable = true` is always an authored opinion (the field
         // defaults to false), so it counts even when the authoring path did
         // not stamp instanceable_authored (hand-built layers). Only an

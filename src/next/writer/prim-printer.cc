@@ -148,7 +148,7 @@ void PrintRelationships(StreamWriter& os, const PrimSpec& spec,
 }
 
 // Print metadata block
-void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
+void PrintMetadata(StreamWriter& os, const PrimMetadata& meta, int depth,
                    const PrimPrintOptions& opts) {
   bool has_meta = false;
 

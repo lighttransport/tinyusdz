@@ -177,7 +177,7 @@ Stage::StaticGeometryReleaseStats ReleasePrimStaticGeometryArrays(
 
 static const std::string kEmptyString;
 static const Path kEmptyPath;
-static const PrimSpecMeta kDefaultMeta;
+static const PrimMetadata kDefaultMeta;
 
 const std::string& UsdPrim::GetName() const {
   if (!spec_) return kEmptyString;
@@ -777,7 +777,7 @@ UsdPrim UsdPrim::GetChild(const std::string& name) const {
   return UsdPrim();
 }
 
-const PrimSpecMeta& UsdPrim::GetMeta() const {
+const PrimMetadata& UsdPrim::GetMeta() const {
   if (!spec_) return kDefaultMeta;
   return spec_->meta();
 }

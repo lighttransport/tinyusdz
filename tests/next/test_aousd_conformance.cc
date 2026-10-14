@@ -390,12 +390,12 @@ void TestDictionaryAndRelationshipComposition() {
   PrimSpec weak_rel("R"), middle_rel("R"), strong_rel("R"), merged("R");
   weak_rel.set_relationship_targets("r", {Path("/A")});
   middle_rel.set_relationship_targets("r", {Path("/C")});
-  ArcEdit& middle_edit = middle_rel.ensure_relationship_edit("r");
+  ArcListOp& middle_edit = middle_rel.ensure_relationship_edit("r");
   middle_edit.authored = true;
   middle_edit.is_explicit = false;
   middle_edit.appended = {"/C"};
   strong_rel.set_relationship_targets("r", {Path("/B")});
-  ArcEdit& strong_edit = strong_rel.ensure_relationship_edit("r");
+  ArcListOp& strong_edit = strong_rel.ensure_relationship_edit("r");
   strong_edit.authored = true;
   strong_edit.is_explicit = false;
   strong_edit.prepended = {"/B"};
@@ -440,7 +440,7 @@ void TestDictionaryAndRelationshipComposition() {
   strong_nested.as_dictionary()->set("a", Value(int32_t(9)));
   strong_meta.customData.as_dictionary()->set("nested", strong_nested);
 
-  TypedExtensionField strong_extension;
+  DecodedExtensionField strong_extension;
   strong_extension.name = "extensionDict";
   strong_extension.unregistered = true;
   strong_extension.unregistered_source =
@@ -451,7 +451,7 @@ void TestDictionaryAndRelationshipComposition() {
   strong_extension.value.as_dictionary()->set("nested",
                                                strong_extension_nested);
   strong_meta.unknownFields.push_back(strong_extension);
-  TypedExtensionField weak_extension;
+  DecodedExtensionField weak_extension;
   weak_extension.name = "extensionDict";
   weak_extension.unregistered = true;
   weak_extension.value = Value::MakeDictionary();
@@ -501,7 +501,7 @@ void TestDictionaryAndRelationshipComposition() {
       extension_back_prim->property_meta("x");
   assert(extension_back_meta && extension_back_meta->unknownFields.size() == 3);
   const auto extension_dict = std::find_if(extension_back_meta->unknownFields.begin(),
-      extension_back_meta->unknownFields.end(), [](const TypedExtensionField& field) {
+      extension_back_meta->unknownFields.end(), [](const DecodedExtensionField& field) {
         return field.name == "extensionDict";
       });
   assert(extension_dict != extension_back_meta->unknownFields.end());
@@ -970,7 +970,7 @@ void TestVariantSetListOpFidelity() {
       ") {}\n",
       true);
   assert(text.success);
-  const StringListOpEdits& text_edits =
+  const StringListOps& text_edits =
       text.stage.GetPrimAtPath("/Text").GetMeta().variantSetNameEdits();
   assert(text_edits.added == std::vector<std::string>{"add"} &&
          text_edits.prepended == std::vector<std::string>{"pre"} &&
@@ -982,7 +982,7 @@ void TestVariantSetListOpFidelity() {
       ReadHexFixture("aousd-variantset-listops.usdc.hex");
   USDCLoadResult loaded = LoadUSDCFromMemory(oracle.data(), oracle.size());
   assert(loaded.success);
-  auto edits = [&](const char* path) -> const StringListOpEdits& {
+  auto edits = [&](const char* path) -> const StringListOps& {
     const UsdPrim prim = loaded.stage.GetPrimAtPath(path);
     assert(prim);
     return prim.GetMeta().variantSetNameEdits();
@@ -1000,7 +1000,7 @@ void TestVariantSetListOpFidelity() {
   assert(edits("/Added").added == std::vector<std::string>{"add"});
   assert(edits("/Deleted").deleted == std::vector<std::string>{"del"});
   assert(edits("/Ordered").ordered == std::vector<std::string>{"ord"});
-  const StringListOpEdits& mixed = edits("/Mixed");
+  const StringListOps& mixed = edits("/Mixed");
   assert(mixed.authored && !mixed.is_explicit &&
          mixed.added == std::vector<std::string>{"add"} &&
          mixed.prepended == std::vector<std::string>{"pre"} &&
@@ -1055,9 +1055,9 @@ void TestApiSchemaListOpFidelity() {
       ") {}\n",
       true);
   assert(text.success);
-  const StringListOpEdits& empty_text =
+  const StringListOps& empty_text =
       text.stage.GetPrimAtPath("/Empty").GetMeta().apiSchemaEdits();
-  const StringListOpEdits& mixed_text =
+  const StringListOps& mixed_text =
       text.stage.GetPrimAtPath("/Text").GetMeta().apiSchemaEdits();
   assert(empty_text.authored && empty_text.is_explicit &&
          empty_text.explicit_items.empty());
@@ -1071,7 +1071,7 @@ void TestApiSchemaListOpFidelity() {
       ReadHexFixture("aousd-apischemas-listops.usdc.hex");
   USDCLoadResult loaded = LoadUSDCFromMemory(oracle.data(), oracle.size());
   assert(loaded.success);
-  auto edits = [&](const char* path) -> const StringListOpEdits& {
+  auto edits = [&](const char* path) -> const StringListOps& {
     const UsdPrim prim = loaded.stage.GetPrimAtPath(path);
     assert(prim);
     return prim.GetMeta().apiSchemaEdits();
@@ -1088,7 +1088,7 @@ void TestApiSchemaListOpFidelity() {
   assert(edits("/Added").added == std::vector<std::string>{"AddAPI"});
   assert(edits("/Deleted").deleted == std::vector<std::string>{"DelAPI"});
   assert(edits("/Ordered").ordered == std::vector<std::string>{"OrdAPI"});
-  const StringListOpEdits& mixed = edits("/Mixed");
+  const StringListOps& mixed = edits("/Mixed");
   assert(mixed.added == std::vector<std::string>{"AddAPI"} &&
          mixed.prepended == std::vector<std::string>{"PreAPI"} &&
          mixed.appended == std::vector<std::string>{"AppAPI"} &&
@@ -1112,9 +1112,9 @@ void TestApiSchemaListOpFidelity() {
   USDCLoadResult back =
       LoadUSDCFromMemory(rewritten.data(), rewritten.size());
   assert(back.success);
-  const StringListOpEdits& empty_back =
+  const StringListOps& empty_back =
       back.stage.GetPrimAtPath("/ExplicitEmpty").GetMeta().apiSchemaEdits();
-  const StringListOpEdits& mixed_back =
+  const StringListOps& mixed_back =
       back.stage.GetPrimAtPath("/Mixed").GetMeta().apiSchemaEdits();
   assert(empty_back.authored && empty_back.is_explicit &&
          empty_back.explicit_items.empty());
@@ -1146,7 +1146,7 @@ void TestApiSchemaListOpFidelity() {
   assert(composed_prim &&
          composed_prim->meta().apiSchemas() ==
              std::vector<std::string>{"KeepAPI"});
-  const StringListOpEdits& resolved =
+  const StringListOps& resolved =
       composed_prim->meta().apiSchemaEdits();
   assert(resolved.authored && resolved.is_explicit &&
          resolved.explicit_items == std::vector<std::string>{"KeepAPI"} &&
@@ -1165,7 +1165,7 @@ void TestConnectionListOpFidelity() {
       true);
   assert(authored.success);
   const UsdPrim p = authored.stage.GetPrimAtPath("/P");
-  const ArcEdit* edit = p.GetPrimSpec()->connection_edit("x");
+  const ArcListOp* edit = p.GetPrimSpec()->connection_edit("x");
   assert(edit && edit->authored && !edit->is_explicit &&
          edit->added == std::vector<std::string>{"/Add.out"} &&
          edit->prepended == std::vector<std::string>{"/Pre.out"} &&
@@ -1187,7 +1187,7 @@ void TestConnectionListOpFidelity() {
   assert(WriteUSDCToMemory(crate, authored.stage).success);
   USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
   assert(back.success);
-  const ArcEdit* back_edit =
+  const ArcListOp* back_edit =
       back.stage.GetPrimAtPath("/P").GetPrimSpec()->connection_edit("x");
   assert(back_edit && back_edit->added == edit->added &&
          back_edit->prepended == edit->prepended &&
@@ -1213,7 +1213,7 @@ void TestConnectionListOpFidelity() {
   assert(resolved && resolved->size() == 2 &&
          (*resolved)[0].str() == "/Strong.out" &&
          (*resolved)[1].str() == "/Weak.out");
-  const ArcEdit* resolved_edit = strong_p->connection_edit("x");
+  const ArcListOp* resolved_edit = strong_p->connection_edit("x");
   assert(resolved_edit && resolved_edit->is_explicit);
 }
 
@@ -1544,7 +1544,7 @@ void TestSchemaFallbackAndValueClips() {
          multi.source_asset == "weak.usda" && multi.value.as_float() &&
          *multi.value.as_float() == 1.0f);
 
-  const StringListOpEdits& clip_sets =
+  const StringListOps& clip_sets =
       multi_result.stage.GetPrimAtPath("/Root").GetMeta().clipSetEdits();
   assert(clip_sets.authored && clip_sets.is_explicit &&
          clip_sets.explicit_items ==
@@ -1558,7 +1558,7 @@ void TestSchemaFallbackAndValueClips() {
   USDCLoadResult clip_sets_back =
       LoadUSDCFromMemory(clip_sets_usdc.data(), clip_sets_usdc.size());
   assert(clip_sets_back.success);
-  const StringListOpEdits& clip_sets_back_edits =
+  const StringListOps& clip_sets_back_edits =
       clip_sets_back.stage.GetPrimAtPath("/Root").GetMeta().clipSetEdits();
   assert(clip_sets_back_edits.authored && clip_sets_back_edits.is_explicit &&
          clip_sets_back_edits.explicit_items == clip_sets.explicit_items);
@@ -1574,13 +1574,13 @@ void TestSchemaFallbackAndValueClips() {
       ") {}\n",
       true);
   assert(clip_ops.success);
-  const StringListOpEdits& empty_clip_sets =
+  const StringListOps& empty_clip_sets =
       clip_ops.stage.GetPrimAtPath("/Empty").GetMeta().clipSetEdits();
   assert(empty_clip_sets.authored && empty_clip_sets.is_explicit &&
          empty_clip_sets.explicit_items.empty());
   assert(WriteUSDAToString(clip_ops.stage).find("clipSets = None") !=
          std::string::npos);
-  const StringListOpEdits& ops =
+  const StringListOps& ops =
       clip_ops.stage.GetPrimAtPath("/Ops").GetMeta().clipSetEdits();
   assert(ops.authored && !ops.is_explicit &&
          ops.added == std::vector<std::string>{"add"} &&
@@ -1593,11 +1593,11 @@ void TestSchemaFallbackAndValueClips() {
   USDCLoadResult clip_ops_back =
       LoadUSDCFromMemory(clip_ops_usdc.data(), clip_ops_usdc.size());
   assert(clip_ops_back.success);
-  const StringListOpEdits& back_empty =
+  const StringListOps& back_empty =
       clip_ops_back.stage.GetPrimAtPath("/Empty").GetMeta().clipSetEdits();
   assert(back_empty.authored && back_empty.is_explicit &&
          back_empty.explicit_items.empty());
-  const StringListOpEdits& back_ops =
+  const StringListOps& back_ops =
       clip_ops_back.stage.GetPrimAtPath("/Ops").GetMeta().clipSetEdits();
   assert(back_ops.added == ops.added &&
          back_ops.prepended == ops.prepended &&
@@ -1639,7 +1639,7 @@ void TestSchemaFallbackAndValueClips() {
   const PrimSpec* composed_root =
       composed_clip_sets->prim_at_path("/Root");
   assert(composed_root);
-  const StringListOpEdits& composed_order =
+  const StringListOps& composed_order =
       composed_root->meta().clipSetEdits();
   assert(composed_order.authored && composed_order.is_explicit &&
          composed_order.explicit_items ==
@@ -2067,11 +2067,11 @@ void TestStringListOpFieldTable() {
 
   // apiSchemas: stronger prepend+delete edits over a weaker bare list.
   {
-    PrimSpecMeta weaker;
+    PrimMetadata weaker;
     weaker.apiSchemas() = {"KeepAPI", "DropAPI"};
     weaker.setApiSchemasAuthored();
-    PrimSpecMeta stronger;
-    StringListOpEdits& e = stronger.apiSchemaEdits();
+    PrimMetadata stronger;
+    StringListOps& e = stronger.apiSchemaEdits();
     e.authored = true;
     e.is_explicit = false;
     e.prepended = {"NewAPI"};
@@ -2084,10 +2084,10 @@ void TestStringListOpFieldTable() {
   }
   // apiSchemas: legacy qualifier (no edits) normalizes and merges.
   {
-    PrimSpecMeta weaker;
+    PrimMetadata weaker;
     weaker.apiSchemas() = {"WeakAPI"};
     weaker.setApiSchemasAuthored();
-    PrimSpecMeta stronger;
+    PrimMetadata stronger;
     stronger.apiSchemas() = {"StrongAPI"};
     stronger.setApiSchemasAuthored();
     stronger.apiSchemasQualifier() = "append";
@@ -2100,13 +2100,13 @@ void TestStringListOpFieldTable() {
   // variantSetNames: stronger prepend MERGES over the weaker declaration
   // (was fill-absent-only, dropping the weaker set name).
   {
-    PrimSpecMeta weaker;
-    StringListOpEdits& we = weaker.variantSetNameEdits();
+    PrimMetadata weaker;
+    StringListOps& we = weaker.variantSetNameEdits();
     we.authored = true;
     we.is_explicit = false;
     we.prepended = {"vsWeak"};
-    PrimSpecMeta stronger;
-    StringListOpEdits& se = stronger.variantSetNameEdits();
+    PrimMetadata stronger;
+    StringListOps& se = stronger.variantSetNameEdits();
     se.authored = true;
     se.is_explicit = false;
     se.prepended = {"vsStrong"};
@@ -2117,13 +2117,13 @@ void TestStringListOpFieldTable() {
   }
   // clipSets: stronger reorder over the weaker clips dictionary's name order.
   {
-    PrimSpecMeta weaker;
+    PrimMetadata weaker;
     Value wclips = Value::MakeDictionary();
     wclips.as_dictionary()->set("setA", Value::MakeDictionary());
     wclips.as_dictionary()->set("setB", Value::MakeDictionary());
     weaker.clips() = std::move(wclips);
-    PrimSpecMeta stronger;
-    StringListOpEdits& ce = stronger.clipSetEdits();
+    PrimMetadata stronger;
+    StringListOps& ce = stronger.clipSetEdits();
     ce.authored = true;
     ce.is_explicit = false;
     ce.ordered = {"setB", "setA"};
@@ -2158,9 +2158,9 @@ void TestVariantExtensionFields() {
   assert(r.success);
   const PrimSpec* prim = r.stage.GetRootLayer()->prim_at_path("/P");
   assert(prim);
-  const VariantData* red = nullptr;
-  for (const VariantSetData& vs : prim->meta().variantSets()) {
-    for (const VariantData& vd : vs.variants) {
+  const PrimVariantData* red = nullptr;
+  for (const PrimVariantSetData& vs : prim->meta().variantSets()) {
+    for (const PrimVariantData& vd : vs.variants) {
       if (vd.name == "red") red = &vd;
     }
   }

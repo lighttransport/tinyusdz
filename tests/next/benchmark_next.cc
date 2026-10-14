@@ -448,8 +448,8 @@ int print_memstats(int num_prims) {
   printf("LightUSD Next - Memory Stats\n");
   printf("sizeof(Value)=%zu\n", sizeof(Value));
   printf("sizeof(PrimSpec)=%zu\n", sizeof(PrimSpec));
-  printf("sizeof(PrimSpecMeta)=%zu\n", sizeof(PrimSpecMeta));
-  printf("sizeof(PrimSpecMetaExt)=%zu\n", sizeof(PrimSpecMetaExt));
+  printf("sizeof(PrimMetadata)=%zu\n", sizeof(PrimMetadata));
+  printf("sizeof(PrimMetadataCold)=%zu\n", sizeof(PrimMetadataCold));
   printf("sizeof(pcp::CompNode)=%zu\n", sizeof(pcp::CompNode));
 
   Layer layer;

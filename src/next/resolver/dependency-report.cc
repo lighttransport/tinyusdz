@@ -128,7 +128,7 @@ class Collector {
     for (const auto& encoded : arcs)
       Add(Compositor::ParseReference(encoded).asset_path, layer, site, kind, depth, vars);
   }
-  void Variants(const std::vector<VariantSetData>& sets,
+  void Variants(const std::vector<PrimVariantSetData>& sets,
                 const std::vector<std::pair<std::string, std::string>>& selections,
                 const std::string& layer, const std::string& site, size_t depth,
                 const Value& vars, size_t nesting) {

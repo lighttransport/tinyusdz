@@ -84,7 +84,7 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
     dst->set_type_name(src.type_name());
   }
   // Prim metadata the option's "__self__" root may carry.
-  const PrimSpecMeta& sm = src.meta();
+  const PrimMetadata& sm = src.meta();
   if (!sm.kind().empty()) dst->meta().kind() = sm.kind();
   if (!sm.apiSchemas().empty()) dst->meta().apiSchemas() = sm.apiSchemas();
   if (sm.customData().is_dictionary()) {
@@ -92,11 +92,11 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
   }
 }
 
-// Build one "{set=variant}" holder prim from inline VariantData and append it
+// Build one "{set=variant}" holder prim from inline PrimVariantData and append it
 // (plus any content subtree prims) to `out`. Returns the holder's prim index.
 uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
                              const std::string& set_name,
-                             const VariantData& vd) {
+                             const PrimVariantData& vd) {
   const std::string hp = HolderPath(owner_path, set_name, vd.name);
   PrimSpec holder("{" + set_name + "=" + vd.name + "}");
   holder.set_path(Path(hp));
@@ -178,13 +178,13 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
 
 bool PrimNeedsHolders(const Layer& layer, const PrimSpec& prim) {
   if (IsBracketedName(prim.name())) return false;
-  for (const VariantSetData& vs : prim.meta().variantSets()) {
-    for (const VariantData& vd : vs.variants) {
+  for (const PrimVariantSetData& vs : prim.meta().variantSets()) {
+    for (const PrimVariantData& vd : vs.variants) {
       if (!layer.prim_at_path(HolderPath(prim.path().str(), vs.name,
                                          vd.name))) {
         return true;
       }
-      // Holder exists but the inline VariantData carries opinions of its own
+      // Holder exists but the inline PrimVariantData carries opinions of its own
       // (MergeVariantData pattern): materialization must run so those merge
       // into the existing holder rather than being dropped.
       if (!vd.properties.empty() || !vd.relationships.empty() || vd.content) {
@@ -214,11 +214,11 @@ Layer MaterializeVariantHolders(const Layer& layer) {
     const std::string owner_path = out.prim(static_cast<uint32_t>(i))
                                        ->path()
                                        .str();
-    const std::vector<VariantSetData> sets =
+    const std::vector<PrimVariantSetData> sets =
         out.prim(static_cast<uint32_t>(i))->meta().variantSets();
     if (sets.empty()) continue;
 
-    for (const VariantSetData& vs : sets) {
+    for (const PrimVariantSetData& vs : sets) {
       // "{set=}" VariantSet declaration spec (pxr enumerates variantChildren
       // from it). Create it when any option holder is being synthesized.
       const std::string decl_path = HolderPath(owner_path, vs.name, "");
@@ -227,13 +227,13 @@ Layer MaterializeVariantHolders(const Layer& layer) {
       if (!IsValidVariantIdentifier(vs.name, /*allow_empty=*/false)) {
         continue;  // would corrupt bracket path parsing; refuse to embed
       }
-      for (const VariantData& vd : vs.variants) {
+      for (const PrimVariantData& vd : vs.variants) {
         if (!IsValidVariantIdentifier(vd.name, /*allow_empty=*/false)) {
           continue;
         }
         const std::string hp = HolderPath(owner_path, vs.name, vd.name);
         if (PrimSpec* existing = out.prim_at_path_mutable(hp)) {
-          // Holder already present (crate-read layer). Inline VariantData may
+          // Holder already present (crate-read layer). Inline PrimVariantData may
           // still carry opinions the holder lacks (MergeVariantData pattern:
           // declared-empty holder in a stronger layer + content merged in
           // from a weaker one) — upsert those instead of dropping them.

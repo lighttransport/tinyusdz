@@ -608,7 +608,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // (value blocks, by contrast, are preserved). Qualified edits keep their
   // statement.
   if (opts.composed_stage_output && has_conn && conns->empty()) {
-    const ArcEdit* cedit = spec.connection_edit(name);
+    const ArcListOp* cedit = spec.connection_edit(name);
     if (!(cedit && cedit->authored && !cedit->is_explicit)) has_conn = false;
   }
 
@@ -616,7 +616,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // `wrote_meta` = authored property metadata already emitted on an earlier
   // statement for this property.
   auto emit_connection = [&](bool wrote_meta) {
-    const ArcEdit* edit = spec.connection_edit(name);
+    const ArcListOp* edit = spec.connection_edit(name);
     auto emit_targets = [&](const std::vector<std::string>& targets) {
       if (targets.empty()) {
         os << "None";
@@ -793,7 +793,7 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 
   // Authored list-op edits re-emit their qualifiers (a bare explicit list
   // changes composition semantics for delete/prepend against weaker layers).
-  const ArcEdit* re = nullptr;
+  const ArcListOp* re = nullptr;
   bool explicit_empty = false;
   bool value_block = false;
   {
@@ -857,13 +857,13 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    SegmentSink* segsink = nullptr);
 
 // Emit `variantSet "name" = { "opt" (meta) { body } ... }` blocks at `depth`.
-// Bodies merge two representations: inline VariantData (USDA parse /
+// Bodies merge two representations: inline PrimVariantData (USDA parse /
 // authoring: properties, relationships, arcs, nested sets, content sub-layer)
 // and bracketed holder prims in `layer` (crate representation). When both
 // exist (MergeVariantData pattern), inline opinions win and the holder
 // contributes only what the inline data lacks.
 void WriteVariantSets(StreamWriter& os,
-                      const std::vector<VariantSetData>& sets,
+                      const std::vector<PrimVariantSetData>& sets,
                       const Layer& layer, const std::string& initial_owner_path,
                       int initial_depth, const USDAWriteOptions& opts,
                       SegmentSink* segsink) {
@@ -874,7 +874,7 @@ void WriteVariantSets(StreamWriter& os,
     AfterHolderNested,
   };
   struct VariantFrame {
-    const std::vector<VariantSetData>* sets;
+    const std::vector<PrimVariantSetData>* sets;
     size_t owner_path_size;
     int depth;
     size_t set_index{0};
@@ -903,7 +903,7 @@ void WriteVariantSets(StreamWriter& os,
         continue;
       }
 
-      const VariantSetData& vs = (*frame.sets)[frame.set_index];
+      const PrimVariantSetData& vs = (*frame.sets)[frame.set_index];
       // A declaration-only variant set (`prepend variantSets = "v"` with no
       // local content / options) is emitted only as the `variantSets`
       // declaration, not as an empty `variantSet "v" = {}` block — matching
@@ -916,7 +916,7 @@ void WriteVariantSets(StreamWriter& os,
       continue;
     }
 
-    const VariantSetData& vs = (*frame.sets)[frame.set_index];
+    const PrimVariantSetData& vs = (*frame.sets)[frame.set_index];
     if (frame.phase == VariantPhase::BeginVariant) {
       if (frame.variant_index >= vs.variants.size()) {
         WriteIndent(os, frame.depth, opts.indent);
@@ -926,7 +926,7 @@ void WriteVariantSets(StreamWriter& os,
         continue;
       }
 
-      const VariantData& var = vs.variants[frame.variant_index];
+      const PrimVariantData& var = vs.variants[frame.variant_index];
       const int depth = frame.depth;
       owner_path.resize(frame.owner_path_size);
       owner_path += "/{" + vs.name + "=" + var.name + "}";
@@ -938,7 +938,7 @@ void WriteVariantSets(StreamWriter& os,
 
       // Variant OPTION metadata: composition arcs / active / hidden / doc
       // authored on the option itself (inline or on the holder prim).
-      const PrimSpecMeta* hmeta = holder ? &holder->meta() : nullptr;
+      const PrimMetadata* hmeta = holder ? &holder->meta() : nullptr;
       auto pick_arcs = [&](const std::vector<std::string>& inline_arcs,
                            const std::vector<std::string>* holder_arcs)
           -> const std::vector<std::string>& {
@@ -968,11 +968,11 @@ void WriteVariantSets(StreamWriter& os,
       std::vector<std::pair<std::string, std::string>> o_sels;
       {
         o_sels = var.variantSelections;
-        const std::vector<VariantSetData>& nsets =
+        const std::vector<PrimVariantSetData>& nsets =
             !var.variantSets.empty()
                 ? var.variantSets
                 : (hmeta ? hmeta->variantSets() : var.variantSets);
-        for (const VariantSetData& nvs : nsets) {
+        for (const PrimVariantSetData& nvs : nsets) {
           if (!nvs.selected.empty()) {
             bool have = false;
             for (const auto& existing : o_sels) {
@@ -1095,7 +1095,7 @@ void WriteVariantSets(StreamWriter& os,
       continue;
     }
 
-    const VariantData& var = vs.variants[frame.variant_index];
+    const PrimVariantData& var = vs.variants[frame.variant_index];
     const int depth = frame.depth;
     const PrimSpec* holder = frame.holder;
 
@@ -1211,7 +1211,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
 
   // All prim metadata goes in the parenthesized header section so it re-parses
   // (the parser reads prim metadata from `( ... )`, never from the prim body).
-  const PrimSpecMeta& meta = spec.meta();
+  const PrimMetadata& meta = spec.meta();
   const bool has_doc = (meta.doc_authored() || !meta.doc().empty()) &&
                        opts.include_comments;
   const bool has_comment =
@@ -1231,13 +1231,13 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
   // An authored arc EDIT with empty inline lists still needs the metadata
   // block: explicit-clear (`references = None`) has no items but is a real
   // opinion.
-  const ArcListOpEdits* arc_edits = meta.arc_edits();
+  const ArcListOps* arc_edits = meta.arc_edits();
   const bool has_arc_edits =
       arc_edits && (arc_edits->references.has_authored_opinion() ||
                     arc_edits->payloads.has_authored_opinion() ||
                     arc_edits->inherits.has_authored_opinion() ||
                     arc_edits->specializes.has_authored_opinion());
-  const StringListOpEdits& variant_edits = meta.variantSetNameEdits();
+  const StringListOps& variant_edits = meta.variantSetNameEdits();
   const bool has_variant_edits =
       variant_edits.authored &&
       (variant_edits.is_explicit ? !variant_edits.explicit_items.empty()
@@ -1295,7 +1295,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
     // Bare string literal = comment (pxr 26.x rejects `comment = "..."`).
     if (has_comment) kv(EscapeUSDAString(meta.comment()));
     if (meta.apiSchemasAuthored() || !meta.apiSchemas().empty()) {
-      const StringListOpEdits& edits = meta.apiSchemaEdits();
+      const StringListOps& edits = meta.apiSchemaEdits();
       auto write_api_op = [&](const char* qualifier,
                               const std::vector<std::string>& schemas) {
         if (schemas.empty()) return;
@@ -1353,7 +1353,7 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
     if (has_sdr) kv(DictMetaLine("sdrMetadata", meta.sdrMetadata(), md, opts));
     if (has_clips) kv(DictMetaLine("clips", meta.clips(), md, opts));
     if (has_clip_set_edits) {
-      const StringListOpEdits& edits = meta.clipSetEdits();
+      const StringListOps& edits = meta.clipSetEdits();
       auto write_clip_set_op = [&](const char* qualifier,
                                    const std::vector<std::string>& names) {
         if (names.empty()) return;
@@ -1394,9 +1394,9 @@ void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
     // a bare/explicit list as `references = [...]`, otherwise the
     // prepend/append/delete sublists. With no recorded edit the inline list is
     // an implicit explicit (bare) list.
-    const ArcListOpEdits* edits = meta.arc_edits();
+    const ArcListOps* edits = meta.arc_edits();
     auto write_arc = [&](const char* field, const std::vector<std::string>& inl,
-                         const ArcEdit* e) {
+                         const ArcListOp* e) {
       auto emit = [&](const char* qual, const std::vector<std::string>& items) {
         if (items.empty()) return;
         WriteIndent(os, md, opts.indent);

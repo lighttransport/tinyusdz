@@ -16,7 +16,7 @@ class Access final : public udim::LayerAccess {
   struct Address {
     tn::Layer* layer;
     std::string path;
-    tn::VariantData* option;
+    tn::PrimVariantData* option;
   };
   mutable std::map<std::string, Address> addresses_;
   mutable std::set<std::string> local_geometry_;
@@ -54,11 +54,11 @@ class Access final : public udim::LayerAccess {
     std::vector<std::string> out;
     addresses_.clear();
     local_geometry_.clear();
-    std::function<void(tn::Layer&, const std::string&, tn::VariantData*,
+    std::function<void(tn::Layer&, const std::string&, tn::PrimVariantData*,
                        size_t)>
         walk;
     walk = [&](tn::Layer& layer, const std::string& prefix,
-               tn::VariantData* option, size_t depth) {
+               tn::PrimVariantData* option, size_t depth) {
       if (depth > 64) {
         accessFail("UDIM bake: variant depth exceeds limit");
         return;

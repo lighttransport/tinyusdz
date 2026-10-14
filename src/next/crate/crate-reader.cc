@@ -346,13 +346,13 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
 
     // Path-valued fields: inheritPaths / specializes arcs (PathListOp) and
     // raw path vectors. Flattened to a token array of path strings; BuildStage
-    // routes them into PrimSpecMeta.
+    // routes them into PrimMetadata.
     case CrateTypeId::PathVector:
     case CrateTypeId::PathListOp: {
       std::vector<std::string> paths;
       if (!DecodePathTargets(rep, paths, /*with_markers=*/true)) return false;
       // Arc-string form ("</Base>"), matching what the usda parser stores in
-      // PrimSpecMeta::inherits/specializes. Sublist markers ("\x01?") pass
+      // PrimMetadata::inherits/specializes. Sublist markers ("\x01?") pass
       // through unbracketed for BuildStage's list-op reconstruction.
       for (std::string& p : paths) {
         if (!p.empty() && p[0] != '\x01') p = "<" + p + ">";
@@ -426,7 +426,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::Relocates: {
       // SdfRelocates (crate >= 0.11): [u64 count][(u32 src, u32 dst)*].
       // Surface as a flat token array of [src, dst, ...] pairs; the stage
-      // builder folds them into PrimSpecMeta::relocates.
+      // builder folds them into PrimMetadata::relocates.
       if (rep.payload() == 0) { out = Value::MakeTokenArray({}); return true; }
       if (!SeekToPayload(reader(), rep)) {
         return false;

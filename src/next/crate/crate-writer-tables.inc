@@ -334,7 +334,7 @@
         InternToken(schema);
       }
       {
-        const StringListOpEdits& edits = prim.meta().apiSchemaEdits();
+        const StringListOps& edits = prim.meta().apiSchemaEdits();
         const std::vector<std::string>* lists[] = {
             &edits.explicit_items, &edits.added, &edits.prepended,
             &edits.appended, &edits.deleted, &edits.ordered};
@@ -343,7 +343,7 @@
         }
       }
       {
-        const StringListOpEdits& edits = prim.meta().clipSetEdits();
+        const StringListOps& edits = prim.meta().clipSetEdits();
         const std::vector<std::string>* lists[] = {
             &edits.explicit_items, &edits.added, &edits.prepended,
             &edits.appended, &edits.deleted, &edits.ordered};
@@ -355,7 +355,7 @@
         InternString(variant_set.name);
       }
       {
-        const StringListOpEdits& edits = prim.meta().variantSetNameEdits();
+        const StringListOps& edits = prim.meta().variantSetNameEdits();
         const std::vector<std::string>* lists[] = {
             &edits.explicit_items, &edits.added, &edits.prepended,
             &edits.appended, &edits.deleted, &edits.ordered};

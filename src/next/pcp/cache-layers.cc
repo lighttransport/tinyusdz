@@ -144,8 +144,8 @@ void Cache::Impl::BuildStackRelocates(LayerStack *st) {
                 cur.resize(up);
                 continue;  // self arcs do not count
               }
-              const PrimSpecMeta &m = psp->meta();
-              const ArcListOpEdits *ae = m.arc_edits();
+              const PrimMetadata &m = psp->meta();
+              const ArcListOps *ae = m.arc_edits();
               if (!m.references.empty() || !m.payloads.empty() ||
                   !m.inherits.empty() || !m.specializes.empty() ||
                   !m.variantSets().empty() ||

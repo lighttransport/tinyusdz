@@ -82,7 +82,7 @@ struct CompositionOptions {
   std::map<std::string, std::string> variant_overrides;
   // Borrowed, synchronous observer of reachable sets after namespace mapping.
   // Called before flattening consumes the set, including nested selections.
-  std::function<void(const std::string&, const VariantSetData&,
+  std::function<void(const std::string&, const PrimVariantSetData&,
                      const std::string&)> variant_observer;
 };
 
@@ -330,7 +330,7 @@ private:
                      size_t pending_graft_begin);
   void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
                        const std::string& anchor_path, int depth,
-                       const VariantData& variant);
+                       const PrimVariantData& variant);
 
   // Resolve every remaining sparse array edit in the fully composed layer
   // against its (absent -> empty) base array, like pxr's flatten. Runs only

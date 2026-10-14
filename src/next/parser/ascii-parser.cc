@@ -733,7 +733,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   enum class ArcQual { Explicit, Add, Prepend, Append, Delete, Reorder };
 
   enum class ArcField { References, Payloads, Inherits, Specializes };
-  auto SelectArc = [](PrimSpecMeta& meta,
+  auto SelectArc = [](PrimMetadata& meta,
                       ArcField f) -> std::vector<std::string>& {
     switch (f) {
       case ArcField::References: return meta.references;
@@ -742,7 +742,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       default: return meta.specializes;
     }
   };
-  auto SelectEdit = [](ArcListOpEdits& e, ArcField f) -> ArcEdit& {
+  auto SelectEdit = [](ArcListOps& e, ArcField f) -> ArcListOp& {
     switch (f) {
       case ArcField::References: return e.references;
       case ArcField::Payloads: return e.payloads;
@@ -754,20 +754,20 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   // Read the bracketed (or single) arc references, then merge into the inline
   // arc vector honoring the list-op qualifier (explicit/bare replaces, prepend
   // front, append/reorder back, delete removes) -- the within-spec effective
-  // list. ALSO record the raw qualifier into the spec's ArcEdit (Phase 7 S5),
+  // list. ALSO record the raw qualifier into the spec's ArcListOp (Phase 7 S5),
   // which cross-layer composition (apply_list_ops) and the writer consume. Even
   // a bare empty list (`references = []`) is authored and must replace weaker
   // opinions.
   auto ReadArcList = [this, &SelectArc, &SelectEdit](
-                         PrimSpecMeta& meta, ArcField field, ArcQual qual) {
+                         PrimMetadata& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
     if (Check(TokenType::None)) {
       // `references = None`: an explicit-clear list op. Consume the token
       // (leaving it un-consumed desynchronizes the metadata loop) and record
       // an authored empty explicit edit.
       lexer_->next();
-      ArcEdit& e0 = SelectEdit(meta.ensure_arc_edits(), field);
-      e0 = ArcEdit();
+      ArcListOp& e0 = SelectEdit(meta.ensure_arc_edits(), field);
+      e0 = ArcListOp();
       e0.authored = true;
       SelectArc(meta, field).clear();
       return;
@@ -786,10 +786,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     }
 
     // Record the list-op edit first (copies items for non-bare qualifiers).
-    ArcEdit& e = SelectEdit(meta.ensure_arc_edits(), field);
+    ArcListOp& e = SelectEdit(meta.ensure_arc_edits(), field);
     switch (qual) {
       case ArcQual::Explicit:
-        e = ArcEdit();  // explicit replaces: is_explicit=true, lists cleared
+        e = ArcListOp();  // explicit replaces: is_explicit=true, lists cleared
         e.authored = true;
         break;
       case ArcQual::Prepend:
@@ -997,10 +997,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           schemas.push_back(schema);
         }
       }
-      StringListOpEdits& edits = prim->meta().apiSchemaEdits();
+      StringListOps& edits = prim->meta().apiSchemaEdits();
       edits.authored = true;
       if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
-        edits = StringListOpEdits();
+        edits = StringListOps();
         edits.authored = true;
       }
       auto append = [&](std::vector<std::string>* dst) {
@@ -1008,7 +1008,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       };
       switch (arc_qual) {
         case ArcQual::Explicit:
-          edits = StringListOpEdits();
+          edits = StringListOps();
           edits.authored = true;
           edits.is_explicit = true;
           edits.explicit_items = schemas;
@@ -1113,10 +1113,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         }
       }
 
-      StringListOpEdits& edits = prim->meta().clipSetEdits();
+      StringListOps& edits = prim->meta().clipSetEdits();
       edits.authored = true;
       if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
-        edits = StringListOpEdits();
+        edits = StringListOps();
         edits.authored = true;
       }
       auto append = [&](std::vector<std::string>* dst) {
@@ -1124,7 +1124,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       };
       switch (arc_qual) {
         case ArcQual::Explicit:
-          edits = StringListOpEdits();
+          edits = StringListOps();
           edits.authored = true;
           edits.is_explicit = true;
           edits.explicit_items = names;
@@ -1180,10 +1180,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         }
       }
 
-      StringListOpEdits& edits = prim->meta().variantSetNameEdits();
+      StringListOps& edits = prim->meta().variantSetNameEdits();
       edits.authored = true;
       if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
-        edits = StringListOpEdits();
+        edits = StringListOps();
         edits.authored = true;
       }
       auto append = [&](std::vector<std::string>* dst) {
@@ -1191,7 +1191,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       };
       switch (arc_qual) {
         case ArcQual::Explicit:
-          edits = StringListOpEdits();
+          edits = StringListOps();
           edits.authored = true;
           edits.is_explicit = true;
           edits.explicit_items = authored_names;
@@ -1237,20 +1237,20 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         reordered.insert(reordered.end(), effective.begin(), effective.end());
         effective = std::move(reordered);
       }
-      std::vector<VariantSetData> old =
+      std::vector<PrimVariantSetData> old =
           std::move(prim->meta().variantSets());
-      std::vector<VariantSetData>& sets = prim->meta().variantSets();
+      std::vector<PrimVariantSetData>& sets = prim->meta().variantSets();
       sets.clear();
       for (const std::string& name : effective) {
         auto it = std::find_if(old.begin(), old.end(),
-                               [&](const VariantSetData& set) {
+                               [&](const PrimVariantSetData& set) {
                                  return set.name == name;
                                });
         if (it != old.end()) {
           sets.push_back(std::move(*it));
           old.erase(it);
         } else {
-          VariantSetData set;
+          PrimVariantSetData set;
           set.name = name;
           sets.push_back(std::move(set));
         }

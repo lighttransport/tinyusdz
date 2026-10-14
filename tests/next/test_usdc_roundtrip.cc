@@ -1116,7 +1116,7 @@ void test_roundtrip_byte_arrays() {
 
 // Phase 7 S5: arc list-op qualifiers survive a USDC write -> read cycle via the
 // companion `<arc>_listOp` token[] fields. The within-spec effective list (the
-// `references` token[]) and the ArcEdit (prepend/append/delete) both round-trip.
+// `references` token[]) and the ArcListOp (prepend/append/delete) both round-trip.
 void test_roundtrip_arc_listops() {
   std::cout << "Testing arc list-op crate roundtrip...\n";
   Layer layer;
@@ -1126,7 +1126,7 @@ void test_roundtrip_arc_listops() {
   // delete </A>.
   b.current()->meta().references.push_back("</B>");
   {
-    ArcEdit& e = b.current()->meta().ensure_arc_edits().references;
+    ArcListOp& e = b.current()->meta().ensure_arc_edits().references;
     e.authored = true;
     e.is_explicit = false;
     e.prepended.push_back("</B>");
@@ -1151,7 +1151,7 @@ void test_roundtrip_arc_listops() {
   // The within-spec effective list round-trips.
   assert(p->meta().references.size() == 1 && p->meta().references[0] == "</B>");
   // The non-explicit edit round-trips.
-  const ArcListOpEdits* ed = p->meta().arc_edits();
+  const ArcListOps* ed = p->meta().arc_edits();
   assert(ed && "references edit must survive the crate roundtrip");
   assert(ed->references.authored);
   assert(!ed->references.is_explicit);
@@ -1274,10 +1274,10 @@ void test_roundtrip_api_schemas() {
   const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
   assert(p);
 
-  // apiSchemas must land in PrimSpecMeta (pxr writes it in the metadata block),
+  // apiSchemas must land in PrimMetadata (pxr writes it in the metadata block),
   // NOT leak back as a phantom `token[] apiSchemas` body property.
   assert(p->meta().apiSchemas().size() == 2 &&
-         "apiSchemas did not round-trip into PrimSpecMeta");
+         "apiSchemas did not round-trip into PrimMetadata");
   assert(p->meta().apiSchemas()[0] == "MaterialBindingAPI");
   assert(p->meta().apiSchemas()[1] == "PhysicsCollisionAPI");
   assert(p->property("apiSchemas") == nullptr &&
@@ -1621,7 +1621,7 @@ def Xform "World" (
 }
 
 // Inline-authored variants must round-trip through crate: the writer
-// materializes bracketed holder prims from VariantSetData, and the reader
+// materializes bracketed holder prims from PrimVariantSetData, and the reader
 // reconstructs set/option names + selection from them.
 void test_roundtrip_variants() {
   std::cout << "Testing variant round-trip...\n";
@@ -1656,12 +1656,12 @@ def Xform "root" (
   const PrimSpec* root = layer->prim_at_path("/root");
   assert(root);
   assert(root->meta().variantSets().size() == 1);
-  const VariantSetData& vs = root->meta().variantSets()[0];
+  const PrimVariantSetData& vs = root->meta().variantSets()[0];
   assert(vs.name == "lod");
   assert(vs.selected == "high");
   assert(vs.variants.size() == 2);
   bool has_high = false, has_low = false;
-  for (const VariantData& vd : vs.variants) {
+  for (const PrimVariantData& vd : vs.variants) {
     if (vd.name == "high") has_high = true;
     if (vd.name == "low") has_low = true;
   }
@@ -2136,13 +2136,13 @@ void test_roundtrip_writer_audit_cluster() {
     LayerBuilder bc(lc);
     bc.begin_prim("C", "Scope");
     {
-      ArcEdit& e = bc.current()->meta().ensure_arc_edits().references;
-      e = ArcEdit();
+      ArcListOp& e = bc.current()->meta().ensure_arc_edits().references;
+      e = ArcListOp();
       e.authored = true;  // `references = None`
     }
     {
-      ArcEdit& e = bc.current()->meta().ensure_arc_edits().inherits;
-      e = ArcEdit();
+      ArcListOp& e = bc.current()->meta().ensure_arc_edits().inherits;
+      e = ArcListOp();
       e.authored = true;  // `inherits = None`
     }
     bc.end_prim();
@@ -2155,7 +2155,7 @@ void test_roundtrip_writer_audit_cluster() {
     assert(rrc.success);
     const PrimSpec* cp = rrc.stage.GetRootLayer()->prim_at_path("/C");
     assert(cp);
-    const ArcListOpEdits* ed = cp->meta().arc_edits();
+    const ArcListOps* ed = cp->meta().arc_edits();
     assert(ed && "explicit-clear must survive next's own usdc rewrite");
     assert(ed->references.authored && ed->references.is_explicit);
     assert(cp->meta().references.empty());

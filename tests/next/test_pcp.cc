@@ -94,12 +94,12 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   // V has a variant set "vset" with selection "high".
   lb.begin_prim("V", "");
   {
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "vset";
-    VariantData hi;
+    PrimVariantData hi;
     hi.name = "high";
     hi.properties.push_back({"variantHigh", Value::MakeFloat3(9, 9, 9)});
-    VariantData lo;
+    PrimVariantData lo;
     lo.name = "low";
     lo.properties.push_back({"variantLow", Value::MakeFloat3(1, 1, 1)});
     vss.variants.push_back(std::move(hi));
@@ -120,9 +120,9 @@ static std::shared_ptr<Layer> BuildRootLayer() {
     cb.finalize();
 
     lb.begin_prim("VC", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "geo";
-    VariantData full;
+    PrimVariantData full;
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
@@ -133,15 +133,15 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   // MV selects TWO variant sets at once via variantSelections.
   {
     lb.begin_prim("MV", "");
-    VariantSetData s1;
+    PrimVariantSetData s1;
     s1.name = "s1";
-    VariantData s1on;
+    PrimVariantData s1on;
     s1on.name = "on";
     s1on.properties.push_back({"p1", Value::MakeFloat3(1, 1, 1)});
     s1.variants.push_back(std::move(s1on));
-    VariantSetData s2;
+    PrimVariantSetData s2;
     s2.name = "s2";
-    VariantData s2on;
+    PrimVariantData s2on;
     s2on.name = "on";
     s2on.properties.push_back({"p2", Value::MakeFloat3(2, 2, 2)});
     s2.variants.push_back(std::move(s2on));
@@ -329,7 +329,7 @@ static void test_child_order_weak_to_strong() {
 }
 
 // Crate-authored variants: pxr crates store variant content as bracketed HOLDER
-// prims ("/Asset/{LOD=high}/LOD0") with a VariantSetData carrying only
+// prims ("/Asset/{LOD=high}/LOD0") with a PrimVariantSetData carrying only
 // {name, selected} (no inline content). The compositor must graft the selected
 // holder's descendants onto the host. Combined with a reference + local overrides
 // this reproduces a real UE-exported case: asset locally [Materials] +
@@ -347,7 +347,7 @@ static void test_crate_style_variant_holder() {
   lb.begin_prim("Lib", "Scope");
   lb.begin_prim("Asset", "");
   {
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "LOD";
     vss.selected = "high";  // crate form: selection only, no inline content
     lb.current()->meta().variantSets().push_back(std::move(vss));
@@ -1431,7 +1431,7 @@ static void test_inherits_specializes() {
 
 // Phase 4: variant selection grafts the chosen variant's opinions only.
 // An attribute authored inside a USDA inline variant must keep its qualifier
-// flags (custom / uniform) through parse -> compose -> write. (VariantData stored
+// flags (custom / uniform) through parse -> compose -> write. (PrimVariantData stored
 // name->Value without flags, so the variant graft silently dropped them.)
 static void test_variant_inline_property_flags() {
   std::cout << "test_variant_inline_property_flags..." << std::endl;
@@ -1530,7 +1530,7 @@ static void test_variants() {
 }
 
 // Variant-content layer stacks are keyed by a STABLE identity (host stack +
-// site + set + variant name), not the VariantData pointer. So the instance key
+// site + set + variant name), not the PrimVariantData pointer. So the instance key
 // of a variant-content prim is deterministic across independent compositions
 // (the old uintptr_t key differed by heap address between runs, and aliased
 // after a free+realloc). Two separate Cache::Open of the same scene must agree.
@@ -1549,9 +1549,9 @@ static void test_variant_content_key_stable() {
     auto root = std::make_shared<Layer>();
     LayerBuilder lb(*root);
     lb.begin_prim("VC", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "geo";
-    VariantData full;
+    PrimVariantData full;
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
@@ -2047,9 +2047,9 @@ static void test_cross_source_variant() {
   {
     LayerBuilder ab(*asset);
     ab.begin_prim("A", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "vs";
-    VariantData hi;
+    PrimVariantData hi;
     hi.name = "hi";
     hi.properties.push_back({"xvar", Value::MakeFloat3(5, 5, 5)});
     vss.variants.push_back(std::move(hi));
@@ -2168,7 +2168,7 @@ static void test_implied_intermediate() {
 // bare/explicit list in the stronger layer replaces the weaker one. With the
 // flag off, both arcs compose (legacy strong-first concatenation).
 // Phase 7 S5: the USDA writer re-emits the authored list-op qualifier from the
-// ArcEdit instead of always `prepend` -- a bare list as a bare list, and a
+// ArcListOp instead of always `prepend` -- a bare list as a bare list, and a
 // prepend/delete edit with its qualifiers (the old writer could not emit
 // `delete` at all).
 static void test_writer_listop_fidelity() {
@@ -2183,7 +2183,7 @@ static void test_writer_listop_fidelity() {
   lb.begin_prim("Edited", "Scope");
   lb.current()->meta().references.push_back("ext.usda</A>");  // within-spec list
   {
-    ArcEdit& e = lb.current()->meta().ensure_arc_edits().references;
+    ArcListOp& e = lb.current()->meta().ensure_arc_edits().references;
     e.authored = true;
     e.is_explicit = false;
     e.prepended.push_back("ext.usda</A>");
@@ -2392,7 +2392,7 @@ static void test_authored_arc_fidelity_fixture() {
   const PrimSpec *prim = loaded->prim_at_path("/ArcFidelity");
   PCP_CHECK(prim != nullptr, "authored arc fixture prim missing");
   if (!prim) return;
-  const ArcListOpEdits *edits = prim->meta().arc_edits();
+  const ArcListOps *edits = prim->meta().arc_edits();
   PCP_CHECK(edits != nullptr, "authored arc edits missing");
   if (!edits) return;
   PCP_CHECK(edits->references.prepended.size() == 1 &&
@@ -3429,9 +3429,9 @@ static void test_variant_content_cycle() {
   {
     LayerBuilder lb(*root);
     lb.begin_prim("VC", "");
-    VariantSetData vss;
+    PrimVariantSetData vss;
     vss.name = "geo";
-    VariantData full;
+    PrimVariantData full;
     full.name = "full";
     full.content = content;
     vss.variants.push_back(std::move(full));
@@ -3644,7 +3644,7 @@ static void test_prototype_order_independent() {
   std::cout << "  OK" << std::endl;
 }
 
-// Regression: pcp::Cache must honor the per-set VariantSetData.selected field as
+// Regression: pcp::Cache must honor the per-set PrimVariantSetData.selected field as
 // a selection opinion. The crate (USDC) reader sets `selected` for EVERY chosen
 // variant set but the legacy variantSelection STRING for only the FIRST set (and
 // no variantSelections map). Reading only the string dropped every set after the
@@ -3662,24 +3662,24 @@ static void test_variant_selected_field() {
     // legacy string on only the FIRST, no variantSelections map.
     rb.begin_prim("P", "");
     {
-      VariantSetData lod;
+      PrimVariantSetData lod;
       lod.name = "lod";
       lod.selected = "high";
       {
-        VariantData v; v.name = "high";
+        PrimVariantData v; v.name = "high";
         v.properties.push_back({"L", Value::MakeFloat3(9, 9, 9)});
         lod.variants.push_back(std::move(v));
       }
       {
-        VariantData v; v.name = "low";
+        PrimVariantData v; v.name = "low";
         v.properties.push_back({"L", Value::MakeFloat3(1, 1, 1)});
         lod.variants.push_back(std::move(v));
       }
-      VariantSetData shade;
+      PrimVariantSetData shade;
       shade.name = "shade";
       shade.selected = "red";
       {
-        VariantData v; v.name = "red";
+        PrimVariantData v; v.name = "red";
         v.properties.push_back({"S", Value::MakeFloat3(1, 0, 0)});
         shade.variants.push_back(std::move(v));
       }
@@ -3692,10 +3692,10 @@ static void test_variant_selected_field() {
     // Q selects a single set via `selected` ONLY (no string, no map).
     rb.begin_prim("Q", "");
     {
-      VariantSetData s;
+      PrimVariantSetData s;
       s.name = "geo";
       s.selected = "hi";
-      VariantData v; v.name = "hi";
+      PrimVariantData v; v.name = "hi";
       v.properties.push_back({"G", Value::MakeFloat3(2, 2, 2)});
       s.variants.push_back(std::move(v));
       rb.current()->meta().variantSets().push_back(std::move(s));

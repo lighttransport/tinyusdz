@@ -8,7 +8,7 @@
 
   enum class ArcSel { References, Payloads, Inherits, Specializes };
 
-  static const std::vector<std::string> &SelectInlineArc(const PrimSpecMeta &m,
+  static const std::vector<std::string> &SelectInlineArc(const PrimMetadata &m,
                                                          ArcSel f) {
     switch (f) {
       case ArcSel::References: return m.references;
@@ -18,8 +18,8 @@
     }
   }
 
-  static const ArcEdit *SelectArcEdit(const PrimSpecMeta &m, ArcSel f) {
-    const ArcListOpEdits *e = m.arc_edits();
+  static const ArcListOp *SelectArcEdit(const PrimMetadata &m, ArcSel f) {
+    const ArcListOps *e = m.arc_edits();
     if (!e) return nullptr;
     switch (f) {
       case ArcSel::References: return &e->references;
@@ -37,9 +37,9 @@
       const std::vector<SpecRef> &specs, ArcSel f) const {
     std::vector<std::pair<std::string, std::string>> result;
     for (auto it = specs.rbegin(); it != specs.rend(); ++it) {
-      const PrimSpecMeta &m = it->spec->meta();
+      const PrimMetadata &m = it->spec->meta();
       const std::string &lid = it->layer_id;
-      const ArcEdit *e = SelectArcEdit(m, f);
+      const ArcListOp *e = SelectArcEdit(m, f);
       const std::vector<std::string> &inl = SelectInlineArc(m, f);
       if ((!e || !e->authored) && inl.empty()) {
         continue;

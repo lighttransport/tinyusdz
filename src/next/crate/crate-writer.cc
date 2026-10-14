@@ -199,7 +199,7 @@ CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, c
       return strict_result;
     }
   }
-  // Inline-authored variants (VariantSetData without bracketed holder prims)
+  // Inline-authored variants (PrimVariantSetData without bracketed holder prims)
   // must be materialized into holder prims or the crate drops them.
   if (LayerNeedsVariantHolders(layer)) {
     Layer materialized = MaterializeVariantHolders(layer);

@@ -20,7 +20,7 @@ namespace next {
 class Layer;
 class LayerBuilder;
 class PrimSpec;
-struct PrimSpecMeta;
+struct PrimMetadata;
 struct PropMeta;
 struct PropNameId;
 enum class PrimSpecifier : uint8_t;
@@ -213,7 +213,7 @@ public:
   // ============================================================
 
   /// Get prim metadata
-  const PrimSpecMeta& GetMeta() const;
+  const PrimMetadata& GetMeta() const;
 
   /// Get a property's metadata block (interpolation / customData / ...),
   /// or nullptr when none authored. Never allocates.

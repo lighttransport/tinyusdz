@@ -43,9 +43,9 @@ static Value ParseDictText(const std::string& text) {
   return r.success ? std::move(r.value) : Value();
 }
 
-static TypedExtensionField MakeTypedExtensionField(std::string name,
+static DecodedExtensionField MakeTypedExtensionField(std::string name,
                                                    Value value) {
-  TypedExtensionField extension;
+  DecodedExtensionField extension;
   extension.name = std::move(name);
   extension.value = std::move(value);
   extension.unregistered = true;
@@ -632,7 +632,7 @@ bool CrateReader::Impl::BuildStage() {
   struct AttrCold {
     ArrayEditData array_edit;  // VtArrayEdit default (crate 0.14)
     std::vector<std::string> connection_targets;
-    ArcEdit connection_edit;
+    ArcListOp connection_edit;
     std::string spline_text;  // Crate type-59 spline, decoded to USDA text
   };
   struct AttrInfo {
@@ -661,7 +661,7 @@ bool CrateReader::Impl::BuildStage() {
   struct RelInfo {
     std::string name;
     std::vector<std::string> targets;
-    ArcEdit edits;        // authored list-op sublists (marker-decoded)
+    ArcListOp edits;        // authored list-op sublists (marker-decoded)
     bool custom = false;
     bool uniform = false;
     bool variability_authored = false;
@@ -825,7 +825,7 @@ bool CrateReader::Impl::BuildStage() {
             if (raw.size() == 1 && (raw[0] == "\x01" "E" || raw[0] == "\x01E")) {
               // Authored explicit-clear (`rel r = None`): a declared,
               // target-less relationship with an authored (explicit) edit.
-              ri.edits = ArcEdit();
+              ri.edits = ArcListOp();
               ri.edits.authored = true;
               ri.edits.is_value_block = true;
               raw.clear();
@@ -1208,15 +1208,15 @@ bool CrateReader::Impl::BuildStage() {
     };
 
     // Phase 7 S5: decode a `<arc>_listOp` companion token[] (marker-delimited
-    // prepend/append/delete/order sublists) into an ArcEdit.
-    auto decode_arc_listop = [&](const Value& v, ArcEdit& e) {
+    // prepend/append/delete/order sublists) into an ArcListOp.
+    auto decode_arc_listop = [&](const Value& v, ArcListOp& e) {
       const std::vector<std::string>* arr = v.as_token_array();
       if (!arr) return;
       // "\x01E" alone = authored explicit-clear (`references = None` /
       // pxr's explicit-empty listop): authored with is_explicit kept true
       // and no items, which the USDA writer re-emits as `= None`.
       if (arr->size() == 1 && ((*arr)[0] == "\x01" "E" || (*arr)[0] == "\x01E")) {
-        e = ArcEdit();
+        e = ArcListOp();
         e.authored = true;
         return;
       }
@@ -1240,13 +1240,13 @@ bool CrateReader::Impl::BuildStage() {
 
     ResolveFieldset(entry.fieldset_index, prim_value_field_scratch);
 
-    // Add properties and extract composition arcs / metadata into PrimSpecMeta
+    // Add properties and extract composition arcs / metadata into PrimMetadata
     for (auto& field : prim_value_field_scratch) {
       if (field.first == "typeName" || field.first == "specifier") continue;
 
       // Reserved prim metadata stored inline in the prim spec (pxrUSD keeps
       // these in the prim's fieldset, not as separate property specs). Route
-      // them to PrimSpecMeta so they do not leak in as phantom properties.
+      // them to PrimMetadata so they do not leak in as phantom properties.
       if (ps) {
         if (field.first == "active") {
           if (const bool* b = field.second.as_bool()) {
@@ -1274,7 +1274,7 @@ bool CrateReader::Impl::BuildStage() {
         }
       }
 
-      // Composition arc + metadata fields: store in PrimSpecMeta, not as
+      // Composition arc + metadata fields: store in PrimMetadata, not as
       // regular properties. (Guarded by ps; if current() were null we simply
       // skip them rather than crash.)
       if (ps) {
@@ -1304,8 +1304,8 @@ bool CrateReader::Impl::BuildStage() {
         }
         if (field.first == "apiSchemas") {
           ps->meta().setApiSchemasAuthored();
-          StringListOpEdits& edits = ps->meta().apiSchemaEdits();
-          edits = StringListOpEdits();
+          StringListOps& edits = ps->meta().apiSchemaEdits();
+          edits = StringListOps();
           edits.authored = true;
           if (const std::vector<std::string>* arr =
                   field.second.as_token_array()) {
@@ -1373,10 +1373,10 @@ bool CrateReader::Impl::BuildStage() {
         };
         auto apply_arc_field = [&](const Value& v,
                                    std::vector<std::string>& target,
-                                   ArcEdit& (*sel)(ArcListOpEdits&),
+                                   ArcListOp& (*sel)(ArcListOps&),
                                    const char* what) {
           if (is_marker_list(v)) {
-            ArcEdit& e = sel(ps->meta().ensure_arc_edits());
+            ArcListOp& e = sel(ps->meta().ensure_arc_edits());
             decode_arc_listop(v, e);
             // Effective list within a single spec: prepended then appended
             // (delete/reorder operate on weaker opinions, not this list).
@@ -1392,13 +1392,13 @@ bool CrateReader::Impl::BuildStage() {
         };
         if (field.first == "references") {
           apply_arc_field(field.second, ps->meta().references,
-                          [](ArcListOpEdits& a) -> ArcEdit& { return a.references; },
+                          [](ArcListOps& a) -> ArcListOp& { return a.references; },
                           "references");
           continue;
         }
         if (field.first == "payload") {
           apply_arc_field(field.second, ps->meta().payloads,
-                          [](ArcListOpEdits& a) -> ArcEdit& { return a.payloads; },
+                          [](ArcListOps& a) -> ArcListOp& { return a.payloads; },
                           "payload");
           continue;
         }
@@ -1406,13 +1406,13 @@ bool CrateReader::Impl::BuildStage() {
           // pxr's crate field name is "inheritPaths"; next's own writer used
           // "inherits". Accept both.
           apply_arc_field(field.second, ps->meta().inherits,
-                          [](ArcListOpEdits& a) -> ArcEdit& { return a.inherits; },
+                          [](ArcListOps& a) -> ArcListOp& { return a.inherits; },
                           "inherits");
           continue;
         }
         if (field.first == "specializes") {
           apply_arc_field(field.second, ps->meta().specializes,
-                          [](ArcListOpEdits& a) -> ArcEdit& { return a.specializes; },
+                          [](ArcListOps& a) -> ArcListOp& { return a.specializes; },
                           "specializes");
           continue;
         }
@@ -1490,8 +1490,8 @@ bool CrateReader::Impl::BuildStage() {
           continue;
         }
         if (field.first == "clipSets") {
-          StringListOpEdits& edits = ps->meta().clipSetEdits();
-          edits = StringListOpEdits();
+          StringListOps& edits = ps->meta().clipSetEdits();
+          edits = StringListOps();
           edits.authored = true;
           if (const std::vector<std::string>* arr =
                   field.second.as_token_array()) {
@@ -1555,8 +1555,8 @@ bool CrateReader::Impl::BuildStage() {
           // holder content is grafted on later. Strip any list-op markers a
           // StringListOp carries so a bare set name survives. Skip sets already
           // present (e.g. from holder specs) to avoid duplicates.
-          StringListOpEdits& edits = ps->meta().variantSetNameEdits();
-          edits = StringListOpEdits();
+          StringListOps& edits = ps->meta().variantSetNameEdits();
+          edits = StringListOps();
           edits.authored = true;
           if (const std::vector<std::string>* arr =
                   field.second.as_token_array()) {
@@ -1606,11 +1606,11 @@ bool CrateReader::Impl::BuildStage() {
           }
           for (const std::string& n : names) {
             bool have = false;
-            for (const VariantSetData& evs : ps->meta().variantSets()) {
+            for (const PrimVariantSetData& evs : ps->meta().variantSets()) {
               if (evs.name == n) { have = true; break; }
             }
             if (have) continue;
-            VariantSetData vsd;
+            PrimVariantSetData vsd;
             vsd.name = n;
             ps->meta().variantSets().push_back(std::move(vsd));
           }
@@ -1826,21 +1826,21 @@ bool CrateReader::Impl::BuildStage() {
       }
     }
 
-    // Variant sets: attach a VariantSetData per set, carrying the selection
-    // and the option NAMES (as empty VariantData entries — the compositor
+    // Variant sets: attach a PrimVariantSetData per set, carrying the selection
+    // and the option NAMES (as empty PrimVariantData entries — the compositor
     // ignores option entries without content/properties and grafts the
     // bracketed holder prims instead, which hold the variant CONTENT).
     auto sel = variant_sel.find(entry.full_path);
     auto opt = variant_opts.find(entry.full_path);
     if (ps && (sel != variant_sel.end() || opt != variant_opts.end())) {
       // Union of set names from selections and holder specs.
-      std::map<std::string, VariantSetData> sets;
+      std::map<std::string, PrimVariantSetData> sets;
       if (opt != variant_opts.end()) {
         for (const auto& kv : opt->second) {
-          VariantSetData& vsd = sets[kv.first];
+          PrimVariantSetData& vsd = sets[kv.first];
           vsd.name = kv.first;
           for (const std::string& var : kv.second) {
-            VariantData vd;
+            PrimVariantData vd;
             vd.name = var;
             vsd.variants.push_back(std::move(vd));
           }
@@ -1864,8 +1864,8 @@ bool CrateReader::Impl::BuildStage() {
         // next-authored crates carry a legacy `variantSets` token field that
         // pre-pushed name-only entries; pushing a second full entry would
         // duplicate the set — grafted twice and emitted twice as USDA).
-        VariantSetData* existing = nullptr;
-        for (VariantSetData& evs : ps->meta().variantSets()) {
+        PrimVariantSetData* existing = nullptr;
+        for (PrimVariantSetData& evs : ps->meta().variantSets()) {
           if (evs.name == kv.first) {
             existing = &evs;
             break;
@@ -1875,9 +1875,9 @@ bool CrateReader::Impl::BuildStage() {
           if (existing->selected.empty()) {
             existing->selected = kv.second.selected;
           }
-          for (VariantData& vd : kv.second.variants) {
+          for (PrimVariantData& vd : kv.second.variants) {
             bool have = false;
-            for (const VariantData& evd : existing->variants) {
+            for (const PrimVariantData& evd : existing->variants) {
               if (evd.name == vd.name) {
                 have = true;
                 break;

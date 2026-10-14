@@ -449,7 +449,7 @@ std::string StrListToStr(const std::vector<std::string> &v) {
   return ss.str();
 }
 
-std::string ArcEditToStr(const ArcEdit &e) {
+std::string ArcEditToStr(const ArcListOp &e) {
   if (!e.authored) return "<none>";
   std::stringstream ss;
   ss << (e.is_explicit ? "explicit" : "listop");
@@ -597,13 +597,13 @@ std::string FormatPropertyForDiff(const PrimSpec &ps, const std::string &name,
 // Per-property metadata (PropMeta) comparison.
 // ---------------------------------------------------------------------------
 
-bool ExtensionFieldsEqual(const std::vector<TypedExtensionField>& lhs,
-                          const std::vector<TypedExtensionField>& rhs,
+bool ExtensionFieldsEqual(const std::vector<DecodedExtensionField>& lhs,
+                          const std::vector<DecodedExtensionField>& rhs,
                           const DiffOptions& opts) {
   if (lhs.size() != rhs.size()) return false;
-  for (const TypedExtensionField& field : lhs) {
+  for (const DecodedExtensionField& field : lhs) {
     const auto it = std::find_if(
-        rhs.begin(), rhs.end(), [&](const TypedExtensionField& candidate) {
+        rhs.begin(), rhs.end(), [&](const DecodedExtensionField& candidate) {
           return candidate.name == field.name;
         });
     if (it == rhs.end() || it->unregistered != field.unregistered ||
@@ -737,8 +737,8 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
     if (!tEqual) note("targets");
 
     // Authored list-op edits.
-    static const ArcEdit kNoEdit;
-    auto edit_of = [&](const PrimSpec &ps) -> const ArcEdit & {
+    static const ArcListOp kNoEdit;
+    auto edit_of = [&](const PrimSpec &ps) -> const ArcListOp & {
       const auto &edits = ps.relationship_edits();
       auto it = edits.find(name);
       return (it == edits.end()) ? kNoEdit : it->second;
@@ -768,9 +768,9 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
     }
     if (!cEqual) note("connections");
   }
-  static const ArcEdit kNoConnectionEdit;
-  const ArcEdit* lce = lp.connection_edit(name);
-  const ArcEdit* rce = rp.connection_edit(name);
+  static const ArcListOp kNoConnectionEdit;
+  const ArcListOp* lce = lp.connection_edit(name);
+  const ArcListOp* rce = rp.connection_edit(name);
   if (ArcEditToStr(lce ? *lce : kNoConnectionEdit) !=
       ArcEditToStr(rce ? *rce : kNoConnectionEdit)) {
     note("connectionListOp");
@@ -844,12 +844,12 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
 // "variantSets:<set>/<option>:<field>" tag.
 // ---------------------------------------------------------------------------
 
-bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+bool VariantOptionEqual(const PrimVariantData &l, const PrimVariantData &r,
                         const DiffOptions &opts, std::string *reason,
                         int depth);
 
-bool VariantSetsEqual(const std::vector<VariantSetData> &l,
-                      const std::vector<VariantSetData> &r,
+bool VariantSetsEqual(const std::vector<PrimVariantSetData> &l,
+                      const std::vector<PrimVariantSetData> &r,
                       const DiffOptions &opts, std::string *reason,
                       int depth = 0) {
   auto fail = [&](const std::string &r_) {
@@ -858,9 +858,9 @@ bool VariantSetsEqual(const std::vector<VariantSetData> &l,
   };
   if (depth > 64) return true;  // matches the parser's nesting cap
   if (l.size() != r.size()) return fail("variantSets:count");
-  for (const VariantSetData &ls : l) {
-    const VariantSetData *rs = nullptr;
-    for (const VariantSetData &cand : r) {
+  for (const PrimVariantSetData &ls : l) {
+    const PrimVariantSetData *rs = nullptr;
+    for (const PrimVariantSetData &cand : r) {
       if (cand.name == ls.name) {
         rs = &cand;
         break;
@@ -873,9 +873,9 @@ bool VariantSetsEqual(const std::vector<VariantSetData> &l,
     if (ls.variants.size() != rs->variants.size()) {
       return fail("variantSets:" + ls.name + ":options");
     }
-    for (const VariantData &lv : ls.variants) {
-      const VariantData *rv = nullptr;
-      for (const VariantData &cand : rs->variants) {
+    for (const PrimVariantData &lv : ls.variants) {
+      const PrimVariantData *rv = nullptr;
+      for (const PrimVariantData &cand : rs->variants) {
         if (cand.name == lv.name) {
           rv = &cand;
           break;
@@ -892,7 +892,7 @@ bool VariantSetsEqual(const std::vector<VariantSetData> &l,
   return true;
 }
 
-bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+bool VariantOptionEqual(const PrimVariantData &l, const PrimVariantData &r,
                         const DiffOptions &opts, std::string *reason,
                         int depth) {
   auto fail = [&](const char *r_) {
@@ -962,7 +962,7 @@ bool VariantOptionEqual(const VariantData &l, const VariantData &r,
 // PrimSpec own-field comparison (specifier / typeName / metadata).
 // ---------------------------------------------------------------------------
 
-bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
+bool ComparePrimMeta(const PrimMetadata &l, const PrimMetadata &r,
                      const DiffOptions &opts,
                      std::vector<std::string> *reasons) {
   bool equal = true;
@@ -982,12 +982,12 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
   }
 
   // Composition arcs: inline vectors + authored list-op qualifiers.
-  static const ArcListOpEdits kNoEdits;
-  const ArcListOpEdits &le = l.arc_edits() ? *l.arc_edits() : kNoEdits;
-  const ArcListOpEdits &re = r.arc_edits() ? *r.arc_edits() : kNoEdits;
+  static const ArcListOps kNoEdits;
+  const ArcListOps &le = l.arc_edits() ? *l.arc_edits() : kNoEdits;
+  const ArcListOps &re = r.arc_edits() ? *r.arc_edits() : kNoEdits;
   auto cmp_arc = [&](const std::vector<std::string> &a,
-                     const std::vector<std::string> &b, const ArcEdit &ea,
-                     const ArcEdit &eb, const char *field) {
+                     const std::vector<std::string> &b, const ArcListOp &ea,
+                     const ArcListOp &eb, const char *field) {
     if (a != b || ArcEditToStr(ea) != ArcEditToStr(eb)) {
       note(field);
     }
@@ -1011,8 +1011,8 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       if (reasons) reasons->push_back("meta:" + vreason);
     }
   }
-  const StringListOpEdits& lv = l.variantSetNameEdits();
-  const StringListOpEdits& rv = r.variantSetNameEdits();
+  const StringListOps& lv = l.variantSetNameEdits();
+  const StringListOps& rv = r.variantSetNameEdits();
   if (lv.authored != rv.authored || lv.is_explicit != rv.is_explicit ||
       lv.explicit_items != rv.explicit_items || lv.added != rv.added ||
       lv.prepended != rv.prepended || lv.appended != rv.appended ||
@@ -1045,8 +1045,8 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       l.apiSchemasQualifier() != r.apiSchemasQualifier()) {
     note("meta:apiSchemas");
   }
-  const StringListOpEdits& la = l.apiSchemaEdits();
-  const StringListOpEdits& ra = r.apiSchemaEdits();
+  const StringListOps& la = l.apiSchemaEdits();
+  const StringListOps& ra = r.apiSchemaEdits();
   if (la.authored != ra.authored || la.is_explicit != ra.is_explicit ||
       la.explicit_items != ra.explicit_items || la.added != ra.added ||
       la.prepended != ra.prepended || la.appended != ra.appended ||
@@ -1074,8 +1074,8 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
   if (!ExtensionFieldsEqual(l.unknownFields(), r.unknownFields(), opts)) {
     note("meta:extensionFields");
   }
-  const StringListOpEdits& lc = l.clipSetEdits();
-  const StringListOpEdits& rc = r.clipSetEdits();
+  const StringListOps& lc = l.clipSetEdits();
+  const StringListOps& rc = r.clipSetEdits();
   if (lc.authored != rc.authored || lc.is_explicit != rc.is_explicit ||
       lc.explicit_items != rc.explicit_items || lc.added != rc.added ||
       lc.prepended != rc.prepended || lc.appended != rc.appended ||

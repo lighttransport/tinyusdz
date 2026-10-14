@@ -372,8 +372,8 @@
           clone.meta().references.clear();
           clone.meta().references.push_back("<" + *ref + ">");
           // pxr flatten spells the prototype arc `add references = </FP_N>`.
-          ArcEdit &redit = clone.meta().ensure_arc_edits().references;
-          redit = ArcEdit();
+          ArcListOp &redit = clone.meta().ensure_arc_edits().references;
+          redit = ArcListOp();
           redit.authored = true;
           redit.is_explicit = false;
           redit.added.push_back("<" + *ref + ">");
@@ -403,8 +403,8 @@
         if (std::find(refs.begin(), refs.end(), ref) == refs.end())
           refs.push_back(ref);
         // pxr flatten spells the prototype arc `add references = </FP_N>`.
-        ArcEdit &redit = mp->meta().ensure_arc_edits().references;
-        redit = ArcEdit();
+        ArcListOp &redit = mp->meta().ensure_arc_edits().references;
+        redit = ArcListOp();
         redit.authored = true;
         redit.is_explicit = false;
         redit.added.push_back(ref);
@@ -479,17 +479,17 @@
         add(a.asset_path);
       }
     };
-    auto add_edit = [&](const ArcEdit &e, bool payload) {
+    auto add_edit = [&](const ArcListOp &e, bool payload) {
       if (!e.authored) return;
       add_arcs(e.added, payload);
       add_arcs(e.prepended, payload);
       add_arcs(e.appended, payload);
     };
     for (const PrimSpec &ps : layer.prims()) {
-      const PrimSpecMeta &m = ps.meta();
+      const PrimMetadata &m = ps.meta();
       add_arcs(m.references, false);
       if (payloads) add_arcs(m.payloads, true);
-      if (const ArcListOpEdits *e = m.arc_edits()) {
+      if (const ArcListOps *e = m.arc_edits()) {
         add_edit(e->references, false);
         if (payloads) add_edit(e->payloads, true);
       }

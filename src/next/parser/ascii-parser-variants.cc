@@ -18,7 +18,7 @@ bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name)
 }
 
 bool AsciiParser::Impl::ParseVariantSetBodyInto(
-    const std::string& variant_set_name, std::vector<VariantSetData>& target,
+    const std::string& variant_set_name, std::vector<PrimVariantSetData>& target,
     int depth) {
   if (depth > 64) {
     AddError("variantSet nesting too deep");
@@ -30,7 +30,7 @@ bool AsciiParser::Impl::ParseVariantSetBodyInto(
     return false;
   }
 
-  VariantSetData* vs_data = nullptr;
+  PrimVariantSetData* vs_data = nullptr;
   for (auto& vs : target) {
     if (vs.name == variant_set_name) {
       vs_data = &vs;
@@ -44,7 +44,7 @@ bool AsciiParser::Impl::ParseVariantSetBodyInto(
   }
 
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
-    VariantData variant;
+    PrimVariantData variant;
     if (!ParseVariantOption(&variant, depth)) {
       return false;
     }
@@ -54,7 +54,7 @@ bool AsciiParser::Impl::ParseVariantSetBodyInto(
   return Match(TokenType::CloseBrace);
 }
 
-bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
+bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
   if (!out) return false;
 
   if (!lexer_->expect(TokenType::String, out->name)) {
@@ -540,7 +540,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
   // sets parsed from the body.
   out->variantSelections = pending_selections;
   for (const auto& sel : pending_selections) {
-    for (VariantSetData& nvs : out->variantSets) {
+    for (PrimVariantSetData& nvs : out->variantSets) {
       if (nvs.name == sel.first) {
         nvs.selected = sel.second;
         break;

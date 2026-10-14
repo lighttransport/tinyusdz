@@ -87,14 +87,14 @@ private:
 TypeNameTable& GetTypeNameTable();
 
 // Forward declarations
-struct VariantData;
-struct VariantSetData;
-class Layer;  // for VariantData::content (variant subtree)
+struct PrimVariantData;
+struct PrimVariantSetData;
+class Layer;  // for PrimVariantData::content (variant subtree)
 
 /// Generic decodable extension field retained from USDC. Unregistered fields
 /// use Crate's recursive UnregisteredValue wrapper and must be re-encoded with
 /// that wrapper rather than silently changing their schema type.
-struct TypedExtensionField {
+struct DecodedExtensionField {
   std::string name;
   Value value;
   bool unregistered = false;
@@ -115,13 +115,13 @@ struct VariantProperty {
 };
 
 /// Variant data - properties and prims inside a single variant option
-struct VariantData {
-  VariantData();
-  VariantData(const VariantData&);
-  VariantData(VariantData&&) noexcept;
-  VariantData& operator=(const VariantData&);
-  VariantData& operator=(VariantData&&) noexcept;
-  ~VariantData();
+struct PrimVariantData {
+  PrimVariantData();
+  PrimVariantData(const PrimVariantData&);
+  PrimVariantData(PrimVariantData&&) noexcept;
+  PrimVariantData& operator=(const PrimVariantData&);
+  PrimVariantData& operator=(PrimVariantData&&) noexcept;
+  ~PrimVariantData();
 
   std::string name;
   bool active = true;
@@ -139,7 +139,7 @@ struct VariantData {
   std::unordered_map<std::string, uint16_t> relationshipFlags;
   // Composition arcs authored in the variant OPTION's metadata block, e.g.
   // `"opt" ( prepend payload = @./geo.usd@</geo> ) {}`. Stored in the same
-  // canonical "@asset@</prim>" / "</prim>" encoding as PrimSpecMeta's arc
+  // canonical "@asset@</prim>" / "</prim>" encoding as PrimMetadata's arc
   // vectors (Compositor::ParseReference/ParsePayload decodes them). Composed
   // when this variant is selected — the geometry-defining payload of XGen-style
   // assets lives here, not in the variant body. Empty on the common case.
@@ -151,13 +151,13 @@ struct VariantData {
   // variant set on the host prim, not only a set nested inside this option.
   std::vector<std::pair<std::string, std::string>> variantSelections;
   // Nested variant sets authored inside this variant option (recursive).
-  std::vector<VariantSetData> variantSets;
+  std::vector<PrimVariantSetData> variantSets;
   // Unknown (unmodeled) variant-option metadata: raw authored source text
   // (USDA, re-emitted verbatim) and decoded typed extension fields (USDC via
   // the materialized holder prim). Variant specs previously had NO generic
   // field storage, silently dropping pipeline-specific opinions.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
-  std::vector<TypedExtensionField> unknownFields;
+  std::vector<DecodedExtensionField> unknownFields;
   // Optional subtree for variants that add prim-level opinions and/or child
   // prims: a Layer whose root prim "__self__" carries the host opinions and
   // whose descendants become the host prim's children when this variant is
@@ -198,19 +198,19 @@ struct ArrayEditData {
 };
 
 /// Variant set - a named set of variant options
-struct VariantSetData {
+struct PrimVariantSetData {
   std::string name;
   std::string selected;  // selected variant name for this set ("" = none)
-  std::vector<VariantData> variants;
+  std::vector<PrimVariantData> variants;
 };
 
 /// One composition-arc field's list-op edits, exactly as authored (Phase 7 S5,
 /// AOUSD §10.3.2). `is_explicit` marks a bare `references = [...]` (or an
 /// explicit op), in which case the effective items are the inline arc vector on
-/// PrimSpecMeta; otherwise the effective list is composed from the prepend /
+/// PrimMetadata; otherwise the effective list is composed from the prepend /
 /// append / delete / order lists. Kept so composition can merge a site's specs
 /// across the layer stack and the writer can re-emit the original qualifier.
-struct ArcEdit {
+struct ArcListOp {
   bool authored = false;     // true when this arc field authored list-op edits.
   bool is_explicit = true;  // bare list (the common case)
   bool is_value_block = false;  // relationship `= None`, distinct from `= []`
@@ -226,18 +226,18 @@ struct ArcEdit {
 
 /// Per-arc-type list-op edits for one PrimSpec (lazily allocated; only prims
 /// that author a non-bare arc qualifier pay for it).
-struct ArcListOpEdits {
-  ArcEdit references;
-  ArcEdit payloads;
-  ArcEdit inherits;
-  ArcEdit specializes;
+struct ArcListOps {
+  ArcListOp references;
+  ArcListOp payloads;
+  ArcListOp inherits;
+  ArcListOp specializes;
 };
 
 /// Exact authored SdfStringListOp sublists. `variantSetNames` needs this in
-/// addition to the effective VariantSetData vector: delete/order operations
+/// addition to the effective PrimVariantSetData vector: delete/order operations
 /// may be inert locally yet remain authored data, and explicit-empty must not
 /// collapse to an unauthored field.
-struct StringListOpEdits {
+struct StringListOps {
   bool authored = false;
   bool is_explicit = false;
   std::vector<std::string> explicit_items;
@@ -262,8 +262,8 @@ void MergeWeakerDictionaryValue(
     const std::string& key_prefix = std::string());
 
 void MergeWeakerExtensionFields(
-    std::vector<TypedExtensionField>* stronger,
-    const std::vector<TypedExtensionField>& weaker);
+    std::vector<DecodedExtensionField>* stronger,
+    const std::vector<DecodedExtensionField>& weaker);
 
 void MergeWeakerRawFields(
     std::vector<std::pair<std::string, std::string>>* stronger,
@@ -281,15 +281,15 @@ void ApplyStringListOrder(const std::vector<std::string> &order,
                                  std::vector<std::string> *list);
 
 std::vector<std::string> ApplyStringListOp(
-    const StringListOpEdits &edits,
+    const StringListOps &edits,
     const std::vector<std::string> &weaker);
 
 /// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
 /// (no docs / variants / relocates / apiSchemas / instancing / list-op edits).
-/// Held behind a lazily-allocated unique_ptr on PrimSpecMeta so an ordinary
+/// Held behind a lazily-allocated unique_ptr on PrimMetadata so an ordinary
 /// prim pays only 8 pointer bytes instead of ~190 bytes of empty std::string /
 /// std::vector heads (Phase 8.1 footprint split).
-struct PrimSpecMetaExt {
+struct PrimMetadataCold {
   std::string doc;
   std::string comment;
   bool doc_authored = false;
@@ -306,15 +306,15 @@ struct PrimSpecMetaExt {
   std::string instance_prototype;
   std::vector<std::string> apiSchemas;
   bool apiSchemasAuthored = false;
-  StringListOpEdits apiSchemaEdits;
+  StringListOps apiSchemaEdits;
   // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
   // "prepend", "append" or "delete" — pxr's own convention is prepend.
   std::string apiSchemasQualifier;
   // Variant set definitions.
-  std::vector<VariantSetData> variantSets;
-  StringListOpEdits variantSetNameEdits;
+  std::vector<PrimVariantSetData> variantSets;
+  StringListOps variantSetNameEdits;
   // Multiple variant selections (set -> selection); composed in addition to the
-  // legacy single `variantSelection` field on PrimSpecMeta.
+  // legacy single `variantSelection` field on PrimMetadata.
   std::vector<std::pair<std::string, std::string>> variantSelections;
   bool variantSelectionsAuthored = false;
   // Relocates: namespace renames (absolute source path -> absolute target path).
@@ -325,7 +325,7 @@ struct PrimSpecMetaExt {
   Value assetInfo;
   Value sdrMetadata;
   Value clips;
-  StringListOpEdits clipSetEdits;
+  StringListOps clipSetEdits;
   // Composed-output only (never parsed or serialized): properties whose
   // strongest authored opinion came from a composition source WEAKER than the
   // source that introduced the clips metadata. Value-clip resolution takes
@@ -345,23 +345,23 @@ struct PrimSpecMetaExt {
   // (the legacy parser preserves unknown prim metadata; dropping it loses
   // pipeline-specific opinions like `sceneName`).
   std::vector<std::pair<std::string, std::string>> unknownMeta;
-  std::vector<TypedExtensionField> unknownFields;
+  std::vector<DecodedExtensionField> unknownFields;
   // Arc list-op qualifiers (Phase 7 S5); null unless authored.
-  std::unique_ptr<ArcListOpEdits> arc_edits;
+  std::unique_ptr<ArcListOps> arc_edits;
 
-  PrimSpecMetaExt();
-  ~PrimSpecMetaExt();
-  PrimSpecMetaExt(const PrimSpecMetaExt &o);
-  PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
+  PrimMetadataCold();
+  ~PrimMetadataCold();
+  PrimMetadataCold(const PrimMetadataCold &o);
+  PrimMetadataCold &operator=(const PrimMetadataCold &) = delete;
 };
 
 /// PrimSpec metadata. Hot fields (flags, the four composition-arc lists, the
 /// legacy single variant selection, and the layer offset) are inline; cold
-/// fields live in a lazily-allocated PrimSpecMetaExt. The cold-field accessors
+/// fields live in a lazily-allocated PrimMetadataCold. The cold-field accessors
 /// keep the old names, so call sites change only by gaining `()`. Const reads
 /// never allocate (return a shared empty); mutable access allocates the ext on
 /// first touch. Copyable with a deep copy of the ext.
-struct PrimSpecMeta {
+struct PrimMetadata {
   bool active = true;
   bool hidden = false;
   // Authored-ness for the two bools above: plain bools cannot distinguish
@@ -387,23 +387,23 @@ struct PrimSpecMeta {
   // Layer offset (applied at evaluation time). First = offset, second = scale.
   std::pair<double, double> layer_offset = {0.0, 1.0};
 
-  PrimSpecMeta();
-  ~PrimSpecMeta();
-  PrimSpecMeta(PrimSpecMeta&&) noexcept;
-  PrimSpecMeta& operator=(PrimSpecMeta&&) noexcept;
-  PrimSpecMeta(const PrimSpecMeta& other);
-  PrimSpecMeta& operator=(const PrimSpecMeta& other);
+  PrimMetadata();
+  ~PrimMetadata();
+  PrimMetadata(PrimMetadata&&) noexcept;
+  PrimMetadata& operator=(PrimMetadata&&) noexcept;
+  PrimMetadata(const PrimMetadata& other);
+  PrimMetadata& operator=(const PrimMetadata& other);
 
   bool has_ext() const;
   void ensure_ext();
-  const PrimSpecMetaExt *ext() const;
+  const PrimMetadataCold *ext() const;
 
   // Arc list-op edits (Phase 7 S5). Const returns null when none authored (the
   // inline arc vectors are then implicit explicit lists); mutable allocates.
-  const ArcListOpEdits *arc_edits() const;
+  const ArcListOps *arc_edits() const;
   /// Drop all arc list-op edits (used when composition consumes the arcs).
   void clear_arc_edits();
-  ArcListOpEdits &ensure_arc_edits();
+  ArcListOps &ensure_arc_edits();
 
   const std::string &doc() const;
   std::string &doc();
@@ -429,16 +429,16 @@ struct PrimSpecMeta {
   std::vector<std::string> &apiSchemas();
   bool apiSchemasAuthored() const;
   void setApiSchemasAuthored(bool authored = true);
-  const StringListOpEdits &apiSchemaEdits() const;
-  StringListOpEdits &apiSchemaEdits();
+  const StringListOps &apiSchemaEdits() const;
+  StringListOps &apiSchemaEdits();
   const std::string &apiSchemasQualifier() const;
   std::string &apiSchemasQualifier();
-  const std::vector<VariantSetData> &variantSets() const;
-  std::vector<VariantSetData> &variantSets();
-  const StringListOpEdits &variantSetNameEdits() const;
-  StringListOpEdits &variantSetNameEdits();
-  const StringListOpEdits &clipSetEdits() const;
-  StringListOpEdits &clipSetEdits();
+  const std::vector<PrimVariantSetData> &variantSets() const;
+  std::vector<PrimVariantSetData> &variantSets();
+  const StringListOps &variantSetNameEdits() const;
+  StringListOps &variantSetNameEdits();
+  const StringListOps &clipSetEdits() const;
+  StringListOps &clipSetEdits();
   bool primOrderAuthored() const;
   void setPrimOrderAuthored(bool authored = true);
   bool propertyOrderAuthored() const;
@@ -479,12 +479,12 @@ struct PrimSpecMeta {
   const std::vector<std::string> &propertyOrder() const;
   std::vector<std::string> &editPropertyOrder();
   const std::vector<std::pair<std::string, std::string>> &unknownMeta() const;
-  const std::vector<TypedExtensionField> &unknownFields() const;
-  std::vector<TypedExtensionField> &unknownFields();
+  const std::vector<DecodedExtensionField> &unknownFields() const;
+  std::vector<DecodedExtensionField> &unknownFields();
   std::vector<std::pair<std::string, std::string>> &unknownMeta();
 
  private:
-  std::unique_ptr<PrimSpecMetaExt> ext_;
+  std::unique_ptr<PrimMetadataCold> ext_;
 };
 
 /// Per-property metadata (the `( ... )` block after an attribute/relationship).
@@ -533,17 +533,17 @@ struct PropMeta {
   // authored order (key -> raw value text); the USDA writer re-emits it
   // verbatim so pipeline-specific opinions round-trip.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
-  std::vector<TypedExtensionField> unknownFields;
+  std::vector<DecodedExtensionField> unknownFields;
 
   bool empty() const;
 };
 
 /// Value storage block
 /// Stores property values contiguously for cache efficiency
-class ValueStorage {
+class ValueBlockStorage {
 public:
-  ValueStorage();
-  ~ValueStorage();
+  ValueBlockStorage();
+  ~ValueBlockStorage();
 
   /// Store a value and return its offset
   uint32_t store(const Value& value);
@@ -572,15 +572,15 @@ private:
   std::vector<Value> values_;
 };
 
-/// TimeSampleStorage - stores time samples with value deduplication
+/// TimeSampleBlock - stores time samples with value deduplication
 /// Design goals:
 /// - Deduplicate identical array values across time samples
 /// - Use hash + equality check for efficient lookup
 /// - Store (time, value_offset) pairs per property
-class TimeSampleStorage {
+class TimeSampleBlock {
 public:
-  TimeSampleStorage();
-  ~TimeSampleStorage();
+  TimeSampleBlock();
+  ~TimeSampleBlock();
 
   /// Add a time sample for a property
   /// Returns the value offset (may be shared if duplicate)
@@ -680,7 +680,7 @@ class PrimSpec {
 public:
   struct RelationshipOpinion {
     std::vector<Path> items;
-    ArcEdit edit;
+    ArcListOp edit;
     bool qualified = false;
   };
   PrimSpec();
@@ -771,14 +771,14 @@ public:
 
   /// Author a property value regardless of prior state: creates the slot if
   /// absent, fills a value-less (declared-only) slot, or replaces the existing
-  /// default IN PLACE (no ValueStorage growth on re-authoring). `flags` are
+  /// default IN PLACE (no ValueBlockStorage growth on re-authoring). `flags` are
   /// OR'd onto an existing slot (kFlagArray is recomputed from the value).
   void upsert_property(PropNameId name_id, Value value, uint16_t flags = 0);
   void upsert_property(const std::string& name, Value value, uint16_t flags = 0);
 
   /// Remove a property entirely: slot, connections, declared type name,
   /// per-property metadata, and time samples. Returns true if anything was
-  /// removed. (The stored default Value stays in ValueStorage as an
+  /// removed. (The stored default Value stays in ValueBlockStorage as an
   /// unreferenced entry; storage is append-only.)
   bool remove_property(PropNameId name_id);
   bool remove_property(const std::string& name);
@@ -802,7 +802,7 @@ public:
   void finalize_properties();
 
   /// Free the heap payloads of every property default value and time sample
-  /// (AssetPath defaults are kept -- see ValueStorage::release_payloads). Slot
+  /// (AssetPath defaults are kept -- see ValueBlockStorage::release_payloads). Slot
   /// tables, names, types, meta, relationships and connections stay valid, so
   /// the PrimSpec remains structurally usable but value-stripped. Used by the
   /// crate writer's consume_values mode to cut peak RSS on write-and-discard
@@ -842,7 +842,7 @@ public:
   bool has_any_time_samples() const;
 
   /// Get time sample statistics (for debugging/profiling)
-  TimeSampleStorage::Stats time_sample_stats() const;
+  TimeSampleBlock::Stats time_sample_stats() const;
 
   /// Get interpolated value at a given time
   /// @param name_id Property name ID
@@ -900,7 +900,7 @@ public:
   void add_relationship(const std::string& name, const Path& target);
 
   /// Replace a relationship's targets wholesale (creates it if absent).
-  /// An empty list registers the relationship; author an ArcEdit as well to
+  /// An empty list registers the relationship; author an ArcListOp as well to
   /// distinguish `= []` or `= None` from a bare declaration.
   void set_relationship_targets(const std::string& name,
                                 std::vector<Path> targets);
@@ -910,10 +910,10 @@ public:
   bool remove_relationship(const std::string& name);
 
   /// Authored list-op edits for a relationship (prepend/append/delete
-  /// sublists, like ArcEdit for composition arcs). Keyed by relationship
+  /// sublists, like ArcListOp for composition arcs). Keyed by relationship
   /// name. Empty map = no relationship carries qualifiers.
-  const std::unordered_map<std::string, ArcEdit>& relationship_edits() const;
-  ArcEdit& ensure_relationship_edit(const std::string& name);
+  const std::unordered_map<std::string, ArcListOp>& relationship_edits() const;
+  ArcListOp& ensure_relationship_edit(const std::string& name);
 
   const std::vector<RelationshipOpinion>* relationship_opinion_stack(
       const std::string& name) const;
@@ -950,8 +950,8 @@ public:
   void set_connection_block(const std::string& prop_name);
 
   /// Exact authored connectionPaths list-op for this attribute.
-  const ArcEdit* connection_edit(const std::string& prop_name) const;
-  ArcEdit& ensure_connection_edit(const std::string& prop_name);
+  const ArcListOp* connection_edit(const std::string& prop_name) const;
+  ArcListOp& ensure_connection_edit(const std::string& prop_name);
 
   const std::vector<RelationshipOpinion>* connection_opinion_stack(
       const std::string& prop_name) const;
@@ -1034,8 +1034,8 @@ public:
   // ============================================================
 
   /// Get metadata
-  const PrimSpecMeta& meta() const;
-  PrimSpecMeta& meta();
+  const PrimMetadata& meta() const;
+  PrimMetadata& meta();
 
   // ============================================================
   // Memory
@@ -1054,10 +1054,10 @@ private:
   Path path_;
 
   PropIndex props_;
-  std::unique_ptr<ValueStorage> values_;
+  std::unique_ptr<ValueBlockStorage> values_;
 
   // TimeSamples storage with deduplication
-  std::unique_ptr<TimeSampleStorage> time_samples_;
+  std::unique_ptr<TimeSampleBlock> time_samples_;
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
@@ -1071,11 +1071,11 @@ private:
   // objects inline cost hundreds of bytes on every prim even though ordinary
   // geometry/xform prims use none of them.
   struct ColdData {
-    std::unordered_map<std::string, ArcEdit> rel_edits;
+    std::unordered_map<std::string, ArcListOp> rel_edits;
     std::unordered_map<std::string, std::vector<RelationshipOpinion>>
         rel_opinion_stacks;
     std::unordered_map<std::string, uint16_t> rel_flags;
-    std::unordered_map<uint32_t, ArcEdit> connection_edits;
+    std::unordered_map<uint32_t, ArcListOp> connection_edits;
     std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
         connection_opinion_stacks;
     // Raw USDA `.spline` values and unsupported defaults are keyed by property
@@ -1105,7 +1105,7 @@ private:
   // Children stored as indices into parent Layer's prim array
   std::vector<uint32_t> child_indices_;
 
-  PrimSpecMeta meta_;
+  PrimMetadata meta_;
 };
 
 }  // namespace next

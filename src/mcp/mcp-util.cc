@@ -471,7 +471,7 @@ json PrimToJSON(const next::UsdPrim& prim, lightusd_stage* stage,
 }
 
 json PrimMetaToJSON(const next::UsdPrim& prim) {
-  const next::PrimSpecMeta& m = prim.GetMeta();
+  const next::PrimMetadata& m = prim.GetMeta();
   json j = json::object();
   j["active"] = m.active;
   if (m.hidden_authored) j["hidden"] = m.hidden;

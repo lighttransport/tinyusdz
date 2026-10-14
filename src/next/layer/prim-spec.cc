@@ -16,7 +16,7 @@
 namespace lightusd {
 namespace next {
 
-PrimSpecMetaExt::PrimSpecMetaExt(const PrimSpecMetaExt &o)
+PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
       : doc(o.doc),
         comment(o.comment),
         doc_authored(o.doc_authored),
@@ -55,23 +55,23 @@ PrimSpecMetaExt::PrimSpecMetaExt(const PrimSpecMetaExt &o)
         propertyOrderAuthored(o.propertyOrderAuthored),
         unknownMeta(o.unknownMeta),
         unknownFields(o.unknownFields),
-        arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
+        arc_edits(o.arc_edits ? new ArcListOps(*o.arc_edits) : nullptr) {}
 
-PrimSpecMetaExt::PrimSpecMetaExt() = default;
+PrimMetadataCold::PrimMetadataCold() = default;
 
-PrimSpecMetaExt::~PrimSpecMetaExt() = default;
+PrimMetadataCold::~PrimMetadataCold() = default;
 
-PrimSpecMeta::PrimSpecMeta() = default;
+PrimMetadata::PrimMetadata() = default;
 
-PrimSpecMeta::~PrimSpecMeta() = default;
+PrimMetadata::~PrimMetadata() = default;
 
-PrimSpecMeta::PrimSpecMeta(PrimSpecMeta&&) noexcept = default;
+PrimMetadata::PrimMetadata(PrimMetadata&&) noexcept = default;
 
-PrimSpecMeta& PrimSpecMeta::operator=(PrimSpecMeta&&) noexcept = default;
+PrimMetadata& PrimMetadata::operator=(PrimMetadata&&) noexcept = default;
 
-PrimSpecMeta::PrimSpecMeta(const PrimSpecMeta& other) { *this = other; }
+PrimMetadata::PrimMetadata(const PrimMetadata& other) { *this = other; }
 
-PrimSpecMeta &PrimSpecMeta::operator=(const PrimSpecMeta &o) {
+PrimMetadata &PrimMetadata::operator=(const PrimMetadata &o) {
     active = o.active;
     hidden = o.hidden;
     active_authored = o.active_authored;
@@ -85,8 +85,8 @@ PrimSpecMeta &PrimSpecMeta::operator=(const PrimSpecMeta &o) {
     specializes = o.specializes;
     variantSelection = o.variantSelection;
     layer_offset = o.layer_offset;
-    ext_ = o.ext_ ? std::unique_ptr<PrimSpecMetaExt>(
-                        new PrimSpecMetaExt(*o.ext_))
+    ext_ = o.ext_ ? std::unique_ptr<PrimMetadataCold>(
+                        new PrimMetadataCold(*o.ext_))
                   : nullptr;
     return *this;
   }
@@ -136,13 +136,13 @@ void MergeWeakerDictionaryValue(
 }
 
 void MergeWeakerExtensionFields(
-    std::vector<TypedExtensionField>* stronger,
-    const std::vector<TypedExtensionField>& weaker) {
+    std::vector<DecodedExtensionField>* stronger,
+    const std::vector<DecodedExtensionField>& weaker) {
   if (!stronger) return;
-  for (const TypedExtensionField& field : weaker) {
+  for (const DecodedExtensionField& field : weaker) {
     auto existing = std::find_if(
         stronger->begin(), stronger->end(),
-        [&](const TypedExtensionField& own) { return own.name == field.name; });
+        [&](const DecodedExtensionField& own) { return own.name == field.name; });
     if (existing == stronger->end()) {
       stronger->push_back(field);
     } else if (existing->value.is_dictionary() && field.value.is_dictionary()) {
@@ -195,7 +195,7 @@ void ApplyStringListOrder(const std::vector<std::string> &order,
 }
 
 std::vector<std::string> ApplyStringListOp(
-    const StringListOpEdits &edits,
+    const StringListOps &edits,
     const std::vector<std::string> &weaker) {
   std::vector<std::string> result;
   auto append_unique = [&](const std::string &item) {
@@ -250,7 +250,7 @@ const std::string* FindAssetPathRemap(
   return nullptr;
 }
 
-void CopyVariantDataShallow(const VariantData& src, VariantData* dst) {
+void CopyVariantDataShallow(const PrimVariantData& src, PrimVariantData* dst) {
   dst->name = src.name;
   dst->active = src.active;
   dst->hidden = src.hidden;
@@ -271,11 +271,11 @@ void CopyVariantDataShallow(const VariantData& src, VariantData* dst) {
   dst->content = src.content;
 }
 
-void CopyVariantSetsIterative(const std::vector<VariantSetData>& src,
-                              std::vector<VariantSetData>* dst) {
+void CopyVariantSetsIterative(const std::vector<PrimVariantSetData>& src,
+                              std::vector<PrimVariantSetData>* dst) {
   struct CopyFrame {
-    const std::vector<VariantSetData>* src;
-    std::vector<VariantSetData>* dst;
+    const std::vector<PrimVariantSetData>* src;
+    std::vector<PrimVariantSetData>* dst;
   };
 
   dst->resize(src.size());
@@ -285,14 +285,14 @@ void CopyVariantSetsIterative(const std::vector<VariantSetData>& src,
     const CopyFrame frame = stack.back();
     stack.pop_back();
     for (size_t si = 0; si < frame.src->size(); ++si) {
-      const VariantSetData& src_set = (*frame.src)[si];
-      VariantSetData& dst_set = (*frame.dst)[si];
+      const PrimVariantSetData& src_set = (*frame.src)[si];
+      PrimVariantSetData& dst_set = (*frame.dst)[si];
       dst_set.name = src_set.name;
       dst_set.selected = src_set.selected;
       dst_set.variants.resize(src_set.variants.size());
       for (size_t vi = 0; vi < src_set.variants.size(); ++vi) {
-        const VariantData& src_option = src_set.variants[vi];
-        VariantData& dst_option = dst_set.variants[vi];
+        const PrimVariantData& src_option = src_set.variants[vi];
+        PrimVariantData& dst_option = dst_set.variants[vi];
         CopyVariantDataShallow(src_option, &dst_option);
         if (!src_option.variantSets.empty()) {
           dst_option.variantSets.resize(src_option.variantSets.size());
@@ -306,34 +306,34 @@ void CopyVariantSetsIterative(const std::vector<VariantSetData>& src,
 
 }  // namespace
 
-VariantData::VariantData() = default;
-VariantData::VariantData(const VariantData& other) {
+PrimVariantData::PrimVariantData() = default;
+PrimVariantData::PrimVariantData(const PrimVariantData& other) {
   CopyVariantDataShallow(other, this);
   CopyVariantSetsIterative(other.variantSets, &variantSets);
 }
-VariantData::VariantData(VariantData&&) noexcept = default;
-VariantData& VariantData::operator=(const VariantData& other) {
+PrimVariantData::PrimVariantData(PrimVariantData&&) noexcept = default;
+PrimVariantData& PrimVariantData::operator=(const PrimVariantData& other) {
   if (this != &other) {
-    VariantData copy(other);
+    PrimVariantData copy(other);
     *this = std::move(copy);
   }
   return *this;
 }
-VariantData& VariantData::operator=(VariantData&&) noexcept = default;
+PrimVariantData& PrimVariantData::operator=(PrimVariantData&&) noexcept = default;
 
-VariantData::~VariantData() {
-  // Variant sets recursively own more VariantData values. A default vector
+PrimVariantData::~PrimVariantData() {
+  // Variant sets recursively own more PrimVariantData values. A default vector
   // teardown consumes one C++ stack frame per nested option and can overflow
   // for deeply authored API data even though writer traversal is iterative.
   // Move descendants into an explicit worklist and detach each level before
   // its ordinary destructor runs.
-  std::vector<VariantSetData> pending;
+  std::vector<PrimVariantSetData> pending;
   pending.swap(variantSets);
   while (!pending.empty()) {
-    VariantSetData set = std::move(pending.back());
+    PrimVariantSetData set = std::move(pending.back());
     pending.pop_back();
-    for (VariantData& option : set.variants) {
-      for (VariantSetData& child : option.variantSets) {
+    for (PrimVariantData& option : set.variants) {
+      for (PrimVariantSetData& child : option.variantSets) {
         pending.push_back(std::move(child));
       }
       option.variantSets.clear();
@@ -480,39 +480,39 @@ TypeNameTable& GetTypeNameTable() {
 }
 
 // ============================================================
-// ValueStorage
+// ValueBlockStorage
 // ============================================================
 
-ValueStorage::ValueStorage() {
+ValueBlockStorage::ValueBlockStorage() {
   // Grow on demand: eager per-prim reservations cost KBs per prim regardless
   // of property count, which is catastrophic on high-prim-count scenes.
 }
 
-ValueStorage::~ValueStorage() = default;
+ValueBlockStorage::~ValueBlockStorage() = default;
 
-uint32_t ValueStorage::store(const Value& value) {
+uint32_t ValueBlockStorage::store(const Value& value) {
   uint32_t idx = static_cast<uint32_t>(values_.size());
   values_.push_back(value);
   return idx;
 }
 
-uint32_t ValueStorage::store(Value&& value) {
+uint32_t ValueBlockStorage::store(Value&& value) {
   uint32_t idx = static_cast<uint32_t>(values_.size());
   values_.push_back(std::move(value));
   return idx;
 }
 
-const Value* ValueStorage::get(uint32_t offset) const {
+const Value* ValueBlockStorage::get(uint32_t offset) const {
   if (offset >= values_.size()) return nullptr;
   return &values_[offset];
 }
 
-Value* ValueStorage::get(uint32_t offset) {
+Value* ValueBlockStorage::get(uint32_t offset) {
   if (offset >= values_.size()) return nullptr;
   return &values_[offset];
 }
 
-size_t ValueStorage::memory_usage() const {
+size_t ValueBlockStorage::memory_usage() const {
   size_t size = safe::saturating_mul(values_.capacity(), sizeof(Value));
   for (const auto& v : values_) {
     size = safe::saturating_add(size, v.dynamic_string_memory_usage());
@@ -528,11 +528,11 @@ size_t ValueStorage::memory_usage() const {
   return size;
 }
 
-void ValueStorage::clear() {
+void ValueBlockStorage::clear() {
   values_.clear();
 }
 
-void ValueStorage::release_payloads() {
+void ValueBlockStorage::release_payloads() {
   for (auto& v : values_) {
     // Keep AssetPath values: post-write asset collection reads them.
     if (v.type_id() == TypeId::AssetPath) continue;
@@ -541,16 +541,16 @@ void ValueStorage::release_payloads() {
 }
 
 // ============================================================
-// TimeSampleStorage
+// TimeSampleBlock
 // ============================================================
 
-TimeSampleStorage::TimeSampleStorage() {
+TimeSampleBlock::TimeSampleBlock() {
   // Grow on demand (was reserve(64) ~= 8.7 KB per prim with time samples).
 }
 
-TimeSampleStorage::~TimeSampleStorage() = default;
+TimeSampleBlock::~TimeSampleBlock() = default;
 
-uint32_t TimeSampleStorage::find_or_store(Value value) {
+uint32_t TimeSampleBlock::find_or_store(Value value) {
   // Compute hash
   uint64_t h = value.hash();
 
@@ -577,7 +577,7 @@ uint32_t TimeSampleStorage::find_or_store(Value value) {
   return offset;
 }
 
-void TimeSampleStorage::insert_sample(PropNameId name_id, double time,
+void TimeSampleBlock::insert_sample(PropNameId name_id, double time,
                                       uint32_t offset) {
   auto& vec = samples_[name_id.id];
   if (vec.empty() || time > vec.back().first) {  // common: authored in order
@@ -594,7 +594,7 @@ void TimeSampleStorage::insert_sample(PropNameId name_id, double time,
   vec.insert(it, {time, offset});
 }
 
-uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
+uint32_t TimeSampleBlock::add(PropNameId name_id, double time, Value value) {
   // Store without deduplication (faster for unique values)
   uint32_t offset = static_cast<uint32_t>(values_.size());
   values_.push_back(std::move(value));
@@ -602,7 +602,7 @@ uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
   return offset;
 }
 
-uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value value) {
+uint32_t TimeSampleBlock::add_dedup(PropNameId name_id, double time, Value value) {
   // Lazy (crate-backed) arrays: skip content dedup. find_or_store() hashes the
   // value, and Value::hash() forces an in-place materialize — decoding every
   // array-valued time sample into the heap at parse time, which is the dominant
@@ -619,18 +619,18 @@ uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value val
   return offset;
 }
 
-const std::vector<std::pair<double, uint32_t>>* TimeSampleStorage::get(PropNameId name_id) const {
+const std::vector<std::pair<double, uint32_t>>* TimeSampleBlock::get(PropNameId name_id) const {
   auto it = samples_.find(name_id.id);
   if (it == samples_.end()) return nullptr;
   return &it->second;
 }
 
-const Value* TimeSampleStorage::value(uint32_t offset) const {
+const Value* TimeSampleBlock::value(uint32_t offset) const {
   if (offset >= values_.size()) return nullptr;
   return &values_[offset];
 }
 
-size_t TimeSampleStorage::remap_asset_paths(
+size_t TimeSampleBlock::remap_asset_paths(
     const std::map<std::string, std::string>& remap) {
   if (remap.empty()) return 0;
   size_t count = 0;
@@ -645,15 +645,15 @@ size_t TimeSampleStorage::remap_asset_paths(
   return count;
 }
 
-bool TimeSampleStorage::has(PropNameId name_id) const {
+bool TimeSampleBlock::has(PropNameId name_id) const {
   return samples_.find(name_id.id) != samples_.end();
 }
 
-bool TimeSampleStorage::remove(PropNameId name_id) {
+bool TimeSampleBlock::remove(PropNameId name_id) {
   return samples_.erase(name_id.id) > 0;
 }
 
-void TimeSampleStorage::remap_times(double offset, double scale) {
+void TimeSampleBlock::remap_times(double offset, double scale) {
   if (offset == 0.0 && scale == 1.0) return;
   for (auto& kv : samples_) {
     // Degenerate offset (scale == 0): every time collapses onto `offset`.
@@ -674,7 +674,7 @@ void TimeSampleStorage::remap_times(double offset, double scale) {
   }
 }
 
-SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
+SampleResult TimeSampleBlock::interpolate(PropNameId name_id, double time,
                                             TimeInterpolation mode) const {
   const auto* samples = get(name_id);
   if (!samples || samples->empty()) {
@@ -689,7 +689,7 @@ SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
       mode);
 }
 
-std::vector<PropNameId> TimeSampleStorage::properties() const {
+std::vector<PropNameId> TimeSampleBlock::properties() const {
   std::vector<PropNameId> result;
   result.reserve(samples_.size());
   for (const auto& kv : samples_) {
@@ -698,7 +698,7 @@ std::vector<PropNameId> TimeSampleStorage::properties() const {
   return result;
 }
 
-size_t TimeSampleStorage::memory_usage() const {
+size_t TimeSampleBlock::memory_usage() const {
   size_t size = sizeof(*this);
   auto add = [&size](size_t bytes) {
     size = safe::saturating_add(size, bytes);
@@ -727,21 +727,21 @@ size_t TimeSampleStorage::memory_usage() const {
   return size;
 }
 
-void TimeSampleStorage::clear() {
+void TimeSampleBlock::clear() {
   samples_.clear();
   values_.clear();
   hash_to_offsets_.clear();
   dedup_count_ = 0;
 }
 
-void TimeSampleStorage::release_payloads() {
+void TimeSampleBlock::release_payloads() {
   for (auto& v : values_) v = Value();
   // The dedup index only accelerates future add()s; a released store is
   // write-and-discard, so free it too.
   hash_to_offsets_.clear();
 }
 
-TimeSampleStorage::Stats TimeSampleStorage::stats() const {
+TimeSampleBlock::Stats TimeSampleBlock::stats() const {
   Stats s = {};
   s.property_count = samples_.size();
   for (const auto& kv : samples_) {
@@ -789,12 +789,12 @@ PrimSpec PrimSpec::Clone() const {
   // duplicated every property). Lazy array Values copy as a shared_ptr bump
   // (no payload copy), so cloning a crate-backed prim stays cheap.
   if (values_) {
-    c.values_ = std::make_unique<ValueStorage>(*values_);
+    c.values_ = std::make_unique<ValueBlockStorage>(*values_);
   }
 
   // Deep copy time samples
   if (time_samples_) {
-    c.time_samples_ = std::make_unique<TimeSampleStorage>();
+    c.time_samples_ = std::make_unique<TimeSampleBlock>();
     // Copy time samples per property
     for (auto prop_id : time_sampled_properties()) {
       auto* samples = time_samples(prop_id);
@@ -871,7 +871,7 @@ void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags
 
 void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
   // Store value
-  if (!values_) values_ = std::make_unique<ValueStorage>();
+  if (!values_) values_ = std::make_unique<ValueBlockStorage>();
   uint32_t offset = values_->store(std::move(value));
 
   // Get type from stored value
@@ -905,7 +905,7 @@ bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
   PropSlot* slot = props_.find_mutable(name_id);
   if (!slot) return false;
   if (slot->value_offset != UINT32_MAX) return false;  // already has a value
-  if (!values_) values_ = std::make_unique<ValueStorage>();
+  if (!values_) values_ = std::make_unique<ValueBlockStorage>();
   uint32_t offset = values_->store(std::move(value));
   const Value* stored = values_->get(offset);
   slot->value_offset = offset;
@@ -924,7 +924,7 @@ bool PrimSpec::set_property_value(PropNameId name_id, Value value) {
   if (!values_) return false;
   // Replace IN PLACE like upsert_property() does. Appending instead left the
   // previous Value -- potentially a multi-MB points/faceVertexIndices array --
-  // stranded in values_ forever (nothing compacts ValueStorage), so every
+  // stranded in values_ forever (nothing compacts ValueBlockStorage), so every
   // array-edit / PathExpression resolution permanently doubled that
   // attribute's memory.
   uint32_t offset = slot->value_offset;
@@ -955,13 +955,13 @@ void PrimSpec::upsert_property(PropNameId name_id, Value value, uint16_t flags) 
 
   if (slot->value_offset == UINT32_MAX) {
     // Declared-only slot: attach a value.
-    if (!values_) values_ = std::make_unique<ValueStorage>();
+    if (!values_) values_ = std::make_unique<ValueBlockStorage>();
     slot->value_offset = values_->store(std::move(value));
   } else if (Value* dst = values_ ? values_->get(slot->value_offset) : nullptr) {
-    // Replace in place — no ValueStorage growth on re-authoring.
+    // Replace in place — no ValueBlockStorage growth on re-authoring.
     *dst = std::move(value);
   } else {
-    if (!values_) values_ = std::make_unique<ValueStorage>();
+    if (!values_) values_ = std::make_unique<ValueBlockStorage>();
     slot->value_offset = values_->store(std::move(value));
   }
 
@@ -1071,7 +1071,7 @@ void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value,
   // Use deduplicated storage for array values (common case for animation).
   // `dedup=false`: deferred-fill value (see header), stored as-is like the
   // is_lazy() bypass in add_dedup.
-  if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
+  if (!time_samples_) time_samples_ = std::make_unique<TimeSampleBlock>();
   if (dedup) {
     time_samples_->add_dedup(name_id, time, std::move(value));
   } else {
@@ -1108,7 +1108,7 @@ bool PrimSpec::has_any_time_samples() const {
   return !time_samples_->empty();
 }
 
-TimeSampleStorage::Stats PrimSpec::time_sample_stats() const {
+TimeSampleBlock::Stats PrimSpec::time_sample_stats() const {
   if (!time_samples_) return {};
   return time_samples_->stats();
 }
@@ -1183,7 +1183,7 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
 }
 
-ArcEdit& PrimSpec::ensure_relationship_edit(const std::string& name) {
+ArcListOp& PrimSpec::ensure_relationship_edit(const std::string& name) {
   return ensure_cold_data().rel_edits[name];
 }
 
@@ -1317,7 +1317,7 @@ void PrimSpec::set_connection_block(const std::string& prop_name) {
   if (PropSlot* s = property_mutable(id)) s->flags |= PropSlot::kFlagConnection;
 }
 
-const ArcEdit* PrimSpec::connection_edit(const std::string& prop_name) const {
+const ArcListOp* PrimSpec::connection_edit(const std::string& prop_name) const {
   if (!cold_data_) return nullptr;
   const PropNameId id = GetPropNameTable().find(prop_name);
   if (!id.is_valid()) return nullptr;
@@ -1325,7 +1325,7 @@ const ArcEdit* PrimSpec::connection_edit(const std::string& prop_name) const {
   return it == cold_data_->connection_edits.end() ? nullptr : &it->second;
 }
 
-ArcEdit& PrimSpec::ensure_connection_edit(const std::string& prop_name) {
+ArcListOp& PrimSpec::ensure_connection_edit(const std::string& prop_name) {
   return ensure_cold_data()
       .connection_edits[GetPropNameTable().intern(prop_name).id];
 }
@@ -1431,7 +1431,7 @@ void PrimSpec::remap_target_prefix(const std::string& old_prefix,
       }
     }
   };
-  auto remap_edit = [&](ArcEdit& edit) {
+  auto remap_edit = [&](ArcListOp& edit) {
     remap_strings(edit.added);
     remap_strings(edit.prepended);
     remap_strings(edit.appended);
@@ -1553,22 +1553,22 @@ size_t PrimSpec::memory_usage() const {
     }
   };
   const auto add_extensions = [&add, &add_value](
-      const std::vector<TypedExtensionField>& fields) {
-    add(safe::saturating_mul(fields.capacity(), sizeof(TypedExtensionField)));
-    for (const TypedExtensionField& field : fields) {
+      const std::vector<DecodedExtensionField>& fields) {
+    add(safe::saturating_mul(fields.capacity(), sizeof(DecodedExtensionField)));
+    for (const DecodedExtensionField& field : fields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
       add_value(field.value);
     }
   };
-  const auto add_arc_edit = [&add_strings](const ArcEdit& edit) {
+  const auto add_arc_edit = [&add_strings](const ArcListOp& edit) {
     add_strings(edit.added);
     add_strings(edit.prepended);
     add_strings(edit.appended);
     add_strings(edit.deleted);
     add_strings(edit.ordered);
   };
-  const auto add_string_edit = [&add_strings](const StringListOpEdits& edit) {
+  const auto add_string_edit = [&add_strings](const StringListOps& edit) {
     add_strings(edit.explicit_items);
     add_strings(edit.added);
     add_strings(edit.prepended);
@@ -1587,14 +1587,14 @@ size_t PrimSpec::memory_usage() const {
     add(values_->memory_usage());
   }
 
-  // Time samples (use TimeSampleStorage's memory tracking)
+  // Time samples (use TimeSampleBlock's memory tracking)
   if (time_samples_) {
     add(time_samples_->memory_usage());
   }
   if (cold_data_) {
     add(sizeof(ColdData));
     for (const auto& entry : cold_data_->rel_edits) {
-      add(entry.first.capacity() + sizeof(ArcEdit) + sizeof(void*) * 2);
+      add(entry.first.capacity() + sizeof(ArcListOp) + sizeof(void*) * 2);
       add_arc_edit(entry.second);
     }
     for (const auto& entry : cold_data_->connection_edits) {
@@ -1672,8 +1672,8 @@ size_t PrimSpec::memory_usage() const {
   add_strings(meta_.specializes);
   add(meta_.variantSelection.capacity());
   // Cold fields only cost anything when the ext was allocated.
-  if (const PrimSpecMetaExt* ext = meta_.ext()) {
-    add(sizeof(PrimSpecMetaExt));
+  if (const PrimMetadataCold* ext = meta_.ext()) {
+    add(sizeof(PrimMetadataCold));
     add(ext->doc.capacity());
     add(ext->comment.capacity());
     add(ext->kind.capacity());
@@ -1697,16 +1697,16 @@ size_t PrimSpec::memory_usage() const {
     add_value(ext->sdrMetadata);
     add_value(ext->clips);
     add(safe::saturating_mul(ext->variantSets.capacity(),
-                             sizeof(VariantSetData)));
-    std::vector<const VariantSetData*> pending_sets;
-    for (const VariantSetData& set : ext->variantSets) pending_sets.push_back(&set);
+                             sizeof(PrimVariantSetData)));
+    std::vector<const PrimVariantSetData*> pending_sets;
+    for (const PrimVariantSetData& set : ext->variantSets) pending_sets.push_back(&set);
     while (!pending_sets.empty()) {
-      const VariantSetData* set = pending_sets.back();
+      const PrimVariantSetData* set = pending_sets.back();
       pending_sets.pop_back();
       add(set->name.capacity());
       add(set->selected.capacity());
-      add(safe::saturating_mul(set->variants.capacity(), sizeof(VariantData)));
-      for (const VariantData& variant : set->variants) {
+      add(safe::saturating_mul(set->variants.capacity(), sizeof(PrimVariantData)));
+      for (const PrimVariantData& variant : set->variants) {
         for (const std::string* text : {&variant.name, &variant.doc,
              &variant.kind}) add(text->capacity());
         add(safe::saturating_mul(variant.properties.capacity(),
@@ -1730,8 +1730,8 @@ size_t PrimSpec::memory_usage() const {
         add_pairs(variant.unknownMeta);
         add_extensions(variant.unknownFields);
         add(safe::saturating_mul(variant.variantSets.capacity(),
-                                 sizeof(VariantSetData)));
-        for (const VariantSetData& nested : variant.variantSets)
+                                 sizeof(PrimVariantSetData)));
+        for (const PrimVariantSetData& nested : variant.variantSets)
           pending_sets.push_back(&nested);
         // Shared variant content Layers can have multiple owners; they need
         // deduplicated layer-level accounting rather than per-option charging.
@@ -1740,7 +1740,7 @@ size_t PrimSpec::memory_usage() const {
     add(safe::saturating_mul(ext->clipShadowedProps.capacity(),
                              sizeof(PropNameId)));
     if (ext->arc_edits) {
-      add(sizeof(ArcListOpEdits));
+      add(sizeof(ArcListOps));
       add_arc_edit(ext->arc_edits->references);
       add_arc_edit(ext->arc_edits->payloads);
       add_arc_edit(ext->arc_edits->inherits);
@@ -1752,301 +1752,301 @@ size_t PrimSpec::memory_usage() const {
 }
 
 // ---------------------------------------------------------------------------
-// PrimSpecMeta accessors, moved out of prim-spec.hh so units that include it
+// PrimMetadata accessors, moved out of prim-spec.hh so units that include it
 // do not re-parse their bodies.
 // ---------------------------------------------------------------------------
-bool PrimSpecMeta::has_ext() const { return ext_ != nullptr; }
-void PrimSpecMeta::ensure_ext() {
-    if (!ext_) ext_.reset(new PrimSpecMetaExt());
+bool PrimMetadata::has_ext() const { return ext_ != nullptr; }
+void PrimMetadata::ensure_ext() {
+    if (!ext_) ext_.reset(new PrimMetadataCold());
   }
-const PrimSpecMetaExt *PrimSpecMeta::ext() const { return ext_.get(); }
-const ArcListOpEdits *PrimSpecMeta::arc_edits() const {
+const PrimMetadataCold *PrimMetadata::ext() const { return ext_.get(); }
+const ArcListOps *PrimMetadata::arc_edits() const {
     return ext_ ? ext_->arc_edits.get() : nullptr;
   }
-void PrimSpecMeta::clear_arc_edits() {
+void PrimMetadata::clear_arc_edits() {
     if (ext_) ext_->arc_edits.reset();
   }
-ArcListOpEdits &PrimSpecMeta::ensure_arc_edits() {
+ArcListOps &PrimMetadata::ensure_arc_edits() {
     ensure_ext();
-    if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOpEdits());
+    if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOps());
     return *ext_->arc_edits;
   }
-const std::string &PrimSpecMeta::doc() const {
+const std::string &PrimMetadata::doc() const {
     static const std::string kEmpty;
     return ext_ ? ext_->doc : kEmpty;
   }
-std::string &PrimSpecMeta::doc() {
+std::string &PrimMetadata::doc() {
     ensure_ext();
     return ext_->doc;
   }
-bool PrimSpecMeta::doc_authored() const { return ext_ && ext_->doc_authored; }
-void PrimSpecMeta::set_doc_authored(bool authored ) {
+bool PrimMetadata::doc_authored() const { return ext_ && ext_->doc_authored; }
+void PrimMetadata::set_doc_authored(bool authored ) {
     ensure_ext();
     ext_->doc_authored = authored;
   }
-const std::string &PrimSpecMeta::comment() const {
+const std::string &PrimMetadata::comment() const {
     static const std::string kEmpty;
     return ext_ ? ext_->comment : kEmpty;
   }
-std::string &PrimSpecMeta::comment() {
+std::string &PrimMetadata::comment() {
     ensure_ext();
     return ext_->comment;
   }
-bool PrimSpecMeta::comment_authored() const { return ext_ && ext_->comment_authored; }
-void PrimSpecMeta::set_comment_authored(bool authored ) {
+bool PrimMetadata::comment_authored() const { return ext_ && ext_->comment_authored; }
+void PrimMetadata::set_comment_authored(bool authored ) {
     ensure_ext();
     ext_->comment_authored = authored;
   }
-const std::string &PrimSpecMeta::kind() const {
+const std::string &PrimMetadata::kind() const {
     static const std::string kEmpty;
     return ext_ ? ext_->kind : kEmpty;
   }
-std::string &PrimSpecMeta::kind() {
+std::string &PrimMetadata::kind() {
     ensure_ext();
     return ext_->kind;
   }
-bool PrimSpecMeta::kindAuthored() const { return ext_ && ext_->kind_authored; }
-void PrimSpecMeta::setKindAuthored(bool authored ) {
+bool PrimMetadata::kindAuthored() const { return ext_ && ext_->kind_authored; }
+void PrimMetadata::setKindAuthored(bool authored ) {
     ensure_ext();
     ext_->kind_authored = authored;
   }
-const std::string &PrimSpecMeta::permission() const {
+const std::string &PrimMetadata::permission() const {
     static const std::string kEmpty;
     return ext_ ? ext_->permission : kEmpty;
   }
-std::string &PrimSpecMeta::permission() {
+std::string &PrimMetadata::permission() {
     ensure_ext();
     return ext_->permission;
   }
-const std::string &PrimSpecMeta::displayName() const {
+const std::string &PrimMetadata::displayName() const {
     static const std::string kEmpty;
     return ext_ ? ext_->displayName : kEmpty;
   }
-std::string &PrimSpecMeta::displayName() {
+std::string &PrimMetadata::displayName() {
     ensure_ext();
     return ext_->displayName;
   }
-bool PrimSpecMeta::displayNameAuthored() const {
+bool PrimMetadata::displayNameAuthored() const {
     return ext_ && ext_->display_name_authored;
   }
-void PrimSpecMeta::setDisplayNameAuthored(bool authored ) {
+void PrimMetadata::setDisplayNameAuthored(bool authored ) {
     ensure_ext();
     ext_->display_name_authored = authored;
   }
-const std::string &PrimSpecMeta::instance_prototype() const {
+const std::string &PrimMetadata::instance_prototype() const {
     static const std::string kEmpty;
     return ext_ ? ext_->instance_prototype : kEmpty;
   }
-std::string &PrimSpecMeta::instance_prototype() {
+std::string &PrimMetadata::instance_prototype() {
     ensure_ext();
     return ext_->instance_prototype;
   }
-const std::vector<std::string> &PrimSpecMeta::apiSchemas() const {
+const std::vector<std::string> &PrimMetadata::apiSchemas() const {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->apiSchemas : kEmpty;
   }
-std::vector<std::string> &PrimSpecMeta::apiSchemas() {
+std::vector<std::string> &PrimMetadata::apiSchemas() {
     ensure_ext();
     return ext_->apiSchemas;
   }
-bool PrimSpecMeta::apiSchemasAuthored() const {
+bool PrimMetadata::apiSchemasAuthored() const {
     return ext_ && ext_->apiSchemasAuthored;
   }
-void PrimSpecMeta::setApiSchemasAuthored(bool authored ) {
+void PrimMetadata::setApiSchemasAuthored(bool authored ) {
     ensure_ext();
     ext_->apiSchemasAuthored = authored;
   }
-const StringListOpEdits &PrimSpecMeta::apiSchemaEdits() const {
-    static const StringListOpEdits kEmpty;
+const StringListOps &PrimMetadata::apiSchemaEdits() const {
+    static const StringListOps kEmpty;
     return ext_ ? ext_->apiSchemaEdits : kEmpty;
   }
-StringListOpEdits &PrimSpecMeta::apiSchemaEdits() {
+StringListOps &PrimMetadata::apiSchemaEdits() {
     ensure_ext();
     return ext_->apiSchemaEdits;
   }
-const std::string &PrimSpecMeta::apiSchemasQualifier() const {
+const std::string &PrimMetadata::apiSchemasQualifier() const {
     static const std::string kEmpty;
     return ext_ ? ext_->apiSchemasQualifier : kEmpty;
   }
-std::string &PrimSpecMeta::apiSchemasQualifier() {
+std::string &PrimMetadata::apiSchemasQualifier() {
     ensure_ext();
     return ext_->apiSchemasQualifier;
   }
-const std::vector<VariantSetData> &PrimSpecMeta::variantSets() const {
-    static const std::vector<VariantSetData> kEmpty;
+const std::vector<PrimVariantSetData> &PrimMetadata::variantSets() const {
+    static const std::vector<PrimVariantSetData> kEmpty;
     return ext_ ? ext_->variantSets : kEmpty;
   }
-std::vector<VariantSetData> &PrimSpecMeta::variantSets() {
+std::vector<PrimVariantSetData> &PrimMetadata::variantSets() {
     ensure_ext();
     return ext_->variantSets;
   }
-const StringListOpEdits &PrimSpecMeta::variantSetNameEdits() const {
-    static const StringListOpEdits kEmpty;
+const StringListOps &PrimMetadata::variantSetNameEdits() const {
+    static const StringListOps kEmpty;
     return ext_ ? ext_->variantSetNameEdits : kEmpty;
   }
-StringListOpEdits &PrimSpecMeta::variantSetNameEdits() {
+StringListOps &PrimMetadata::variantSetNameEdits() {
     ensure_ext();
     return ext_->variantSetNameEdits;
   }
-const StringListOpEdits &PrimSpecMeta::clipSetEdits() const {
-    static const StringListOpEdits kEmpty;
+const StringListOps &PrimMetadata::clipSetEdits() const {
+    static const StringListOps kEmpty;
     return ext_ ? ext_->clipSetEdits : kEmpty;
   }
-StringListOpEdits &PrimSpecMeta::clipSetEdits() {
+StringListOps &PrimMetadata::clipSetEdits() {
     ensure_ext();
     return ext_->clipSetEdits;
   }
-bool PrimSpecMeta::primOrderAuthored() const {
+bool PrimMetadata::primOrderAuthored() const {
     return ext_ && ext_->primOrderAuthored;
   }
-void PrimSpecMeta::setPrimOrderAuthored(bool authored ) {
+void PrimMetadata::setPrimOrderAuthored(bool authored ) {
     ensure_ext();
     ext_->primOrderAuthored = authored;
   }
-bool PrimSpecMeta::propertyOrderAuthored() const {
+bool PrimMetadata::propertyOrderAuthored() const {
     return ext_ && ext_->propertyOrderAuthored;
   }
-void PrimSpecMeta::setPropertyOrderAuthored(bool authored ) {
+void PrimMetadata::setPropertyOrderAuthored(bool authored ) {
     ensure_ext();
     ext_->propertyOrderAuthored = authored;
   }
-const std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::variantSelections()
+const std::vector<std::pair<std::string, std::string>> &PrimMetadata::variantSelections()
       const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
     return ext_ ? ext_->variantSelections : kEmpty;
   }
-std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::variantSelections() {
+std::vector<std::pair<std::string, std::string>> &PrimMetadata::variantSelections() {
     ensure_ext();
     return ext_->variantSelections;
   }
-bool PrimSpecMeta::variantSelectionsAuthored() const {
+bool PrimMetadata::variantSelectionsAuthored() const {
     return ext_ && ext_->variantSelectionsAuthored;
   }
-void PrimSpecMeta::setVariantSelectionsAuthored(bool authored ) {
+void PrimMetadata::setVariantSelectionsAuthored(bool authored ) {
     ensure_ext();
     ext_->variantSelectionsAuthored = authored;
   }
-const std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::relocates() const {
+const std::vector<std::pair<std::string, std::string>> &PrimMetadata::relocates() const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
     return ext_ ? ext_->relocates : kEmpty;
   }
-std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::relocates() {
+std::vector<std::pair<std::string, std::string>> &PrimMetadata::relocates() {
     ensure_ext();
     return ext_->relocates;
   }
-bool PrimSpecMeta::relocatesAuthored() const { return ext_ && ext_->relocatesAuthored; }
-void PrimSpecMeta::setRelocatesAuthored(bool authored ) {
+bool PrimMetadata::relocatesAuthored() const { return ext_ && ext_->relocatesAuthored; }
+void PrimMetadata::setRelocatesAuthored(bool authored ) {
     ensure_ext();
     ext_->relocatesAuthored = authored;
   }
-const Value &PrimSpecMeta::customData() const {
+const Value &PrimMetadata::customData() const {
     static const Value kEmpty;
     return ext_ ? ext_->customData : kEmpty;
   }
-Value &PrimSpecMeta::customData() {
+Value &PrimMetadata::customData() {
     ensure_ext();
     return ext_->customData;
   }
-bool PrimSpecMeta::customDataAuthored() const {
+bool PrimMetadata::customDataAuthored() const {
     return ext_ && ext_->customDataAuthored;
   }
-void PrimSpecMeta::setCustomDataAuthored(bool authored ) {
+void PrimMetadata::setCustomDataAuthored(bool authored ) {
     ensure_ext();
     ext_->customDataAuthored = authored;
   }
-const Value &PrimSpecMeta::assetInfo() const {
+const Value &PrimMetadata::assetInfo() const {
     static const Value kEmpty;
     return ext_ ? ext_->assetInfo : kEmpty;
   }
-Value &PrimSpecMeta::assetInfo() {
+Value &PrimMetadata::assetInfo() {
     ensure_ext();
     return ext_->assetInfo;
   }
-bool PrimSpecMeta::assetInfoAuthored() const { return ext_ && ext_->assetInfoAuthored; }
-void PrimSpecMeta::setAssetInfoAuthored(bool authored ) {
+bool PrimMetadata::assetInfoAuthored() const { return ext_ && ext_->assetInfoAuthored; }
+void PrimMetadata::setAssetInfoAuthored(bool authored ) {
     ensure_ext();
     ext_->assetInfoAuthored = authored;
   }
-const Value &PrimSpecMeta::sdrMetadata() const {
+const Value &PrimMetadata::sdrMetadata() const {
     static const Value kEmpty;
     return ext_ ? ext_->sdrMetadata : kEmpty;
   }
-Value &PrimSpecMeta::sdrMetadata() {
+Value &PrimMetadata::sdrMetadata() {
     ensure_ext();
     return ext_->sdrMetadata;
   }
-bool PrimSpecMeta::sdrMetadataAuthored() const {
+bool PrimMetadata::sdrMetadataAuthored() const {
     return ext_ && ext_->sdrMetadataAuthored;
   }
-void PrimSpecMeta::setSdrMetadataAuthored(bool authored ) {
+void PrimMetadata::setSdrMetadataAuthored(bool authored ) {
     ensure_ext();
     ext_->sdrMetadataAuthored = authored;
   }
-const Value &PrimSpecMeta::clips() const {
+const Value &PrimMetadata::clips() const {
     static const Value kEmpty;
     return ext_ ? ext_->clips : kEmpty;
   }
-Value &PrimSpecMeta::clips() {
+Value &PrimMetadata::clips() {
     ensure_ext();
     return ext_->clips;
   }
-bool PrimSpecMeta::clipsAuthored() const { return ext_ && ext_->clipsAuthored; }
-void PrimSpecMeta::setClipsAuthored(bool authored ) {
+bool PrimMetadata::clipsAuthored() const { return ext_ && ext_->clipsAuthored; }
+void PrimMetadata::setClipsAuthored(bool authored ) {
     ensure_ext();
     ext_->clipsAuthored = authored;
   }
-const std::vector<PropNameId> &PrimSpecMeta::clipShadowedProps() const {
+const std::vector<PropNameId> &PrimMetadata::clipShadowedProps() const {
     static const std::vector<PropNameId> kEmpty;
     return ext_ ? ext_->clipShadowedProps : kEmpty;
   }
-std::vector<PropNameId> &PrimSpecMeta::clipShadowedProps() {
+std::vector<PropNameId> &PrimMetadata::clipShadowedProps() {
     ensure_ext();
     return ext_->clipShadowedProps;
   }
-const std::vector<std::string> &PrimSpecMeta::primOrder() const {
+const std::vector<std::string> &PrimMetadata::primOrder() const {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->primOrder : kEmpty;
   }
-const std::vector<std::string> &PrimSpecMeta::displayGroupOrder() const {
+const std::vector<std::string> &PrimMetadata::displayGroupOrder() const {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->displayGroupOrder : kEmpty;
   }
-std::vector<std::string> &PrimSpecMeta::editDisplayGroupOrder() {
+std::vector<std::string> &PrimMetadata::editDisplayGroupOrder() {
     ensure_ext();
     return ext_->displayGroupOrder;
   }
-bool PrimSpecMeta::displayGroupOrderAuthored() const {
+bool PrimMetadata::displayGroupOrderAuthored() const {
     return ext_ && ext_->displayGroupOrderAuthored;
   }
-void PrimSpecMeta::setDisplayGroupOrderAuthored(bool authored ) {
+void PrimMetadata::setDisplayGroupOrderAuthored(bool authored ) {
     ensure_ext();
     ext_->displayGroupOrderAuthored = authored;
   }
-std::vector<std::string> &PrimSpecMeta::editPrimOrder() {
+std::vector<std::string> &PrimMetadata::editPrimOrder() {
     ensure_ext();
     return ext_->primOrder;
   }
-const std::vector<std::string> &PrimSpecMeta::propertyOrder() const {
+const std::vector<std::string> &PrimMetadata::propertyOrder() const {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->propertyOrder : kEmpty;
   }
-std::vector<std::string> &PrimSpecMeta::editPropertyOrder() {
+std::vector<std::string> &PrimMetadata::editPropertyOrder() {
     ensure_ext();
     return ext_->propertyOrder;
   }
-const std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::unknownMeta() const {
+const std::vector<std::pair<std::string, std::string>> &PrimMetadata::unknownMeta() const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
     return ext_ ? ext_->unknownMeta : kEmpty;
   }
-const std::vector<TypedExtensionField> &PrimSpecMeta::unknownFields() const {
-    static const std::vector<TypedExtensionField> kEmpty;
+const std::vector<DecodedExtensionField> &PrimMetadata::unknownFields() const {
+    static const std::vector<DecodedExtensionField> kEmpty;
     return ext_ ? ext_->unknownFields : kEmpty;
   }
-std::vector<TypedExtensionField> &PrimSpecMeta::unknownFields() {
+std::vector<DecodedExtensionField> &PrimMetadata::unknownFields() {
     ensure_ext();
     return ext_->unknownFields;
   }
-std::vector<std::pair<std::string, std::string>> &PrimSpecMeta::unknownMeta() {
+std::vector<std::pair<std::string, std::string>> &PrimMetadata::unknownMeta() {
     ensure_ext();
     return ext_->unknownMeta;
   }
@@ -2071,8 +2071,8 @@ const std::unordered_map<uint32_t, ArrayEditData>& PrimSpec::array_edits() const
     static const std::unordered_map<uint32_t, ArrayEditData> kEmpty;
     return cold_data_ ? cold_data_->array_edits : kEmpty;
   }
-const std::unordered_map<std::string, ArcEdit>& PrimSpec::relationship_edits() const {
-    static const std::unordered_map<std::string, ArcEdit> kEmpty;
+const std::unordered_map<std::string, ArcListOp>& PrimSpec::relationship_edits() const {
+    static const std::unordered_map<std::string, ArcListOp> kEmpty;
     return cold_data_ ? cold_data_->rel_edits : kEmpty;
   }
 const std::vector<uint32_t>& PrimSpec::child_indices() const { return child_indices_; }
@@ -2082,22 +2082,22 @@ void PrimSpec::set_child_indices(std::vector<uint32_t>&& idx) {
     child_indices_ = std::move(idx);
   }
 size_t PrimSpec::child_count() const { return child_indices_.size(); }
-const PrimSpecMeta& PrimSpec::meta() const { return meta_; }
-PrimSpecMeta& PrimSpec::meta() { return meta_; }
+const PrimMetadata& PrimSpec::meta() const { return meta_; }
+PrimMetadata& PrimSpec::meta() { return meta_; }
 bool PropMeta::empty() const {
     return authored == 0 && unknownMeta.empty() && unknownFields.empty();
   }
-bool TimeSampleStorage::empty() const { return samples_.empty(); }
-size_t ValueStorage::count() const { return values_.size(); }
+bool TimeSampleBlock::empty() const { return samples_.empty(); }
+size_t ValueBlockStorage::count() const { return values_.size(); }
 bool TypeNameId::is_valid() const { return id != UINT16_MAX; }
-bool ArcEdit::has_qualifiers() const {
+bool ArcListOp::has_qualifiers() const {
     return authored && (!is_explicit || !added.empty() || !prepended.empty() ||
            !appended.empty() || !deleted.empty() || !ordered.empty());
   }
-bool ArcEdit::has_authored_opinion() const {
+bool ArcListOp::has_authored_opinion() const {
     return authored;
   }
-bool StringListOpEdits::has_nonexplicit_items() const {
+bool StringListOps::has_nonexplicit_items() const {
     return !added.empty() || !prepended.empty() || !appended.empty() ||
            !deleted.empty() || !ordered.empty();
   }

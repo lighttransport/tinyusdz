@@ -429,7 +429,7 @@ void ValidateDictValue(const Value &v, const std::string &rule_id,
 bool HasCompositionArc(const PrimSpec &ps);
 bool IsOverride(const PrimSpec &ps);
 std::vector<std::string> GatherArcStrings(const std::vector<std::string> &inline_items,
-                                          const ArcEdit *edit);
+                                          const ArcListOp *edit);
 bool ParseFiniteLayerOffsetNumber(const char *begin, const char *end,
                                   double *out);
 bool ParseRawLayerOffset(const std::string &text, double *offset,

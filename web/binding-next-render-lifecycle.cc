@@ -3032,7 +3032,7 @@ void RenderStream::collectVariantSets_() {
         info.set_name = vs.name;
         // Authored selection lives in the prim's `variants = {...}` metadata
         // (variantSelections / legacy single variantSelection), not on the
-        // VariantSetData itself.
+        // PrimVariantSetData itself.
         info.selected = vs.selected;
         for (const auto &sel : meta.variantSelections()) {
           if (sel.first == vs.name) {

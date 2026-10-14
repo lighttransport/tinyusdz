@@ -303,9 +303,9 @@ void Layer::apply_namespace_ordering() {
     std::vector<uint32_t> children = prim.child_indices();
     // Namespace ordering is a read-only finalization pass.  Bind metadata as
     // const so overload resolution cannot select the mutable cold-field
-    // accessor, which materializes a PrimSpecMetaExt for otherwise ordinary
+    // accessor, which materializes a PrimMetadataCold for otherwise ordinary
     // prims.
-    const PrimSpecMeta& meta = prim.meta();
+    const PrimMetadata& meta = prim.meta();
     apply(&children, meta.primOrder(), prims_);
     prim.clear_child_indices();
     for (uint32_t child : children) prim.add_child_index(child);
@@ -607,15 +607,15 @@ size_t Layer::memory_usage() const {
     for (const PrimSpec& prim : layer->prims_) {
       const size_t prim_bytes = prim.memory_usage();
       add(prim_bytes >= sizeof(PrimSpec) ? prim_bytes - sizeof(PrimSpec) : 0);
-      std::vector<const VariantSetData*> pending_sets;
-      for (const VariantSetData& set : prim.meta().variantSets())
+      std::vector<const PrimVariantSetData*> pending_sets;
+      for (const PrimVariantSetData& set : prim.meta().variantSets())
         pending_sets.push_back(&set);
       while (!pending_sets.empty()) {
-        const VariantSetData* set = pending_sets.back();
+        const PrimVariantSetData* set = pending_sets.back();
         pending_sets.pop_back();
-        for (const VariantData& option : set->variants) {
+        for (const PrimVariantData& option : set->variants) {
           if (option.content) pending_layers.push_back(option.content.get());
-          for (const VariantSetData& nested : option.variantSets)
+          for (const PrimVariantSetData& nested : option.variantSets)
             pending_sets.push_back(&nested);
         }
       }
@@ -653,8 +653,8 @@ size_t Layer::memory_usage() const {
       add(entry.second.capacity());
     }
     add(safe::saturating_mul(meta.unknownFields.capacity(),
-                             sizeof(TypedExtensionField)));
-    for (const TypedExtensionField& field : meta.unknownFields) {
+                             sizeof(DecodedExtensionField)));
+    for (const DecodedExtensionField& field : meta.unknownFields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
       add_value(field.value);

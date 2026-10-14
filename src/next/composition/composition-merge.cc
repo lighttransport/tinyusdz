@@ -103,7 +103,7 @@ std::string ResolveWeakerPathExpressionText(const std::string& stronger,
   return out;
 }
 
-void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit) {
+void ApplyRelationshipEdit(std::vector<Path>* values, const ArcListOp& edit) {
   if (!values) return;
   auto as_path = [](const std::string& s) { return Path(s); };
   auto erase_items = [&](const std::vector<std::string>& items) {
@@ -253,13 +253,13 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
   // A STRONGER layer's `delete <arc>` list-edit removes matching arcs coming
   // from weaker layers (previously the union ignored ArcEdits entirely, so
   // `delete references = @a@` in the root still composed @a@ from a sublayer).
-  auto deleted_by = [](const ArcEdit* e, const std::string& a) {
+  auto deleted_by = [](const ArcListOp* e, const std::string& a) {
     return e && e->authored &&
            std::find(e->deleted.begin(), e->deleted.end(), a) != e->deleted.end();
   };
   auto merge_arcs = [&](std::vector<std::string>& dst,
                         const std::vector<std::string>& src,
-                        const ArcEdit* tgt_edit) {
+                        const ArcListOp* tgt_edit) {
     for (const std::string& a : src) {
       if (deleted_by(tgt_edit, a)) continue;
       if (std::find(dst.begin(), dst.end(), a) == dst.end()) {
@@ -267,7 +267,7 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
       }
     }
   };
-  const ArcListOpEdits* te = target.meta().arc_edits();
+  const ArcListOps* te = target.meta().arc_edits();
   merge_arcs(target.meta().references, source.meta().references,
              te ? &te->references : nullptr);
   merge_arcs(target.meta().payloads, source.meta().payloads,
@@ -278,8 +278,8 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
              te ? &te->specializes : nullptr);
   // Propagate the source's own delete edits down the stack (they must also
   // remove arcs authored in still-weaker layers merged later).
-  if (const ArcListOpEdits* se = source.meta().arc_edits()) {
-    auto merge_deleted = [&](const ArcEdit& from, ArcEdit& into) {
+  if (const ArcListOps* se = source.meta().arc_edits()) {
+    auto merge_deleted = [&](const ArcListOp& from, ArcListOp& into) {
       if (!from.authored || from.deleted.empty()) return;
       into.authored = true;
       if (into.deleted.empty() && into.prepended.empty() &&
@@ -293,7 +293,7 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
         }
       }
     };
-    ArcListOpEdits& tedits = target.meta().ensure_arc_edits();
+    ArcListOps& tedits = target.meta().ensure_arc_edits();
     merge_deleted(se->references, tedits.references);
     merge_deleted(se->payloads, tedits.payloads);
     merge_deleted(se->inherits, tedits.inherits);
@@ -303,9 +303,9 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
   // list-op edits are merged inside CopyLocalOpinions' registered string
   // list-op field loop.)
   if (!source.meta().variantSets().empty()) {
-    for (const VariantSetData& svs : source.meta().variantSets()) {
+    for (const PrimVariantSetData& svs : source.meta().variantSets()) {
       bool have = false;
-      for (const VariantSetData& tvs : target.meta().variantSets()) {
+      for (const PrimVariantSetData& tvs : target.meta().variantSets()) {
         if (tvs.name == svs.name) {
           have = true;
           break;
@@ -338,9 +338,9 @@ void Compositor::CopyLocalOpinions(
     double time_scale,
     const std::function<std::string(const std::string&)>& remap_path,
     std::vector<std::string>* dict_conflicts) {
-  // PrimSpecMeta's mutable cold-field accessors allocate. Keep a const view
+  // PrimMetadata's mutable cold-field accessors allocate. Keep a const view
   // for all gap tests so metadata-free prims stay allocation-free.
-  const PrimSpecMeta& target_meta = target.meta();
+  const PrimMetadata& target_meta = target.meta();
   // Remap a relationship/connection target. An empty remap result means the
   // target is not expressible in the composed namespace (outside the arc's
   // scope) and must be DROPPED, not copied verbatim.
@@ -359,7 +359,7 @@ void Compositor::CopyLocalOpinions(
     } else if (const std::vector<Path>* items = target.connection(prop_name)) {
       PrimSpec::RelationshipOpinion opinion;
       opinion.items = *items;
-      if (const ArcEdit* edit = target.connection_edit(prop_name)) {
+      if (const ArcListOp* edit = target.connection_edit(prop_name)) {
         opinion.edit = *edit;
         opinion.qualified = edit->authored && !edit->is_explicit;
       }
@@ -393,7 +393,7 @@ void Compositor::CopyLocalOpinions(
     } else if (const std::vector<Path>* items = source.connection(prop_name)) {
       PrimSpec::RelationshipOpinion opinion;
       opinion.items = *items;
-      if (const ArcEdit* edit = source.connection_edit(prop_name)) {
+      if (const ArcListOp* edit = source.connection_edit(prop_name)) {
         opinion.edit = *edit;
         opinion.qualified = edit->authored && !edit->is_explicit;
       }
@@ -407,8 +407,8 @@ void Compositor::CopyLocalOpinions(
     }
     target.set_connection_targets(prop_name, std::move(effective));
     target.set_connection_opinion_stack(prop_name, std::move(opinions));
-    ArcEdit& resolved = target.ensure_connection_edit(prop_name);
-    resolved = ArcEdit();
+    ArcListOp& resolved = target.ensure_connection_edit(prop_name);
+    resolved = ArcListOp();
     resolved.authored = true;
     resolved.is_explicit = true;
   };
@@ -729,8 +729,8 @@ void Compositor::CopyLocalOpinions(
                          src_vacated == src_opinions && effective.empty();
     target.set_relationship_targets(rel_name, std::move(effective));
     target.set_relationship_opinion_stack(rel_name, std::move(opinions));
-    ArcEdit& resolved = target.ensure_relationship_edit(rel_name);
-    resolved = ArcEdit();
+    ArcListOp& resolved = target.ensure_relationship_edit(rel_name);
+    resolved = ArcListOp();
     resolved.authored = !vacated;
     resolved.is_explicit = !vacated;
     target.set_relationship_flags(
@@ -877,8 +877,8 @@ void Compositor::CopyLocalOpinions(
   // Dictionary-valued metadata (fill-absent). `ct` binds a const view so the
   // gap check never allocates the target's metadata ext.
   {
-    const PrimSpecMeta& cs = source.meta();
-    const PrimSpecMeta& ct = target.meta();
+    const PrimMetadata& cs = source.meta();
+    const PrimMetadata& ct = target.meta();
     if (cs.customData().is_dictionary()) {
       if (!ct.customData().is_dictionary())
         target.meta().customData() = cs.customData();
@@ -930,7 +930,7 @@ void Compositor::CopyLocalOpinions(
   // (variantSetNames list-op edits merge in the registered string list-op
   // field loop earlier in this function.)
   if (!source.meta().variantSets().empty()) {
-    std::vector<VariantSetData>& tsets = target.meta().variantSets();
+    std::vector<PrimVariantSetData>& tsets = target.meta().variantSets();
     // The host (target) may express its selection as the legacy variantSelection
     // STRING rather than a per-set `selected`. The crate reader sets both, but a
     // host carrying only the string must still win over a referenced asset's
@@ -943,7 +943,7 @@ void Compositor::CopyLocalOpinions(
     for (const auto& ssvs : source.meta().variantSets()) {
       const bool host_string_selects =
           !target_sel.variant_set.empty() && ssvs.name == target_sel.variant_set;
-      VariantSetData* tvs = nullptr;
+      PrimVariantSetData* tvs = nullptr;
       for (auto& t : tsets) {
         if (t.name == ssvs.name) { tvs = &t; break; }
       }
@@ -956,7 +956,7 @@ void Compositor::CopyLocalOpinions(
         tvs->selected = ssvs.selected;
       }
       for (const auto& svar : ssvs.variants) {
-        VariantData* tvar = nullptr;
+        PrimVariantData* tvar = nullptr;
         for (auto& v : tvs->variants) {
           if (v.name == svar.name) { tvar = &v; break; }
         }

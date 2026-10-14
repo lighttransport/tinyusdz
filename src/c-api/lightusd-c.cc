@@ -2052,11 +2052,11 @@ lightusd_status lightusd_prim_variant_selection_names(lightusd_prim p, lightusd_
   return LIGHTUSD_OK;
 }
 
-static const n::VariantSetData* FindVariantSet(lightusd_prim p,
+static const n::PrimVariantSetData* FindVariantSet(lightusd_prim p,
                                                const char* set_name) {
   const n::PrimSpec* spec = SpecFromC(p);
   if (!spec || !set_name) return nullptr;
-  for (const n::VariantSetData& vs : spec->meta().variantSets()) {
+  for (const n::PrimVariantSetData& vs : spec->meta().variantSets()) {
     if (vs.name == set_name) return &vs;
   }
   return nullptr;
@@ -2076,12 +2076,12 @@ lightusd_sv lightusd_prim_variant_set_name(lightusd_prim p, size_t set_index) {
 }
 
 size_t lightusd_variant_count(lightusd_prim p, const char* set_name) {
-  const n::VariantSetData* vs = FindVariantSet(p, set_name);
+  const n::PrimVariantSetData* vs = FindVariantSet(p, set_name);
   return vs ? vs->variants.size() : 0;
 }
 
 lightusd_sv lightusd_variant_name(lightusd_prim p, const char* set_name, size_t index) {
-  const n::VariantSetData* vs = FindVariantSet(p, set_name);
+  const n::PrimVariantSetData* vs = FindVariantSet(p, set_name);
   if (!vs || index >= vs->variants.size()) return EmptySV();
   return SV(vs->variants[index].name);
 }
@@ -2093,7 +2093,7 @@ lightusd_sv lightusd_variant_selection(lightusd_prim p, const char* set_name) {
   for (const auto& sel : spec->meta().variantSelections()) {
     if (sel.first == set_name) return SV(sel.second);
   }
-  const n::VariantSetData* vs = FindVariantSet(p, set_name);
+  const n::PrimVariantSetData* vs = FindVariantSet(p, set_name);
   if (vs) return SV(vs->selected);
   return EmptySV();
 }
@@ -2107,7 +2107,7 @@ lightusd_status lightusd_prim_get_metadata(lightusd_prim p, const char* key,
   if (!key || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "key/out is null");
   const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
-  const n::PrimSpecMeta& m = spec->meta();
+  const n::PrimMetadata& m = spec->meta();
   const std::string k(key);
   n::Value v;
   if (k == "active") {
@@ -2156,7 +2156,7 @@ lightusd_status lightusd_prim_metadata_is_authored(
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "key/out_authored is null");
   const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
-  const n::PrimSpecMeta& m = spec->meta();
+  const n::PrimMetadata& m = spec->meta();
   const std::string k(key);
   if (k == "active") *out_authored = m.active_authored;
   else if (k == "hidden") *out_authored = m.hidden_authored;
@@ -2576,7 +2576,7 @@ lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage, const char* pr
     return s;
   };
 
-  n::PrimSpecMeta& m = spec->meta();
+  n::PrimMetadata& m = spec->meta();
   const std::string k(key);
   if (k == "active") {
     const bool* b = v.as_bool();
@@ -2654,10 +2654,10 @@ lightusd_status lightusd_prim_add_variant_set(lightusd_stage* stage, const char*
   lightusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
-  for (const n::VariantSetData& vs : spec->meta().variantSets()) {
+  for (const n::PrimVariantSetData& vs : spec->meta().variantSets()) {
     if (vs.name == set_name) return LIGHTUSD_OK;  // idempotent
   }
-  n::VariantSetData vs;
+  n::PrimVariantSetData vs;
   vs.name = set_name;
   spec->meta().variantSets().push_back(std::move(vs));
   return LIGHTUSD_OK;
@@ -2674,12 +2674,12 @@ lightusd_status lightusd_prim_add_variant(lightusd_stage* stage, const char* pri
   if (!spec) return st;
   lightusd_status vst = lightusd_prim_add_variant_set(stage, prim_path, set_name);
   if (vst != LIGHTUSD_OK) return vst;
-  for (n::VariantSetData& vs : spec->meta().variantSets()) {
+  for (n::PrimVariantSetData& vs : spec->meta().variantSets()) {
     if (vs.name != set_name) continue;
-    for (const n::VariantData& v : vs.variants) {
+    for (const n::PrimVariantData& v : vs.variants) {
       if (v.name == variant_name) return LIGHTUSD_OK;  // idempotent
     }
-    n::VariantData v;
+    n::PrimVariantData v;
     v.name = variant_name;
     vs.variants.push_back(std::move(v));
     return LIGHTUSD_OK;
@@ -2698,7 +2698,7 @@ lightusd_status lightusd_prim_set_variant_selection(lightusd_stage* stage,
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
 
-  for (n::VariantSetData& vs : spec->meta().variantSets()) {
+  for (n::PrimVariantSetData& vs : spec->meta().variantSets()) {
     if (vs.name == set_name) {
       vs.selected = variant_name;
     }

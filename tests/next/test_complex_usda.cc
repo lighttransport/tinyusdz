@@ -430,7 +430,7 @@ def Xform "W"
     assert(r.success && r.stage.GetRootLayer());
     const PrimSpec* prim = r.stage.GetRootLayer()->prim_at_path("/W");
     assert(prim);
-    const ArcEdit* edit = prim->connection_edit("inputs:x");
+    const ArcListOp* edit = prim->connection_edit("inputs:x");
     assert(edit && edit->authored && !edit->is_explicit &&
            edit->deleted == std::vector<std::string>{"/W/S.outputs:o"});
   }

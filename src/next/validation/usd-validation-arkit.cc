@@ -382,8 +382,8 @@ void ValidateArkitMaterialBinding(const PrimSpec &ps,
 void ValidateArkitCompositionAssetPaths(const PrimSpec &ps,
                                         const std::string &prim_location,
                                         USDValidationResult *result) {
-  const PrimSpecMeta &m = ps.meta();
-  const ArcListOpEdits *edits = m.arc_edits();
+  const PrimMetadata &m = ps.meta();
+  const ArcListOps *edits = m.arc_edits();
   const auto check = [&](const std::vector<std::string> &arcs,
                          const char *what) {
     for (const std::string &encoded : arcs) {

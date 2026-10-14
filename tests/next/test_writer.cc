@@ -529,15 +529,15 @@ void test_deep_variant_writer() {
   // This depth overflowed the recursive writer stack (especially under ASan
   // and in WASM). Build bottom-up so test setup itself is non-recursive.
   constexpr size_t kDepth = 8192;
-  VariantSetData nested;
+  PrimVariantSetData nested;
   for (size_t i = 0; i < kDepth; ++i) {
-    VariantData option;
+    PrimVariantData option;
     option.name = "o";
     if (!nested.name.empty()) {
       option.variantSets.push_back(std::move(nested));
     }
 
-    VariantSetData outer;
+    PrimVariantSetData outer;
     outer.name = "v";
     outer.variants.push_back(std::move(option));
     nested = std::move(outer);
@@ -566,9 +566,9 @@ void test_deep_variant_writer() {
   // discipline as writing and teardown.
   const PrimSpec* root = stage.GetRootLayer()->prim_at_path("/Root");
   assert(root && !root->meta().variantSets().empty());
-  VariantData copied = root->meta().variantSets()[0].variants[0];
+  PrimVariantData copied = root->meta().variantSets()[0].variants[0];
   size_t copied_depth = 1;
-  const VariantData* current = &copied;
+  const PrimVariantData* current = &copied;
   while (!current->variantSets.empty()) {
     current = &current->variantSets[0].variants[0];
     ++copied_depth;

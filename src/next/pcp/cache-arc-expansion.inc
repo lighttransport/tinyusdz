@@ -65,7 +65,7 @@
   // authored at a WEAKER site and only known once the whole prim expanded —
   // can be grafted afterwards at their recorded strength position.)
   void ApplyVariantOption(const Src &src, const ExpansionFrame *frame,
-                          const std::string &set_name, const VariantData *vd,
+                          const std::string &set_name, const PrimVariantData *vd,
                           const PrimSpec &owner, int vdepth,
                           const std::string &layer_id,
                           std::vector<Src> *out, std::vector<Src> *spec_out,

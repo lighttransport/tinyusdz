@@ -64,7 +64,7 @@
     return ValueRep::Make(CrateTypeId::UnregisteredValue, index, false, false);
   }
 
-  ValueRep EncodeExtensionField(const TypedExtensionField& field) {
+  ValueRep EncodeExtensionField(const DecodedExtensionField& field) {
     if (!field.unregistered) return EncodeValue(field.value);
     return EncodeUnregisteredValue(
         field.unregistered_source.empty()

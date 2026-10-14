@@ -482,13 +482,13 @@ void test_crate_reader_audit_cluster() {
     USDCLoadResult compat = LoadUSDCFromFile(fx.c_str());
     assert(compat.success);
     auto field = [](const auto& fields, const std::string& name)
-        -> const TypedExtensionField* {
+        -> const DecodedExtensionField* {
       for (const auto& item : fields) if (item.name == name) return &item;
       return nullptr;
     };
     const Layer* root = compat.stage.GetRootLayer();
     assert(root);
-    const TypedExtensionField* layer_probe =
+    const DecodedExtensionField* layer_probe =
         field(root->meta().unknownFields, "extensionLayerProbe");
     assert(layer_probe && layer_probe->unregistered &&
            layer_probe->unregistered_source == "\"kept-by-openusd\"");
@@ -499,15 +499,15 @@ void test_crate_reader_audit_cluster() {
     UsdPrim p = compat.stage.GetPrimAtPath("/P");
     assert(p.IsValid() && !p.HasProperty("extensionPrimProbe") &&
            "unknown Prim metadata must not become a phantom property");
-    const TypedExtensionField* prim_probe =
+    const DecodedExtensionField* prim_probe =
         field(p.GetMeta().unknownFields(), "extensionPrimProbe");
     assert(prim_probe && prim_probe->unregistered_source == "17");
     assert(prim_probe->value.as_int() && *prim_probe->value.as_int() == 17);
     const PropMeta* attr_meta = p.GetPrimSpec()->property_meta("v");
     const PropMeta* rel_meta = p.GetPrimSpec()->property_meta("r");
-    const TypedExtensionField* attr_probe =
+    const DecodedExtensionField* attr_probe =
         attr_meta ? field(attr_meta->unknownFields, "extensionProbe") : nullptr;
-    const TypedExtensionField* rel_probe =
+    const DecodedExtensionField* rel_probe =
         rel_meta ? field(rel_meta->unknownFields, "extensionRelProbe") : nullptr;
     assert(attr_probe && attr_probe->unregistered_source == "42");
     assert(rel_probe &&
@@ -561,7 +561,7 @@ void test_crate_reader_audit_cluster() {
     UsdPrim a = r.stage.GetPrimAtPath("/A");
     assert(a.IsValid());
     assert(a.GetMeta().references.empty());
-    const ArcListOpEdits* edits = a.GetMeta().arc_edits();
+    const ArcListOps* edits = a.GetMeta().arc_edits();
     assert(edits);
     assert(edits->references.authored);
     assert(edits->references.is_explicit);
@@ -630,7 +630,7 @@ void test_crate_reader_audit_cluster() {
     assert(r.success);
     UsdPrim a = r.stage.GetPrimAtPath("/A");
     assert(a.IsValid());
-    const ArcListOpEdits* edits = a.GetMeta().arc_edits();
+    const ArcListOps* edits = a.GetMeta().arc_edits();
     assert(edits && edits->inherits.authored && edits->inherits.is_explicit);
     assert(a.GetMeta().inherits.empty());
     const std::vector<Path>* targets = a.GetRelationship("r");
