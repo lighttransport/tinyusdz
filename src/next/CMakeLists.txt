@@ -292,6 +292,8 @@ add_library(lightusd_validation STATIC
     c/validation-tables.c
     c/generated-schema-tables.c
     validation/usd-validation.cc
+    validation/usd-validation-props.cc
+    validation/usd-validation-compose.cc
     validation/usd-validation-geom.cc
     validation/usd-validation-shade.cc
     validation/usd-validation-arkit.cc

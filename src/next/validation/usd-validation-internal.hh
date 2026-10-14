@@ -2,6 +2,7 @@
 // Copyright 2026 Light Transport Entertainment Inc.
 #pragma once
 #include "usd-validation.hh"
+#include "validation-context.hh"
 #include <array>
 #include <set>
 #include <unordered_map>
@@ -464,7 +465,8 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                                 USDValidationResult *result);
 void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
                           const std::vector<AppliedSchema> &applied_schemas,
-                          USDValidationResult *result);
+                          USDValidationResult *result,
+                          const ValidationRegistry &registry);
 void ValidateMaterialXReferenceConventions(const PrimSpec &ps,
                                            const std::string &prim_location,
                                            USDValidationResult *result);
