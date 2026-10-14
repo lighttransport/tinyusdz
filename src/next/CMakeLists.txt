@@ -292,6 +292,9 @@ add_library(lightusd_validation STATIC
     c/validation-tables.c
     c/generated-schema-tables.c
     validation/usd-validation.cc
+    validation/usd-validation-geom.cc
+    validation/usd-validation-shade.cc
+    validation/usd-validation-arkit.cc
     validation/usd-validation-report.cc
     validation/usd-validation-physics.cc
     validation/validation-context.cc

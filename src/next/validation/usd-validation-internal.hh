@@ -10,6 +10,9 @@ namespace lightusd {
 namespace next {
 namespace validation_detail {
 
+inline constexpr const char *kLayerLocation = "<layer>";
+inline constexpr const char *kSpecVersion = "AOUSD Core Spec v1.0.1 (2025-12-12)";
+
 struct AppliedSchema {
   std::string name;
   std::string instance_name;
