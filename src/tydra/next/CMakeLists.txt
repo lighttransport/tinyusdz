@@ -31,6 +31,7 @@ set(TYDRA_NEXT_SOURCES
   render-converter-lights.cc
   render-converter-camera.cc
   render-converter-material.cc
+  render-converter-mtlx-eval.cc
   render-converter-physics.cc
   render-converter-hierarchy.cc
   render-converter-bindings.cc
