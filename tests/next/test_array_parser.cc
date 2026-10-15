@@ -54,6 +54,21 @@ def Xform "Root" {
     assert(va && vb && vb->is_lazy());
     assert(va->type_id() == vb->type_id());
     assert(va->array_size() == vb->array_size());
+
+    // Regression: a lazy Value's element count lives in the carrier size
+    // field and must survive copy/move (array_size() reads it directly).
+    // This must run BEFORE `*va == *vb`, which materializes the lazy value
+    // in place and would otherwise hide a lazy copy/move defect.
+    {
+      Value lazy_copy = *vb;
+      assert(lazy_copy.is_lazy());
+      assert(lazy_copy.array_size() == va->array_size());
+      Value lazy_moved = std::move(lazy_copy);
+      assert(lazy_moved.is_lazy());
+      assert(lazy_moved.array_size() == va->array_size());
+      assert(lazy_moved.type_id() == va->type_id());
+    }
+
     assert(*va == *vb);
   }
   for (const char* field : {

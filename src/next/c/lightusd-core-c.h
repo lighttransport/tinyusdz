@@ -866,6 +866,56 @@ LU_CORE_API int lu_crate_encode_delta_s32(const int32_t *values, size_t count,
                                           size_t *out_size,
                                           const char **out_error);
 
+
+/* ============================================================
+ * C11 semi-any value core (src/next/c/value.c)
+ *
+ * Storage kind + tag + compact SBO buffer and a lifetime-dispatch API. The C++
+ * `lightusd::next::Value` keeps the same public API but stores its state as one
+ * `lu_value`; C++-owned payloads (string/array/dict/lazy) stay in the inline slot
+ * behind the payload ops hooks registered at start-up.
+ * ============================================================ */
+#define LU_VALUE_INLINE_CAP 40
+
+typedef enum lu_value_kind {
+    LU_VALUE_EMPTY = 0,
+    LU_VALUE_BLOCK,
+    LU_VALUE_POD,
+    LU_VALUE_STRING,
+    LU_VALUE_ARRAY,
+    LU_VALUE_LAZY_ARRAY,
+    LU_VALUE_DICT,
+    LU_VALUE_BOX
+} lu_value_kind;
+
+typedef struct lu_value {
+    uint16_t type;  /* lu_type_id */
+    uint8_t kind;   /* lu_value_kind */
+    uint8_t flags;
+    uint32_t size;  /* array element count where relevant */
+    union {
+        max_align_t _align;
+        unsigned char bytes[LU_VALUE_INLINE_CAP];
+    } store;
+} lu_value;
+
+typedef struct lu_value_payload_ops {
+    void (*copy)(lu_value* dst, const lu_value* src);
+    void (*move)(lu_value* dst, lu_value* src);
+    void (*destroy)(lu_value* value);
+} lu_value_payload_ops;
+
+LU_CORE_API lu_value_kind lu_value_kind_of (uint16_t type);
+LU_CORE_API void lu_value_init (lu_value* value, uint16_t type);
+LU_CORE_API void lu_value_init_empty (lu_value* value);
+LU_CORE_API void lu_value_init_block (lu_value* value);
+LU_CORE_API void lu_value_destroy (lu_value* value);
+LU_CORE_API void lu_value_copy (lu_value* dst, const lu_value* src);
+LU_CORE_API void lu_value_move (lu_value* dst, lu_value* src);
+LU_CORE_API void lu_value_set_payload_ops (const lu_value_payload_ops* ops);
+
+
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

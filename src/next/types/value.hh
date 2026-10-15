@@ -8,6 +8,7 @@
 
 #include "type-id.hh"
 #include "array-storage.hh"
+#include "../c/lightusd-core-c.h"
 #include <cstddef>
 #include <string>
 #include "../core/string-index.hh"
@@ -29,7 +30,7 @@ public:
   /// 16 doubles). String/array/dictionary storage uses smaller handles. Keeping
   /// this at 128 instead of 136 avoids alignment rounding Value from 144 to 160
   /// bytes, saving 10% in the dense per-prim value pools.
-  static constexpr size_t kSBOSize = 128;
+  static constexpr size_t kSBOSize = LU_VALUE_INLINE_CAP;
 
   // ============================================================
   // Constructors and assignment
@@ -118,6 +119,7 @@ public:
 
   /// Create from raw type ID and data pointer
   static Value MakeFromRaw(TypeId type_id, const void* data);
+  void adopt_pod(const void* data, size_t size);
 
   // ============================================================
   // Array constructors
@@ -290,7 +292,7 @@ public:
 
   /// Decode a lazy array into a fresh temporary Value WITHOUT mutating *this
   /// (the source Value stays lazy). For non-lazy values, returns an ordinary
-  /// copy-on-write copy (preserves dirty_). On decode failure, returns an empty
+  /// copy-on-write copy (preserves ((core_.flags & 0x01u) != 0)). On decode failure, returns an empty
   /// Value (prints as "None", matching in-place materialize() failure). Used by
   /// the writer to format a lazy array once and free it immediately, so peak
   /// resident decoded-array memory is bounded to ~one array.
@@ -406,15 +408,9 @@ private:
   // Shared implementation for the to_float* converting reads.
   bool ToFloatLanes(int lanes, float* out) const;
 
-  TypeId type_id_ = TypeId::Invalid;
-  bool is_array_ = false;
-  bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*
-  bool dirty_ = false;    // materialized and possibly mutated (no byte pass-through)
-  bool is_block_ = false; // authored `= None` block: no data, but not is_empty()
-  uint32_t array_size_ = 0;
+  lu_value core_{};        // C11 tag/kind/storage/size carrier
+  void* large_pod_ = nullptr; // transitional heap box; migrates into BOX kind
 
-  // Storage - either inline or heap-allocated
-  alignas(16) char storage_[kSBOSize];
 
   // Helper functions
   bool uses_heap() const;

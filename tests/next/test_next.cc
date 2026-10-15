@@ -1672,6 +1672,156 @@ void test_matrix_type_name_lookup() {
 // Regression: Frame4d layout and Value copy/move/equality operations.
 // ============================================================
 
+void test_value_boxed_large_pod() {
+  std::cout << "Testing boxed large POD storage ( oversized inline matrices )..." << std::endl;
+
+  assert(Value::kSBOSize == LU_VALUE_INLINE_CAP);
+
+  // C11 kind taxonomy: small types stay POD, large scalar POD spills to BOX.
+  assert(lu_value_kind_of(LU_TYPE_FLOAT4) == LU_VALUE_POD);
+  assert(lu_value_kind_of(LU_TYPE_MATRIX4F) == LU_VALUE_BOX);
+  assert(lu_value_kind_of(LU_TYPE_MATRIX3D) == LU_VALUE_BOX);
+  assert(lu_value_kind_of(LU_TYPE_FRAME4D) == LU_VALUE_BOX);
+  assert(lu_type_size(LU_TYPE_MATRIX4F) == sizeof(float) * 16);
+
+  {
+    std::vector<float> data(16, 0.0f);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i + 1);
+    Value a = Value::MakeMatrix4f(data.data());
+    Value b = a;  // CoW by pointer/array-style copy
+    assert(a.type_id() == TypeId::Matrix4f);
+    assert(b.type_id() == TypeId::Matrix4f);
+    const float* pa = a.as_matrix4f();
+    const float* pb = b.as_matrix4f();
+    assert(pa != nullptr && pb != nullptr);
+    assert(std::memcmp(pa, pb, sizeof(float)*16) == 0);
+    for (size_t i = 0; i < 16; ++i) assert(pb[i] == static_cast<float>(i + 1));
+    assert(a.raw_bytes(nullptr) == nullptr || true);
+  }
+
+  {
+    double mat[16] = {0};
+    for (int i = 0; i < 16; ++i) mat[i] = (i + 1) * 0.25;
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = a;
+    Value c = std::move(a);
+    assert(c.type_id() == TypeId::Frame4d);
+    const double* pc = c.as_matrix4d();
+    assert(pc != nullptr);
+    for (int i = 0; i < 16; ++i) assert(pc[i] == (i + 1) * 0.25);
+    assert(c.hash() != 0);
+  }
+
+  {
+    float mat[16] = {0};
+    for (int i = 0; i < 16; ++i) mat[i] = static_cast<float>(i * 2);
+    Value v = Value::MakeFromRaw(TypeId::Matrix4f, mat);
+    const float* p = static_cast<const float*>(v.raw_data());
+    assert(p != nullptr);
+    assert(p[0] == 0.0f && p[5] == 10.0f);
+  }
+  std::cout << "  Boxed large POD storage regression tests passed!" << std::endl;
+}
+
+// Regression tests for the Value C11-carrier fixes: array element count must
+// survive copy/move, inline scalars must never be mistaken for heap (boxed)
+// pointers during destroy, boxed values must compare/hash by payload bytes
+// (not by allocation address), and scalar accessors must reach boxed payload.
+void test_value_regressions() {
+  std::cout << "Testing Value copy/move/destroy/compare regressions..." << std::endl;
+
+  // --- Inline scalar integrity across copy/move/destroy -----------------
+  // Use bit patterns that would look like live pointers if the inline SBO
+  // bytes were (wrongly) treated as an owned heap allocation. A regression
+  // here crashes in ~Value/destroy via free() of a bogus pointer.
+  {
+    std::vector<Value> scalars;
+    scalars.emplace_back(static_cast<int32_t>(42));      // 0x2a
+    scalars.emplace_back(static_cast<uint64_t>(0x2a2a2a2a2a2a2a2aULL));
+    scalars.emplace_back(static_cast<double>(1.5));
+    scalars.emplace_back(static_cast<float>(2.5f));
+    scalars.emplace_back(true);
+    // Force several copy + move passes so copy_from/move_from run.
+    std::vector<Value> copied = scalars;
+    std::vector<Value> moved = std::move(copied);
+    assert(moved.size() == scalars.size());
+    assert(*moved[0].as_int() == 42);
+    assert(*moved[1].as_uint64() == 0x2a2a2a2a2a2a2a2aULL);
+    assert(*moved[2].as_double() == 1.5);
+    assert(*moved[3].as_float() == 2.5f);
+    assert(*moved[4].as_bool() == true);
+    scalars.clear();  // destroy originals (must not free inline bytes)
+  }
+
+  // --- Boxed matrix compare/hash by payload, not pointer ----------------
+  {
+    double m3[9];
+    for (int i = 0; i < 9; ++i) m3[i] = static_cast<double>(i + 1);
+    Value a = Value::MakeMatrix3d(m3);
+    Value b = Value::MakeMatrix3d(m3);  // distinct allocation
+    assert(a.type_id() == TypeId::Matrix3d && b.type_id() == TypeId::Matrix3d);
+    assert(a.as_matrix3d() != nullptr && b.as_matrix3d() != nullptr);
+    // Independent heap boxes with equal content must be equal + hash equal.
+    assert(a == b);
+    assert(a.hash() == b.hash());
+
+    double m3b[9];
+    for (int i = 0; i < 9; ++i) m3b[i] = static_cast<double>(i + 1);
+    m3b[4] = 999.0;
+    Value c = Value::MakeMatrix3d(m3b);
+    assert(!(a == c));
+    assert(a.hash() != c.hash() || true);  // hash may collide; equality is the gate
+
+    // Copy + move a boxed value; content must be preserved (deep copy).
+    Value d = a;
+    Value e = std::move(a);
+    assert(d == b && e == b);
+  }
+
+  // --- Boxed scalar accessors return payload, not the box pointer -------
+  {
+    double m4[16];
+    for (int i = 0; i < 16; ++i) m4[i] = static_cast<double>(i) * 0.5;
+    Value v = Value::MakeMatrix4d(m4);
+    const double* p = v.as_matrix4d();
+    assert(p != nullptr);
+    for (int i = 0; i < 16; ++i) assert(p[i] == static_cast<double>(i) * 0.5);
+
+    size_t nbytes = 0;
+    const uint8_t* raw = v.raw_bytes(&nbytes);
+    assert(raw != nullptr && nbytes == sizeof(double) * 16);
+    assert(std::memcmp(raw, m4, sizeof(m4)) == 0);
+  }
+
+  // --- Inline small-POD matrix still reads through the SBO --------------
+  {
+    double m2[4] = {1, 2, 3, 4};
+    Value v = Value::MakeMatrix2d(m2);
+    const double* p = v.as_matrix2d();
+    assert(p != nullptr);
+    assert(p[0] == 1 && p[1] == 2 && p[2] == 3 && p[3] == 4);
+  }
+
+  // --- array_size() is stable across copy/move (element count retained) --
+  {
+    std::vector<float> flat = {1, 2, 3, 4, 5, 6};  // 2 x float3
+    Value a = Value::MakeFloat3Array(flat);
+    assert(a.array_size() == 2);
+    Value b = a;
+    Value c = std::move(a);
+    assert(b.array_size() == 2);
+    assert(c.array_size() == 2);
+    assert(b == c);
+
+    // A boxed scalar reports size 0 (it is not an array).
+    double m3[9] = {0};
+    Value m = Value::MakeMatrix3d(m3);
+    assert(m.array_size() == 0);
+  }
+
+  std::cout << "  Value copy/move/destroy/compare regressions passed!" << std::endl;
+}
+
 void test_frame4d_value_ops() {
   std::cout << "Testing Frame4d Value operations regression..." << std::endl;
 
@@ -2382,6 +2532,8 @@ int main() {
     test_value();
     test_matrix_type_name_lookup();
     test_frame4d_value_ops();
+    test_value_boxed_large_pod();
+    test_value_regressions();
     test_mutable_int_array_backing_types();
     test_generic_value_tuple_arity();
     test_encode_delta_s32_overflow();

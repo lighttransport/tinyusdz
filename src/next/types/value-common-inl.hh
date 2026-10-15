@@ -1,3 +1,4 @@
+#include <cstring>
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "value.hh"
@@ -94,3 +95,7 @@ inline bool FinalizeLazyDecode(const LazyArrayRef& ref, Value* decoded) {
 }
 }  // namespace next
 }  // namespace lightusd
+
+inline void AdoptPod(lightusd::next::Value& v, const void* data, size_t size) {
+  v.adopt_pod(data, size);
+}
