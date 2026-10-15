@@ -5,6 +5,8 @@
 set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     types/type-info.cc
     types/value.cc
+    types/value-constructors.cc
+    types/value-constructors.cc
     types/array-storage.cc
     types/value-dict.cc
     c/string-index.c
