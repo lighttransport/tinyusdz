@@ -68,6 +68,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     composition/composition.cc
     composition/composition-variants.cc
     composition/composition-merge.cc
+    composition/composition-merge-helpers.cc
     resolver/asset-resolver.cc
     pipeline/flatten.cc
     pcp/layer-registry.cc
