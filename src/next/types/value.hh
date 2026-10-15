@@ -277,6 +277,12 @@ public:
   /// recursive dictionaries. Numeric array payloads are accounted separately.
   size_t dynamic_string_memory_usage() const;
 
+  /// Total estimated heap bytes owned by this value: dynamic string bytes plus
+  /// numeric array payloads (array_size * element width), recursing into nested
+  /// dictionary values. This is the single source of truth for value heap
+  /// accounting used by Layer/PrimSpec/block memory_usage().
+  size_t heap_memory_usage() const;
+
   /// True if the value was materialized AND potentially mutated (so write-time
   /// byte pass-through is no longer safe).
   bool is_dirty() const;

@@ -1822,6 +1822,28 @@ void test_value_regressions() {
   std::cout << "  Value copy/move/destroy/compare regressions passed!" << std::endl;
 }
 
+void test_value_heap_memory_usage() {
+  std::cout << "Testing Value::heap_memory_usage accounting..." << std::endl;
+  // Regression: element width must be GetTypeSize (full element width), not a
+  // fixed 4-byte multiplier. double[] of N is N*8; float3[] of N is N*12.
+  {
+    Value d = Value::MakeDoubleArray(std::vector<double>{1, 2, 3});
+    assert(d.array_size() == 3);
+    assert(d.heap_memory_usage() == 3 * sizeof(double));
+  }
+  {
+    std::vector<float> flat = {1, 2, 3, 4, 5, 6};  // 2 x float3
+    Value f3 = Value::MakeFloat3Array(flat);
+    assert(f3.array_size() == 2);
+    assert(f3.heap_memory_usage() == 2 * 3 * sizeof(float));
+  }
+  {
+    Value s = Value(std::string("hello"));
+    assert(s.heap_memory_usage() >= 5);
+  }
+  std::cout << "  Value::heap_memory_usage accounting passed!" << std::endl;
+}
+
 void test_frame4d_value_ops() {
   std::cout << "Testing Frame4d Value operations regression..." << std::endl;
 
@@ -2534,6 +2556,7 @@ int main() {
     test_frame4d_value_ops();
     test_value_boxed_large_pod();
     test_value_regressions();
+    test_value_heap_memory_usage();
     test_mutable_int_array_backing_types();
     test_generic_value_tuple_arity();
     test_encode_delta_s32_overflow();

@@ -789,24 +789,7 @@ size_t PrimSpec::memory_usage() const {
     }
   };
   const auto add_value = [&add](const Value& value) {
-    add(value.dynamic_string_memory_usage());
-    if (value.is_array() && !value.is_lazy()) {
-      add(safe::saturating_mul(value.array_size(),
-                               GetTypeSize(value.type_id())));
-    }
-    if (!value.as_dictionary()) return;
-    std::vector<const Value*> pending{&value};
-    while (!pending.empty()) {
-      const Value* current = pending.back();
-      pending.pop_back();
-      if (current != &value && current->is_array() && !current->is_lazy()) {
-        add(safe::saturating_mul(current->array_size(),
-                                 GetTypeSize(current->type_id())));
-      }
-      if (const Dict* dict = current->as_dictionary()) {
-        for (const auto& entry : dict->entries()) pending.push_back(&entry.second);
-      }
-    }
+    add(value.heap_memory_usage());
   };
   const auto add_extensions = [&add, &add_value](
       const std::vector<DecodedExtensionField>& fields) {

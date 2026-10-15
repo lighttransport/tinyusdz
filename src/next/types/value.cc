@@ -18,6 +18,7 @@
 #include <new>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace lightusd {
 namespace next {
@@ -911,6 +912,34 @@ size_t Value::dynamic_string_memory_usage() const {
     }
   }
   if (const Dict* dict = as_dictionary()) add(dict->dynamic_string_memory_usage());
+  return bytes;
+}
+
+size_t Value::heap_memory_usage() const {
+  size_t bytes = dynamic_string_memory_usage();
+  const auto add = [&bytes](size_t n) {
+    bytes = n > (std::numeric_limits<size_t>::max)() - bytes
+        ? (std::numeric_limits<size_t>::max)() : bytes + n;
+  };
+  const auto multiply = [](size_t a, size_t b) {
+    return a && b > (std::numeric_limits<size_t>::max)() / a
+        ? (std::numeric_limits<size_t>::max)() : a * b;
+  };
+  if (is_array() && !is_lazy()) {
+    add(multiply(array_size(), GetTypeSize(type_id())));
+  }
+  if (!as_dictionary()) return bytes;
+  std::vector<const Value*> pending{this};
+  while (!pending.empty()) {
+    const Value* current = pending.back();
+    pending.pop_back();
+    if (current != this && current->is_array() && !current->is_lazy()) {
+      add(multiply(current->array_size(), GetTypeSize(current->type_id())));
+    }
+    if (const Dict* dict = current->as_dictionary()) {
+      for (const auto& entry : dict->entries()) pending.push_back(&entry.second);
+    }
+  }
   return bytes;
 }
 

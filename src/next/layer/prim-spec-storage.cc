@@ -513,15 +513,7 @@ Value* ValueBlockStorage::get(uint32_t offset) {
 size_t ValueBlockStorage::memory_usage() const {
   size_t size = safe::saturating_mul(values_.capacity(), sizeof(Value));
   for (const auto& v : values_) {
-    size = safe::saturating_add(size, v.dynamic_string_memory_usage());
-    if (v.is_array()) {
-      // Type size is the full array element width (including vector/quaternion
-      // components); the old fixed four-byte multiplier undercounted double
-      // and multi-component arrays. Variable-sized string arrays are charged
-      // by dynamic_string_memory_usage above.
-      size = safe::saturating_add(size, safe::saturating_mul(
-          v.array_size(), GetTypeSize(v.type_id())));
-    }
+    size = safe::saturating_add(size, v.heap_memory_usage());
   }
   return size;
 }
@@ -705,10 +697,7 @@ size_t TimeSampleBlock::memory_usage() const {
   // Values
   add(safe::saturating_mul(values_.capacity(), sizeof(Value)));
   for (const auto& v : values_) {
-    // Add array storage size if applicable
-    if (v.is_array()) {
-      add(safe::saturating_mul(v.array_size(), size_t{4}));
-    }
+    add(v.heap_memory_usage());
   }
 
   // Samples map
