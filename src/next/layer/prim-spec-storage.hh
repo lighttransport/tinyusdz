@@ -141,3 +141,8 @@ private:
 /// - Properties accessed via O(1) indexed lookup
 /// - Values stored in contiguous memory
 /// - Children stored as indices, not pointers
+
+std::string NormalizeAssetPathForRemap(std::string path);
+const std::string* FindAssetPathRemap(
+    const std::map<std::string, std::string>& remap,
+    const std::string& path);

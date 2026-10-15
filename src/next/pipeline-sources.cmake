@@ -36,6 +36,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     layer/array-edit.cc
     layer/property-index.cc
     layer/prim-spec.cc
+    layer/prim-spec-storage.cc
     layer/layer.cc
     stage/stage.cc
     crate/crate-format.cc
