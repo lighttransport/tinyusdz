@@ -13,7 +13,6 @@
 #include <vector>
 namespace lightusd { namespace tydra { namespace next {
 namespace {
-size_t SaturatingMul(size_t a, size_t b) { return a && b > std::numeric_limits<size_t>::max() / a ? std::numeric_limits<size_t>::max() : a * b; }
 bool GetToken(const UsdPrim& prim, const char* name, std::string* out) { const Value* v=prim.GetPropertyValue(name); if (!v || !out) return false; if (const std::string* x=v->as_token()) {*out=*x; return true;} if (const std::string* x=v->as_string()) {*out=*x; return true;} return false; }
 void ComputePointBounds(const FloatChunked& p, Float3* lo, Float3* hi, bool* has) { if (!lo || !hi || !has || p.size()<3) return; *lo=Float3(1e30f,1e30f,1e30f); *hi=Float3(-1e30f,-1e30f,-1e30f); for(size_t i=0;i<p.size()/3;++i){ const float x=p[i*3],y=p[i*3+1],z=p[i*3+2]; lo->x=std::min(lo->x,x);lo->y=std::min(lo->y,y);lo->z=std::min(lo->z,z);hi->x=std::max(hi->x,x);hi->y=std::max(hi->y,y);hi->z=std::max(hi->z,z);} *has=true; }
 }  // namespace

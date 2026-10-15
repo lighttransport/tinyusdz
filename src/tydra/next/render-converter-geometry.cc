@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: Apache-2.0
+// Geometry foundation (extent/size estimation) shared by the retained and
+// streaming conversion drivers. Split from render-converter.cc.
+#include "safe-arithmetic.hh"
+#include "../../next/layer/prim-spec.hh"
+#include "next/core/path-expression-eval.hh"
+#include "next/schema/usd-vol.hh"
+#include "next/schema/usd-geom-camera.hh"
+#include "render-converter-internal.hh"
+#include "render-converter-assembly.hh"
+#include "render-converter-material-finalize.hh"
+#include "render-converter-light-linking.hh"
+#include "next/schema/color-space.hh"
+#include "next/eval/value-clip.hh"
+#include "next/resolver/asset-resolver.hh"
+#include "materialx.hh"
+#include "next/layer/asset-anchor.hh"
+#include "next/resolver/asset-resolver.hh"
+#include "next/schema/usdPhysics.hh"
+#include "next/schema/usd-shade.hh"
+#include "next/schema/usd-skel.hh"
+#include "next/types/type-info.hh"
+#include "tydra/fast-mikktspace.hh"
+#include "tydra/mikktspace-tangent.hh"
+#include "tydra/shape-to-mesh.hh"
+#include "tydra/tangent-quantize.hh"
+#include "tsd/tinysubdiv.hh"
+#include "external/mapbox/earcut/earcut.hpp"
+#include <cmath>
+#include <algorithm>
+#include <cstring>
+#include <limits>
+#include <map>
+#include <deque>
+#include <memory>
+#include <unordered_map>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <iomanip>
+#include <atomic>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <thread>
+#endif
+#include <unordered_set>
+
+namespace lightusd {
+namespace tydra {
+namespace next {
+
+namespace {
+const ::lightusd::next::PropNameId& kIdFaceVertexCounts() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("faceVertexCounts");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdFaceVertexIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("faceVertexIndices");
+  return id;
+}
+
+
+
+
+
+const ::lightusd::next::PropNameId& kIdHoleIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("holeIndices");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdPoints() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("points");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdTetVertexIndices() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("tetVertexIndices");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdNormals() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("normals");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdDisplayColor() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("primvars:displayColor");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdDisplayOpacity() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("primvars:displayOpacity");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdPrimvarsSt() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("primvars:st");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdExtent() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("extent");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdCurveVertexCounts() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("curveVertexCounts");
+  return id;
+}
+
+const ::lightusd::next::PropNameId& kIdWidths() {
+  static const ::lightusd::next::PropNameId id =
+      ::lightusd::next::GetPropNameTable().intern("widths");
+  return id;
+}
+
+
+size_t AuthoredArraySize(const UsdPrim& prim,
+                        const ::lightusd::next::PropNameId& name_id) {
+  const Value* value = prim.GetPropertyValue(name_id);
+  return value && value->is_array() ? value->array_size() : 0;
+}
+
+bool HasAuthoredExtent(const UsdPrim& prim) {
+  return AuthoredArraySize(prim, kIdExtent()) >= 2;
+}
+}  // namespace
+
+GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
+                               int32_t id) {
+  GeometryInfo info;
+  info.kind = kind;
+  info.id = id;
+  info.prim_path = prim.GetPath().str();
+  info.type_name = prim.GetTypeName();
+  info.point_count = AuthoredArraySize(prim, kIdPoints());
+  info.has_authored_extent = HasAuthoredExtent(prim);
+
+  size_t estimate = 0;
+  if (kind == GeometryKind::Mesh) {
+    info.index_count = AuthoredArraySize(prim, kIdFaceVertexIndices());
+    // Account for decoded source arrays, render arrays, triangulation, and
+    // face-varying remaps. This intentionally errs high for residency policy.
+    estimate = SaturatingMul(info.point_count, 24);
+    estimate = SaturatingAdd(estimate,
+                             SaturatingMul(info.index_count, 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdFaceVertexCounts()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdNormals()), 24));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdPrimvarsSt()), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 24));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdTetVertexIndices()), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdHoleIndices()), 8));
+  } else if (kind == GeometryKind::Points) {
+    estimate = SaturatingMul(info.point_count, 48);
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 16));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
+  } else {
+    estimate = SaturatingMul(info.point_count, 40);
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdCurveVertexCounts()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 12));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 20));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
+  }
+  info.estimated_resident_bytes = estimate;
+  return info;
+}
+
+GeometryInfo RenderSceneConverter::Impl::GetGeometryInfo(const UsdPrim& prim,
+                                                    GeometryKind kind,
+                                                    int32_t id) const {
+  return BuildGeometryInfo(prim, kind, id);
+}
+
+}  // namespace next
+}  // namespace tydra
+}  // namespace lightusd

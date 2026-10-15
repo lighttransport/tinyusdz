@@ -13,6 +13,11 @@ set(TYDRA_NEXT_SOURCES
     scene-access.cc
     render-extract.cc
     render-converter.cc
+    render-converter-saturating.cc
+    render-converter-state.cc
+    render-converter-sink.cc
+    render-converter-geometry.cc
+    render-converter-convert.cc
     render-converter-points.cc
     render-converter-curves.cc
     render-converter-tangents.cc

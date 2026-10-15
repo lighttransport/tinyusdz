@@ -385,12 +385,6 @@ bool FirstArrayElementToFloat4(const std::vector<float>& values,
   return true;
 }
 
-size_t SaturatingMul(size_t a, size_t b) {
-  if (a != 0 && b > std::numeric_limits<size_t>::max() / a) {
-    return std::numeric_limits<size_t>::max();
-  }
-  return a * b;
-}
 
 }  // namespace
 

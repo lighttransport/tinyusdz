@@ -7,10 +7,6 @@
 #include <string>
 namespace lightusd { namespace tydra { namespace next {
 namespace {
-size_t SaturatingMul(size_t a, size_t b) {
-  if (a != 0 && b > std::numeric_limits<size_t>::max() / a) return std::numeric_limits<size_t>::max();
-  return a * b;
-}
 template <typename Chunked>
 
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {

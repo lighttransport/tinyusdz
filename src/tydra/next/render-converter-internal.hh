@@ -235,6 +235,11 @@ class RenderSceneConverter::Impl {
   };
 };
 
+size_t SaturatingAdd(size_t a, size_t b);
+size_t SaturatingMul(size_t a, size_t b);
+GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
+                               int32_t id = -1);
+
 }  // namespace next
 }  // namespace tydra
 }  // namespace lightusd

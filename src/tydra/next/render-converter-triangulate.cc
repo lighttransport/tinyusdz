@@ -24,10 +24,6 @@ constexpr uint32_t kEarcutMaxVertices = 16384;
 bool WouldOverflowSizeMul(size_t a, size_t b) {
   return a != 0 && b > std::numeric_limits<size_t>::max() / a;
 }
-size_t SaturatingMul(size_t a, size_t b) {
-  return a && b > (std::numeric_limits<size_t>::max() / a)
-             ? std::numeric_limits<size_t>::max() : a * b;
-}
 }  // namespace
 
 bool RenderSceneConverter::Impl::TriangulateMesh(RenderMesh* mesh) {
