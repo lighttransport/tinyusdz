@@ -70,6 +70,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     resolver/asset-resolver.cc
     pipeline/flatten.cc
     pcp/layer-registry.cc
+    pcp/layer-registry-load.cc
     reader/usda-reader.cc
     reader/usdc-reader.cc
     reader/usdz-reader.cc
