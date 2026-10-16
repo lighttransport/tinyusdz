@@ -11,9 +11,12 @@
 #include "crate-allocation-budget.hh"
 #include "stream-reader.hh"
 #include "../layer/prim-spec.hh"  // PropMeta (property metadata decode)
+#include "../layer/prim-spec-variant-data.hh"
+#include "../layer/layer.hh"
 
 #include <limits>
 #include <memory>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -134,7 +137,93 @@ class PathPool {
   std::vector<Span> spans_;
 };
 
+  struct PrimEntry {
+    std::string full_path;
+    std::string name;
+    std::string type_name;
+    PrimSpecifier specifier;
+    uint32_t fieldset_index = 0;
+    uint32_t path_index = 0;  // PATHS slot of full_path
+  };
+
+  struct VariantOptRecord {
+    std::string owner;
+    std::string set;
+    std::string option;
+  };
+  struct VariantSelRecord {
+    std::string prim_path;
+    std::vector<std::pair<std::string, std::string>> sels;
+  };
+  struct PrimRecords {
+    std::vector<PrimEntry> entries;
+    std::vector<VariantOptRecord> opts;
+    std::vector<VariantSelRecord> sels;
+  };
+  struct AttrCold {
+    ArrayEditData array_edit;  // VtArrayEdit default (crate 0.14)
+    std::vector<std::string> connection_targets;
+    ArcListOp connection_edit;
+    std::string spline_text;  // Crate type-59 spline, decoded to USDA text
+  };
+  struct AttrInfo {
+    std::string name;
+    std::string type_name;
+    bool has_default = false;
+    bool has_array_edit = false;
+    bool is_connection = false;  // implies `cold`
+    bool uniform = false;
+    bool custom = false;
+    Value default_value;
+    std::vector<std::pair<double, Value>> time_samples;
+    std::unique_ptr<AttrCold> cold;
+    // Per-property metadata (round-tripped via attribute spec fields);
+    // `meta->authored` bits record which fields were present.
+    std::unique_ptr<PropMeta> meta;
+    AttrCold& ensure_cold() {
+      if (!cold) cold.reset(new AttrCold());
+      return *cold;
+    }
+    PropMeta& ensure_meta() {
+      if (!meta) meta.reset(new PropMeta());
+      return *meta;
+    }
+  };
+  struct RelInfo {
+    std::string name;
+    std::vector<std::string> targets;
+    ArcListOp edits;        // authored list-op sublists (marker-decoded)
+    bool custom = false;
+    bool uniform = false;
+    bool variability_authored = false;
+    bool varying = false;
+    // Relationships carry PropMeta too (doc/hidden/...).
+    std::unique_ptr<PropMeta> meta;
+    PropMeta& ensure_meta() {
+      if (!meta) meta.reset(new PropMeta());
+      return *meta;
+    }
+  };
+struct PrimBuildState {
+  Layer& layer;
+  LayerBuilder& builder;
+  std::vector<PrimEntry>& prim_entries;
+  std::unordered_map<std::string_view, uint32_t>& entry_by_path;
+  std::vector<uint32_t>& entry_prim;
+  std::vector<std::vector<std::string>>& children_order;
+  std::unordered_map<std::string, std::vector<std::string>>& prim_children_order;
+  bool& irregular_entries;
+  std::vector<AttrInfo*>& attr_refs;
+  std::vector<RelInfo*>& rel_refs;
+  std::vector<uint32_t>& attr_off;
+  std::vector<uint32_t>& rel_off;
+  std::unordered_map<std::string, std::map<std::string, std::string>>& variant_sel;
+  std::unordered_map<std::string, std::map<std::string, std::vector<std::string>>>& variant_opts;
+};
+
 class CrateReader::Impl {
+ public:
+  using ReportFn = std::function<bool(const char*, size_t, size_t)>;
  public:
   explicit Impl(const CrateReadOptions& options) : options_(options) {}
 
@@ -237,6 +326,9 @@ class CrateReader::Impl {
   bool DecodePropMetaField(const std::string& name, ValueRep rep,
                            PropMeta& pm);
   bool BuildStage();
+  void EmitPrimBody(PrimBuildState& state, size_t entry_index,
+                    std::vector<std::pair<std::string, Value>>& scratch,
+                    const ReportFn& report);
 
   // `depth` is the nesting depth of the value being unpacked. It MUST be
   // threaded through by every recursive caller: the UnregisteredValue wrapper
