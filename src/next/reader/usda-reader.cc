@@ -111,29 +111,6 @@ LoadResult LoadUSDAFromStringOwned(std::string&& data,
   return result;
 }
 
-bool IsUSDAFile(const char* filename) {
-  if (!filename) {
-    return false;
-  }
-
-  std::ifstream file(filename, std::ios::binary);
-  if (!file.is_open()) {
-    return false;
-  }
-
-  // Read first 16 bytes and look for #usda signature
-  char buffer[16] = {0};
-  file.read(buffer, sizeof(buffer) - 1);
-
-  // Check for #usda header
-  if (std::strncmp(buffer, "#usda", 5) == 0) {
-    return true;
-  }
-
-  // Could also start with whitespace or comments
-  // For now, just check for the #usda signature
-  return false;
-}
 
 }  // namespace next
 }  // namespace lightusd

@@ -740,11 +740,6 @@ std::string AssetResolver::GetDirectory(const std::string& path) {
   return path.substr(0, pos);
 }
 
-std::string AssetResolver::GetFilename(const std::string& path) {
-  size_t pos = path.find_last_of("/\\");
-  if (pos == std::string::npos) return path;
-  return path.substr(pos + 1);
-}
 
 std::string AssetResolver::NormalizePath(const std::string& path) {
   if (path.empty()) return path;

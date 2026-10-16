@@ -193,7 +193,6 @@ size_t GetTypeAlignment(TypeId id) { return lu_type_alignment(T(id)); }
 
 bool IsScalarType(TypeId id) { return lu_type_is_scalar(T(id)) != 0; }
 
-bool IsNumericType(TypeId id) { return lu_type_is_numeric(T(id)) != 0; }
 
 TypeId GetComponentType(TypeId id) {
   return static_cast<TypeId>(lu_type_component_type(T(id)));

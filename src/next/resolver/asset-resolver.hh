@@ -205,7 +205,6 @@ public:
   static std::string GetDirectory(const std::string& path);
 
   /// Get filename part of path
-  static std::string GetFilename(const std::string& path);
 
   /// Normalize path (resolve . and .., normalize separators)
   static std::string NormalizePath(const std::string& path);

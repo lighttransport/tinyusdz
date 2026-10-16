@@ -574,16 +574,6 @@ bool UsdGeomXform::GetTranslationAtTimecode(double timecode, float* x,
   return false;
 }
 
-bool IsXformable(const UsdPrim& prim) {
-  if (!prim.IsValid()) return false;
-  const std::string& type = prim.GetTypeName();
-  // Most geometry types are xformable
-  return type == "Xform" || type == "Mesh" || type == "Sphere" ||
-         type == "Cube" || type == "Cylinder" || type == "Cone" ||
-         type == "Capsule" || type == "Camera" || type == "Points" ||
-         type == "BasisCurves" || type == "NurbsCurves" ||
-         type == "SkelRoot" || type == "Skeleton";
-}
 
 bool IsXform(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;

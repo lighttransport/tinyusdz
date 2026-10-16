@@ -350,7 +350,6 @@ struct CompressResult {
 };
 
 /// Compress data with LZ4
-CompressResult CompressLZ4(const uint8_t* src, size_t src_size);
 
 /// Encode integers using USD's integer compression (inverse of DecompressIntegers)
 /// Returns the compressed byte representation.

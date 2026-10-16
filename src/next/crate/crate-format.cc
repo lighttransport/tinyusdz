@@ -43,30 +43,6 @@ DecompressResult DecompressLZ4(const uint8_t* src, size_t src_size,
   return result;
 }
 
-CompressResult CompressLZ4(const uint8_t* src, size_t src_size) {
-  CompressResult result;
-  if (!src || src_size == 0) {
-    result.success = true;
-    return result;
-  }
-  size_t bound = 0;
-  if (!lu_lz4_compress_bound(src_size, &bound)) {
-    result.error = "LZ4_compressBound failed";
-    return result;
-  }
-  result.data.resize(bound);
-  const char* error = nullptr;
-  size_t out_size = 0;
-  if (lu_lz4_compress(src, src_size, result.data.data(), bound, &out_size,
-                      &error)) {
-    result.data.resize(out_size);
-    result.success = true;
-  } else {
-    result.data.clear();
-    result.error = error ? error : "LZ4 compression failed";
-  }
-  return result;
-}
 
 // ============================================================
 // TfFastCompression wrappers (pxrUSD crate LZ4 format)

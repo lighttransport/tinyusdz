@@ -31,22 +31,6 @@ namespace {
 // relative and may carry a directory prefix the authored path omits, so accept
 // an exact match, a path-suffix match on a directory boundary, or a basename
 // match as the last resort.
-bool UsdzEntryMatches(const std::string& entry, const std::string& asset) {
-  std::string a = asset;
-  if (a.rfind("./", 0) == 0) a = a.substr(2);
-  if (entry == a) return true;
-  if (entry.size() > a.size() &&
-      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
-      entry[entry.size() - a.size() - 1] == '/') {
-    return true;
-  }
-  auto base = [](const std::string& s) {
-    const size_t p = s.find_last_of('/');
-    return p == std::string::npos ? s : s.substr(p + 1);
-  };
-  return base(entry) == base(a);
-}
-
 bool SourceImageWithinLimit(const TextureDecodeOptions& opt,
                             const uint8_t* data, size_t size,
                             const std::string& uri) {
