@@ -275,13 +275,7 @@ struct SliceParser {
       }
       if (c == '\\' && p < end) {
         char esc = *p++;
-        auto hexval = [](char h) -> int {
-          if (h >= '0' && h <= '9') return h - '0';
-          if (h >= 'a' && h <= 'f') return h - 'a' + 10;
-          if (h >= 'A' && h <= 'F') return h - 'A' + 10;
-          return -1;
-        };
-        switch (esc) {
+                switch (esc) {
           case 'n': out->push_back('\n'); break;
           case 'r': out->push_back('\r'); break;
           case 't': out->push_back('\t'); break;
@@ -295,8 +289,8 @@ struct SliceParser {
           case 'x': {
             // \xNN — up to two hex digits (matches the scalar lexer decode)
             int v = 0, n = 0;
-            while (n < 2 && p < end && hexval(*p) >= 0) {
-              v = v * 16 + hexval(*p);
+            while (n < 2 && p < end && lu_lex_hex_val(*p) >= 0) {
+              v = v * 16 + lu_lex_hex_val(*p);
               ++p;
               ++n;
             }
@@ -322,8 +316,8 @@ struct SliceParser {
             const int want = (esc == 'u') ? 4 : 8;
             uint32_t cp = 0;
             int n = 0;
-            while (n < want && p < end && hexval(*p) >= 0) {
-              cp = cp * 16 + static_cast<uint32_t>(hexval(*p));
+            while (n < want && p < end && lu_lex_hex_val(*p) >= 0) {
+              cp = cp * 16 + static_cast<uint32_t>(lu_lex_hex_val(*p));
               ++p;
               ++n;
             }

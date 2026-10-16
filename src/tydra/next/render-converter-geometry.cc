@@ -7,6 +7,7 @@
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include "render-converter-internal.hh"
+#include "render-converter-prop-ids.hh"
 #include "render-converter-assembly.hh"
 #include "render-converter-material-finalize.hh"
 #include "render-converter-light-linking.hh"
@@ -49,81 +50,21 @@ namespace tydra {
 namespace next {
 
 namespace {
-const ::lightusd::next::PropNameId& kIdFaceVertexCounts() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("faceVertexCounts");
-  return id;
-}
-
-const ::lightusd::next::PropNameId& kIdFaceVertexIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("faceVertexIndices");
-  return id;
-}
 
 
 
 
 
-const ::lightusd::next::PropNameId& kIdHoleIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("holeIndices");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdPoints() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("points");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdTetVertexIndices() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("tetVertexIndices");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdNormals() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("normals");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdDisplayColor() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("primvars:displayColor");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdDisplayOpacity() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("primvars:displayOpacity");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdPrimvarsSt() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("primvars:st");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdExtent() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("extent");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdCurveVertexCounts() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("curveVertexCounts");
-  return id;
-}
 
-const ::lightusd::next::PropNameId& kIdWidths() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("widths");
-  return id;
-}
+
 
 
 size_t AuthoredArraySize(const UsdPrim& prim,

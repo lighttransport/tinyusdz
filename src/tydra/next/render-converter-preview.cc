@@ -7,6 +7,7 @@
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include "render-converter-internal.hh"
+#include "render-converter-prop-ids.hh"
 #include "render-converter-mtlx-eval.hh"
 #include "mem-budget.hh"
 #include "next/schema/color-space.hh"
@@ -41,11 +42,6 @@
 namespace lightusd { namespace tydra { namespace next {
 using ::lightusd::next::Stage; using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
 namespace {
-const ::lightusd::next::PropNameId& kIdOutputsOut() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("outputs:out");
-  return id;
-}
 
 bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
                        double time_code) {

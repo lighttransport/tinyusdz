@@ -6,6 +6,7 @@
 #include "next/schema/usd-vol.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include "render-converter-internal.hh"
+#include "render-converter-prop-ids.hh"
 #include "render-converter-assembly.hh"
 #include "render-converter-material-finalize.hh"
 #include "render-converter-light-linking.hh"
@@ -68,11 +69,6 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
   return false;
 }
 
-const ::lightusd::next::PropNameId& kIdInputsTextureFile() {
-  static const ::lightusd::next::PropNameId id =
-      ::lightusd::next::GetPropNameTable().intern("inputs:texture:file");
-  return id;
-}
 
 std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim,
                                                  const std::string& name) {
