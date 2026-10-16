@@ -126,6 +126,7 @@ set(LIGHTUSD_NEXT_SOURCES
 
     # High-level API
     lightusd-next.cc
+    format-detect.cc
 )
 
 # Define header files (for IDE project generation)
