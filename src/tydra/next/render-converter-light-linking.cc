@@ -4,6 +4,7 @@
 // Collection API and path-expression based light-link resolution.
 
 #include "render-converter-light-linking.hh"
+#include "render-converter-prop-read.hh"
 #include "../../next/layer/prim-spec.hh"
 #include "render-data.hh"
 #include "next/core/path-expression-eval.hh"
@@ -22,27 +23,7 @@ using ::lightusd::next::UsdPrim;
 using ::lightusd::next::Value;
 namespace {
 
-bool GetBool(const UsdPrim& prim, const std::string& name, bool* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false;
-  *out = *result;
-  return true;
-}
 
-bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value || !out) return false;
-  if (const std::string* result = value->as_token()) {
-    *out = *result;
-    return true;
-  }
-  if (const std::string* result = value->as_string()) {
-    *out = *result;
-    return true;
-  }
-  return false;
-}
 
 // Mesh paths sorted lexicographically, built ONCE per ResolveLightLinking call
 // and shared by every light and both link kinds.
@@ -252,9 +233,9 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
   if (!includes && !excludes) return;  // unauthored -> links all
 
   bool include_root = false;
-  GetBool(prim, base + "includeRoot", &include_root);
+  GetPropBool(prim, base + "includeRoot", &include_root);
   std::string rule = "expandPrims";
-  GetToken(prim, base + "expansionRule", &rule);
+  GetPropToken(prim, base + "expansionRule", &rule);
   const bool explicit_only = (rule == "explicitOnly");
   const std::string& owner_path = prim.GetPath().str();
 

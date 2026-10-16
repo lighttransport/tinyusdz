@@ -4,6 +4,7 @@
 // Tydra Next - Mesh topology and geometry extraction
 
 #include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -13,22 +14,7 @@ namespace lightusd { namespace tydra { namespace next {
 using ::lightusd::next::UsdPrim;
 using ::lightusd::next::Value;
 namespace {
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  if (!out) return false;
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value || !value->as_bool()) return false;
-  *out = *value->as_bool();
-  return true;
-}
 
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  if (!out) return false;
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value) return false;
-  if (const std::string* token = value->as_token()) { *out = *token; return true; }
-  if (const std::string* text = value->as_string()) { *out = *text; return true; }
-  return false;
-}
 
 }  // namespace
 
@@ -60,11 +46,11 @@ bool RenderSceneConverter::Impl::ExtractMeshTopology(const UsdPrim& prim, Render
   }
 
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetPropToken(prim, "orientation", &orientation)) {
     mesh->left_handed = (orientation == "leftHanded");
   }
 
-  GetBool(prim, "doubleSided", &mesh->double_sided);
+  GetPropBool(prim, "doubleSided", &mesh->double_sided);
 
   // holeIndices: face indices excluded from rendering.
   {

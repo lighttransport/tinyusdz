@@ -20,6 +20,10 @@ size_t SaturatingMul(size_t a, size_t b) {
   return a * b;
 }
 
+bool WouldOverflowSizeMul(size_t a, size_t b) {
+  return a != 0 && b > std::numeric_limits<size_t>::max() / a;
+}
+
 
 
 }  // namespace next

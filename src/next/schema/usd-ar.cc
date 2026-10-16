@@ -4,6 +4,7 @@
 // LightUSD Next - UsdAR Schema Implementation
 
 #include "usd-ar.hh"
+#include "schema-predicates.hh"
 #include "../layer/prim-spec.hh"
 
 namespace lightusd {
@@ -13,16 +14,7 @@ namespace next {
 // Helpers
 // ============================================================
 
-static bool HasAPISchema(const UsdPrim& prim, const std::string& name) {
-  for (const auto& s : prim.GetMeta().apiSchemas()) {
-    if (s == name) return true;
-  }
-  return false;
-}
 
-static bool IsType(const UsdPrim& prim, const std::string& type) {
-  return prim.IsValid() && prim.GetTypeName() == type;
-}
 
 // ============================================================
 // Typed prims

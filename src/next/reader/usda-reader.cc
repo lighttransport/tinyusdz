@@ -4,6 +4,7 @@
 // LightUSD Next - USDA Reader implementation
 
 #include "usda-reader.hh"
+#include "../next-util.hh"
 #include "../parser/ascii-parser.hh"
 #include "../strfmt.hh"
 
@@ -16,13 +17,6 @@ namespace next {
 
 namespace {
 
-std::string GetBaseDir(const std::string& filename) {
-  size_t pos = filename.find_last_of("/\\");
-  if (pos != std::string::npos) {
-    return filename.substr(0, pos + 1);
-  }
-  return "";
-}
 
 }  // anonymous namespace
 

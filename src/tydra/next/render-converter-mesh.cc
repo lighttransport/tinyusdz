@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - Mesh conversion orchestration
 #include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
 #include "safe-arithmetic.hh"
 #include <cstring>
 #include "next/schema/usd-skel.hh"
@@ -13,7 +14,6 @@
 #include <vector>
 namespace lightusd { namespace tydra { namespace next {
 namespace {
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) { const Value* v=prim.GetPropertyValue(name); if (!v || !out) return false; if (const std::string* x=v->as_token()) {*out=*x; return true;} if (const std::string* x=v->as_string()) {*out=*x; return true;} return false; }
 void ComputePointBounds(const FloatChunked& p, Float3* lo, Float3* hi, bool* has) { if (!lo || !hi || !has || p.size()<3) return; *lo=Float3(1e30f,1e30f,1e30f); *hi=Float3(-1e30f,-1e30f,-1e30f); for(size_t i=0;i<p.size()/3;++i){ const float x=p[i*3],y=p[i*3+1],z=p[i*3+2]; lo->x=std::min(lo->x,x);lo->y=std::min(lo->y,y);lo->z=std::min(lo->z,z);hi->x=std::max(hi->x,x);hi->y=std::max(hi->y,y);hi->z=std::max(hi->z,z);} *has=true; }
 }  // namespace
 
@@ -62,7 +62,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
   }
   std::string subdivision_scheme;
   const bool has_authored_subdivision =
-      GetToken(prim, "subdivisionScheme", &subdivision_scheme);
+      GetPropToken(prim, "subdivisionScheme", &subdivision_scheme);
   SkinBindingInfo subdivision_skin;
   const bool subdivision_deformed =
       GetSkinBinding(prim, &subdivision_skin) || !GetBlendShapes(prim).empty();

@@ -4,6 +4,7 @@
 // LightUSD Next - Low-memory flatten pipeline implementation
 
 #include "flatten.hh"
+#include "../next-util.hh"
 
 #include <algorithm>
 #include <cstring>
@@ -235,17 +236,6 @@ uint64_t FileSizeBytes(const std::string& filename) {
   return static_cast<uint64_t>(n);
 }
 
-bool EndsWithNoCase(const std::string& s, const char* suffix) {
-  const size_t n = std::strlen(suffix);
-  if (s.size() < n) return false;
-  const size_t off = s.size() - n;
-  for (size_t i = 0; i < n; ++i) {
-    unsigned char a = static_cast<unsigned char>(s[off + i]);
-    unsigned char b = static_cast<unsigned char>(suffix[i]);
-    if (std::tolower(a) != std::tolower(b)) return false;
-  }
-  return true;
-}
 
 }  // namespace
 

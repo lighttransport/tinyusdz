@@ -4,6 +4,7 @@
 // LightUSD Next - High-level API Implementation
 
 #include "lightusd-next.hh"
+#include "next-util.hh"
 #include "composition/composition.hh"
 #include "diff/layer-diff.hh"
 #include "pcp/cache.hh"
@@ -164,11 +165,6 @@ FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* 
   return DetectFormat(header, static_cast<size_t>(nread));
 }
 
-size_t MinNonZero(size_t a, size_t b) {
-  if (a == 0) return b;
-  if (b == 0) return a;
-  return std::min(a, b);
-}
 
 LoadOptions EffectiveUSDAOptions(const LoadUSDOptions& options) {
   LoadOptions out = options.usda_options;

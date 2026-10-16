@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
 #include "render-extract.hh"
 #include "safe-arithmetic.hh"
 #include "tydra/shape-to-mesh.hh"
@@ -11,18 +12,6 @@
 namespace lightusd { namespace tydra { namespace next {
 using ::lightusd::next::UsdPrim; using ::lightusd::next::Value;
 namespace {
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  const Value* value = prim.GetPropertyValue(name); const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false;
-  *out = *result;
-  return true;
-}
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  const Value* value = prim.GetPropertyValue(name); if (!value || !out) return false;
-  if (const std::string* result = value->as_token()) { *out = *result; return true; }
-  if (const std::string* result = value->as_string()) { *out = *result; return true; }
-  return false;
-}
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
                           double fallback) {
@@ -94,10 +83,10 @@ void FillGeneratedMesh(const UsdPrim& prim,
     }
   }
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetPropToken(prim, "orientation", &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
-  GetBool(prim, "doubleSided", &out->double_sided);
+  GetPropBool(prim, "doubleSided", &out->double_sided);
   if (!points.empty()) {
     out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
     out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
@@ -306,7 +295,7 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
 
   if (type != "TetMesh") {
     std::string axis = "Z";
-    GetToken(prim, "axis", &axis);
+    GetPropToken(prim, "axis", &axis);
     if (type == "Cube" || type == "Sphere") axis = "Y";
     ApplyAxis(&points, &normals, axis);
   }

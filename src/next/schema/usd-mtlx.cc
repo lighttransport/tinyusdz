@@ -4,6 +4,7 @@
 // LightUSD Next - UsdMtlx Schema Implementation
 
 #include "usd-mtlx.hh"
+#include "schema-predicates.hh"
 #include <cstring>
 
 namespace lightusd {
@@ -15,9 +16,6 @@ namespace next {
 
 namespace {
 
-static bool IsType(const UsdPrim& prim, const std::string& type) {
-  return prim.IsValid() && prim.GetTypeName() == type;
-}
 
 } // namespace
 

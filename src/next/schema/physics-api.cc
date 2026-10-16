@@ -4,6 +4,7 @@
 // LightUSD Next - UsdPhysics Applied API Schema Implementation
 
 #include "physics-api.hh"
+#include "schema-predicates.hh"
 #include "../layer/prim-spec.hh"
 #include <cstring>
 
@@ -14,12 +15,6 @@ namespace next {
 // Helper: check if prim has applied API schema
 // ============================================================
 
-static bool HasAPISchema(const UsdPrim& prim, const std::string& name) {
-  for (const auto& s : prim.GetMeta().apiSchemas()) {
-    if (s == name) return true;
-  }
-  return false;
-}
 
 static bool GetStringOrToken(const UsdPrim& prim, const std::string& prop_name,
                              std::string* out) {

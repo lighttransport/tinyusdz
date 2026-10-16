@@ -2,6 +2,7 @@
 // Copyright 2026-Present Light Transport Entertainment Inc.
 
 #include "color-space.hh"
+#include "schema-predicates.hh"
 #include "../layer/prim-spec.hh"
 
 #include <cmath>
@@ -18,12 +19,6 @@ void Append(std::string *dst, const std::string &message) {
   *dst += message;
 }
 
-bool HasApplied(const UsdPrim &prim, const std::string &schema) {
-  for (const std::string &entry : prim.GetMeta().apiSchemas()) {
-    if (entry == schema) return true;
-  }
-  return false;
-}
 
 bool GetStringLike(const UsdPrim &prim, const std::string &property,
                    std::string *out) {
@@ -146,7 +141,7 @@ bool ComputeColorSpaceName(const UsdPrim &prim, const std::string &property,
     }
   }
   for (UsdPrim current = prim; current.IsValid(); current = current.GetParent()) {
-    if (!HasApplied(current, "ColorSpaceAPI")) continue;
+    if (!HasAPISchema(current, "ColorSpaceAPI")) continue;
     std::string token;
     if (GetStringLike(current, "colorSpace:name", &token) && !token.empty()) {
       *name = ::lightusd::color::CanonicalizeToken(token);

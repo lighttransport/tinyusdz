@@ -4,6 +4,7 @@
 // LightUSD Next - PCP LayerRegistry implementation
 
 #include "layer-registry.hh"
+#include "../next-util.hh"
 #include "../safe-file-size.hh"
 
 #include "../layer/asset-anchor.hh"
@@ -25,11 +26,6 @@ namespace pcp {
 
 namespace {
 
-size_t MinNonZero(size_t a, size_t b) {
-  if (a == 0) return b;
-  if (b == 0) return a;
-  return std::min(a, b);
-}
 
 std::string ToLowerExt(const std::string &path) {
   std::string p = path;
@@ -51,16 +47,6 @@ std::string NormalizeEntryName(std::string name) {
   return name;
 }
 
-bool EndsWithNoCase(const std::string &s, const char *suffix) {
-  const size_t n = std::strlen(suffix);
-  if (s.size() < n) return false;
-  for (size_t i = 0; i < n; ++i) {
-    unsigned char a = static_cast<unsigned char>(s[s.size() - n + i]);
-    unsigned char b = static_cast<unsigned char>(suffix[i]);
-    if (std::tolower(a) != std::tolower(b)) return false;
-  }
-  return true;
-}
 
 std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
                                          const std::string &label,

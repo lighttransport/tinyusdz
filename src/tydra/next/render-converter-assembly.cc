@@ -124,7 +124,6 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
 }
 
 namespace {
-bool WouldOverflowSizeMul(size_t a, size_t b) { return a != 0 && b > std::numeric_limits<size_t>::max() / a; }
 Matrix4 MulMatrix4(const Matrix4& a, const Matrix4& b) {
   Matrix4 r;
   for (int i = 0; i < 4; ++i) {

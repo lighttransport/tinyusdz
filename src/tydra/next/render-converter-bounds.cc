@@ -6,6 +6,7 @@
 // compiling material, hierarchy, or full scene conversion machinery.
 
 #include "render-converter-internal.hh"
+#include "render-converter-prop-read.hh"
 #include "render-extract.hh"
 #include "next/types/vec-pod.hh"  // value::float2 / float3 only
 
@@ -22,27 +23,7 @@ using ::lightusd::next::Value;
 
 namespace {
 
-bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  const bool* result = value ? value->as_bool() : nullptr;
-  if (!result || !out) return false;
-  *out = *result;
-  return true;
-}
 
-bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
-  const Value* value = prim.GetPropertyValue(name);
-  if (!value || !out) return false;
-  if (const std::string* result = value->as_token()) {
-    *out = *result;
-    return true;
-  }
-  if (const std::string* result = value->as_string()) {
-    *out = *result;
-    return true;
-  }
-  return false;
-}
 
 bool ReadExtent(const UsdPrim& prim, double time, value::float3* minimum,
                 value::float3* maximum) {
@@ -78,10 +59,10 @@ void FillProxyMesh(const UsdPrim& prim,
     out->points.push_back(point[2]);
   }
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetPropToken(prim, "orientation", &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
-  GetBool(prim, "doubleSided", &out->double_sided);
+  GetPropBool(prim, "doubleSided", &out->double_sided);
   out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
   out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
   for (const value::float3& point : points) {
