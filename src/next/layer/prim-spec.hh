@@ -8,6 +8,7 @@
 #pragma once
 
 #include "property-index.hh"
+#include "intern-table.hh"
 #include "../types/value.hh"
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
@@ -43,7 +44,7 @@ struct TypeNameId {
 /// Type name interning table
 /// Thread-safe under LIGHTUSD_ENABLE_THREAD (authoring interns new type names
 /// at runtime, so concurrent readers need protection like PropNameTable).
-class TypeNameTable {
+class TypeNameTable : public detail::StringInternTable<TypeNameId, UINT16_MAX> {
 public:
   TypeNameId intern(const std::string& name);
   const std::string& get(TypeNameId id) const;
@@ -72,16 +73,6 @@ public:
   TypeNameId id_GeomSubset;
 
   void register_common_types();
-
-private:
-  // deque, not vector: get() returns a `const std::string&` that callers may
-  // hold after the lock is released; deque never relocates on push_back.
-  std::deque<std::string> names_;
-  detail::StringIndex name_to_id_;
-  TypeNameId find_live(const std::string& name) const;
-#if defined(LIGHTUSD_ENABLE_THREAD)
-  mutable std::shared_mutex mu_;
-#endif
 };
 
 TypeNameTable& GetTypeNameTable();

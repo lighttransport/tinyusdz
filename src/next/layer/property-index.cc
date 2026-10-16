@@ -22,31 +22,6 @@ PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
-namespace {
-const char* PropertyNameKey(const void* context, size_t index, size_t* length) {
-  const auto& names = *static_cast<const std::deque<std::string>*>(context);
-  if (index >= names.size()) return nullptr;
-  const std::string_view name = names[index];
-  *length = name.size();
-  return name.data();
-}
-}  // namespace
-
-PropNameId PropNameTable::find_live(std::string_view name) const {
-  // Empty string_view may have a null data pointer; empty names are still keys.
-  const size_t id = name_to_id_.find(name.empty() ? "" : name.data(), name.size(),
-                                   PropertyNameKey, &names_);
-  if (id < UINT32_MAX) return PropNameId{static_cast<uint32_t>(id)};
-  // The index is optional acceleration. An allocation failure must not lose
-  // an interned name or give it a second ID on a subsequent lookup.
-  if (name_to_id_.size() != names_.size()) {
-    for (size_t i = 0; i < names_.size(); ++i) {
-      if (names_[i] == name) return PropNameId{static_cast<uint32_t>(i)};
-    }
-  }
-  return PropNameId{};
-}
-
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 namespace {
@@ -141,13 +116,13 @@ void PropNameTable::publish_snapshot() {}
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
-  const std::string_view view(name.data(), name.size());
 #if defined(LIGHTUSD_ENABLE_THREAD)
+  const std::string_view view(name.data(), name.size());
   // Frozen fast path: the common compose-time intern is a HIT (every property
   // name was interned at parse), so answer it lock-free from the snapshot.
-  // A MISS falls through to the locked path below and inserts into the live
-  // map — which the snapshot does not alias, so lock-free readers are
-  // untouched and the snapshot stays valid (just missing this one name).
+  // A MISS falls through to the locked path and inserts into the live map --
+  // which the snapshot does not alias, so lock-free readers are untouched and
+  // the snapshot stays valid (just missing this one name).
   if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), view,
                                FrozenLess{});
@@ -159,32 +134,18 @@ PropNameId PropNameTable::intern(const std::string& name) {
     const PropNameId hit = SnapshotFind(*snap, view);
     if (hit.is_valid()) return hit;
   }
-  {
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-    const PropNameId hit = find_live(view);
-    if (hit.is_valid()) return hit;
-  }
-  std::unique_lock<std::shared_mutex> wlk(mu_);
+  // Locked intern; on a fresh insert, refresh the growth snapshot under the
+  // exclusive lock once the table has grown by half (at least 64 names).
+  return intern_locked(name, [](void* self) {
+    auto* t = static_cast<PropNameTable*>(self);
+    if (t->names_.size() - t->snapshot_count_ >=
+        std::max<size_t>(64, t->snapshot_count_ / 2)) {
+      t->publish_growth_snapshot_locked();
+    }
+  }, this);
+#else
+  return intern_locked(name);
 #endif
-  // Recheck under the exclusive lock; another thread may have interned it.
-  const PropNameId hit = find_live(view);
-  if (hit.is_valid()) return hit;
-  if (names_.size() >= UINT32_MAX) return PropNameId{};
-  const uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  if (name_to_id_.size() + 1 == names_.size())
-    name_to_id_.insert(id, PropertyNameKey, &names_);
-  else
-    name_to_id_.rebuild(names_.size(), PropertyNameKey, &names_);
-#if defined(LIGHTUSD_ENABLE_THREAD)
-  // Republish the lock-free snapshot once the table has grown by half (at
-  // least 64 names) since the last one: amortized O(1) per insert.
-  if (names_.size() - snapshot_count_ >=
-      std::max<size_t>(64, snapshot_count_ / 2)) {
-    publish_growth_snapshot_locked();
-  }
-#endif
-  return PropNameId{id};
 }
 
 PropNameId PropNameTable::intern(const char* name) {
@@ -533,12 +494,6 @@ void PropIndex::sort() {
 // not re-parse them.
 // ---------------------------------------------------------------------------
 bool PropNameId::is_valid() const { return id != UINT32_MAX; }
-size_t PropNameTable::size() const {
-#if defined(LIGHTUSD_ENABLE_THREAD)
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-#endif
-    return names_.size();
-  }
 bool PropSlot::is_custom() const { return flags & kFlagCustom; }
 bool PropSlot::is_uniform() const { return flags & kFlagUniform; }
 bool PropSlot::is_time_sampled() const { return flags & kFlagTimeSampled; }

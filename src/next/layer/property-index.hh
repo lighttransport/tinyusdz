@@ -13,6 +13,7 @@
 #include <utility>
 #include <deque>
 #include "../core/string-index.hh"
+#include "intern-table.hh"
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #include <memory>
@@ -36,7 +37,7 @@ struct PropNameId {
 /// Property name interning table
 /// All property names are stored once and referenced by ID
 /// Thread-safe for reads after initial population
-class PropNameTable {
+class PropNameTable : public detail::StringInternTable<PropNameId, UINT32_MAX> {
 public:
   PropNameTable();
   ~PropNameTable();
@@ -54,9 +55,6 @@ public:
   PropNameId find(const std::string& name) const;
   PropNameId find(std::string_view name) const;
   PropNameId find(const char* name) const;
-
-  /// Get total count of interned names
-  size_t size() const;
 
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
@@ -110,18 +108,11 @@ public:
   PropNameId id_size;         // "size"
 
 private:
-  // A deque retains the address of existing strings while concurrent intern()
-  // calls append new names. StringIndex avoids a second key copy in the lookup
-  // table; the deque remains until all value-facing name storage is pooled.
-  std::deque<std::string> names_;
-  detail::StringIndex name_to_id_;
-  PropNameId find_live(std::string_view name) const;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
   // lookup takes a shared lock, the rare new-name insert an exclusive one.
   // Uncontended in the serial path (~ns) so single-threaded parse is unaffected.
-  mutable std::shared_mutex mu_;
 
   // Immutable lookup snapshot published by freeze(). `by_name` is sorted by
   // name so a lookup is a binary search over flat storage, and `by_id` stores
