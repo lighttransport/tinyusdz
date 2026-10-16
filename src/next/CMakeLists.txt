@@ -79,6 +79,7 @@ set(LIGHTUSD_NEXT_SOURCES
     # Writers
     writer/prim-printer.cc
     writer/usda-writer.cc
+    writer/usda-writer-print.cc
     writer/usdc-writer.cc
     writer/usdz-writer.cc
 
