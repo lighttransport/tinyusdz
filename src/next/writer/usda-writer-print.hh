@@ -6,9 +6,13 @@
 #pragma once
 #include <cstdint>
 #include <deque>
+#include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
+#include "../layer/layer.hh"
+#include "../layer/prim-spec.hh"
 #include "../crate/crate-format.hh"   // CrateTypeId
 #include "../crate/lazy-array.hh"     // LazyArrayRef
 #include "dtoa.hh"          // dtos()

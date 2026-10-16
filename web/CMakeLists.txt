@@ -397,11 +397,20 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
     binding-next.cc binding-next-scene.cc
     binding-next-layer.cc
+    binding-next-layer-json-import.cc
+    binding-next-layer-json-export.cc
+    binding-next-layer-json-values.cc
+    binding-next-layer-inspect.cc
     binding-next-api.cc
     binding-next-image.cc
     binding-next-assets.cc
     binding-next-util.cc
     binding-next-render-lifecycle.cc
+    binding-next-render-query-geometry.cc
+    binding-next-render-query-scene.cc
+    binding-next-render-query-shading.cc
+    binding-next-render-query-animation.cc
+    binding-next-render-assets.cc
     ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
     binding-next-render-primvars.cc

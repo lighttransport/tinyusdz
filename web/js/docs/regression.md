@@ -194,6 +194,12 @@ retirement, stale/wrong-class calls, explicit disposal, argument validation,
 numeric/Unicode JSON fidelity, and malformed validation options. Run it on both
 wasm32 and memory64 after changing the C dispatch or post-JS wrapper.
 
+`tests/next-binding-copy-contracts.test.mjs` exercises raw C callers on both
+pointer widths. It checks UTF-8 node-path size queries, untouched undersized
+destinations, scene strings' separate truncation/NUL convention, invalid
+handles/indices, and consistent streaming asset names across relative paths
+and slash styles. It needs no external fixtures or combined module.
+
 To exercise an isolated measurement build without replacing generated app
 files, run from `web/js` (use an absolute module path):
 

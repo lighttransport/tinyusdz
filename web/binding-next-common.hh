@@ -25,6 +25,9 @@ extern "C" bool reportNextLayerLoadProgress(const char* phase, double current,
                                              double total)
     EM_IMPORT(reportNextLayerLoadProgress);
 bool IsUSDCBytes(const std::string& bytes);
+// Size-query copy: return required bytes; leave undersized destinations untouched.
+int CopyOutputString(const std::string& value, uint8_t* out, uint32_t cap);
+std::string NormalizeRenderAssetKey(const std::string& name);
 std::array<double, 16> IdentityMatrix();
 std::array<double, 16> MatrixToArray(const tr::Matrix4& m);
 const char* LightTypeName(tr::LightType type);

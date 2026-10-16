@@ -27,6 +27,8 @@ set(TYDRA_NEXT_SOURCES
     render-converter-triangulate.cc
     render-converter-mesh.cc
     render-converter-preview.cc
+    render-converter-shader-param.cc
+    render-converter-texture.cc
     render-converter-animation.cc
   render-converter-lights.cc
   render-converter-camera.cc
@@ -47,6 +49,11 @@ set(TYDRA_NEXT_SOURCES
     texture-cache.cc
     materialx.cc
     urdf-to-usd.cc
+    urdf-to-usd-support.cc
+    urdf-to-usd-geometry.cc
+    urdf-to-usd-physics.cc
+    urdf-to-usd-extensions.cc
+    urdf-to-usd-scene.cc
     ../../external/mikktspace/mikktspace.c
 )
 

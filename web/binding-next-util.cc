@@ -2,6 +2,8 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-common.hh"
 #include <cstring>
+#include <limits>
+#include "next/resolver/asset-resolver.hh"
 #include <iomanip>
 #include <set>
 #include "next/crate/crate-reader.hh"
@@ -36,6 +38,20 @@ EM_JS(bool, reportNextLayerLoadProgress,
   return typeof Module.__lightusdNextLayerProgressCallback !== 'function' ||
     Module.__lightusdNextLayerProgressCallback(event) !== false;
 });
+int CopyOutputString(const std::string& value, uint8_t* out, uint32_t cap) {
+  if (value.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
+  const int required = static_cast<int>(value.size());
+  if (out && cap >= value.size() && !value.empty())
+    std::memcpy(out, value.data(), value.size());
+  return required;
+}
+
+std::string NormalizeRenderAssetKey(const std::string& name) {
+  std::string key = tn::AssetResolver::NormalizePath(name);
+  while (key.rfind("./", 0) == 0) key.erase(0, 2);
+  return key;
+}
+
 bool IsUSDCBytes(const std::string& bytes) {
   return bytes.size() >= 8 &&
          std::memcmp(bytes.data(), "PXR-USDC", 8) == 0;

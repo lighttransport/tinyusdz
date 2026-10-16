@@ -6,6 +6,7 @@
 #include <string>
 
 #include "../stage/stage.hh"
+#include "../layer/prim-spec.hh"
 
 namespace lightusd {
 namespace next {

@@ -7,13 +7,6 @@
 namespace lightusd {
 namespace web_next {
 namespace {
-int CopyOutputString(const std::string& value, uint8_t* out, uint32_t cap) {
-  if (value.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
-  const int required = static_cast<int>(value.size());
-  if (out && cap >= value.size() && !value.empty())
-    std::memcpy(out, value.data(), value.size());
-  return required;
-}
 
 using NextRenderMaterial = lightusd::tydra::next::RenderMaterial;
 using NextShaderParam = lightusd::tydra::next::ShaderParam;

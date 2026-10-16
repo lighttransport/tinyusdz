@@ -8,8 +8,6 @@
 #include <unordered_map>
 #include <vector>
 
-struct Layer;
-
 // Forward declarations
 struct PrimVariantData;
 struct PrimVariantSetData;

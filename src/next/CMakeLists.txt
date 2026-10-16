@@ -60,6 +60,8 @@ set(LIGHTUSD_NEXT_SOURCES
     resolver/dependency-report.cc
     eval/property-trace.cc
     stage/change-set.cc
+    stage/change-set-diff.cc
+    stage/stage-session.cc
     # Shared bounded JSON parser used by the next-generation URDF bridge.
     ../minijson.cc
     ../color-transform.cc
@@ -106,6 +108,8 @@ set(LIGHTUSD_NEXT_SOURCES
 
     # Layer / PrimSpec diff
     diff/layer-diff.cc
+    diff/layer-diff-value.cc
+    diff/layer-diff-output.cc
 
     # PCP-style lazy composition cache (native to next)
     # MaterialX XML stack (dependency-free): layer-registry synthesizes

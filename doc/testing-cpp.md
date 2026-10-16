@@ -33,6 +33,18 @@ Keep assertions enabled. Run Python tests against an extension rebuilt from
 this checkout, and the web gate against freshly built next and combined modules;
 a legacy-only `lightusd.js` lacks APIs required by the combined-module tests.
 
+After TU or include-boundary changes, also build next with
+`LIGHTUSD_NEXT_USE_PCH=OFF` and `TYDRA_NEXT_USE_PCH=OFF`. The threaded optimized
+ASan/UBSan configuration above can serve this purpose. This checks actual
+dependencies that a precompiled header can otherwise conceal, including the
+session logger, USDA printer metadata/threading types, schema predicates, and
+shader texture extraction. Run both `next_test_tydra` and
+`next_test_urdf_to_usd` when splitting the next render/robot converters.
+For GCC sanitizer builds with the default RTTI-disabled libraries, add
+`-fno-sanitize=vptr` to the C++ flags: otherwise RTTI-enabled test TUs can emit
+references to library typeinfo that is deliberately absent. Address checking
+and the other undefined-behavior checks remain enabled.
+
 ## Reproducible verification entrypoint
 
 The repository-wide harness is `scripts/verify.sh`. Preparation downloads only

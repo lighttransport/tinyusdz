@@ -6,7 +6,6 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     types/type-info.cc
     types/value.cc
     types/value-constructors.cc
-    types/value-constructors.cc
     types/array-storage.cc
     types/value-dict.cc
     c/string-index.c
@@ -50,6 +49,9 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     crate/crate-reader.cc
     crate/crate-reader-sections.cc
     crate/crate-reader-stage.cc
+    crate/crate-reader-stage-meta.cc
+    crate/crate-reader-properties.cc
+    crate/crate-reader-prim.cc
     crate/crate-reader-unpack.cc
     crate/crate-reader-vectors.cc
     crate/crate-writer-types.cc

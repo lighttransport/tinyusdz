@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+// Private URDF/MJCF authoring helpers. Not installed.
+#pragma once
+#include "urdf-to-usd.hh"
+#include "tydra/urdf-payload.hh"
+#include "next/types/type-id.hh"
+#include <array>
+#include <initializer_list>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+namespace lightusd { namespace next { class Layer; class PrimSpec; class Value; } }
+
+namespace lightusd { namespace tydra { namespace next {
+namespace urdf_detail {
+using Json = ::lightusd::tydra::detail::JSONValue;
+namespace tn = ::lightusd::next;
+using NameMap = std::map<std::string, std::string>;
+using Matrix4 = std::array<double, 16>;  // row-major, translation in row 3
+
+// Omit empty scopes and define each populated scope at its first child.
+class Scope {
+ public:
+  Scope(tn::Layer* layer, const std::string& name);
+  tn::PrimSpec* Add(const std::string& name, const std::string& type);
+ private:
+  tn::Layer* layer_;
+  std::string path_;
+  bool defined_{false};
+};
+
+std::string JsonString(const Json &j, const char *key,
+                       const std::string &fallback = std::string());
+bool ReadNumber(const Json &j, const char *key, double *out);
+bool ReadNumber(const Json &j, const char *key, float *out);
+bool ReadBool(const Json &j, const char *key, bool *out);
+const Json *JsonObject(const Json &j, const char *key);
+const Json *JsonArray(const Json &j, const char *key);
+int32_t JsonInt(const Json &j, const char *key, int32_t fallback);
+bool ReadIntFrom(const Json &src, const char *object_key, const char *key,
+                 int32_t *out);
+int32_t JsonIntFrom(const Json &src, const char *object_key, const char *key,
+                    int32_t fallback);
+bool ReadNumberFrom(const Json &src, const char *object_key, const char *key,
+                    double *out);
+double JsonNumberFrom(const Json &src, const char *object_key, const char *key,
+                      double fallback);
+std::vector<float> JsonFloats(const Json &j, const char *key);
+std::vector<double> JsonDoubles(const Json &j, const char *key);
+std::vector<double> JsonDoublesFrom(const Json &src, const char *object_key,
+                                    const char *key);
+std::vector<int32_t> JsonInts(const Json &j, const char *key);
+std::vector<std::string> JsonStrings(const Json &j, const char *key);
+bool ReadRange(const Json &j, const char *key, double *lo, double *hi);
+std::string Sanitize(const std::string &source, const std::string &fallback);
+std::string Unique(const std::string &source, const std::string &fallback,
+                   std::set<std::string> *used);
+std::string ChildName(const std::string &name, std::set<std::string> *siblings);
+void AppendWarn(std::string *warn, const std::string &message);
+void AddAPI(tn::PrimSpec *prim, const std::string &schema);
+void AddAPIs(tn::PrimSpec *prim,
+             std::initializer_list<const char *> schemas);
+void Set(tn::PrimSpec *prim, const std::string &name, tn::Value value,
+         const std::string &type_name, bool uniform = false);
+void SetToken(tn::PrimSpec *prim, const std::string &name,
+              const std::string &value, bool uniform = false);
+void SetDoubles(tn::PrimSpec *prim, const std::string &name,
+                std::vector<double> values, bool uniform = false);
+void Declare(tn::PrimSpec *prim, const std::string &name, tn::TypeId type_id,
+             const std::string &type_name);
+void Connect(tn::PrimSpec *prim, const std::string &name, tn::TypeId type_id,
+             const std::string &type_name, const std::string &target);
+void SetRel(tn::PrimSpec *prim, const std::string &name,
+            const std::vector<std::string> &targets);
+void SetInterpolation(tn::PrimSpec *prim, const std::string &name,
+                      const char *interpolation);
+tn::PrimSpec *Define(tn::Layer *layer, const std::string &path,
+                     const std::string &type);
+Matrix4 IdentityMatrix();
+Matrix4 MatrixFromArray(const std::vector<double> &flat);
+void SetTransform(tn::PrimSpec *prim, const Matrix4 &m);
+void SetTransformFromJson(tn::PrimSpec *prim, const Json &source);
+std::string AxisFromToken(const std::string &axis);
+void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
+                      const Json &src, bool mjcf_source);
+bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
+                     std::set<std::string> *siblings, const Json &mesh_json,
+                     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
+                     const std::string &fallback_name, bool collision,
+                     bool mjcf_source, std::string *warn, std::string *err);
+bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
+                                     const std::string &link_path,
+                                     std::set<std::string> *siblings,
+                                     const Json &shape_json,
+                                     const std::string &fallback_name,
+                                     bool mjcf_source, std::string *warn,
+                                     std::string *err);
+void JacobiEigenSymmetric3(const double in[3][3], double eval[3],
+                           double evec[3][3]);
+tn::Value RotationMatrixToQuatf(double r[3][3]);
+std::string AxisToken(const Json &joint);
+std::string JointDofName(const std::string &axis, bool rotational);
+void SetPoint3(tn::PrimSpec *prim, const std::string &name,
+               const std::vector<float> &v, bool uniform);
+void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
+                     const std::string &parent, const std::string &child,
+                     const NameMap &joint_names);
+void ApplyMjcSceneOptions(tn::PrimSpec *scene, const Json &root);
+void AddPhysicsScene(tn::Layer *layer, const Json &root);
+std::vector<std::string> NewtonActuatorSchemas(const Json &act);
+void AddNewtonActuatorFromJson(Scope *scope, std::set<std::string> *siblings,
+                               const Json &act, const NameMap &joint_names,
+                               size_t index, std::string *warn);
+void AddMjcSiteFromJson(Scope *scope, const Json &site,
+                        const std::string &name);
+void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
+                          const Json &t, const NameMap &joint_names,
+                          const NameMap &site_names, NameMap *tendon_names,
+                          size_t index, std::string *warn);
+void AddMjcEqualityFromJson(Scope *scope, std::set<std::string> *siblings,
+                            const Json &e, const NameMap &link_names,
+                            const NameMap &joint_names, size_t index);
+void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
+                            const Json &a, const NameMap &joint_names,
+                            const NameMap &tendon_names,
+                            const NameMap &site_names,
+                            const NameMap &link_names, size_t index);
+void AddMjcKeyframeFromJson(Scope *scope, std::set<std::string> *used,
+                            const Json &k, size_t index);
+void AddMjcSensorFromJson(Scope *scope, std::set<std::string> *used,
+                          const Json &s, size_t index);
+void AddContactPairFromJson(Scope *scope, std::set<std::string> *used,
+                            const Json &p, size_t index);
+Matrix4 LightTransformMatrix(const Matrix4 &world,
+                             const std::array<double, 3> &local_dir);
+void AddLightFromJson(Scope *scope, std::set<std::string> *used,
+                      const Json &l, size_t index);
+void AddCameraFromJson(Scope *scope, std::set<std::string> *used,
+                       const Json &c, size_t index);
+void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
+                         const Json &m, size_t index);
+}  // namespace urdf_detail
+
+} } }  // namespace lightusd::tydra::next

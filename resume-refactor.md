@@ -1,15 +1,65 @@
 # LightUSD refactor checkpoint
 
-## Accepted stopping point
+## Current continuation (2026-10-16)
+
+The requested seven-area maintainability refactor is implemented: the load /
+session facade, layer diff, crate reconstruction, shader extraction, URDF/MJCF
+authoring, RenderStream bindings, and layer-document bindings have focused
+compiled boundaries. Loader result handling, session memory accounting,
+streaming asset normalization and matching bounded string copies are shared.
+Public APIs, product defaults and optimization flags are unchanged.
+
+This continuation started from clean commit `7659fa4fc`.
+New private headers remain implementation-only and uninstalled. Session Impl
+and its synchronization stay together. Crate scheduling, URDF authoring order,
+JSON budgets, ownership and distinct copy protocols retain their behavior.
+
+The accepted earlier WASM-size stopping point still applies. The new request
+explicitly authorized these TU/binding splits; it did not reopen size tuning,
+raw-value-buffer migrations, portable POD bindings, or product-default work.
+The completed PCP split described below remains historical context.
+
+See [the continuation report](doc/refactor-c-core.md#continued-maintainability-refactor-2026-10-16)
+for boundaries, measurements and limitations. Key results:
+
+- Native affected-TU slowest median: 3.15 → 2.03 s; aggregate isolated compile
+  time: 12.20 → 21.34 s. wasm32: 2.47 → 1.99 s and 11.60 → 25.39 s.
+  Splitting increases aggregate compilation work; no clean-build win is claimed.
+- Current next-only raw WASM: 1,954,631 bytes (wasm32), 2,174,316 bytes
+  (memory64), measured with Emscripten 5.0.1. The older PCP table used 4.0.14
+  and is not directly comparable. Compressed size grows slightly against the
+  matching archived baseline. This is not a renewed size target.
+- Root native CTest: 113 passed, two optional skips. Standalone Debug,
+  threaded Debug, and optimized threaded ASan/UBSan without PCH: 57 passed,
+  one optional skip each. Sanitizers disable leak detection in the sandbox
+  and GCC vptr checks for RTTI-disabled libraries.
+- Next and legacy Debug builds also pass with examples and tools enabled
+  and the GUI viewer disabled. Additional legacy checks report 154 passed,
+  four skipped and two failures; the unit suite was stopped after ten minutes.
+  The full legacy gate remains incomplete; details are in the continuation report.
+- Sixteen standalone header syntax checks pass; 705 fixture rewrites retain
+  identical exit status, stdout and stderr. No OpenUSD usdcat is available.
+- Next-only and combined wasm32/memory64 builds pass. The new raw C-boundary
+  copy/name test passes on both baseline and refactored modules at both widths.
+- Node profiles pass 49 suites with seven known baseline failures per width.
+  The full web gate remains incomplete because these failures and missing
+  Menagerie data remain. Both validation-app browser checks and eight UDIM
+  main-thread/Worker cases pass after providing Chrome.
+- Alternating generated-mesh and 1,000-link robot runtime probes preserve
+  geometry hashes and byte-identical URDF USDA output. They do not establish
+  comprehensive runtime parity.
+
+Reports and the original source snapshot are under ignored
+`build_ninja/continued-refactor/`. The no-PCH check also repaired missing
+includes in the earlier USDA-printer and schema-predicate headers; do not
+remove those explicit dependencies. Generated validator/EXR JS glue is ignored.
+
+## Historical accepted stopping point
 
 The user accepted approximately **1.6 MB raw WASM** and requested that TU and
 WASM-size optimization stop after finishing the PCP TU refactor. That refactor
-is finished. The earlier <512 KiB goal is superseded. Do not resume optimization,
-regroup binding TUs, change optimization flags, or pursue additional buffer/API
-migrations without a new request.
-
-The working tree contains substantial pre-existing and new uncommitted work.
-Preserve it; do not reset or clean the tree. No commit or push was performed.
+is finished. The earlier <512 KiB goal remains superseded. The measurements
+and verification below describe that older checkpoint, not the current build.
 
 ## Finished PCP refactor
 
@@ -27,7 +77,7 @@ The existing composition algorithms, ownership and threading behavior are
 preserved. The private implementation header must not become a consumer header.
 No source-local optimization workaround was added.
 
-## Final measurements
+## Historical PCP measurements
 
 Emscripten 4.0.14, MinSizeRel, SIMD, wasm32, without LTO:
 
@@ -54,7 +104,7 @@ Tydra coordinator's source-local optimization override; the current build does
 not. A separate LTO trial at the preceding checkpoint produced 1,667,514 bytes,
 so LTO was not adopted.
 
-## Verification
+## Historical PCP verification
 
 After the final PCP lifecycle extraction:
 

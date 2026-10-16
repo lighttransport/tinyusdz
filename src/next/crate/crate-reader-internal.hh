@@ -204,6 +204,15 @@ class PathPool {
       return *meta;
     }
   };
+using AttrRecords = std::vector<std::pair<uint32_t, AttrInfo>>;
+using RelRecords = std::vector<std::pair<uint32_t, RelInfo>>;
+
+namespace crate_stage_detail {
+constexpr uint32_t kSkipEntry = UINT32_MAX;
+Value ParseDictText(const std::string& text);
+DecodedExtensionField MakeTypedExtensionField(std::string name, Value value);
+}
+
 struct PrimBuildState {
   Layer& layer;
   LayerBuilder& builder;
@@ -326,6 +335,17 @@ class CrateReader::Impl {
   bool DecodePropMetaField(const std::string& name, ValueRep rep,
                            PropMeta& pm);
   bool BuildStage();
+  void DecodeStageMetadata(
+      Layer& layer,
+      std::unordered_map<std::string, std::vector<std::string>>& children_order);
+  bool CollectPropertyRecords(
+      const std::vector<PrimEntry>& prim_entries,
+      const std::unordered_map<std::string_view, uint32_t>& entry_by_path,
+      const std::vector<uint32_t>& slot_to_entry, const ReportFn& report_stage,
+      size_t spec_begin, size_t spec_end, AttrRecords& attr_out,
+      RelRecords& rel_out,
+      std::vector<std::pair<std::string, ValueRep>>& raw_field_scratch,
+      bool report);
   void EmitPrimBody(PrimBuildState& state, size_t entry_index,
                     std::vector<std::pair<std::string, Value>>& scratch,
                     const ReportFn& report);

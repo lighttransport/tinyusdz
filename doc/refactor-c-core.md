@@ -6154,3 +6154,137 @@ paired modules. The retained native matrix loop measured 35.6 versus 37.0 ms
 for loading in a seven-run pinned-core recheck; the apparent memory64 integer
 export regression did not reproduce in a five-run paired optimized check
 (1.91 versus 1.81 ms). No general throughput or clean-build speedup is claimed.
+
+## Continued maintainability refactor (2026-10-16)
+
+This pass follows the completed PCP work and the later writer, type-table,
+render-converter, and file-format splits. It is a maintainability pass over the
+current next product, including its WASM bindings. It introduces no new public
+API, product switch, optimization flag, or WASM size target.
+
+| Coordinator | Compiled responsibilities extracted |
+| --- | --- |
+| `lightusd-next.cc` | Persistent session ownership/transactions and stage change classification |
+| `diff/layer-diff.cc` | Tolerant value/dictionary/asset comparison and text/JSON output |
+| `crate/crate-reader-stage.cc` | Prim bodies, property records/metadata, pseudo-root metadata and extension decoding |
+| `render-converter-preview.cc` | Shader parameter/connection/color resolution and texture/UV/UDIM extraction |
+| `urdf-to-usd.cc` | Common JSON/authoring utilities, geometry, physics, extension entities, lights/cameras/materials |
+| `binding-next-render-lifecycle.cc` | Geometry, scene, shading and animation queries, plus asset streaming |
+| `binding-next-layer.cc` | JSON import, JSON export, shared JSON value conversion and inspection |
+
+Session `Impl`, its locks, resolver/cache lifetime, and reentrancy tracking stay
+in one implementation TU. The crate coordinator retains scheduling and ordered
+merging, using the existing `PrimBuildState` and property record types. URDF
+scope definitions remain lazy and the coordinator retains authoring order.
+Private helper headers are not installed or included by consumers.
+
+The associated simplifications share success-only loader result publication,
+session memory estimation/budget diagnostics, streaming asset-key normalization,
+and ten matching bounded string-copy implementations. Scene-string truncation
+and NUL termination remain a separate protocol, as do LayerDocument's copy
+failure rules. JSON budgets, fallback ordering, lazy ownership and callbacks
+retain their existing behavior. The shared pipeline source list no longer
+repeats `value-constructors.cc`.
+
+The no-PCH build also checks the preceding splits: USDA printer dependencies
+(metadata, prim types, mutex and unordered set) and schema-predicate metadata
+are included explicitly, and the duplicate conflicting `Layer` forward
+declaration is removed. The new shader helper header includes the render-data
+umbrella because its texture subheaders are namespace-local include fragments.
+Generated validator/EXR JavaScript glue is ignored alongside the other WASM
+build outputs.
+
+`next-binding-copy-contracts.test.mjs`, registered in the Node profile, tests
+raw C-boundary copy behavior and streaming-name equivalence without external
+fixtures. It passes against both the original and refactored modules on
+wasm32 and memory64. This protects compatibility while the existing suites
+cover layer JSON, rendering, crate reconstruction, sessions and URDF authoring.
+
+### Measurements and verification
+
+Compile measurements use three cache-disabled isolated serial passes with no
+other builds running: GCC 13.3 Debug with PCH for native, and Emscripten 5.0.1
+MinSizeRel with SIMD, PCH and no LTO for wasm32. Times below are per-TU medians;
+aggregate time is the sum of those medians, not a whole-product build timing.
+
+| Affected group | Native slowest TU, before → after | wasm32 slowest TU, before → after |
+| --- | ---: | ---: |
+| load/session | 2.86 → 1.76 s | 1.35 → 0.85 s |
+| diff | 2.18 → 1.58 s | 1.16 → 0.93 s |
+| crate stage | 3.15 → 2.03 s | 1.79 → 1.23 s |
+| shader | 2.04 → 1.15 s | 1.37 → 0.83 s |
+| URDF | 1.97 → 1.02 s | 1.29 → 0.62 s |
+| layer binding | — | 2.17 → 1.35 s |
+| render binding | — | 2.47 → 1.99 s |
+
+The five native coordinators become 19 TUs: the slowest falls from 3.15 to
+2.03 s, while aggregate time rises from 12.20 to 21.34 s. Peak compiler RSS
+across these TUs falls from 423,248 to 407,084 KiB. Their aggregate pre-link
+object text + data grows from 1,064,408 to 1,348,400 bytes; Debug COMDAT and
+other duplicate object code can still fold at link time.
+
+The seven wasm32 coordinators become 30 TUs: the slowest falls from 2.47 to
+1.99 s, while aggregate time rises from 11.60 to 25.39 s. Peak compiler RSS
+falls from 219,152 to 209,588 KiB. The available GNU size tool cannot inspect
+the WASM objects, so no WASM object-section total is reported.
+
+| Next-only artifact | Before, raw / gzip bytes | After, raw / gzip bytes |
+| --- | ---: | ---: |
+| wasm32 | 1,956,262 / 794,286 | 1,954,631 / 794,328 |
+| memory64 | 2,175,147 / 834,657 | 2,174,316 / 835,102 |
+
+These artifact deltas are informational: the baseline is an archived source
+snapshot, so different source-root prefixes can affect embedded diagnostics.
+Compressed size grows slightly. No clean-build, overall runtime, or size win
+is claimed.
+
+Seven-run alternating baseline/refactored runtime smoke probes use Node's
+`--no-liftoff`, after three warmups per module. A generated 30,000-triangle
+scene retains identical mesh-buffer hashes for USDA and USDC inputs; a generated
+1,000-link/999-joint robot retains byte-identical USDA output. Median times:
+
+| Probe | wasm32 before → after | memory64 before → after |
+| --- | ---: | ---: |
+| USDA load/render | 26.99 → 27.49 ms | 31.43 → 31.24 ms |
+| USDC load/render | 2.74 → 2.74 ms | 3.28 → 3.21 ms |
+| URDF authoring | 81.54 → 82.97 ms | 88.23 → 89.60 ms |
+
+These small probes do not establish comprehensive runtime parity.
+
+Final checks:
+
+- Root next-native CTest: 113 passed, two optional cases skipped.
+- Next and legacy Debug builds pass with `LIGHTUSD_BUILD_EXAMPLES=ON` and
+  `LIGHTUSD_BUILD_TOOLS=ON`, with the GUI viewer disabled.
+- Additional legacy checks: 154 passed, four skipped and two failed. The CPU
+  MaterialX graph render exceeds its 30-second timeout, including on a serial
+  retry. The OpenPBR parity fixture generator requires the absent `lusdview`.
+  The unit suite was interrupted after ten minutes; the dependent USDC parser
+  test passes separately. The full legacy regression gate remains incomplete.
+- Standalone Debug and threaded Debug CTest: 57 passed, one optional case
+  skipped in each configuration.
+- Threaded optimized ASan/UBSan, both PCH options off: 57 passed, one optional
+  case skipped. LeakSanitizer is disabled in the restricted environment;
+  GCC vptr instrumentation is disabled to match the RTTI-disabled library.
+- Sixteen standalone syntax checks cover the new/private dependency headers
+  and the repaired earlier headers, with threading both off and on.
+- All 705 USDA/USDC fixture rewrites match baseline exit status, stdout and
+  stderr. This is baseline parity, not an OpenUSD compatibility claim; an
+  OpenUSD usdcat is not installed.
+- Next-only and combined products build for wasm32 and memory64.
+- Full Node profiles: 49 passed, seven known failures on each pointer width.
+  Comparing shared tests against the fresh baseline wasm32 module finds no
+  new failures. The older baseline run additionally failed validation parity
+  when supplied the standalone next_usdcat instead of the root lusdcat.
+- The initial full wasm32 runner reports 49 passed and ten failures: those
+  seven Node failures, missing Menagerie data, and two unavailable-browser
+  checks. After providing Chrome, the latter checks pass separately: both
+  validation apps and all eight main-thread/Worker UDIM cases.
+
+The seven retained Node failures concern USDA composition's explicit validator
+loading, the absent value-clip fixture, validation parity, schema/image utility
+EXR loading, the allocation-failure validator gate, the missing MCP module,
+and UDIM baking. They also occur with the baseline module. The full web gate
+is not declared green. Reports, source-body audit, fixture hashes, compile
+samples and runtime probes live under ignored
+`build_ninja/continued-refactor/`; generated artifacts stay outside review.

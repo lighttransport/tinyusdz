@@ -25,6 +25,7 @@ const NODE_TESTS = [
   ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
   ['next HTTP asset fallback', 'tests/next-http-asset-fallback.test.mjs'],
   ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
+  ['next binding copy contracts', 'tests/next-binding-copy-contracts.test.mjs'],
   ['next material format parity', 'tests/material-format-parity.test.mjs'],
   ['next WASM parity gap matrix', 'tests/next-wasm-parity-matrix.test.mjs'],
   ['next flatten workflow parity map', 'tests/next-flatten-parity.test.mjs'],
