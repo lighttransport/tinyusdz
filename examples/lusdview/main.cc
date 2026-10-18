@@ -836,14 +836,14 @@ int main(int argc, char** argv) {
         return 1;
       }
     } if (std::strcmp(argv[i], "--texture-gpu") == 0 && (i + 1) < argc) {
-      const char* backend = argv[++i];
-      if (std::strcmp(backend, "off") == 0) {
+      const char* textureBackend = argv[++i];
+      if (std::strcmp(textureBackend, "off") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::Off;
-      } else if (std::strcmp(backend, "vulkan") == 0) {
+      } else if (std::strcmp(textureBackend, "vulkan") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::Vulkan;
-      } else if (std::strcmp(backend, "cuda") == 0) {
+      } else if (std::strcmp(textureBackend, "cuda") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::CUDA;
-      } else if (std::strcmp(backend, "hip") == 0) {
+      } else if (std::strcmp(textureBackend, "hip") == 0) {
         textureOptions.gpuBackend = lusdview::TextureGpuBackend::HIP;
       } else {
         LOGE("--texture-gpu must be off, vulkan, cuda or hip");

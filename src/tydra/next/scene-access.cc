@@ -274,7 +274,7 @@ bool GetString(const UsdPrim& prim, const std::string& name, std::string* out) {
   const Value* val = GetAttribute(prim, name);
   if (!val) return false;
 
-  const std::string* s = val->as_string();
+  auto s = val->as_string();
   if (s) {
     *out = *s;
     return true;
@@ -288,7 +288,7 @@ bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
   const Value* val = GetAttribute(prim, name);
   if (!val) return false;
 
-  const std::string* t = val->as_token();
+  auto t = val->as_token();
   if (t) {
     *out = *t;
     return true;
@@ -346,9 +346,9 @@ std::vector<float> GetFloatArray(const UsdPrim& prim, const std::string& name) {
   const Value* val = GetAttribute(prim, name);
   if (!val) return result;
 
-  const std::vector<float>* arr = val->as_float_array();
+  auto arr = val->as_float_array();
   if (arr) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -358,19 +358,19 @@ std::vector<std::string> GetTokenArray(const UsdPrim& prim,
   std::vector<std::string> result;
   const Value* val = GetAttribute(prim, name);
   if (!val) return result;
-  if (const std::vector<std::string>* arr = val->as_token_array()) {
-    result = *arr;
+  if (auto arr = val->as_token_array()) {
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
 
-const std::vector<int32_t>* GetIntArrayView(const UsdPrim& prim,
+::lightusd::next::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
                                             const std::string& name) {
   const Value* val = GetAttribute(prim, name);
   return val ? val->as_int_array() : nullptr;
 }
 
-const std::vector<float>* GetFloatArrayView(const UsdPrim& prim,
+::lightusd::next::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
                                             const std::string& name) {
   const Value* val = GetAttribute(prim, name);
   return val ? val->as_float_array() : nullptr;
@@ -381,9 +381,9 @@ std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name) {
   const Value* val = GetAttribute(prim, name);
   if (!val) return result;
 
-  const std::vector<int32_t>* arr = val->as_int_array();
+  auto arr = val->as_int_array();
   if (arr) {
-    result = *arr;
+    result.assign(arr->begin(), arr->end());
   }
   return result;
 }
@@ -626,7 +626,7 @@ std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
                                         const std::string& name) {
   std::vector<std::string> out;
   if (const Value* v = GetAttribute(prim, name)) {
-    if (const std::vector<std::string>* toks = v->as_token_array()) out = *toks;
+    if (auto toks = v->as_token_array()) out.assign(toks->begin(), toks->end());
   }
   return out;
 }
@@ -635,8 +635,8 @@ std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
 // Some encoders author float[] instead; the view keeps that representation and
 // converts one lane at a time at the final destination.
 struct DoubleArrayView {
-  const std::vector<double>* doubles = nullptr;
-  const std::vector<float>* floats = nullptr;
+  ::lightusd::next::ValueArrayView<const double> doubles = nullptr;
+  ::lightusd::next::ValueArrayView<const float> floats = nullptr;
 
   size_t size() const {
     return doubles ? doubles->size() : (floats ? floats->size() : 0);
@@ -801,7 +801,7 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
       }
       return 1;
     };
-    auto expand_indexed = [](auto& vals, const std::vector<int32_t>& idx,
+    auto expand_indexed = [](auto& vals, ::lightusd::next::ValueArrayView<const int32_t> idx,
                              size_t esize) {
       if (idx.empty() || vals.empty() || esize == 0 ||
           (vals.size() % esize) != 0) {
@@ -826,9 +826,9 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
     // Views: these index arrays are only read. On a dense skin each can be
     // tens of MB, and the expansion below already builds the owned result.
     static const std::vector<int32_t> kNoIdx;
-    const std::vector<int32_t>* ji_idx =
+    ::lightusd::next::ValueArrayView<const int32_t> ji_idx =
         GetIntArrayView(mesh_prim, "primvars:skel:jointIndices:indices");
-    const std::vector<int32_t>* jw_idx =
+    ::lightusd::next::ValueArrayView<const int32_t> jw_idx =
         GetIntArrayView(mesh_prim, "primvars:skel:jointWeights:indices");
     expand_indexed(out->joint_indices, ji_idx ? *ji_idx : kNoIdx,
                    elem_size("primvars:skel:jointIndices"));

@@ -42,7 +42,7 @@ void CrateReader::Impl::EmitPrimBody(
     // silently dropping a known arc field that fails to decode.
     auto append_token_list = [&](const Value& v, std::vector<std::string>& dst,
                                  const char* field_name) {
-      if (const std::vector<std::string>* arr = v.as_token_array()) {
+      if (auto arr = v.as_token_array()) {
         // Marker-aware: keep prepend/append sublist items, skip
         // deleted/ordered sublists, strip the markers themselves.
         bool keep = true;
@@ -53,9 +53,9 @@ void CrateReader::Impl::EmitPrimBody(
           }
           if (keep) dst.push_back(s);
         }
-      } else if (const std::string* s = v.as_token()) {
+      } else if (auto s = v.as_token()) {
         dst.push_back(*s);
-      } else if (const std::string* s = v.as_string()) {
+      } else if (auto s = v.as_string()) {
         dst.push_back(*s);
       } else {
         AddWarning(std::string("Composition arc field '") + field_name +
@@ -66,7 +66,7 @@ void CrateReader::Impl::EmitPrimBody(
     // Phase 7 S5: decode a `<arc>_listOp` companion token[] (marker-delimited
     // prepend/append/delete/order sublists) into an ArcListOp.
     auto decode_arc_listop = [&](const Value& v, ArcListOp& e) {
-      const std::vector<std::string>* arr = v.as_token_array();
+      auto arr = v.as_token_array();
       if (!arr) return;
       // "\x01E" alone = authored explicit-clear (`references = None` /
       // pxr's explicit-empty listop): authored with is_explicit kept true
@@ -119,10 +119,10 @@ void CrateReader::Impl::EmitPrimBody(
           continue;
         }
         if (field.first == "documentation" || field.first == "doc") {
-          if (const std::string* s = field.second.as_string()) {
+          if (auto s = field.second.as_string()) {
             ps->meta().doc() = *s;
             ps->meta().set_doc_authored();
-          } else if (const std::string* s = field.second.as_token()) {
+          } else if (auto s = field.second.as_token()) {
             ps->meta().doc() = *s;
             ps->meta().set_doc_authored();
           }
@@ -136,24 +136,24 @@ void CrateReader::Impl::EmitPrimBody(
       if (ps) {
         if (field.first == "primOrder") {
           ps->meta().setPrimOrderAuthored();
-          if (const std::vector<std::string>* names =
+          if (auto names =
                   field.second.as_token_array()) {
-            ps->meta().editPrimOrder() = *names;
+            ps->meta().editPrimOrder().assign(names->begin(), names->end());
           }
           continue;
         }
         if (field.first == "propertyOrder") {
           ps->meta().setPropertyOrderAuthored();
-          if (const std::vector<std::string>* names =
+          if (auto names =
                   field.second.as_token_array()) {
-            ps->meta().editPropertyOrder() = *names;
+            ps->meta().editPropertyOrder().assign(names->begin(), names->end());
           }
           continue;
         }
         if (field.first == "displayGroupOrder") {
-          if (const std::vector<std::string>* names =
+          if (auto names =
                   field.second.as_token_array()) {
-            ps->meta().editDisplayGroupOrder() = *names;
+            ps->meta().editDisplayGroupOrder().assign(names->begin(), names->end());
             ps->meta().setDisplayGroupOrderAuthored();
           }
           continue;
@@ -163,7 +163,7 @@ void CrateReader::Impl::EmitPrimBody(
           StringListOps& edits = ps->meta().apiSchemaEdits();
           edits = StringListOps();
           edits.authored = true;
-          if (const std::vector<std::string>* arr =
+          if (auto arr =
                   field.second.as_token_array()) {
             if (arr->size() == 1 && (*arr)[0] == "\x01" "E") {
               edits.is_explicit = true;
@@ -182,7 +182,7 @@ void CrateReader::Impl::EmitPrimBody(
               }
             } else {
               edits.is_explicit = true;
-              edits.explicit_items = *arr;
+              edits.explicit_items.assign(arr->begin(), arr->end());
             }
           } else {
             edits.is_explicit = true;
@@ -223,7 +223,7 @@ void CrateReader::Impl::EmitPrimBody(
         // encoding: reconstruct the authored edits and derive the effective
         // (within-spec) list; otherwise it is a plain explicit list.
         auto is_marker_list = [](const Value& v) {
-          const std::vector<std::string>* arr = v.as_token_array();
+          auto arr = v.as_token_array();
           return arr && !arr->empty() && !(*arr)[0].empty() &&
                  (*arr)[0][0] == '\x01';
         };
@@ -290,46 +290,46 @@ void CrateReader::Impl::EmitPrimBody(
           continue;
         }
         if (field.first == "variantSelection") {
-          if (const std::string* s = field.second.as_token())
+          if (auto s = field.second.as_token())
             ps->meta().variantSelection = *s;
-          else if (const std::string* s = field.second.as_string())
+          else if (auto s = field.second.as_string())
             ps->meta().variantSelection = *s;
           continue;
         }
         if (field.first == "comment") {
-          if (const std::string* s = field.second.as_token())
+          if (auto s = field.second.as_token())
             ps->meta().comment() = *s;
-          else if (const std::string* s = field.second.as_string())
+          else if (auto s = field.second.as_string())
             ps->meta().comment() = *s;
           ps->meta().set_comment_authored();
           continue;
         }
         if (field.first == "kind") {
-          if (const std::string* s = field.second.as_token())
+          if (auto s = field.second.as_token())
             ps->meta().kind() = *s;
-          else if (const std::string* s = field.second.as_string())
+          else if (auto s = field.second.as_string())
             ps->meta().kind() = *s;
           ps->meta().setKindAuthored();
           continue;
         }
         if (field.first == "permission") {
-          if (const std::string* s = field.second.as_token())
+          if (auto s = field.second.as_token())
             ps->meta().permission() = *s;
-          else if (const std::string* s = field.second.as_string())
+          else if (auto s = field.second.as_string())
             ps->meta().permission() = *s;
           continue;
         }
         if (field.first == "displayName") {
-          if (const std::string* s = field.second.as_string())
+          if (auto s = field.second.as_string())
             ps->meta().displayName() = *s;
-          else if (const std::string* s = field.second.as_token())
+          else if (auto s = field.second.as_token())
             ps->meta().displayName() = *s;
           ps->meta().setDisplayNameAuthored();
           continue;
         }
         if (field.first == "relocates") {
           ps->meta().setRelocatesAuthored();
-          if (const std::vector<std::string>* pairs =
+          if (auto pairs =
                   field.second.as_token_array()) {
             for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
               ps->meta().relocates().emplace_back((*pairs)[i],
@@ -349,7 +349,7 @@ void CrateReader::Impl::EmitPrimBody(
           StringListOps& edits = ps->meta().clipSetEdits();
           edits = StringListOps();
           edits.authored = true;
-          if (const std::vector<std::string>* arr =
+          if (auto arr =
                   field.second.as_token_array()) {
             if (arr->size() == 1 && (*arr)[0] == "\x01" "E") {
               edits.is_explicit = true;
@@ -367,7 +367,7 @@ void CrateReader::Impl::EmitPrimBody(
               }
             } else {
               edits.is_explicit = true;
-              edits.explicit_items = *arr;
+              edits.explicit_items.assign(arr->begin(), arr->end());
             }
           } else {
             edits.is_explicit = true;
@@ -382,9 +382,9 @@ void CrateReader::Impl::EmitPrimBody(
           Value d;
           if (field.second.is_dictionary()) {
             d = std::move(field.second);
-          } else if (const std::string* s = field.second.as_string()) {
+          } else if (auto s = field.second.as_string()) {
             d = ParseDictText(*s);
-          } else if (const std::string* s = field.second.as_token()) {
+          } else if (auto s = field.second.as_token()) {
             d = ParseDictText(*s);
           }
           if (d.is_dictionary()) {
@@ -414,7 +414,7 @@ void CrateReader::Impl::EmitPrimBody(
           StringListOps& edits = ps->meta().variantSetNameEdits();
           edits = StringListOps();
           edits.authored = true;
-          if (const std::vector<std::string>* arr =
+          if (auto arr =
                   field.second.as_token_array()) {
             if (arr->size() == 1 && (*arr)[0] == "\x01" "E") {
               edits.is_explicit = true;
@@ -433,7 +433,7 @@ void CrateReader::Impl::EmitPrimBody(
               }
             } else {
               edits.is_explicit = true;
-              edits.explicit_items = *arr;
+              edits.explicit_items.assign(arr->begin(), arr->end());
             }
           } else {
             edits.is_explicit = true;
@@ -475,7 +475,7 @@ void CrateReader::Impl::EmitPrimBody(
         if (field.first == "__lightusd_unknownMeta") {
           // lightusd-private field: length-prefixed (key, raw-value) pairs of
           // unmodeled prim metadata the parser preserved (see the writer).
-          const std::string* blob = field.second.as_string();
+          auto blob = field.second.as_string();
           if (!blob) blob = field.second.as_token();
           if (blob) {
             size_t p = 0;
@@ -527,10 +527,10 @@ void CrateReader::Impl::EmitPrimBody(
         // statement. Restoring child_indices already reproduces that emission
         // order; setting primOrder() here made every USDC->USDA round trip gain
         // a spurious reorder statement pxr never emits.
-        if (const std::vector<std::string>* names =
+        if (auto names =
                 field.second.as_token_array()) {
           if (!names->empty()) {
-            children_order[entry_index] = *names;
+            children_order[entry_index].assign(names->begin(), names->end());
           }
         }
         continue;

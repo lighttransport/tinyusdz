@@ -13,7 +13,7 @@ const sourceDir = path.resolve(packageRoot, '..', 'js', 'src', 'lightusd');
 // imported by the packaged loaders (e.g. LightUSDLoader.js pulls
 // parseUSDZEntries from ../usdzconvert.js). They are staged flat into dist and
 // the staged importers are rewritten from '../<name>' to './<name>'.
-const PARENT_DIR_MODULES = ['usdzconvert.js', 'texture-memory-budget.mjs'];
+const PARENT_DIR_MODULES = ['usdzconvert.js', 'udim-bake.js', 'texture-memory-budget.mjs'];
 const distDir = path.resolve(packageRoot, 'dist');
 const rootEntrypoint = path.resolve(packageRoot, 'index.js');
 const readmePath = path.resolve(packageRoot, 'README.md');
@@ -29,6 +29,14 @@ const REQUIRED_SOURCE_FILES = [
   'lightusd_next.wasm',
   'lightusd_next_64.js',
   'lightusd_next_64.wasm',
+  'lightusd_geometry.js',
+  'lightusd_geometry.wasm',
+  'lightusd_geometry_64.js',
+  'lightusd_geometry_64.wasm',
+  'lightusd_raytrace.js',
+  'lightusd_raytrace.wasm',
+  'lightusd_raytrace_64.js',
+  'lightusd_raytrace_64.wasm',
   'lightusd_validator.js',
   'lightusd_validator.wasm',
   'lightusd_validator_64.js',

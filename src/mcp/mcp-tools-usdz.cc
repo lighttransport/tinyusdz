@@ -39,18 +39,19 @@ std::string DirOf(const std::string& path) {
 // Relative asset references authored on the stage (defaults only).
 std::set<std::string> CollectAssetPaths(const next::Stage& stage) {
   std::set<std::string> out;
-  auto add = [&](const std::string& p) {
-    if (!p.empty() && p.find("://") == std::string::npos) out.insert(p);
+  auto add = [&](next::StringView p) {
+    if (!p.empty() && p.find("://") == next::StringView::npos)
+      out.emplace(p.data(), p.size());
   };
   stage.Traverse([&](const next::UsdPrim& prim) {
     for (const std::string& name : prim.GetPropertyNames()) {
       const next::Value* v = prim.GetPropertyValue(name);
       if (!v || v->type_id() != next::TypeId::AssetPath) continue;
       if (v->is_array()) {
-        if (const auto* a = v->as_token_array()) {
-          for (const std::string& p : *a) add(p);
+        if (const auto a = v->as_token_array()) {
+          for (const auto p : *a) add(p);
         }
-      } else if (const std::string* p = v->as_asset_path()) {
+      } else if (const auto p = v->as_asset_path()) {
         add(*p);
       }
     }

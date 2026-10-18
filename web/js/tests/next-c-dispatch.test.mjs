@@ -9,8 +9,8 @@ const {default: createModule} = await import(wasm64
   ? '../src/lightusd/lightusd_next_64.js'
   : '../src/lightusd/lightusd_next.js');
 const module = await createModule();
-await module.loadValidator();
-await module.loadEXR();
+const validator = await module.loadFeature('validator');
+const exr = await module.loadFeature('exr');
 const encode = text => new TextEncoder().encode(text);
 const assertAggregateHeadroomRejectsBeforeBuild = (stream, aggregateMethod,
   itemMethod, itemCount) => {
@@ -557,7 +557,8 @@ try {
 } finally {
   metadataBudgetStore.delete();
 }
-const subdiv = new module.SubdivStreamer();
+const geometry = await module.loadFeature('geometry');
+const subdiv = new geometry.SubdivStreamer();
 assert.ok(subdiv.heapBytes() > 0);
 assert.throws(() => subdiv.refineStream(), /wrong argument count/);
 const quad = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
@@ -2153,7 +2154,7 @@ const loadValueClip = (configured, clipsEnabled = true) => {
 assert.deepEqual(loadValueClip(false), [0, 1]);
 assert.deepEqual(loadValueClip(true), [0, 0.5, 1]);
 assert.deepEqual(loadValueClip(false, false), []);
-const clipFixturePath = '../../../examples/lusdview/tests/fixtures/value-clip/';
+const clipFixturePath = '../../../tests/feat/value-clip/carrier/';
 const clipFixture = name => new Uint8Array(fs.readFileSync(
   new URL(clipFixturePath + name, import.meta.url)));
 const loadClippedCurves = enabled => {
@@ -2163,6 +2164,10 @@ const loadClippedCurves = enabled => {
   curveStream.provideAsset('clip_tall.usda', clipFixture('clip_tall.usda'));
   const result = curveStream.begin(clipFixture('main.usda'));
   assert.equal(result.success, true, result.error || curveStream.error());
+  assert.equal(curveStream.numMeshes(), 1,
+    'mesh slots remain stable when clip-backed geometry is disabled');
+  assert.equal(curveStream.meshVertexCount(0), enabled ? 4 : 0,
+    'clip-backed mesh points follow the same enable flag as curves');
   const count = curveStream.curvesCount();
   curveStream.end();
   return count;
@@ -3572,29 +3577,29 @@ assert.equal(prim.geometry.size, 2);
 
 for (const options of ['{}', '{bad', '{"groups":[]}',
     '{"groups":["shade"],"groups":["core"]}']) {
-  const result = JSON.parse(module.validateFromBinary(encode(text), 'scene.usda', options));
+  const result = JSON.parse(validator.validateFromBinary(encode(text), 'scene.usda', options));
   assert.equal(result.parse_ok, true);
   assert.ok(Array.isArray(result.issues));
   assert.ok(result.checked_groups.includes('core'));
 }
 const validationInput = encode(`x${text}y`).subarray(1, -1);
-assert.equal(JSON.parse(module.validateFromBinary(
+assert.equal(JSON.parse(validator.validateFromBinary(
   validationInput, 'scene.usda', '{}')).parse_ok, true);
 const validationPtr = module._lightusd_next_alloc(validationInput.length + 2);
 try {
   module.HEAPU8.set(validationInput, Number(validationPtr) + 1);
   const heapInput = module.HEAPU8.subarray(
     Number(validationPtr) + 1, Number(validationPtr) + 1 + validationInput.length);
-  assert.equal(JSON.parse(module.validateFromBinary(
+  assert.equal(JSON.parse(validator.validateFromBinary(
     heapInput, 'scene.usda', '{}')).parse_ok, true);
 } finally {
   module._lightusd_next_free(validationPtr);
 }
-assert.throws(() => module.validateFromBinary(null, 'scene.usda', '{}'),
+assert.throws(() => validator.validateFromBinary(null, 'scene.usda', '{}'),
   /expected byte view/);
-assert.throws(() => module.validateFromBinary(validationInput, 1, '{}'),
+assert.throws(() => validator.validateFromBinary(validationInput, 1, '{}'),
   /expected filename and options strings/);
-const bad = JSON.parse(module.validateFromBinary(encode('not USD'), 'bad.usda', '{}'));
+const bad = JSON.parse(validator.validateFromBinary(encode('not USD'), 'bad.usda', '{}'));
 assert.equal(bad.parse_ok, false);
 assert.equal(bad.ok, false);
 assert.equal(typeof bad.error, 'string');

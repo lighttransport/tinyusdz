@@ -11,8 +11,10 @@
   };
   Module['runValidation'] = (bytes, filename, options, checker, snapshot = null) => {
     if (busy) throw new Error('validator is already running');
-    if (!ArrayBuffer.isView(bytes) || typeof filename !== 'string' || typeof options !== 'string')
-      throw new TypeError('validation requires bytes, filename and options');
+    if (!ArrayBuffer.isView(bytes))
+      throw new TypeError('validation: expected byte view');
+    if (typeof filename !== 'string' || typeof options !== 'string')
+      throw new TypeError('validation: expected filename and options strings');
     const source = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const name = encoder.encode(filename), config = encoder.encode(options);
     if (source.length > 0x40000000 || name.length > 65536 || config.length > 0x1000000)

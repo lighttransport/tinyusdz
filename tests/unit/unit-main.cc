@@ -111,6 +111,7 @@ TEST_LIST = {
   { "tinydng_classic_tiff_test", tinydng_classic_tiff_test },
   { "tinydng_layers_api_test", tinydng_layers_api_test },
   { "tinydng_bigtiff_test", tinydng_bigtiff_test },
+  { "tinydng_odd_offset_probe_test", tinydng_odd_offset_probe_test },
   { "tinydng_writer_roundtrip_test", tinydng_writer_roundtrip_test },
   { "tinydng_writer_bitdepth_roundtrip_test", tinydng_writer_bitdepth_roundtrip_test },
   { "tinydng_packed_integer_test", tinydng_packed_integer_test },
@@ -907,6 +908,7 @@ TEST_LIST = {
   // USDZ conversion pipeline + texture ops + fpnge
   { "usdz_convert_png_roundtrip_test", usdz_convert_png_roundtrip_test },
   { "usdz_convert_resize_test", usdz_convert_resize_test },
+  { "usdz_convert_srgb_resize_test", usdz_convert_srgb_resize_test },
   { "usdz_convert_exr_roundtrip_test", usdz_convert_exr_roundtrip_test },
   { "usdz_convert_resize_float_test", usdz_convert_resize_float_test },
   { "usdz_convert_pack_channels_test", usdz_convert_pack_channels_test },

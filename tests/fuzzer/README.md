@@ -50,6 +50,13 @@ Use `-rss_limit_mb=8192`(or more if you encounter oom and have enough memory) to
 $ ./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
 ```
 
+The legacy `usdcparser_fuzzmain.cc` harness calls `ReconstructStage` after a
+successful crate read, so it exercises decoded values and array ownership as
+well as binary sections/fields. Its seed bytes must omit the eight-byte
+`PXR-USDC` magic, which the harness prepends. The legacy USDA harness likewise
+prepends its USDA header. Use a copied corpus for mutation runs so generated
+inputs remain outside the source fixture directories.
+
 ## src/next harnesses
 
 The `next` module has five of its own libFuzzer harnesses -- `next_usdc`

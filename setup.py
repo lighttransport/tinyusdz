@@ -13,8 +13,8 @@ Flow:
 
 Two build flavors from the same sources:
   - Regular CPython: stable-ABI (abi3) extension with
-    Py_LIMITED_API=0x030A0000; the wheel is tagged cp310-abi3 and covers
-    CPython >= 3.10.
+    Py_LIMITED_API=0x030B0000; the wheel is tagged cp311-abi3 and covers
+    CPython >= 3.11.
   - Free-threaded CPython (Py_GIL_DISABLED, e.g. 3.14t): the limited API is
     unavailable there, so a regular version-specific extension is built
     (wheel tag cp314t-...). The module declares Py_mod_gil=Py_MOD_GIL_NOT_USED.
@@ -58,7 +58,7 @@ CMAKE_BUILD_DIR = pathlib.Path(
     os.environ.get("LIGHTUSD_PY_BUILD_DIR", str(ROOT / _default_build_dir))
 ).resolve()
 
-PY_LIMITED_API = 0x030A0000  # CPython 3.10 floor for the abi3 wheel
+PY_LIMITED_API = 0x030B0000  # CPython 3.11 floor for the abi3 wheel
 
 # The stable ABI cannot be used on free-threaded CPython builds.
 FREE_THREADED = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
@@ -104,7 +104,7 @@ def _cmake_configure_and_build() -> None:
         "--target", "lightusd_next",
         "--target", "tydra_next",
         "--target", "lightusd_render_c",
-        "--parallel", str(os.cpu_count() or 2),
+        "--parallel", os.environ.get("LIGHTUSD_PY_JOBS", str(min(16, os.cpu_count() or 2))),
     ]
     subprocess.check_call(build_args, env=env)
 
@@ -139,14 +139,18 @@ class CMakeBuildExt(build_ext):
         tydra = _find_static_lib("tydra_next")
         core = _find_static_lib("lightusd_next")
 
+        core_c = _find_static_lib("lightusd_core_c")
+        archives = [str(p) for p in (render_api, c_api, tydra, core, core_c)]
+        stamp = pathlib.Path(self.build_temp) / "lightusd-build-config.txt"
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        config = repr((archives, USE_LIMITED, PY_LIMITED_API, PY_ENABLE_THREAD))
+        if not stamp.exists() or stamp.read_text() != config:
+            stamp.write_text(config)
+        headers = [str(p) for directory in (ROOT / "src/python", ROOT / "src/c-api", ROOT / "src/next/c")
+                   for p in directory.glob("*.h")]
         for ext in self.extensions:
-            ext.extra_objects = [str(render_api), str(c_api), str(tydra), str(core)] + list(
-                ext.extra_objects)
-        # setuptools does not reliably treat a changed static-archive path or
-        # CMake build flavor as an extension dependency. Always relink the tiny
-        # C shim so switching LIGHTUSD_PY_ENABLE_THREAD cannot leave a stale
-        # threaded/non-threaded module in place.
-        self.force = True
+            ext.extra_objects = archives + list(ext.extra_objects)
+            ext.depends = list(ext.depends or []) + archives + headers + [str(stamp)]
         super().run()
 
 
@@ -177,11 +181,13 @@ ext = Extension(
     sources=[
         "src/python/py-module.c",
         "src/python/py-array.c",
+        "src/python/py-numeric.c",
         "src/python/py-prim.c",
         "src/python/py-render.c",
         "src/python/py-stage.c",
     ],
     include_dirs=[
+        "src",
         "src/c-api",
         "src/python",
     ],
@@ -195,7 +201,7 @@ ext = Extension(
 
 options = {}
 if USE_LIMITED:
-    options["bdist_wheel"] = {"py_limited_api": "cp310"}
+    options["bdist_wheel"] = {"py_limited_api": "cp311"}
 
 setup(
     ext_modules=[ext],

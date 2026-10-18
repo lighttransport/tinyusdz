@@ -16,6 +16,31 @@
 namespace lightusd {
 namespace next {
 
+struct PrimSpec::ColdData {
+
+    std::unordered_map<std::string, ArcListOp> rel_edits;
+    std::unordered_map<std::string, std::vector<RelationshipOpinion>>
+        rel_opinion_stacks;
+    std::unordered_map<std::string, uint16_t> rel_flags;
+    std::unordered_map<uint32_t, ArcListOp> connection_edits;
+    std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
+        connection_opinion_stacks;
+    // Raw USDA `.spline` values and unsupported defaults are keyed by property
+    // id. Sparse array edits keep a structured twin of the raw default text.
+    std::unordered_map<uint32_t, std::string> spline_sources;
+    std::unordered_map<uint32_t, std::string> raw_default_sources;
+    std::unordered_map<uint32_t, ArrayEditData> array_edits;
+  std::unordered_map<std::string, std::vector<Path>> relationships;
+  std::unordered_map<uint32_t, std::vector<Path>> connections;
+  std::unordered_map<uint32_t, std::string> prop_type_names;
+  std::unordered_map<uint32_t, std::unique_ptr<PropMeta>> prop_metas;
+  ColdData() = default;
+  ColdData(const ColdData& other) : rel_edits(other.rel_edits), rel_opinion_stacks(other.rel_opinion_stacks), rel_flags(other.rel_flags), connection_edits(other.connection_edits), connection_opinion_stacks(other.connection_opinion_stacks), spline_sources(other.spline_sources), raw_default_sources(other.raw_default_sources), array_edits(other.array_edits), relationships(other.relationships), connections(other.connections), prop_type_names(other.prop_type_names) {
+    for (const auto& kv : other.prop_metas)
+      if (kv.second) prop_metas[kv.first] = std::make_unique<PropMeta>(*kv.second);
+  }
+};
+
 PrimSpec::PrimSpec() {}
 
 PrimSpec::PrimSpec(const std::string& name) : name_(name) {}
@@ -65,18 +90,7 @@ PrimSpec PrimSpec::Clone() const {
     }
   }
 
-  // Deep copy relationships and the rare authored-field block.
-  c.relationships_ = relationships_;
   if (cold_data_) c.cold_data_ = std::make_unique<ColdData>(*cold_data_);
-
-  // Deep copy attribute connections + declared type names
-  c.connections_ = connections_;
-  c.prop_type_names_ = prop_type_names_;
-
-  // Deep copy per-property metadata (unique_ptr side table).
-  for (const auto& kv : prop_metas_) {
-    if (kv.second) c.prop_metas_[kv.first] = std::make_unique<PropMeta>(*kv.second);
-  }
 
   // Deep copy children
   c.child_indices_ = child_indices_;
@@ -243,13 +257,13 @@ void PrimSpec::upsert_property(const std::string& name, Value value,
 bool PrimSpec::remove_property(PropNameId name_id) {
   if (!name_id.is_valid()) return false;
   bool removed = props_.remove(name_id);
-  if (connections_.erase(name_id.id) > 0) removed = true;
   if (cold_data_) {
+    if (cold_data_->connections.erase(name_id.id) > 0) removed = true;
     cold_data_->connection_edits.erase(name_id.id);
     cold_data_->connection_opinion_stacks.erase(name_id.id);
+    cold_data_->prop_type_names.erase(name_id.id);
+    cold_data_->prop_metas.erase(name_id.id);
   }
-  prop_type_names_.erase(name_id.id);
-  prop_metas_.erase(name_id.id);
   if (time_samples_ && time_samples_->remove(name_id)) removed = true;
   return removed;
 }
@@ -289,7 +303,7 @@ size_t PrimSpec::remap_asset_paths(
   for (const PropSlot& slot : props_.slots()) {
     const Value* value = property_value(slot.name_id);
     if (!value) continue;
-    const std::string* path = value->as_asset_path();
+    auto path = value->as_asset_path();
     if (!path) continue;
     const std::string* mapped = FindAssetPathRemap(remap, *path);
     if (!mapped) continue;
@@ -426,6 +440,20 @@ void PrimSpec::clear_array_edit(PropNameId name_id) {
   if (cold_data_) cold_data_->array_edits.erase(name_id.id);
 }
 
+bool PrimSpec::needs_property_composition() const {
+  if (!cold_data_) return false;
+  if (!cold_data_->array_edits.empty()) return true;
+  for (const auto& entry : cold_data_->rel_edits) {
+    if (!entry.second.is_explicit && entry.second.has_authored_opinion())
+      return true;
+  }
+  for (const auto& entry : cold_data_->connection_edits) {
+    if (!entry.second.is_explicit && entry.second.has_authored_opinion())
+      return true;
+  }
+  return false;
+}
+
 const std::string* PrimSpec::raw_default_source(PropNameId name_id) const {
   if (!name_id.is_valid() || !cold_data_) return nullptr;
   auto it = cold_data_->raw_default_sources.find(name_id.id);
@@ -436,7 +464,7 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   // Authoring boundary (see add_property): keep relationship names valid
   // identifiers so API scenes stay round-trippable.
   if (!IsValidNamespacedIdentifier(name)) return;
-  relationships_[name].push_back(target);
+  cold().relationships[name].push_back(target);
 }
 
 ArcListOp& PrimSpec::ensure_relationship_edit(const std::string& name) {
@@ -469,7 +497,7 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
                                           const std::vector<Path>& targets,
                                           RelationshipListOp op) {
   if (targets.empty()) return;
-  std::vector<Path>& dst = relationships_[name];
+  std::vector<Path>& dst = cold().relationships[name];
 
   switch (op) {
     case RelationshipListOp::Prepend:
@@ -489,7 +517,7 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
                                                   p) != targets.end();
                                }),
                 dst.end());
-      if (dst.empty()) relationships_.erase(name);
+      if (dst.empty()) cold().relationships.erase(name);
       break;
     case RelationshipListOp::Reorder: {
       std::vector<Path> ordered;
@@ -513,11 +541,11 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
 
 void PrimSpec::set_relationship_targets(const std::string& name,
                                         std::vector<Path> targets) {
-  relationships_[name] = std::move(targets);
+  cold().relationships[name] = std::move(targets);
 }
 
 bool PrimSpec::remove_relationship(const std::string& name) {
-  bool removed = relationships_.erase(name) > 0;
+  bool removed = cold().relationships.erase(name) > 0;
   if (cold_data_) {
     cold_data_->rel_opinion_stacks.erase(name);
     cold_data_->rel_edits.erase(name);
@@ -534,19 +562,19 @@ bool PrimSpec::remove_relationship(const std::string& name) {
 }
 
 const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
-  auto it = relationships_.find(name);
-  if (it == relationships_.end()) return nullptr;
+  auto it = cold().relationships.find(name);
+  if (it == cold().relationships.end()) return nullptr;
   return &it->second;
 }
 
 std::vector<std::string> PrimSpec::relationship_names() const {
   std::vector<std::string> names;
-  names.reserve(relationships_.size() + relationship_edits().size());
-  for (const auto& [name, _] : relationships_) {
+  names.reserve(cold().relationships.size() + relationship_edits().size());
+  for (const auto& [name, _] : cold().relationships) {
     names.push_back(name);
   }
   // A delete-only or otherwise inert list-op may have no effective target
-  // entries in relationships_, but remains an authored relationship opinion.
+  // entries in cold().relationships, but remains an authored relationship opinion.
   for (const auto& [name, _] : relationship_edits()) names.push_back(name);
   // Both maps are unordered; sort and deduplicate for stable enumeration.
   std::sort(names.begin(), names.end());
@@ -559,7 +587,7 @@ void PrimSpec::add_connection(const std::string& prop_name, const Path& target) 
   // valid identifiers.
   if (!IsValidNamespacedIdentifier(prop_name)) return;
   const PropNameId id = GetPropNameTable().intern(prop_name);
-  connections_[id.id].push_back(target);
+  cold().connections[id.id].push_back(target);
   // Mark the slot as carrying a connection so serializers that gate on the
   // flag (the USDC writer) emit it even when the property ALSO has a default
   // value — otherwise `attr = v` + `attr.connect = <t>` loses the connection
@@ -569,7 +597,7 @@ void PrimSpec::add_connection(const std::string& prop_name, const Path& target) 
 
 void PrimSpec::set_connection_block(const std::string& prop_name) {
   const PropNameId id = GetPropNameTable().intern(prop_name);
-  connections_[id.id];  // empty vector (authored `.connect = None`)
+  cold().connections[id.id];  // empty vector (authored `.connect = None`)
   if (PropSlot* s = property_mutable(id)) s->flags |= PropSlot::kFlagConnection;
 }
 
@@ -604,7 +632,7 @@ void PrimSpec::set_connection_opinion_stack(
 void PrimSpec::set_connection_targets(const std::string& prop_name,
                                       std::vector<Path> targets) {
   const PropNameId id = GetPropNameTable().intern(prop_name);
-  connections_[id.id] = std::move(targets);
+  cold().connections[id.id] = std::move(targets);
   if (PropSlot* slot = property_mutable(id)) {
     slot->flags |= PropSlot::kFlagConnection;
   }
@@ -614,7 +642,7 @@ void PrimSpec::apply_connection_list_op(const std::string& prop_name,
                                         const std::vector<Path>& targets,
                                         RelationshipListOp op) {
   const PropNameId id = GetPropNameTable().intern(prop_name);
-  std::vector<Path>& dst = connections_[id.id];
+  std::vector<Path>& dst = cold().connections[id.id];
   switch (op) {
     case RelationshipListOp::Prepend:
       dst.insert(dst.begin(), targets.begin(), targets.end());
@@ -656,13 +684,14 @@ void PrimSpec::apply_connection_list_op(const std::string& prop_name,
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
   PropNameId id = GetPropNameTable().find(prop_name);
   if (!id.is_valid()) return nullptr;
-  auto it = connections_.find(id.id);
-  if (it == connections_.end()) return nullptr;
+  auto it = cold().connections.find(id.id);
+  if (it == cold().connections.end()) return nullptr;
   return &it->second;
 }
 
 void PrimSpec::remap_target_prefix(const std::string& old_prefix,
                                    const std::string& new_prefix) {
+  if (!cold_data_) return;
   auto remap = [&](std::vector<Path>& targets) {
     for (Path& t : targets) {
       const std::string s = t.str();
@@ -694,8 +723,8 @@ void PrimSpec::remap_target_prefix(const std::string& old_prefix,
     remap_strings(edit.deleted);
     remap_strings(edit.ordered);
   };
-  for (auto& kv : relationships_) remap(kv.second);
-  for (auto& kv : connections_) remap(kv.second);
+  for (auto& kv : cold().relationships) remap(kv.second);
+  for (auto& kv : cold().connections) remap(kv.second);
   if (cold_data_) {
     for (auto& kv : cold_data_->rel_edits) remap_edit(kv.second);
     for (auto& kv : cold_data_->connection_edits) remap_edit(kv.second);
@@ -719,16 +748,22 @@ PrimSpec::ColdData& PrimSpec::ensure_cold_data() {
   return *cold_data_;
 }
 
+PrimSpec::ColdData& PrimSpec::cold() { return ensure_cold_data(); }
+const PrimSpec::ColdData& PrimSpec::cold() const {
+  static const ColdData empty;
+  return cold_data_ ? *cold_data_ : empty;
+}
+
 void PrimSpec::set_property_type_name(const std::string& prop_name,
                                       const std::string& type_name) {
   // Intern both name and typeName; typeNames are few and highly shared.
-  prop_type_names_[GetPropNameTable().intern(prop_name).id] = type_name;
+  cold().prop_type_names[GetPropNameTable().intern(prop_name).id] = type_name;
 }
 
 const std::string* PrimSpec::property_type_name(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
-  auto it = prop_type_names_.find(name_id.id);
-  if (it == prop_type_names_.end()) return nullptr;
+  auto it = cold().prop_type_names.find(name_id.id);
+  if (it == cold().prop_type_names.end()) return nullptr;
   return &it->second;
 }
 
@@ -738,8 +773,8 @@ const std::string* PrimSpec::property_type_name(const std::string& prop_name) co
 
 const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
-  auto it = prop_metas_.find(name_id.id);
-  if (it == prop_metas_.end()) return nullptr;
+  auto it = cold().prop_metas.find(name_id.id);
+  if (it == cold().prop_metas.end()) return nullptr;
   return it->second.get();
 }
 
@@ -748,7 +783,7 @@ const PropMeta* PrimSpec::property_meta(const std::string& prop_name) const {
 }
 
 PropMeta& PrimSpec::ensure_property_meta(PropNameId name_id) {
-  std::unique_ptr<PropMeta>& slot = prop_metas_[name_id.id];
+  std::unique_ptr<PropMeta>& slot = cold().prop_metas[name_id.id];
   if (!slot) slot = std::make_unique<PropMeta>();
   return *slot;
 }
@@ -873,17 +908,17 @@ size_t PrimSpec::memory_usage() const {
   }
 
   // Relationships
-  for (const auto& rel : relationships_) {
+  for (const auto& rel : cold().relationships) {
     add(rel.first.capacity() + sizeof(rel) + sizeof(void*) * 2);
     add_paths(rel.second);
   }
-  for (const auto& connection : connections_) {
+  for (const auto& connection : cold().connections) {
     add(sizeof(connection) + sizeof(void*) * 2);
     add_paths(connection.second);
   }
-  for (const auto& entry : prop_type_names_)
+  for (const auto& entry : cold().prop_type_names)
     add(sizeof(entry) + sizeof(void*) * 2 + entry.second.capacity());
-  for (const auto& entry : prop_metas_) {
+  for (const auto& entry : cold().prop_metas) {
     add(sizeof(entry) + sizeof(void*) * 2);
     if (!entry.second) continue;
     const PropMeta& meta = *entry.second;

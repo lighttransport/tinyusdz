@@ -41,7 +41,7 @@ extern "C" {
 #endif
 #endif
 
-#define LU_CORE_C_VERSION_MAJOR 1
+#define LU_CORE_C_VERSION_MAJOR 2
 #define LU_CORE_C_VERSION_MINOR 0
 #define LU_CORE_C_VERSION_PATCH 0
 
@@ -870,10 +870,9 @@ LU_CORE_API int lu_crate_encode_delta_s32(const int32_t *values, size_t count,
 /* ============================================================
  * C11 semi-any value core (src/next/c/value.c)
  *
- * Storage kind + tag + compact SBO buffer and a lifetime-dispatch API. The C++
- * `lightusd::next::Value` keeps the same public API but stores its state as one
- * `lu_value`; C++-owned payloads (string/array/dict/lazy) stay in the inline slot
- * behind the payload ops hooks registered at start-up.
+ * One C11 implementation owns inline values and retained, copy-on-write
+ * strings, arrays, dictionaries, boxes and lazy decoder contexts. C++ and
+ * language bindings use this carrier without constructing C++ payloads in it.
  * ============================================================ */
 #define LU_VALUE_INLINE_CAP 40
 
@@ -899,20 +898,16 @@ typedef struct lu_value {
     } store;
 } lu_value;
 
-typedef struct lu_value_payload_ops {
-    void (*copy)(lu_value* dst, const lu_value* src);
-    void (*move)(lu_value* dst, lu_value* src);
-    void (*destroy)(lu_value* value);
-} lu_value_payload_ops;
-
 LU_CORE_API lu_value_kind lu_value_kind_of (uint16_t type);
 LU_CORE_API void lu_value_init (lu_value* value, uint16_t type);
 LU_CORE_API void lu_value_init_empty (lu_value* value);
 LU_CORE_API void lu_value_init_block (lu_value* value);
 LU_CORE_API void lu_value_destroy (lu_value* value);
+/* Destinations must be initialized. Copies retain C11-owned storage and writes
+ * detach shared payloads. Moving between a dictionary and its own child is
+ * unsupported; use a separate initialized carrier for that operation. */
 LU_CORE_API void lu_value_copy (lu_value* dst, const lu_value* src);
 LU_CORE_API void lu_value_move (lu_value* dst, lu_value* src);
-LU_CORE_API void lu_value_set_payload_ops (const lu_value_payload_ops* ops);
 
 
 

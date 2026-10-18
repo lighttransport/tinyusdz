@@ -516,6 +516,7 @@ class RenderStream {
   void releaseSourceLayer() {}
 
   void buildRenderScene_();
+  tr::AnimationConfig::ClipStageLoader valueClipLoader_();
   int prepareMaterialFormat_(int material_id, uint8_t format) const;
 
  private:
@@ -647,7 +648,7 @@ class RenderStream {
   struct MeshOnlyPrimvar {
     std::string name;
     const lightusd::next::Value* value = nullptr;
-    const std::vector<int32_t>* indices = nullptr;
+    lightusd::next::ValueArrayView<const int32_t> indices;
     tr::VertexFormat format = tr::VertexFormat::Float;
     tr::Interpolation interpolation = tr::Interpolation::Vertex;
     uint32_t components = 1;

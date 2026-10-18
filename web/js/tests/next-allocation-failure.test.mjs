@@ -19,6 +19,8 @@ const {default: createNext} = await import(new URL(
   wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js',
   import.meta.url));
 const M = await createNext();
+await M.loadFeature('validator');
+await M.loadFeature('exr');
 const encode = text => new TextEncoder().encode(text);
 const fixture = name => new Uint8Array(fs.readFileSync(new URL(`../../../${name}`, import.meta.url)));
 

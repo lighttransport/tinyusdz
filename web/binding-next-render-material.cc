@@ -280,8 +280,8 @@ std::string RenderStream::texFile_(const std::string &connPath) {
     if (!tex.IsValid()) return "";
     const lightusd::next::Value *v = tex.GetPropertyValue("inputs:file");
     if (!v) return "";
-    if (const std::string *a = v->as_asset_path()) return *a;
-    if (const std::string *s = v->as_string()) return *s;
+    if (auto a = v->as_asset_path()) return *a;
+    if (auto s = v->as_string()) return *s;
     return "";
   }
 }  // namespace web_next

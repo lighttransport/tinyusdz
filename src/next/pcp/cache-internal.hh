@@ -107,39 +107,13 @@ struct StackSpecCache {
   }
 
   std::vector<SpecRef> &insert(const std::string &site, uint64_t h,
-                               std::vector<SpecRef> &&v) {
-    if (slots_.empty() || (count_ + 1) * 2 > slots_.size()) rehash();
-    const uint32_t vi = static_cast<uint32_t>(vals_.size());
-    keys_.emplace_back(site);
-    vals_.emplace_back(std::move(v));
-    place(h, vi);
-    ++count_;
-    return vals_[vi];
-  }
+                               std::vector<SpecRef> &&v) ;
 
-  void clear() {
-    slots_.clear();
-    keys_.clear();
-    vals_.clear();
-    count_ = 0;
-  }
+  void clear() ;
 
  private:
-  void place(uint64_t h, uint32_t vi) {
-    const size_t mask = slots_.size() - 1;
-    size_t i = static_cast<size_t>(h) & mask;
-    while (slots_[i].hash != 0) i = (i + 1) & mask;
-    slots_[i].hash = h;
-    slots_[i].val_idx = vi;
-  }
-  void rehash() {
-    const size_t new_cap = slots_.empty() ? 16 : slots_.size() * 2;
-    std::vector<Slot> old = std::move(slots_);
-    slots_.assign(new_cap, Slot{});
-    for (const Slot &s : old) {
-      if (s.hash != 0) place(s.hash, s.val_idx);
-    }
-  }
+  void place(uint64_t h, uint32_t vi) ;
+  void rehash() ;
 };
 
 // Memoized Specs() pointer that RESETS on copy/move. A Src copied on
@@ -252,108 +226,19 @@ struct SrcCache {
 
   size_t size() const { return count_; }
 
-  void clear() {  // full free (drops the path-string keys too)
-    std::vector<Slot>().swap(slots_);
-    std::deque<std::string>().swap(keys_);
-    std::deque<std::vector<Src>>().swap(vals_);
-    std::vector<uint8_t>().swap(live_);
-    count_ = 0;
-    occupied_ = 0;
-  }
+  void clear() ;
 
-  std::vector<Src> *find(const std::string &k) {
-    if (slots_.empty()) return nullptr;
-    const uint64_t h = Hash(k);
-    const size_t mask = slots_.size() - 1;
-    size_t i = static_cast<size_t>(h) & mask;
-    for (;;) {
-      const Slot &s = slots_[i];
-      if (s.state == 0) return nullptr;
-      if (s.state == 1 && s.hash == h) {
-        const std::string &key = keys_[s.idx];
-        if (key.size() == k.size() &&
-            std::memcmp(key.data(), k.data(), k.size()) == 0) {
-          return &vals_[s.idx];
-        }
-      }
-      i = (i + 1) & mask;
-    }
-  }
-  const std::vector<Src> *find(const std::string &k) const {
-    if (slots_.empty()) return nullptr;
-    const uint64_t h = Hash(k);
-    const size_t mask = slots_.size() - 1;
-    size_t i = static_cast<size_t>(h) & mask;
-    for (;;) {
-      const Slot &s = slots_[i];
-      if (s.state == 0) return nullptr;
-      if (s.state == 1 && s.hash == h) {
-        const std::string &key = keys_[s.idx];
-        if (key.size() == k.size() &&
-            std::memcmp(key.data(), k.data(), k.size()) == 0) {
-          return &vals_[s.idx];
-        }
-      }
-      i = (i + 1) & mask;
-    }
-  }
+  std::vector<Src> *find(const std::string &k) ;
+  const std::vector<Src> *find(const std::string &k) const ;
   bool contains(const std::string &k) const { return find(k) != nullptr; }
 
   // find-or-insert; returns a reference that stays valid across later inserts.
-  std::vector<Src> &get_or_create(const std::string &k) {
-    const uint64_t h = Hash(k);
-    if (slots_.empty() || (occupied_ + 1) * 2 > slots_.size()) rehash();
-    const size_t mask = slots_.size() - 1;
-    size_t i = static_cast<size_t>(h) & mask;
-    size_t first_tomb = SIZE_MAX;
-    for (;;) {
-      Slot &s = slots_[i];
-      if (s.state == 0) {
-        const size_t at = (first_tomb == SIZE_MAX) ? i : first_tomb;
-        return emplace_at(at, h, k, /*was_tomb=*/slots_[at].state == 2);
-      }
-      if (s.state == 2) {
-        if (first_tomb == SIZE_MAX) first_tomb = i;
-      } else if (s.hash == h) {
-        const std::string &key = keys_[s.idx];
-        if (key.size() == k.size() &&
-            std::memcmp(key.data(), k.data(), k.size()) == 0) {
-          return vals_[s.idx];
-        }
-      }
-      i = (i + 1) & mask;
-    }
-  }
+  std::vector<Src> &get_or_create(const std::string &k) ;
 
   // Insert only if absent (merge path). Consumes v when it inserts.
-  void emplace_if_absent(const std::string &k, std::vector<Src> &&v) {
-    if (contains(k)) return;
-    get_or_create(k) = std::move(v);
-  }
+  void emplace_if_absent(const std::string &k, std::vector<Src> &&v) ;
 
-  void erase(const std::string &k) {
-    if (slots_.empty()) return;
-    const uint64_t h = Hash(k);
-    const size_t mask = slots_.size() - 1;
-    size_t i = static_cast<size_t>(h) & mask;
-    for (;;) {
-      Slot &s = slots_[i];
-      if (s.state == 0) return;
-      if (s.state == 1 && s.hash == h) {
-        const std::string &key = keys_[s.idx];
-        if (key.size() == k.size() &&
-            std::memcmp(key.data(), k.data(), k.size()) == 0) {
-          live_[s.idx] = 0;
-          std::string().swap(keys_[s.idx]);
-          std::vector<Src>().swap(vals_[s.idx]);
-          s.state = 2;  // tombstone: keeps the probe chain valid
-          --count_;
-          return;
-        }
-      }
-      i = (i + 1) & mask;
-    }
-  }
+  void erase(const std::string &k) ;
 
   template <typename Pred>
   void erase_if(Pred pred) {
@@ -371,51 +256,8 @@ struct SrcCache {
 
  private:
   std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
-                               bool was_tomb) {
-    uint32_t vi;
-    if (was_tomb) {
-      vi = static_cast<uint32_t>(live_.size());
-      for (uint32_t di = 0; di < live_.size(); ++di) {
-        if (!live_[di]) { vi = di; break; }
-      }
-      if (vi < live_.size()) {
-        keys_[vi] = k;
-        vals_[vi].clear();
-        live_[vi] = 1;
-      } else {
-        keys_.emplace_back(k);
-        vals_.emplace_back();
-        live_.push_back(1);
-      }
-    } else {
-      vi = static_cast<uint32_t>(vals_.size());
-      keys_.emplace_back(k);
-      vals_.emplace_back();
-      live_.push_back(1);
-    }
-    slots_[slot].hash = h;
-    slots_[slot].idx = vi;
-    slots_[slot].state = 1;
-    ++count_;
-    if (!was_tomb) ++occupied_;
-    return vals_[vi];
-  }
-  void rehash() {
-    const size_t new_cap = slots_.empty() ? 16 : slots_.size() * 2;
-    slots_.assign(new_cap, Slot{});
-    occupied_ = 0;
-    const size_t mask = new_cap - 1;
-    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
-      if (!live_[vi]) continue;
-      const uint64_t h = Hash(keys_[vi]);
-      size_t i = static_cast<size_t>(h) & mask;
-      while (slots_[i].state != 0) i = (i + 1) & mask;
-      slots_[i].hash = h;
-      slots_[i].idx = vi;
-      slots_[i].state = 1;
-      ++occupied_;
-    }
-  }
+                               bool was_tomb) ;
+  void rehash() ;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -515,14 +357,7 @@ struct Cache::Impl {
   // Interned prim-path table shared by all PrimIndex nodes (dedup across indices).
   std::deque<std::string> path_table;
   std::unordered_map<std::string, uint32_t> path_intern;
-  uint32_t InternPath(const std::string &p) {
-    auto it = path_intern.find(p);
-    if (it != path_intern.end()) return it->second;
-    uint32_t idx = static_cast<uint32_t>(path_table.size());
-    path_table.push_back(p);
-    path_intern.emplace(p, idx);
-    return idx;
-  }
+  uint32_t InternPath(const std::string &p) ;
 
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   SrcCache sources_cache;  // path -> expanded sources (open-addressed, stable values)
@@ -530,29 +365,11 @@ struct Cache::Impl {
   // only newly resolved entries in sources_cache. This avoids deep-copying the
   // full source cache once per worker.
   const SrcCache *source_seed_cache = nullptr;
-  const std::vector<Src> *FindCachedSources(const std::string &key) const {
-    if (const std::vector<Src> *local = sources_cache.find(key)) {
-      return local;
-    }
-    if (source_seed_cache) {
-      return source_seed_cache->find(key);
-    }
-    return nullptr;
-  }
+  const std::vector<Src> *FindCachedSources(const std::string &key) const ;
   bool HasCachedSources(const std::string &key) const {
     return FindCachedSources(key) != nullptr;
   }
-  std::vector<Src> &GetOrCreateCachedSources(const std::string &key) {
-    if (std::vector<Src> *local = sources_cache.find(key)) return *local;
-    if (source_seed_cache) {
-      if (const std::vector<Src> *seed = source_seed_cache->find(key)) {
-        // This path is only used when a caller is about to populate or mutate
-        // an entry that was found through the immutable seed.
-        return sources_cache.get_or_create(key) = *seed;
-      }
-    }
-    return sources_cache.get_or_create(key);
-  }
+  std::vector<Src> &GetOrCreateCachedSources(const std::string &key) ;
   std::set<std::string> sources_in_progress;
   // Reentrancy guard for SourcesForRelocatedContent: derives a relocate
   // arrival's CONTENT from the source's COMPOSED parent (SourcesForSite), which
@@ -575,12 +392,7 @@ struct Cache::Impl {
   // std::deque never relocates existing entries -> lock-free concurrent reads.
   std::deque<NamespaceMapping> nm_pool_{NamespaceMapping{}};
   const NamespaceMapping &Mapping(uint32_t idx) const { return nm_pool_[idx]; }
-  uint32_t InternMapping(NamespaceMapping m) {
-    if (m.is_identity()) return 0;
-    uint32_t idx = static_cast<uint32_t>(nm_pool_.size());
-    nm_pool_.push_back(std::move(m));
-    return idx;
-  }
+  uint32_t InternMapping(NamespaceMapping m) ;
 
   // Phase 10: lazily-composed per-prim specs + their composed child names,
   // keyed by prim path. Populated by ComposePrim, dropped by Invalidate.

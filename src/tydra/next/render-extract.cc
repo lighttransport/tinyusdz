@@ -80,7 +80,7 @@ std::string PurposeForPrim(const ::lightusd::next::UsdPrim& prim,
   const ::lightusd::next::PrimSpec* spec = prim.GetPrimSpec();
   if (const ::lightusd::next::Value* v =
           spec ? spec->property_value("purpose") : nullptr) {
-    if (const std::string* s = v->as_token()) {
+    if (auto s = v->as_token()) {
       if (*s == "render" || *s == "proxy" || *s == "guide") return *s;
       if (*s == "default") return "default";
     }
@@ -269,7 +269,7 @@ std::string ComputeInheritedPurpose(const ::lightusd::next::UsdPrim& prim) {
     const ::lightusd::next::PrimSpec* spec = p.GetPrimSpec();
     const ::lightusd::next::Value* v =
         spec ? spec->property_value("purpose") : nullptr;
-    const std::string* token = v ? v->as_token() : nullptr;
+    auto token = v ? v->as_token() : nullptr;
     if (token && (*token == "default" || *token == "render" ||
                   *token == "proxy" || *token == "guide")) {
       return *token;

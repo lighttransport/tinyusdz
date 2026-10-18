@@ -161,7 +161,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
   const Value* value = owner.GetPropertyValue(property_name);
   if (!value ||
       value->type_id() != ::lightusd::next::TypeId::PathExpression) return false;
-  const std::string* text = value->as_string();
+  auto text = value->as_string();
   if (!text) return false;
   ParsedPathExpression expression = ParsedPathExpression::Parse(*text);
   if (!expression.valid()) return false;
@@ -184,7 +184,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
         "collection:" + ref.name + ":membershipExpression");
     if (!ref_value || ref_value->type_id() !=
                           ::lightusd::next::TypeId::PathExpression) return nullptr;
-    const std::string* ref_text = ref_value->as_string();
+    auto ref_text = ref_value->as_string();
     if (!ref_text) return nullptr;
     std::string qualified = *ref_text;
     const std::string replacement = "%" + owner_path + ":";

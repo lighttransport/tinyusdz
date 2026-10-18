@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
-#include "chunked-array.hh"
+#include "render-data-enums.hh"
+#include "render-data-vertex.hh"
 #include "render-data-math.hh"
+#include "chunked-array.hh"
+#include <string>
+#include <vector>
+#include <memory>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 // RenderMesh - GPU-ready mesh data
@@ -169,3 +175,5 @@ struct RenderMesh {
 
   size_t memory_usage() const;
 };
+
+}}} // namespace lightusd::tydra::next

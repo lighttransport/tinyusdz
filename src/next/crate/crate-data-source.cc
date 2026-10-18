@@ -10,6 +10,7 @@
 #include "safe-arithmetic.hh"
 #include "stream-reader.hh"
 #include "../types/value.hh"
+#include "../types/array-builder.hh"
 
 #include <algorithm>
 #include <cstring>
@@ -279,6 +280,8 @@ TypeId CrateArrayValueType(CrateTypeId id) {
       return TypeId::Token;
     case CrateTypeId::AssetPath:
       return TypeId::AssetPath;
+    case CrateTypeId::PathExpression:
+      return TypeId::PathExpression;
     case CrateTypeId::Vec2f:
       return TypeId::Float2;
     case CrateTypeId::Vec3f:
@@ -633,103 +636,113 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 
   switch (type_id) {
     case CrateTypeId::Float: {
-      std::vector<float> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<float> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(), static_cast<size_t>(count))) return false;
       } else if (!read_raw(data.data(), sizeof(float))) {
         return false;
       }
-      *out = Value::MakeFloatArray(std::move(data));
-      return true;
+      *out = data.take(TypeId::Float);
+      return !out->is_empty();
     }
     case CrateTypeId::Int: {
-      std::vector<int32_t> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<int32_t> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_u32(reinterpret_cast<uint32_t*>(data.data()))) return false;
       } else if (!read_raw(data.data(), sizeof(int32_t))) {
         return false;
       }
-      *out = Value::MakeIntArray(std::move(data));
-      return true;
+      *out = data.take(TypeId::Int);
+      return !out->is_empty();
     }
     case CrateTypeId::Vec2f: {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(2), &scalars)) return false;
-      std::vector<float> data(scalars);
+      detail::ArrayBuilder<float> data(scalars);
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), 2 * sizeof(float))) {
         return false;
       }
-      *out = Value::MakeFloat2Array(std::move(data));
-      return true;
+      *out = data.take(TypeId::Float2);
+      return !out->is_empty();
     }
     case CrateTypeId::Vec3f: {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(3), &scalars)) return false;
-      std::vector<float> data(scalars);
+      detail::ArrayBuilder<float> data(scalars);
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), 3 * sizeof(float))) {
         return false;
       }
-      *out = Value::MakeFloat3Array(std::move(data));
-      return true;
+      *out = data.take(TypeId::Float3);
+      return !out->is_empty();
     }
     case CrateTypeId::Double: {
-      std::vector<double> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<double> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(), static_cast<size_t>(count))) return false;
       } else if (!read_raw(data.data(), sizeof(double))) {
         return false;
       }
-      *out = Value::MakeDoubleArray(std::move(data));
-      return true;
+      *out = data.take(TypeId::Double);
+      return !out->is_empty();
     }
     case CrateTypeId::Int64: {
-      std::vector<int64_t> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<int64_t> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_u64(reinterpret_cast<uint64_t*>(data.data()))) return false;
       } else if (!read_raw(data.data(), sizeof(int64_t))) {
         return false;
       }
-      *out = Value::MakeInt64Array(std::move(data));
-      return true;
+      *out = data.take(TypeId::Int64);
+      return !out->is_empty();
     }
     case CrateTypeId::UInt: {
-      std::vector<uint32_t> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<uint32_t> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_u32(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(uint32_t))) {
         return false;
       }
-      *out = Value::MakeUIntArray(std::move(data));
-      return true;
+      *out = data.take(TypeId::UInt);
+      return !out->is_empty();
     }
     case CrateTypeId::UChar: {
       // uchar[] is stored tightly packed on disk but uses the shared uint32
       // array storage in Value. Keep the authored UChar identity while
       // widening each lane on materialization.
       if (compressed) return false;
-      std::vector<uint32_t> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<uint32_t> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       const uint8_t* raw = r.current();
       if (!r.skip(static_cast<size_t>(count))) return false;
       for (size_t i = 0; i < count; ++i) data[i] = raw[i];
-      *out = Value::MakeUIntCompArray(std::move(data), TypeId::UChar, 1);
-      return true;
+      *out = data.take(TypeId::UChar);
+      return !out->is_empty();
     }
     case CrateTypeId::UInt64: {
-      std::vector<uint64_t> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<uint64_t> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_u64(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(uint64_t))) {
         return false;
       }
-      *out = Value::MakeUInt64Array(std::move(data));
-      return true;
+      *out = data.take(TypeId::UInt64);
+      return !out->is_empty();
     }
     case CrateTypeId::Bool: {
-      std::vector<uint8_t> bytes(static_cast<size_t>(count));
+      detail::ArrayBuilder<uint8_t> bytes(static_cast<size_t>(count));
+      if (bytes.failed()) return false;
       if (compressed) {
         if (!charge_elements(static_cast<size_t>(count), sizeof(uint32_t))) return false;
         std::vector<uint32_t> lanes(static_cast<size_t>(count));
@@ -740,11 +753,13 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       } else if (!read_raw(bytes.data(), sizeof(uint8_t))) {
         return false;
       }
-      *out = Value::MakeBoolByteArray(std::move(bytes));
-      return true;
+      for (size_t i = 0; i < bytes.size(); ++i) bytes[i] = bytes[i] ? 1 : 0;
+      *out = bytes.take(TypeId::Bool);
+      return !out->is_empty();
     }
     case CrateTypeId::TimeCode: {
-      std::vector<double> data(static_cast<size_t>(count));
+      detail::ArrayBuilder<double> data(static_cast<size_t>(count));
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(),
                                         static_cast<size_t>(count))) {
@@ -753,8 +768,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       } else if (!read_raw(data.data(), sizeof(double))) {
         return false;
       }
-      *out = Value::MakeDoubleCompArray(std::move(data), TypeId::TimeCode, 1);
-      return true;
+      *out = data.take(TypeId::TimeCode);
+      return !out->is_empty();
     }
     case CrateTypeId::Token: {
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
@@ -772,13 +787,19 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       }
       if (!charge_elements(static_cast<size_t>(count), sizeof(std::string)) ||
           !charge(text_bytes)) return false;
-      std::vector<std::string> data(static_cast<size_t>(count));
-      for (size_t i = 0; i < count; i++) {
-        if (idxs[i] >= tokens.size()) return false;
-        data[i] = tokens[idxs[i]];
-      }
-      *out = Value::MakeTokenArray(std::move(data));
-      return true;
+      struct Context {
+        const std::vector<std::string>* tokens;
+        const std::vector<uint32_t>* indices;
+      };
+      const Context context{&tokens, &idxs};
+      const auto at = [](const void* p, size_t i, size_t* length) {
+        const auto& ctx = *static_cast<const Context*>(p);
+        const auto& text = (*ctx.tokens)[(*ctx.indices)[i]];
+        *length = text.size();
+        return text.data();
+      };
+      *out = Value::MakeStrings(TypeId::Token, idxs.size(), at, &context);
+      return out->is_array();
     }
     case CrateTypeId::Vec4f:
     case CrateTypeId::Quatf: {
@@ -788,7 +809,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           count > (std::numeric_limits<size_t>::max)() / comps) {
         return false;
       }
-      std::vector<float> data(static_cast<size_t>(count) * comps);
+      detail::ArrayBuilder<float> data(static_cast<size_t>(count) * comps);
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(), data.size())) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
@@ -803,9 +825,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
         }
       }
-      *out = Value::MakeFloatCompArray(std::move(data),
-                                       CrateArrayValueType(type_id), comps);
-      return true;
+      *out = data.take(CrateArrayValueType(type_id));
+      return !out->is_empty();
     }
     case CrateTypeId::Vec2d:
     case CrateTypeId::Vec3d:
@@ -820,7 +841,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           count > (std::numeric_limits<size_t>::max)() / comps) {
         return false;
       }
-      std::vector<double> data(static_cast<size_t>(count) * comps);
+      detail::ArrayBuilder<double> data(static_cast<size_t>(count) * comps);
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_floating_n(data.data(), data.size())) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
@@ -834,9 +856,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
         }
       }
-      *out = Value::MakeDoubleCompArray(std::move(data),
-                                        CrateArrayValueType(type_id), comps);
-      return true;
+      *out = data.take(CrateArrayValueType(type_id));
+      return !out->is_empty();
     }
     case CrateTypeId::Half:
     case CrateTypeId::Vec2h:
@@ -848,7 +869,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           count > (std::numeric_limits<size_t>::max)() / comps) {
         return false;
       }
-      std::vector<float> data(static_cast<size_t>(count) * comps);
+      detail::ArrayBuilder<float> data(static_cast<size_t>(count) * comps);
+      if (data.failed()) return false;
       if (compressed) {
         if (!read_compressed_half_n(data.data(), data.size())) return false;
       } else {
@@ -869,9 +891,8 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
           q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
         }
       }
-      *out = Value::MakeFloatCompArray(std::move(data),
-                                       CrateArrayValueType(type_id), comps);
-      return true;
+      *out = data.take(CrateArrayValueType(type_id));
+      return !out->is_empty();
     }
     default:
       // No concrete Value storage for this array type yet.

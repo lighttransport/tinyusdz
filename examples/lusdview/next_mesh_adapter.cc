@@ -82,6 +82,13 @@ bool ConvertMeshThroughPublicAPI(
   config.time_code = converterConfig.time_code;
   config.max_threads = 1;
   config.use_default_asset_resolver = 0;
+  for (lightusd_prim owner = prim; lightusd_prim_is_valid(owner);
+       owner = lightusd_prim_parent(owner)) {
+    if (lightusd_prim_has_value_clips(owner)) {
+      config.use_default_asset_resolver = 1;
+      break;
+    }
+  }
   const auto levelIt = converterConfig.mesh.subdivision_prim_levels.find(path);
   const int subdivisionLevel =
       levelIt == converterConfig.mesh.subdivision_prim_levels.end()

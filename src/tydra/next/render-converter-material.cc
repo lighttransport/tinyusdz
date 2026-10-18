@@ -89,15 +89,15 @@ std::string ConnectionPropertyName(const std::string& path) {
 }
 
 void EmitNextGraphValue(std::ostream& os, const Value& value) {
-  if (const std::string* v = value.as_asset_path()) {
+  if (auto v = value.as_asset_path()) {
     os << '"' << JsonEscape(*v) << '"';
     return;
   }
-  if (const std::string* v = value.as_string()) {
+  if (auto v = value.as_string()) {
     os << '"' << JsonEscape(*v) << '"';
     return;
   }
-  if (const std::string* v = value.as_token()) {
+  if (auto v = value.as_token()) {
     os << '"' << JsonEscape(*v) << '"';
     return;
   }
@@ -395,9 +395,9 @@ bool ReadStringLikeProperty(const UsdPrim& prim, const char* name,
   if (!out) return false;
   const Value* value = prim.GetPropertyValue(name);
   if (!value) return false;
-  if (const std::string* text = value->as_string()) { *out = *text; return true; }
-  if (const std::string* token = value->as_token()) { *out = *token; return true; }
-  if (const std::string* asset = value->as_asset_path()) { *out = *asset; return true; }
+  if (auto text = value->as_string()) { *out = *text; return true; }
+  if (auto token = value->as_token()) { *out = *token; return true; }
+  if (auto asset = value->as_asset_path()) { *out = *asset; return true; }
   return false;
 }
 

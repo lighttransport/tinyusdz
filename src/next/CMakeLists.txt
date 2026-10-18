@@ -667,6 +667,16 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_include_directories(test_c11_leaves PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(test_c11_leaves PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
     add_test(NAME next_c11_leaves COMMAND test_c11_leaves)
+    add_executable(test_storage ../../tests/next/test_storage.c)
+    target_link_libraries(test_storage PRIVATE lightusd_core_c)
+    target_include_directories(test_storage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_target_properties(test_storage PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    if(MSVC)
+      target_compile_options(test_storage PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(test_storage PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME next_c11_storage COMMAND test_storage)
     file(GLOB exr_test_sources ../external/tinyexr/src/*.c)
     add_executable(test_exr_codec ../../tests/next/test_exr_codec.c
       ../imageio/exr-codec.c ${exr_test_sources})
@@ -1005,7 +1015,7 @@ if(LIGHTUSD_WITH_MCP_SERVER AND NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
     target_include_directories(lightusd_mcp
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../mcp
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../c-api)
-    target_link_libraries(lightusd_mcp PUBLIC lightusd_c)
+    target_link_libraries(lightusd_mcp PUBLIC lightusd_c lightusd_validation)
     # Tool arguments are untrusted JSON; nlohmann reports type errors by
     # throwing, and the server converts them into tool errors.
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -1057,6 +1067,8 @@ set_target_properties(lightusd_validation_c PROPERTIES EXPORT_NAME validation_c)
 set_target_properties(lightusd_validation PROPERTIES EXPORT_NAME validation)
 install(TARGETS lightusd_core_c lightusd_next lightusd_c lightusd_validation lightusd_validation_c EXPORT LightUSDTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES c/lightusd-core-c.h c/storage.h c/value.h c/chunks.h c/descriptor.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/next/c)
 install(FILES ../c-api/lightusd-validation-c.h ../c-api/lightusd-validation-cpp.hh
               ../c-api/lightusd-c.h ../c-api/lightusd-cpp.hh
               ../c-api/lightusd-session-c.h ../c-api/lightusd-session-cpp.hh
@@ -1090,6 +1102,7 @@ foreach(c_target IN LISTS LIGHTUSD_C_TARGETS)
     target_compile_features(${c_target} PRIVATE cxx_std_17)
     target_include_directories(${c_target}
         PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
+               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
                $<INSTALL_INTERFACE:include>
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     if(MSVC)

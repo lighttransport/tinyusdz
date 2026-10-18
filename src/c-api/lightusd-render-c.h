@@ -276,6 +276,7 @@ LIGHTUSD_API lightusd_status lightusd_render_convert_material(
 LIGHTUSD_API lightusd_status lightusd_render_convert(const lightusd_stage* stage,
                                          const lightusd_render_config* cfg,
                                          lightusd_render_scene** out);
+LIGHTUSD_API void lightusd_render_scene_retain(lightusd_render_scene* scene);
 LIGHTUSD_API void lightusd_render_scene_destroy(lightusd_render_scene* scene);
 LIGHTUSD_API lightusd_status lightusd_render_scene_warnings(const lightusd_render_scene* scene,
                                                 lightusd_strlist** out);
@@ -690,6 +691,10 @@ typedef struct lightusd_buffer_view {
   const void* data;
   size_t nbytes;
 } lightusd_buffer_view;
+/* Retain this immutable scene catalog and its buffer cache without copying.
+ * Pin before releasing the borrowed scene/view. The pin survives scene close. */
+LIGHTUSD_API lightusd_status lightusd_render_buffer_pin(const lightusd_render_scene*,
+    const lightusd_buffer_view*, lightusd_buffer** out);
 
 /* Copy a borrowed buffer view into caller-owned storage. `required` is always
  * written on success and on a short-buffer query. Pass out=NULL/cap=0 to

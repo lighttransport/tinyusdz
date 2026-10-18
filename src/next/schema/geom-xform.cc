@@ -62,8 +62,8 @@ std::vector<std::string> UsdGeomXform::GetXformOpOrder() const {
 
   const Value* v = prim_.GetPropertyValue(kIdXformOpOrder());
   if (!v) return result;
-  if (const std::vector<std::string>* toks = v->as_token_array()) {
-    result = *toks;
+  if (auto toks = v->as_token_array()) {
+    result.assign(toks->begin(), toks->end());
   }
   return result;
 }

@@ -3,12 +3,14 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
 
 #include "lightusd-cpp.hh"
+#include "c-api/lightusd-render-c.h"
 #include "next_mesh_adapter.hh"
 #include "prototype_expansion.hh"
 #include "tydra/next/render-converter.hh"
@@ -137,4 +139,34 @@ def Mesh "Sanitized" {
   // The temporary public render records and source stage are both gone.
   assert(face.points[0] == 10 && face.texcoords_1[0] == 0.2f);
   assert(constant.points[0] == -2 && constant.texcoords_1[0] == 0.75f);
+
+  const char* fixtureRoot = std::getenv("LIGHTUSD_TEST_FIXTURE_DIR");
+  const std::string clipPath =
+      std::string(fixtureRoot ? fixtureRoot : ".") +
+      "/tests/feat/value-clip/carrier/main.usda";
+  rawStage = nullptr;
+  assert(lightusd_stage_load(clipPath.c_str(), nullptr, &rawStage) == LIGHTUSD_OK);
+  lightusd::api::Stage clipStage(rawStage);
+  lightusd_render_config noResolver;
+  lightusd_render_config_init(&noResolver);
+  noResolver.use_default_asset_resolver = 0;
+  lightusd_render_scene* unresolved = nullptr;
+  assert(lightusd_render_convert_mesh(
+      clipStage.get(), lightusd_stage_prim_at_path(clipStage.get(), "/World/Quad"),
+      &noResolver, 0, &unresolved) == LIGHTUSD_ERR_TYPE_MISMATCH);
+  assert(unresolved == nullptr);
+  config.time_code = 0;
+  tydn::RenderMesh wide;
+  assert(lusdview::ConvertMeshThroughPublicAPI(
+      clipStage.get(), "/World/Quad", config, &wide));
+  assert(wide.point_count() == 4 && wide.bbox_min.x == -2 &&
+         wide.bbox_max.y == 0.5f);
+  config.time_code = 1;
+  tydn::RenderMesh tall;
+  assert(lusdview::ConvertMeshThroughPublicAPI(
+      clipStage.get(), "/World/Quad", config, &tall));
+  assert(tall.point_count() == 4 && tall.bbox_min.x == -0.5f &&
+         tall.bbox_max.y == 2);
+  clipStage = lightusd::api::Stage();
+  assert(wide.points[0] == -2 && tall.points[0] == -0.5f);
 }

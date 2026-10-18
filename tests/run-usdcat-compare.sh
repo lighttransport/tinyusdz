@@ -298,13 +298,17 @@ main() {
     print_section "USDA (ASCII) Format Tests"
     echo "Testing all .usda files in tests/usda directory..."
     echo ""
-    run_folder_comparison "$SCRIPT_DIR/usda" "USDA Files" "*.usda" || true
+    if ! run_folder_comparison "$SCRIPT_DIR/usda" "USDA Files" "*.usda"; then
+      echo "USDA" >> "$FAIL_MARKER"
+    fi
 
     # Test USDC files
     print_section "USDC (Binary/Crate) Format Tests"
     echo "Testing all .usdc files in tests/usdc directory..."
     echo ""
-    run_folder_comparison "$SCRIPT_DIR/usdc" "USDC Files" "*.usdc" || true
+    if ! run_folder_comparison "$SCRIPT_DIR/usdc" "USDC Files" "*.usdc"; then
+      echo "USDC" >> "$FAIL_MARKER"
+    fi
 
     # usdchecker validation pass (differential; skipped when usdchecker absent)
     run_usdchecker_pass "$FAIL_MARKER" || true
@@ -312,18 +316,18 @@ main() {
     print_header "Comparison Complete"
   } | tee "$RESULTS_FILE"
 
-  if [ -s "$FAIL_MARKER" ]; then
-    echo ""
-    echo -e "${RED}✗ usdchecker parity failures detected (see log above)${NC}"
-    rm -f "$FAIL_MARKER"
-    exit 1
-  fi
-  rm -f "$FAIL_MARKER"
-
   # Print failure summary if enabled
   if [ "$SHOW_FAILURE_SUMMARY" = "true" ]; then
     print_failure_summary "$RESULTS_FILE"
   fi
+
+  if [ -s "$FAIL_MARKER" ]; then
+    echo ""
+    echo -e "${RED}✗ Comparison failures detected (see log above)${NC}"
+    rm -f "$FAIL_MARKER"
+    exit 1
+  fi
+  rm -f "$FAIL_MARKER"
 
   echo ""
   echo -e "${GREEN}✓ Comparison complete!${NC}"

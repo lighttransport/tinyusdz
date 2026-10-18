@@ -451,6 +451,7 @@ CMakeUserPresets.json
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
+!tests/feat/value-clip/carrier/*.usda
 !models/lusdview-curves-ribbons.usda
 !models/lusdview-nurbs-patch.usda
 !models/lusdview-transparency.usda

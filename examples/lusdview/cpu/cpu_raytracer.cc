@@ -1098,7 +1098,19 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
         const int interpolation=static_cast<int>(std::floor(b[0]+.5f)),num=std::clamp(static_cast<int>(std::floor(c[0]+.5f)),2,10);const float x=a[0];
         auto blend=[&](float lo,float hi,const std::array<float,4>& c0,const std::array<float,4>& c1){float t=std::fabs(hi-lo)>1e-8f?std::clamp((std::clamp(x,lo,hi)-lo)/(hi-lo),0.0f,1.0f):0;if(interpolation==1)t=t*t*(3-2*t);if(interpolation==2)t=x>=hi?1.0f:0.0f;std::array<float,4> q;for(int lane=0;lane<4;lane++)q[lane]=c0[lane]+t*(c1[lane]-c0[lane]);return q;};
-        if(op==static_cast<int>(MaterialXGraphOpCPU::Ramp)){dst=values[std::min(start+1,count-1)];for(int interval=1;interval<=9;interval++){if(interval>=num)continue;const int base=start+(interval-1)*2;const float lo=values[std::min(base,count-1)][0],hi=values[std::min(base+2,count-1)][0];const auto q=blend(lo,hi,values[std::min(base+1,count-1)],values[std::min(base+3,count-1)]);if(x>lo)dst=q;}}
+        if (op == static_cast<int>(MaterialXGraphOpCPU::Ramp)) {
+          dst = values[std::min(start + 1, count - 1)];
+          for (int interval = 1; interval <= 9; interval++) {
+            if (interval >= num) continue;
+            const int intervalBase = start + (interval - 1) * 2;
+            const float lo = values[std::min(intervalBase, count - 1)][0];
+            const float hi = values[std::min(intervalBase + 2, count - 1)][0];
+            const auto q = blend(lo, hi,
+                values[std::min(intervalBase + 1, count - 1)],
+                values[std::min(intervalBase + 3, count - 1)]);
+            if (x > lo) dst = q;
+          }
+        }
         else{const float lo=values[start][0],hi=values[std::min(start+1,count-1)][0];const int intervalNum=static_cast<int>(values[std::min(start+5,count-1)][0]);dst=values[std::min(start+4,count-1)];if(intervalNum<num&&x>lo)dst=blend(lo,hi,values[std::min(start+2,count-1)],values[std::min(start+3,count-1)]);}
       } else if(op==static_cast<int>(MaterialXGraphOpCPU::Flake)){
         const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
@@ -2188,14 +2200,18 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 const float rb[3] = {-t[0] * sr + b[0] * cr,
                                      -t[1] * sr + b[1] * cr,
                                      -t[2] * sr + b[2] * cr};
-                float h[3] = {lightDirN[0] + (camPos[0] - hitP[0]) / viewLen,
+                float halfVector[3] = {lightDirN[0] + (camPos[0] - hitP[0]) / viewLen,
                               lightDirN[1] + (camPos[1] - hitP[1]) / viewLen,
                               lightDirN[2] + (camPos[2] - hitP[2]) / viewLen};
-                const float hn = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+                const float hn = std::sqrt(halfVector[0] * halfVector[0] +
+                                           halfVector[1] * halfVector[1] +
+                                           halfVector[2] * halfVector[2]);
                 if (hn > 1.0e-6f) {
-                  for (float& c : h) c /= hn;
-                  const float ht = h[0] * rt[0] + h[1] * rt[1] + h[2] * rt[2];
-                  const float hb = h[0] * rb[0] + h[1] * rb[1] + h[2] * rb[2];
+                  for (float& c : halfVector) c /= hn;
+                  const float ht = halfVector[0] * rt[0] + halfVector[1] * rt[1] +
+                                   halfVector[2] * rt[2];
+                  const float hb = halfVector[0] * rb[0] + halfVector[1] * rb[1] +
+                                   halfVector[2] * rb[2];
                   directionalRoughness = std::clamp(
                       roughness * (1.0f + anisotropy * (ht * ht - hb * hb)),
                       0.03f, 1.0f);

@@ -1118,7 +1118,54 @@ static int test_material_binding_query(void) {
   return 0;
 }
 
+static int read_pin_number(void* context, size_t index, lu_number* out) {
+  (void)context;
+  out->kind = LU_NUMBER_SIGNED;
+  out->value.signed_value = (int64_t)index + 7;
+  return 1;
+}
+
+static int test_buffer_pins(void) {
+  lightusd_stage* stage = NULL;
+  lightusd_prim prim;
+  lightusd_value* value = NULL;
+  lightusd_value_view borrowed, pinned;
+  lightusd_buffer* buffer = NULL;
+  const lightusd_abi_info abi = lightusd_abi_get();
+  float replacement[] = {90, 91, 92};
+  CHECK(abi.major == 5 && abi.core.major == 2);
+  CHECK(abi.core.pointer_bits == sizeof(void*) * 8);
+  CHECK(abi.value_view_size == sizeof(lightusd_value_view));
+  CHECK(abi.value_view_data_offset == offsetof(lightusd_value_view, data));
+  CHECK_OK(lightusd_stage_create(&stage));
+  CHECK_OK(lightusd_stage_define_prim(stage, "/P", "Xform", 0, &prim));
+  CHECK_OK(lightusd_value_from_numbers(LIGHTUSD_TYPE_FLOAT, 1, 3,
+                                      read_pin_number, NULL, &value));
+  CHECK_OK(lightusd_attr_set_value(stage, "/P", "values", value, 0));
+  CHECK_OK(lightusd_value_get_view(value, &borrowed));
+  CHECK_OK(lightusd_buffer_pin(borrowed, &buffer));
+  pinned = lightusd_buffer_get_view(buffer);
+  CHECK(pinned.data == borrowed.data); /* C11 payload retained without copying. */
+  lightusd_value_destroy(value);
+  CHECK_OK(lightusd_attr_set(stage, "/P", "values", LIGHTUSD_TYPE_FLOAT,
+                             1, replacement, 3, 0));
+  lightusd_stage_destroy(stage);
+  CHECK(pinned.nbytes == 3 * sizeof(float));
+  CHECK(((const float*)pinned.data)[0] == 7 && ((const float*)pinned.data)[2] == 9);
+  lightusd_buffer_destroy(buffer);
+  CHECK_OK(lightusd_value_from_numbers(LIGHTUSD_TYPE_INT, 0, 1,
+                                      read_pin_number, NULL, &value));
+  CHECK_OK(lightusd_value_get_view(value, &borrowed));
+  CHECK_OK(lightusd_buffer_pin(borrowed, &buffer));
+  lightusd_value_destroy(value);
+  pinned = lightusd_buffer_get_view(buffer);
+  CHECK(*(const int32_t*)pinned.data == 7); /* Inline scalar copied into the pin. */
+  lightusd_buffer_destroy(buffer);
+  return 0;
+}
+
 int main(int argc, char** argv) {
+  if (test_buffer_pins()) return 1;
   if (test_skeleton_sample()) return 1;
   if (test_material_binding_query()) return 1;
   if (test_backplate_queries()) return 1;

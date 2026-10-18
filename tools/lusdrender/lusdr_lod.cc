@@ -163,7 +163,7 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
 
     const lightusd::next::Value *val = job.prim.GetPropertyValue("points");
     if (!val) continue;
-    const std::vector<float> *pts = val->as_float_array();
+    const auto pts = val->as_float_array();
     if (!pts || pts->empty()) continue;
     const size_t nv = pts->size() / 3;
 

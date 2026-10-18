@@ -1631,7 +1631,18 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
 //   arkitCompatible?, flatten?, textureProcessor?
 // }
 // returns { usdz: Uint8Array, stats: { textures, resized, reencoded, rootPath } }
+async function loadTextureFeatures(native, keys, opts) {
+  if (!native.loadFeature) return;
+  const paths = [...keys];
+  if (String(opts.textureFormat).toLowerCase() === 'exr' ||
+      paths.some(path => /\.(exr|hdr)$/i.test(path)) ||
+      (paths.some(path => /\.usdz$/i.test(path)) &&
+       (opts.reencode !== false || opts.maxTextureSize > 0 || opts.targetTextureBytes > 0)))
+    await native.loadFeature('exr');
+}
+
 export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
+  await loadTextureFeatures(native, assetMap.keys(), opts);
   const bake = udimOptions(opts).mode !== 'off';
   const log = opts.log || (() => {});
   const progress = typeof opts.progress === 'function' ? opts.progress : null;
@@ -2111,6 +2122,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
 // first zip entry, so the remap cannot wait for texture processing).
 // ---------------------------------------------------------------------------
 export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
+  await loadTextureFeatures(native, source.keys || [], opts);
   const bake = udimOptions(opts).mode !== 'off';
   const log = opts.log || (() => {});
   const progress = typeof opts.progress === 'function' ? opts.progress : null;

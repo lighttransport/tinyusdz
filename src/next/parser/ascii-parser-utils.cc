@@ -236,7 +236,8 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
     } else if (key == "allowedTokens") {
       ParseResult r = ParseArrayValue(*lexer_, TypeId::Token);
       if (r.success && r.value.as_token_array()) {
-        m.allowedTokens = *r.value.as_token_array();
+        const auto names = r.value.as_token_array();
+    m.allowedTokens.assign(names.begin(), names.end());
         m.authored |= PropMeta::kAllowedTokens;
       }
     } else if (key == "customData") {

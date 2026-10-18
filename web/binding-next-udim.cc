@@ -148,9 +148,9 @@ class Access final : public udim::LayerAccess {
                      (prop == "info:id" || prop == "inputs:sourceColorSpace")
                  ? text(fallback(p), prop, time)
                  : "";
-    if (const auto* s = v->as_token()) return *s;
-    if (const auto* s = v->as_asset_path()) return *s;
-    if (const auto* s = v->as_string()) return *s;
+    if (auto s = v->as_token()) return *s;
+    if (auto s = v->as_asset_path()) return *s;
+    if (auto s = v->as_string()) return *s;
     return "";
   }
   std::vector<std::string> targets(const std::string& p,
@@ -284,10 +284,10 @@ class Access final : public udim::LayerAccess {
     if (v->is_array() && (v->type_id() == tn::TypeId::Token ||
                           v->type_id() == tn::TypeId::String)) {
       if (v->array_size() > memoryBudget() / 128) return false;
-      if (const auto* values = v->as_token_array())
+      if (auto values = v->as_token_array())
         return encodeDiscrete(
             p + "." + n, values->size(),
-            [&](size_t i) -> const std::string& { return (*values)[i]; }, out);
+            [&](size_t i) { return (*values)[i]; }, out);
     }
     out->components = tn::GetComponentCount(v->type_id());
     if (!out->components) return false;
@@ -297,19 +297,19 @@ class Access final : public udim::LayerAccess {
         accessFail("UDIM bake: numeric attribute exceeds working-memory limit");
         return false;
       }
-      if (const auto* a = v->as_token_array())
+      if (auto a = v->as_token_array())
         return encodeDiscrete(
             p + "." + n, a->size(),
-            [&](size_t i) -> const std::string& { return (*a)[i]; }, out);
-      if (const auto* a = v->as_float_array()) {
+            [&](size_t i) { return (*a)[i]; }, out);
+      if (auto a = v->as_float_array()) {
         out->values.assign(a->begin(), a->end());
         return true;
       }
-      if (const auto* a = v->as_double_array()) {
-        out->values = *a;
+      if (auto a = v->as_double_array()) {
+        out->values.assign(a->begin(), a->end());
         return true;
       }
-      if (const auto* a = v->as_int_array()) {
+      if (auto a = v->as_int_array()) {
         out->values.assign(a->begin(), a->end());
         out->integral = true;
         return true;

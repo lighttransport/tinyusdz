@@ -27,9 +27,9 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
 
     const lightusd::next::Value *file = tex.GetPropertyValue("inputs:file");
     if (file) {
-      if (const std::string *a = file->as_asset_path()) {
+      if (auto a = file->as_asset_path()) {
         meta.path = *a;
-      } else if (const std::string *s = file->as_string()) {
+      } else if (auto s = file->as_string()) {
         meta.path = *s;
       }
     }
@@ -37,9 +37,9 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
       if (!out) return;
       const lightusd::next::Value *v = tex.GetPropertyValue(name);
       if (!v) return;
-      if (const std::string *tok = v->as_token()) {
+      if (auto tok = v->as_token()) {
         *out = *tok;
-      } else if (const std::string *str = v->as_string()) {
+      } else if (auto str = v->as_string()) {
         *out = *str;
       }
     };
@@ -97,8 +97,8 @@ bool RenderStream::populateHairMaterial_(const lightusd::next::UsdPrim &prim,
     const lightusd::next::Value *id_value = prim.GetPropertyValue("info:id");
     std::string shader_id;
     if (id_value) {
-      if (const std::string *token = id_value->as_token()) shader_id = *token;
-      else if (const std::string *str = id_value->as_string()) shader_id = *str;
+      if (auto token = id_value->as_token()) shader_id = *token;
+      else if (auto str = id_value->as_string()) shader_id = *str;
     }
     bool found = shader_id.find("chiang_hair_bsdf") != std::string::npos ||
                  shader_id.find("principled_hair") != std::string::npos;
@@ -230,9 +230,9 @@ std::string RenderStream::materialSourceIdentity_(
       const lightusd::next::Value *value =
           child.GetPropertyValue("info:unreal:sourceAsset");
       if (!value) continue;
-      if (const std::string *asset = value->as_asset_path()) {
+      if (auto asset = value->as_asset_path()) {
         source_asset = *asset;
-      } else if (const std::string *value_string = value->as_string()) {
+      } else if (auto value_string = value->as_string()) {
         source_asset = *value_string;
       }
       if (!source_asset.empty()) break;
@@ -314,7 +314,7 @@ std::string RenderStream::materialSourceIdentity_(
       const lightusd::next::Value *file =
           child.GetPropertyValue("inputs:file");
       if (file) {
-        const std::string *asset = file->as_asset_path();
+        auto asset = file->as_asset_path();
         if (!asset) asset = file->as_string();
         if (asset) {
           append_text("tex");

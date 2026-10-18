@@ -587,7 +587,7 @@ int main(void) {
   assert(memcmp(overlapping_bytes, (unsigned char[]){0, 0, 1, 2, 3, 4, 5},
                 sizeof(overlapping_bytes)) == 0);
 
-  assert(LIGHTUSD_API_VERSION_MAJOR == 4);
+  assert(LIGHTUSD_API_VERSION_MAJOR == 5);
   assert(LIGHTUSD_RENDER_UNSUPPORTED == 9 &&
          LIGHTUSD_RENDER_INSTANCER == 10 &&
          LIGHTUSD_RENDER_ROOT_NODE == 11);

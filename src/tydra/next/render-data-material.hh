@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
 #include "render-data-shaders.hh"
 #include <memory>
 #include <string>
 #include <vector>
 
+namespace lightusd { namespace tydra { namespace next {
+
 // Shader Parameter - value or texture reference
-#include "render-data-shaders.hh"
 
 struct MaterialDiagnostic {
   MaterialDiagnosticKind kind = MaterialDiagnosticKind::UnsupportedShader;
@@ -96,6 +96,6 @@ struct RenderMaterial {
   MaterialXConfig mtlx_config;
 };
 
-#include "render-data-texture.hh"
 
-#include "render-data-light.hh"
+
+}}} // namespace lightusd::tydra::next

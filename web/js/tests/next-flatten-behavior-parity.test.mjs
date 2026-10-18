@@ -116,6 +116,16 @@ try {
     try { assert.equal(document.load(bytes).success, true); return document.exportUSDA().text; }
     finally { document.delete(); }
   };
+  const localEdits = encode('#usda 1.0\ndef Xform "Local" {\n' +
+    'custom int[] a = edit [append 1; append 2]\n}\n');
+  const localCrate = toUSDC(localEdits);
+  const resolvedLocal = layerText(nextFlatten(localEdits));
+  assert.match(resolvedLocal, /int\[\] a = \[1, 2\]/,
+    'a single-layer flatten resolves sparse edits without external arcs');
+  assert.equal(layerText(nextFlatten(localCrate)), resolvedLocal,
+    'USDA and USDC local edits flatten identically');
+  assert.deepEqual(outputOf(loader.nextFlattenUSDC(localCrate, true)),
+    nextFlatten(localCrate), 'combined and next-only local edits match');
   assert.equal(layerText(nextFlatten(singleUSDA)), layerText(nextFlatten(singleUSDC)),
     'a USDA root flattens to the same layer as its Crate encoding');
   exercised.set('nextFlattenUSDC', 'delta');

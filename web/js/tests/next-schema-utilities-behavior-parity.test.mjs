@@ -22,6 +22,7 @@ const {default: createNext} = await import(new URL(
   wasm64 ? '../src/lightusd/lightusd_next_64.js' : '../src/lightusd/lightusd_next.js',
   import.meta.url));
 const nextModule = await createNext();
+await nextModule.loadFeature('exr');
 const encode = text => new TextEncoder().encode(text);
 
 const exercised = new Map();  // method -> 'match' | 'delta'

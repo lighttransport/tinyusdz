@@ -273,6 +273,10 @@ async function main() {
     console.log(`note: ${counts.xpass} xfail-listed input(s) now pass — prune them from ${path.relative(repoRoot, a.xfail)}`);
   }
 
+  if (counts['pxr-error'] + counts.skip === inputs.length) {
+    console.error('OpenUSD could not read any selected input; no reference comparisons ran.');
+    process.exit(2);
+  }
   if (failures.length > 0 && !a.reportOnly) process.exit(1);
 }
 

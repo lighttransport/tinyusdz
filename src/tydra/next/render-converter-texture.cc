@@ -248,11 +248,11 @@ bool ExtractTextureNodeData(const Stage& stage,
     const ::lightusd::next::PropMeta* pm = owner.GetPropertyMeta(property);
     if (!pm) return;
     if (!pm->colorSpace.empty()) out->source_color_space = pm->colorSpace;
-    if (const ::lightusd::next::Dict* cd = pm->customData.as_dictionary()) {
-      if (const ::lightusd::next::Value* v = cd->find("ktx2")) {
-        if (const std::string* s = v->as_asset_path()) {
+    if (const auto cd = pm->customData.as_dictionary()) {
+      if (auto v = cd->find("ktx2")) {
+        if (auto s = v->as_asset_path()) {
           out->ktx2_hint = *s;
-        } else if (const std::string* t = v->as_string()) {
+        } else if (auto t = v->as_string()) {
           out->ktx2_hint = *t;
         }
       }

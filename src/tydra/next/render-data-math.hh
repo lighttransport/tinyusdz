@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
 #include <cstddef>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 // Basic math types (GPU-aligned)
@@ -45,3 +46,5 @@ struct Matrix4d {
 
   static Matrix4d Identity() { return Matrix4d(); }
 };
+
+}}} // namespace lightusd::tydra::next

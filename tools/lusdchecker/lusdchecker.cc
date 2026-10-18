@@ -667,23 +667,23 @@ void ValidatePackageCentralDirectory(const uint8_t* bytes, size_t size,
 }
 
 void CollectValueDependencies(
-    const lightusd::next::Value& value,
+    lightusd::next::ValueView value,
     std::unordered_set<std::string>* dependencies) {
   if (!dependencies) return;
-  if (const std::string* asset = value.as_asset_path()) {
+  if (auto asset = value.as_asset_path()) {
     if (!asset->empty()) dependencies->insert(*asset);
     return;
   }
   if (value.is_array() &&
       value.type_id() == lightusd::next::TypeId::AssetPath) {
-    if (const auto* assets = value.as_token_array()) {
+    if (const auto assets = value.as_token_array()) {
       for (const std::string& asset : *assets) {
         if (!asset.empty()) dependencies->insert(asset);
       }
     }
     return;
   }
-  if (const lightusd::next::Dict* dict = value.as_dictionary()) {
+  if (const auto dict = value.as_dictionary()) {
     for (const auto& entry : dict->entries()) {
       CollectValueDependencies(entry.second, dependencies);
     }

@@ -669,7 +669,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       if (lu_exr_encode(image.data.data(), image.data.size(), uint32_t(image.width),
           uint32_t(image.height), uint32_t(image.channels), uint32_t(image.bpp),
           size_t(512) << 20, &encoded) != 0)
-        return nonstd::make_unexpected("EXR: codec unavailable or resource limit exceeded; await loadEXR().");
+        return nonstd::make_unexpected("EXR: codec unavailable or resource limit exceeded; await module.loadFeature('exr').");
       std::vector<uint8_t> external_out(encoded.data, encoded.data + encoded.size);
       std::free(encoded.data);
       return external_out;

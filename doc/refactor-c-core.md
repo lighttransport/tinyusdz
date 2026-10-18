@@ -6288,3 +6288,460 @@ and UDIM baking. They also occur with the baseline module. The full web gate
 is not declared green. Reports, source-body audit, fixture hashes, compile
 samples and runtime probes live under ignored
 `build_ninja/continued-refactor/`; generated artifacts stay outside review.
+
+## C11 storage, compact views and split features (2026-10-18)
+
+This continuation starts at `abc530f7c`. The renewed request explicitly allows
+ABI breakage and reopens compile-time and object-size work for next,
+Tydra-next, WASM and Python. Earlier stopping points above are historical.
+
+`c/storage.c` owns aligned buffers, atomic retention, COW and retained allocation
+budgets. `c/value.c` owns the 40-byte inline payload, boxed PODs, strings, numeric
+arrays, string-array arenas, ordered dictionaries and lazy decoder ownership.
+Dictionary teardown uses an iterative pending list. Equality, hashing and
+memory accounting use iterative scratch traversal. Per-owner lazy callbacks
+replace process-global C++ payload dispatch. The C core links independently of
+the C++ runtime.
+
+C++ `Value` is a single `lu_value` facade. `StringView` and numeric array views
+occupy two words and distinguish missing from present empty values. Dictionary
+iteration reads borrowed values directly. Numeric USDA parsing and eager/lazy
+crate materialization use one shared builder adapter and publish C11 buffers
+without a second payload copy. Quaternion lane order, half quantization/widening
+and crate encodings retain their existing behavior. Obsolete C++ array-storage
+and value-common implementations are removed.
+
+Tydra chunk allocation, retention and bulk copying live in `c/chunks.c`.
+Render-data headers are self-contained and can be included individually. The
+C render API retains opaque scene catalogs for read-only pins. PrimSpec's
+relationship, connection, property-type and property-metadata maps now share
+its optional cold allocation. PCP implementation fragments hold declarations;
+method bodies and cache growth algorithms compile in existing translation
+units. Unused `FindSpec` code was removed.
+
+The native C ABI is major 5; the C core ABI is major 2. Shared descriptors define
+storage, formats, strides and alignment. Numeric ingestion reads typed numbers
+through a callback, checks narrowing and publishes only complete values.
+`lightusd_buffer_pin` retains value storage; `lightusd_render_buffer_pin`
+retains a render catalog. Pins remain valid across source mutation/destruction.
+`lightusd_abi_get` reports pointer width, layout revision, carrier sizes and
+field offsets. Installed C headers include the corresponding core headers.
+
+The WASM next distribution has five independently linked modules: the main
+scene/edit/composition/writer/URDF/Tydra module and geometry, raytrace, validator
+and EXR features. Geometry owns streaming subdivision and mesh simplification;
+raytrace owns LightRT. Tydra still uses subdivision internally. Only
+`await module.loadFeature(name)` loads optional features; it returns their
+module object, deduplicates promises, supports retry and checks ABI/layout/
+pointer-width metadata. Heaps stay separate and wrappers transfer counted data.
+Packaging includes all module pairs at both widths. Full distribution size is
+reported below; subdivision linked into both main and geometry is not hidden.
+
+Python's floor is 3.11 (`cp311-abi3`), with a separate free-threaded wheel.
+Arrays implement the real read-only buffer protocol and own native pins.
+`memoryview(array)` and `np.asarray(array)` retain storage without a borrowed
+raw-memoryview fallback. `.memoryview()` and `__array_interface__` are removed.
+Authoring uses the same native descriptors and bounded number conversion,
+including typed strided/big-endian inputs. Setuptools tracks archive/header/
+configuration dependencies instead of forcing every extension rebuild.
+
+### Measurements and verification
+
+Three clean builds per snapshot, 16 jobs, identical CMake cache hashes and
+compiler versions (GCC 13.3 / Emscripten 5.0.1), MinSizeRel, PCH enabled and
+threading disabled. Native targets are core C, next, Tydra-next, C API and render
+C API. WASM builds the complete distribution, including every feature. No other
+builds ran during timing. Values below are medians; object sums count unique
+compiled inputs once, including new modules, with matching optimization flags.
+
+| Metric | Before | After |
+|---|---:|---:|
+| Native clean wall | 19.44 s | 14.81 s (-23.8%) |
+| Native clean CPU | 252.60 s | 203.71 s (-19.4%) |
+| Native optimized object text + data | 3,255,415 B | 3,253,369 B (-0.06%) |
+| Native objects | 200 | 203 |
+| wasm32 distribution clean wall | 24.17 s | 23.25 s (-3.8%) |
+| wasm32 distribution clean CPU | 338.94 s | 339.07 s (+0.04%; effectively unchanged) |
+| wasm32 optimized object text + data | 5,497,162 B | 5,475,334 B (-0.40%) |
+| wasm32 objects | 304 | 314 |
+| Main next WASM raw / gzip | 1,954,631 / 794,328 B | 1,859,482 / 751,727 B |
+| All distribution WASM raw / gzip | 3,066,041 / 1,237,980 B | 3,175,221 / 1,291,144 B |
+| All distribution JS + WASM raw / gzip | 3,649,414 / 1,337,914 B | 3,819,029 / 1,411,205 B |
+
+Native wall samples span 14.63–15.06 s (baseline 19.07–19.83 s); WASM spans
+22.98–24.15 s (baseline 24.13–24.23 s). Native peak-child RSS median drops from
+467,196 to 391,968 KiB. The object-size improvements are modest. The main module
+gets smaller, but the complete distribution grows 4.65% raw / 5.48% gzip with
+JS included. Independent runtime glue and subdivision linked into both main
+and geometry contribute to that cost. This is not a whole-distribution download
+size win; WASM CPU time also has no measured improvement.
+
+
+Native Debug, threaded native, no-PCH ASan/UBSan, C11-only linking, installed C
+consumer, standalone render headers and Python abi3/free-threaded checks pass.
+All 890 recursive USDA/USDC fixture rewrites match the saved baseline's exit
+status, stdout and stderr. This is differential parity; OpenUSD `usdcat` is not
+available for the external compatibility gate.
+
+Final checks: optimized standalone CTest has 60 passes and one optional skip;
+Debug and threaded no-PCH ASan/UBSan have 58 passes and one optional skip each.
+The root threaded build with examples, tools and MCP enabled has 111 passes and
+two optional skips. All 26 core C sources pass strict C11 warnings; all 12 render
+data headers compile independently. The installed CMake C consumer links, and
+the core storage executable links only libc (no C++ runtime).
+
+Python 3.11 abi3 and free-threaded 3.14 with `PYTHON_GIL=0` each report 136 passes
+and 10 skips. Built wheels contain the correct ABI3 and
+free-threaded extension variants. The ABI3 binary also runs on Python 3.12.
+An unchanged build reports Ninja has no work and does not recompile/relink the
+extension.
+
+The Node profiles report 55 passing suites and two failures per pointer width.
+After building MCP, its focused suite passes at both widths (58 tools, tool-list
+parity, JSON-RPC and malformed arguments); the remaining Node blocker is the
+absent `examples/lusdview/tests/fixtures/value-clip/` dataset used by the dispatch
+test. The feature contracts pass in Node, Node Workers, Chrome main threads and
+Chrome module Workers at both widths. Both validation demos and all eight UDIM
+browser/main/Worker cases pass. The missing external Menagerie checkout still
+prevents the full web/physics breadth gate. Npm stage validation, feature module
+instantiation at both widths, and the legacy compatibility loading test pass.
+Packaging now includes the UDIM orchestration dependency as well as every
+feature; MCP explicitly links validation and uses borrowed string views.
+
+The full legacy native gate was not rerun. Full pre-merge coverage remains
+incomplete: OpenUSD and missing-dataset coverage remain outstanding.
+
+### Viewer, example and tool build follow-up
+
+The compatibility product now builds successfully in `build_ninja/` with
+MinSizeRel, threading, examples, tools, C API, standalone MCP, the next-backed
+large-scene loader, and the OpenGL/Vulkan viewer enabled. It builds 30 consumer
+executables and 21 viewer unit-test executables. The viewer links the refactored
+next/Tydra-next/public C libraries; the next-only top-level product does not
+configure the viewer. The standalone next example build also succeeds.
+
+This check repaired missed Value accessor migrations in the renderer's next,
+GPU extraction and LOD code. Read access uses borrowed views, with explicit
+copies into owned renderer buffers. The legacy C API's physics joint lookup
+now uses the existing fallback-value helper for its nine fallback fields.
+A focused C11 consumer checks authored fields, false/zero values and absent
+unauthored fields.
+
+The selected compatibility CTest runs report 99 passes and one OpenUSD skip:
+25 viewer tests, 61 checker/diff/example tests, two conversion/large-scene tests,
+and 12 renderer/workflow/MCP tests. The standalone next example/C API selection
+passes all three tests. Both C API examples and the large-scene example run;
+the standalone MCP stdio tool-list response contains 63 tools. A headless viewer
+capture and next-loader CPU screenshot pass using software Vulkan (llvmpipe).
+The subsequent hardware run below covers GPU execution. OptiX and the full
+legacy regression gate remain unverified.
+
+The build recipe is in [the consumer regression procedure](testing-cpp.md#viewer-examples-and-tool-consumers).
+Logs and the consumer inventory are under ignored
+`build_ninja/viewer-refactor-check/`. A final build reports no work to do.
+
+### Headless hardware GPU follow-up
+
+The refactored build passes headless execution on an NVIDIA GeForce RTX 5060 Ti
+with driver 615.71.09 and Vulkan API 1.4.351. The sandbox hides the GPU devices,
+so the tests run in the elevated host context, with the NVIDIA ICD selected and
+no X server. Three direct next-loader renders produce nonblank 320x240 images:
+Vulkan raster, Vulkan hardware ray query, and CUDA. The ray-query log explicitly
+reports `device=discrete rt=hardware`; CUDA reports the GPU's name and owns its
+completed screenshot. The first ray-query and CUDA launches warm their shader
+caches; these timings are not render benchmarks.
+
+All eight selected CTest regressions pass in 255.77 seconds:
+`tool-lusdrender-gpu-render`, `lusdview-vk-multitlas`, `lusdview-vk-render`,
+`lusdview-vk-stacked-glass`, `lusdview-vk-authored-materials`,
+`lusdview-deform-instanced-proto-rt`, `lusdview-vk-nonmesh-render`, and
+`lusdview-vk-gaussian-chunks`. Instanced deformation matches the CPU bake with
+mean depth difference 0.000. The renderer suite exercises Vulkan compute,
+hardware ray query and CUDA, including MaterialX graphs and path tracing; its
+HIP sub-backend is unavailable. CUDA uses the GPU software-BVH transport;
+OptiX remains disabled. This selection does not replace the complete viewer
+or validation-layer regression gates.
+
+Logs, direct screenshots, commands, JUnit output and the machine-readable
+summary are under ignored `build_ninja/viewer-refactor-check/hardware/`.
+
+### Pinned external corpus follow-up
+
+The public corpora are checked out under ignored `.cache/lightusd-verification/`:
+USD-WG assets at `1b91f3c464891af259d51d9ee9ee9e6c357f7079` and AOUSD
+supplemental release `1.0.1.post0` at
+`c15ae0cad3ed9e07a25dffd6699627d2c166cab0`. Initial native/Python USD checks used
+an existing clean checkout at the identical pin while the fresh cache downloaded;
+WASM and GPU tests use the new cache. CMake now points at the downloaded datasets.
+
+Both native implementations load all 280 USD-family files, with no failures,
+crashes or timeouts (next: 274 clean, six warnings; compatibility: 276 clean,
+four warnings). WASM32 and memory64 each parse all 280 successfully. Their corpus
+runner now uses `LayerDocument` for next-only modules; its stale legacy-class
+assumption prevented execution. Malformed-input probes verify nonzero failure
+exits at both widths.
+
+The native AOUSD supplemental gate passes the data-type bridge, 54 file-format
+fixtures, 138 composition cases and eight value-resolution cases with the
+sampled-value oracle. The viewer passes all 83 `.usda`/`.usdc` fixtures through
+both loaders on NVIDIA hardware (197.11 seconds). Python 3.11 and free-threaded
+3.14 with `PYTHON_GIL=0` each pass five AOUSD tests and three USD-assets tests;
+one Kitchen/Sponza check skips because those assets are absent from this corpus.
+The Python USD scan covers all 214 files selected by its extensions; one
+intentionally invalid sublayer raises the expected `UsdError`.
+
+The complete 40-scene hardware/CPU profile passes all 160 classifications:
+Vulkan raster and hardware RT each render 40/40; renderer CPU produces 29 clean,
+two warning and nine `no_renderable` results; renderer Vulkan produces 25 clean
+and 15 warning results. No backend errors, load errors or timeouts occur. All
+28 animation renders pass across two times and two backends; the cross-time
+gate detects changes in four CPU and five raster fixtures. The broad and
+animation CTests take 271.14 and 27.43 seconds respectively.
+
+Corpus pins, commands, logs, JUnit output, images and `summary.json` are retained
+under ignored `build_ninja/viewer-refactor-check/corpora/`. Full OpenUSD oracle
+and Menagerie coverage remain outside this run.
+
+### OpenUSD and complete web regression follow-up
+
+The pinned OpenUSD v26.05 oracle is now built from
+`2095fafafd033fa23386d7ec6d58c7cc33974518`, with Python 3.11, oneTBB 2021.12.0
+and MaterialX 1.39.4. MaterialX is required for the reference shader registry
+and `.mtlx` file-format support. The core-only oracle produced 22 artificial
+checker-parity failures; the complete configuration passes all 685 fixtures,
+26 registered validators and 43 exercised error identifiers. All 304 sampled
+values pass, retaining six explicitly checked AOUSD/OpenUSD timing differences.
+
+Serialization passes with one oracle worker: 697 equivalent files, seven
+expected failures and one expected difference across 705 inputs. Written-crate
+checker parity passes 476 comparisons with two invalid-source skips. The
+default-worker run had one intermittent OpenUSD array-edit shutdown crash;
+three isolated retries and the complete single-worker run pass. The original
+failure log remains available. The USD-assets differential gate reports 270
+matches, eight comparator errors and two reference skips, with no LightUSD
+load failures; its existing difference ceiling of 15 passes.
+
+The strict flatten gate remains red: 799 matches, 18 intentional differences,
+eight fixture skips and 15 unlisted differences across 840 inputs. Those 15
+cases cover array edits, relationship list-ops, cleared composition opinions
+and relocates. Every failing case has identical exit status, stdout and stderr
+with the saved pre-refactor binary. The expected-difference list and comparison
+tolerances are unchanged.
+
+The comparison harness now propagates USDA/USDC folder failures through the
+batch exit status. Both corpus runners reject a run with no readable reference
+input, preventing sandbox-aborted oracle processes from yielding a false pass.
+Declaration-only relationships ignore unused list-op keywords; authored empty
+target opinions remain distinct. Four comparator suites and negative gate
+probes pass. Restricted-sandbox oracle runs are marked invalid and excluded;
+the reported oracle checks use the host environment.
+
+The complete web matrix passes across final profiles: 57 Node suites on each
+pointer width; MuJoCo smoke, simulation and all 67 Menagerie closures on each
+width; both validation demos; eight UDIM browser/Worker cases; independent
+feature contracts on both widths in browser main threads and module Workers;
+five regular browser models and all 67 OffscreenCanvas Worker models. The
+Menagerie browser renders use NVIDIA ANGLE/Vulkan under Xvfb and Chrome
+148.0.7778.97. Menagerie and MuJoCo use the manifest pins. The initial software
+aggregate is retained as an interrupted run, rather than counted as a pass.
+
+Fresh combined wasm32/memory64 builds exposed three missed material-array
+helper migrations in `web/binding.cc`. They now borrow const views and copy only
+into returned owned vectors. The shared clip-carrier fixtures live under
+`tests/feat/value-clip/carrier/`, with a narrow ignore exception and both
+consumers pointing there. The split validator retains the dispatch contract's
+specific byte-input and filename/options diagnostics. Both full dispatch
+contracts and the final complete Node profiles pass after these repairs.
+
+Audited summaries, initial failures and final logs are under ignored
+`build_ninja/viewer-refactor-check/remaining/openusd/` and
+`build_ninja/viewer-refactor-check/remaining/web-summary.json`. These checks do
+not complete the previously outstanding full legacy native gate.
+
+### Broader native GPU regression follow-up
+
+The NVIDIA/Xvfb viewer selection finishes with 115 passes, six skips and no
+remaining failures across 121 tests, combining the initial sweep with focused
+retries. It covers GL/Vulkan image parity, lighting, shadows, skinning, morphs,
+instancing, camera motion, CUDA, incremental updates, persistent MCP windows,
+live shader reload, threaded OIT and GPU-assisted texture/OIT validation. Five
+HIP checks skip because this host has NVIDIA hardware; the opt-in OpenChess
+high-sample path-tracing benchmark also skips. The earlier external corpus
+results remain separate, and optional large production benchmarks are excluded.
+
+The sweep exposed a missing mesh clip fallback and a missing runtime shader
+compiler. Mesh and curve point fallback now share one compiled private helper.
+The public mesh converter can load clip layers with its filesystem resolver
+enabled; the viewer enables that only for a mesh with a clip owner. A CPU
+regression verifies both clip times, owned geometry after stage release and
+resolver opt-out. All six selected C API/Tydra/viewer CPU tests pass. The GPU
+clip-carrier retry renders both the wide and tall mesh successfully.
+
+The WASM lazy mesh builder now uses the same fallback and the existing supplied
+asset loader, factored into one method. Its dispatch regression checks four
+vertices with clips enabled and an empty retained mesh slot with clips disabled.
+Both complete Node profiles pass 57/57 after refreshing the distributions;
+browser/Worker feature contracts, both validation demos and all eight UDIM cases
+also pass again. No authored point arrays are duplicated into retained scene
+metadata to implement the fallback.
+
+Vulkan live reload passes compile, replacement and rollback using cached distro
+shaderc 2023.8 with a launcher for its extracted runtime. CUDA live reload also
+passes. The additional renderer/viewer OpenPBR GPU parity check passes, closing
+the earlier missing-viewer limitation. Two direct NVIDIA hardware ray-query
+renders, headless and threaded, produce nonblank captures with no validation
+errors under Khronos GPU-assisted validation. Threaded startup logs precede
+queued RT activation; its hardware-AS build provides the worker-mode evidence.
+
+The host is an RTX 5060 Ti with driver 615.71.09. ValidationLayers use
+`vulkan-sdk-1.3.275.0`, matching the loader. Logs, JUnit, screenshots, initial
+failures and audited final summaries are under ignored
+`build_ninja/viewer-refactor-check/remaining/viewer/`. Compile/size measurements
+above precede these regression repairs. The full legacy native gate was still
+outstanding at this checkpoint; the follow-up below closes it. The 15 existing
+strict OpenUSD flatten differences remain outstanding.
+
+### Full legacy native regression follow-up (2026-10-19)
+
+The complete configured legacy native build and CTest tree pass. The build uses
+`LIGHTUSD_NATIVE_PRODUCT=legacy`, `MinSizeRel`, tests, examples, tools, C API,
+Tydra, MCP and the threaded GL/Vulkan viewer. The build was already up to date;
+no product source fixes or timeout changes were needed for this run.
+
+The full serial CTest run under Xvfb on the NVIDIA RTX 5060 Ti completed all
+371 registered tests in 1,589.95 seconds: 359 passed, 12 skipped, zero failed.
+This includes all 1,023 legacy Acutest cases (133.92 seconds), USDA/USDC parsers
+and roundtrips, crate writer comparisons, feature tests, quick benchmarks,
+viewer hardware and CPU tests, next-library integration, checker contracts and
+MCP. OpenUSD v26.05 checker parity again covers 685 fixtures, 26 validators and
+43 observed error IDs with zero failures. The previously timed-out CPU
+MaterialX graph test passes in 5.64 seconds, and OpenPBR GPU parity passes.
+
+Two external tool tests initially skipped because their corpus lookup uses
+`USD_ASSETS_ROOT`, while the run supplied `USD_WG_ASSETS_DIR`. Both pass after
+supplying the existing pinned checkout through the expected variable. Material
+resolver coverage renders all 27 assets through three resolver modes (81
+renders); 25 comparison rows report advisory material differences. The harness
+checks load/render failures and does not assert resolver equivalence. External
+alpha-blend sorting also passes.
+
+Across the full run and the two focused reruns, the final unique result is
+**361 passed, ten skipped, zero failed**. Remaining skips are five HIP tests
+(no HIP hardware), one unavailable external production scene, the opt-in
+high-sample path-tracing benchmark, and three opt-in corpus profiles (golden,
+broad render, animation). The earlier 160-case broad render and 28-case animation
+results remain recorded in the corpus follow-up; those expensive opt-in
+profiles were not repeated here.
+
+Commands, environment, verbose logs, both JUnit reports and the audited final
+summary are retained under ignored `build_ninja/legacy-native-full/`. These
+results close the previously interrupted legacy native CTest gate. The 15
+baseline-identical strict next/OpenUSD flatten differences described above
+were outside that legacy CTest result and are addressed in the follow-up below.
+
+### Strict flatten and legacy sanitizer follow-up (2026-10-19)
+
+All 15 unlisted strict flatten differences are fixed. A shared
+`LayerNeedsComposition` check replaces three incomplete fast-path predicates.
+Local sparse arrays, qualified relationship/connection targets, authored empty
+composition arcs, relocates and inactive subtrees require stage composition
+even without external dependencies. Returning the raw layer skipped these
+operations. Ordinary explicit values and targets still retain the original
+prim storage, preserving the lazy-array fast path.
+
+The pinned OpenUSD v26.05 strict gate now reports **814 matches, 18 existing
+intentional/oracle differences, eight fixture skips and zero failures across
+840 inputs**. The comparator, numeric tolerances and expected-failure ledger
+are unchanged. New always-on native checks cover public composition helpers
+and storage retention; the memory pipeline checks sparse edits through both
+engines. Standalone Debug passes 58 tests with one optional AOUSD skip. Fresh
+wasm32/memory64 next and combined modules pass flatten behavior parity,
+including local sparse edits, plus six focused composition/loading/dispatch
+checks across both widths.
+
+Legacy parser fuzz smoke passes with instrumented libraries and harnesses,
+ASan, UBSan and leak checking enabled. The initial corpora contain 646 unique
+USDA and 232 USDC fixture inputs (including malformed/crash regressions),
+limited to 1 MiB per input. Each parser completes 10,000 fuzz iterations. The
+USDC harness now reconstructs the stage after a successful crate read, covering
+decoded values and array ownership. Slow informational function-name
+symbolization is disabled during mutation; sanitizer error symbolization stays
+enabled. Exact compile/link/run commands, seed counts and logs are retained
+under ignored `build_ninja/regression-flatten-sanitize/fuzz/`.
+
+The complete legacy sanitizer build uses Clang 21, Debug with `-O1`, both C and
+C++ ASan/UBSan/coverage instrumentation, threading and no PCH. Tests, examples,
+tools, legacy C API, MCP and the threaded GL/Vulkan viewer build successfully.
+Strict Clang warnings exposed C89 compatibility warnings in C11 leaves,
+shadowed consumer variables, a missing `override`, an unused GUI field and
+redundant string materialization. The fixes retain the warning policy and
+32-bit allocation bounds.
+
+Leak checking found a real `MemPool` shutdown leak: its cached pointers were
+discarded without freeing their blocks. The destructor now frees the cache.
+Four focused renderer tests pass with leak checking and no sanitizer reports.
+The host NVIDIA Vulkan stack separately retains D-Bus allocations; a minimal
+Vulkan program without LightUSD reproduces that leak. Only `libdbus-1.so.3`
+allocations were suppressed in the initial full sweep. The installed loader's
+`VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING=1` setting avoids orphaned driver
+allocations at shutdown. Project leak checks remain enabled. Initial reports
+and the standalone reproduction are retained for review.
+
+The first full sanitizer sweep also found two undefined pointer operations in
+the vendored image resizer: SIMD sRGB encoding formed a pointer before its
+lookup table, and callback-only streaming resize performed arithmetic on null
+backing-image pointers. Indices now carry the table bias and absent image
+pointers stay null. A standalone before/after probe reproduces the original
+bounds failure and verifies identical output bytes for 18 layouts/size cases
+with ASan, UBSan and leak checks. A new unit case covers sRGB endpoints and
+linear alpha; existing PNG streaming tests cover the callback path.
+
+The viewer's GL loader now passes a correctly typed adapter to GLAD instead
+of casting `glfwGetProcAddress` to a different function type. The normal full
+native build, focused image cases and refreshed wasm32/memory64 image/flatten
+parity checks pass. The initial 366-test legacy sanitizer sweep completed,
+explicitly excluding the five HIP tests. The affected-test retry was stopped
+at the user's request to terminate lusdview after 116/149 CTests; the full
+sanitizer gate remains incomplete. Its retained report lists outstanding
+failures and the AOUSD timeout, which need review before claiming a clean gate.
+The GL warmup additionally exposed a 5,584-byte shutdown
+leak inside `libnvidia-glcore.so.615.71.09`. A minimal GLFW-only program
+reproduces the exact bytes and stacks, so the retry profile isolates that
+driver version too. Project leak checks remain enabled. Focused image checks
+pass all seven cases, and GL warmup/MCP pass without sanitizer reports.
+The MCP validation fixture now uses CTest's configured fixture root rather
+than assuming a one-level build directory. Reports and independent diagnostics are under
+ignored `build_ninja/regression-flatten-sanitize/sanitizer/`.
+
+### Legacy sanitizer gate completion (2026-10-19)
+
+The interrupted retry was resumed and the gate is complete: 366 non-HIP CTests
+aggregate to 361 passes and five skips (the external `ISLAND_USD` asset and
+four opt-in profiles: OpenChess path trace, usd-assets golden, broad and
+animation), with zero project ASan/UBSan/LSan reports. The 1,084-case legacy
+unit executable passes under all three sanitizers.
+
+- `tinydng::IsDNGFromMemory` and `LoadDNGFromMemoryImpl` read the TIFF magic
+  with `memcpy` instead of a misaligned 16-bit load; packaged (USDZ) images can
+  start at odd addresses. `tinydng_odd_offset_probe_test` reproduces the UBSan
+  report without the fix and passes with it. Packaged UDIM/displacement and
+  Vulkan RT texture parity pass; wasm32/memory64 combined modules were rebuilt
+  and their schema-utilities parity passes. The Python extension does not link
+  this code.
+- CUDA `cuInit` returned `CUDA_ERROR_OUT_OF_MEMORY` only under ASan: its
+  protected shadow gap blocks the driver's UVM reservation. With
+  `ASAN_OPTIONS=protect_shadow_gap=0` all eight CUDA viewer tests genuinely
+  pass and the 456-byte driver allocation report disappears.
+- Remaining failures were instrumentation budgets, not functional faults.
+  Sanitizer-only CTest settings now widen them while normal builds keep their
+  limits: AOUSD 2,700 s (83/83 fixtures pass through both loaders), the
+  deferred-USDZ payload poll deadline (new
+  `LUSDVIEW_DEFERRED_PAYLOAD_TIMEOUT_MS`, default 10 s), the geomsubset RT
+  per-render timeout and the OpenChess CPU RT capture. Completion and render
+  assertions are unchanged.
+
+
+Reports, original artifacts, benchmark logs and fixture results are retained in
+ignored `build_ninja/c11-storage/`; generated WASM modules, wheels and Chrome
+remain ignored build artifacts. No optimization flags or release versions were
+changed for this refactor.

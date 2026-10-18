@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
+#include "render-data-scene-nodes.hh"
 #include "render-data-math.hh"
-#include "render-data-shaders.hh"
 #include "render-data-points.hh"
 #include "render-data-mesh.hh"
 #include "render-data-texture.hh"
@@ -11,6 +10,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
+
+namespace lightusd { namespace tydra { namespace next {
 
 struct ConversionDiagnostic {
   ConversionDisposition disposition = ConversionDisposition::Failed;
@@ -128,3 +130,5 @@ class RenderScene {
   };
   Stats get_stats() const;
 };
+
+}}} // namespace lightusd::tydra::next

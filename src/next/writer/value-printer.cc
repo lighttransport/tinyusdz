@@ -47,7 +47,7 @@ inline void ReserveArrayHeadroom(std::string& o, size_t want) {
 // Escape a string for USDA output
 
 // Forward decl: recursive dictionary printer (defined after PrintValue).
-std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+std::string PrintDictionaryIndented(DictView  d, const PrintOptions& opts,
                                     int base_depth);
 
 class ChunkedStream {
@@ -463,7 +463,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         tmp = value.materialized_copy();
         src = &tmp;
       }
-      const std::vector<uint8_t>* a = src->as_bool_array();
+      auto a = src->as_bool_array();
       if (!a) return false;
       out.append('[');
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
@@ -485,7 +485,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         tmp = value.materialized_copy();
         src = &tmp;
       }
-      const std::vector<std::string>* a = src->as_token_array();
+      auto a = src->as_token_array();
       if (!a) return false;
       out.append('[');
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
@@ -651,7 +651,7 @@ void PrintValueInto(std::string& out, const Value& value,
 
     switch (type_id) {
       case TypeId::Int: {
-        if (const auto* a = value.as_int_array()) {
+        if (auto a = value.as_int_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
@@ -661,7 +661,7 @@ void PrintValueInto(std::string& out, const Value& value,
       }
       case TypeId::UInt:
       case TypeId::UChar: {
-        if (const auto* a = value.as_uint_array()) {
+        if (auto a = value.as_uint_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
@@ -670,7 +670,7 @@ void PrintValueInto(std::string& out, const Value& value,
         break;
       }
       case TypeId::Int64: {
-        if (const auto* a = value.as_int64_array()) {
+        if (auto a = value.as_int64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
@@ -679,7 +679,7 @@ void PrintValueInto(std::string& out, const Value& value,
         break;
       }
       case TypeId::UInt64: {
-        if (const auto* a = value.as_uint64_array()) {
+        if (auto a = value.as_uint64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
@@ -688,7 +688,7 @@ void PrintValueInto(std::string& out, const Value& value,
         break;
       }
       case TypeId::Bool: {
-        if (const auto* a = value.as_bool_array()) {
+        if (auto a = value.as_bool_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "1" : "0"); }  // pxr: 1/0
           if (limit < a->size()) out += ", ...";
@@ -699,7 +699,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::String:
       case TypeId::PathExpression:
       case TypeId::AssetPath: {
-        if (const auto* a = value.as_token_array()) {
+        if (auto a = value.as_token_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           for (size_t i = 0; i < limit; ++i) {
             if (i) out += ", ";
@@ -716,7 +716,7 @@ void PrintValueInto(std::string& out, const Value& value,
                          type_id == TypeId::Double ||
                          type_id == TypeId::TimeCode;
         if (dbl) {
-          if (const auto* a = value.as_double_array()) {
+          if (auto a = value.as_double_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -725,7 +725,7 @@ void PrintValueInto(std::string& out, const Value& value,
           }
         } else if (GetComponentType(type_id) == TypeId::UInt) {
           // UInt2/UInt3/UInt4 arrays (flat uint32 buffer)
-          if (const auto* a = value.as_uint_array()) {
+          if (auto a = value.as_uint_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -743,7 +743,7 @@ void PrintValueInto(std::string& out, const Value& value,
           }
         } else if (GetComponentType(type_id) == TypeId::Int) {
           // Int2/Int3/Int4 arrays (flat int32 buffer)
-          if (const auto* a = value.as_int_array()) {
+          if (auto a = value.as_int_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -760,7 +760,7 @@ void PrintValueInto(std::string& out, const Value& value,
             if (limit < n) out += ", ...";
           }
         } else {
-          if (const auto* a = value.as_float_array()) {
+          if (auto a = value.as_float_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
@@ -829,19 +829,19 @@ void PrintValueInto(std::string& out, const Value& value,
 
     case TypeId::String:
     case TypeId::PathExpression: {  // SdfPathExpression prints as a string
-      const std::string* v = value.as_string();
+      auto v = value.as_string();
       out += v ? EscapeUSDAString(*v) : "None";
       return;
     }
 
     case TypeId::Token: {
-      const std::string* v = value.as_token();
+      auto v = value.as_token();
       out += v ? EscapeUSDAString(*v) : "None";
       return;
     }
 
     case TypeId::AssetPath: {
-      const std::string* v = value.as_asset_path();
+      auto v = value.as_asset_path();
       if (v) out += FormatAssetPathForUsda(*v); else out += "None";
       return;
     }
@@ -1072,7 +1072,7 @@ void PrintValueInto(std::string& out, const Value& value,
     }
 
     case TypeId::Dictionary: {
-      const Dict* d = value.as_dictionary();
+      auto d = value.as_dictionary();
       if (d) out += PrintDictionaryIndented(*d, opts, 0); else out += "{\n}";
       return;
     }
@@ -1266,7 +1266,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
 
 namespace {
 
-std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
+std::string PrintDictionaryIndented(DictView  d, const PrintOptions& opts,
                                     int base_depth) {
   std::string s;
   s += "{\n";
@@ -1290,11 +1290,11 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
   };
 
   struct Frame {
-    const Dict* dict{nullptr};
+    DictView  dict{nullptr};
     int depth{0};
     size_t next_entry{0};
     std::vector<size_t> order;
-    Frame(const Dict* d, int level, bool sort_keys) : dict(d), depth(level) {
+    Frame(DictView  d, int level, bool sort_keys) : dict(d), depth(level) {
       if (sort_keys) {
         order.resize(d->entries().size());
         for (size_t i = 0; i < order.size(); ++i) order[i] = i;
@@ -1305,7 +1305,7 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
     }
   };
   std::vector<Frame> stack;
-  stack.emplace_back(&d, base_depth, opts.sort_dictionary_keys);
+  stack.emplace_back(d, base_depth, opts.sort_dictionary_keys);
 
   while (!stack.empty()) {
     Frame& frame = stack.back();
@@ -1315,13 +1315,13 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
       ++frame.next_entry;
       const auto& kv = frame.dict->entries()[index];
       const std::string& key = kv.first;
-      const Value& val = kv.second;
+      const ValueView val = kv.second;
       for (int i = 0; i <= frame.depth; ++i) s += opts.indent;
       if (val.is_dictionary()) {
         s += "dictionary ";
         s += key_text(key);
         s += " = ";
-        const Dict* nested = val.as_dictionary();
+        auto nested = val.as_dictionary();
         if (!nested) {
           s += "{}\n";
           continue;

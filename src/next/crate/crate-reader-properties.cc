@@ -22,18 +22,18 @@ bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
   auto tok_or_str = [&](std::string& dst, uint32_t bit) -> bool {
     Value v;
     if (!UnpackValue(rep, v)) return true;  // known field, bad value: eat it
-    if (const std::string* s = v.as_token()) { dst = *s; pm.authored |= bit; }
-    else if (const std::string* s = v.as_string()) { dst = *s; pm.authored |= bit; }
+    if (auto s = v.as_token()) { dst = *s; pm.authored |= bit; }
+    else if (auto s = v.as_string()) { dst = *s; pm.authored |= bit; }
     return true;
   };
   auto dict_field = [&](Value& dst, uint32_t bit) -> bool {
     Value v;
     if (!UnpackValue(rep, v)) return true;
     if (v.is_dictionary()) { dst = std::move(v); pm.authored |= bit; }
-    else if (const std::string* s = v.as_string()) {
+    else if (auto s = v.as_string()) {
       Value d = ParseDictText(*s);
       if (d.is_dictionary()) { dst = std::move(d); pm.authored |= bit; }
-    } else if (const std::string* s = v.as_token()) {
+    } else if (auto s = v.as_token()) {
       Value d = ParseDictText(*s);
       if (d.is_dictionary()) { dst = std::move(d); pm.authored |= bit; }
     }
@@ -100,8 +100,8 @@ bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
   if (name == "allowedTokens") {
     Value v;
     if (UnpackValue(rep, v)) {
-      if (const std::vector<std::string>* toks = v.as_token_array()) {
-        pm.allowedTokens = *toks;
+      if (auto toks = v.as_token_array()) {
+        pm.allowedTokens.assign(toks->begin(), toks->end());
         pm.authored |= PropMeta::kAllowedTokens;
       }
     }
@@ -233,7 +233,7 @@ bool CrateReader::Impl::CollectPropertyRecords(
           } else if (f.first == "variability") {
             Value v;
             if (UnpackValue(f.second, v)) {
-              if (const std::string* s = v.as_token()) {
+              if (auto s = v.as_token()) {
                 ri.variability_authored = true;
                 ri.uniform = (*s == "uniform");
                 ri.varying = (*s == "varying");
@@ -270,7 +270,7 @@ bool CrateReader::Impl::CollectPropertyRecords(
         if (f.first == "typeName") {
           Value v;
           if (UnpackValue(f.second, v)) {
-            if (const std::string* s = v.as_token()) ai.type_name = *s;
+            if (auto s = v.as_token()) ai.type_name = *s;
           } else {
             AddWarning("Failed to decode typeName on " + prim_path + "." +
                        ai.name);
@@ -344,7 +344,7 @@ bool CrateReader::Impl::CollectPropertyRecords(
         } else if (f.first == "variability") {
           Value v;
           if (UnpackValue(f.second, v)) {
-            if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+            if (auto s = v.as_token()) ai.uniform = (*s == "uniform");
           } else {
             AddWarning("Failed to decode variability on " + prim_path + "." +
                        ai.name);

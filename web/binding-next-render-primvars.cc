@@ -92,9 +92,9 @@ RenderStream::sourcePrimvars_(int source_index) const {
   auto array_size = [&](const char* name, size_t divisor) -> size_t {
     const lightusd::next::Value* value = prim.GetPropertyValue(name);
     if (!value) return 0;
-    if (const std::vector<float>* floats = value->as_float_array())
+    if (auto floats = value->as_float_array())
       return floats->size() / divisor;
-    if (const std::vector<int32_t>* ints = value->as_int_array())
+    if (auto ints = value->as_int_array())
       return ints->size() / divisor;
     return 0;
   };
@@ -106,9 +106,9 @@ RenderStream::sourcePrimvars_(int source_index) const {
         (!uv_second.empty() && pv.name == uv_second) ||
         pv.name == "displayColor" || pv.name == "displayOpacity" ||
         pv.name == "normals" || pv.name.rfind("skel:", 0) == 0) continue;
-    const std::vector<float>* floats = pv.value->as_float_array();
-    const std::vector<double>* doubles = pv.value->as_double_array();
-    const std::vector<int32_t>* ints = pv.value->as_int_array();
+    auto floats = pv.value->as_float_array();
+    auto doubles = pv.value->as_double_array();
+    auto ints = pv.value->as_int_array();
     if (!floats && !doubles && !ints) continue;
     const uint32_t components = ints ? 1u : static_cast<uint32_t>(
         lightusd::next::GetComponentCount(pv.value->type_id()));
@@ -284,11 +284,11 @@ int RenderStream::meshPrimvarBufferCopy(int mesh_id, int primvar_id, uint8_t kin
         return required;
       if (kind == 1) {
         std::memcpy(out, pv.indices->data(), static_cast<size_t>(required));
-      } else if (const std::vector<float>* values = pv.value->as_float_array()) {
+      } else if (auto values = pv.value->as_float_array()) {
         std::memcpy(out, values->data(), static_cast<size_t>(required));
-      } else if (const std::vector<int32_t>* values = pv.value->as_int_array()) {
+      } else if (auto values = pv.value->as_int_array()) {
         std::memcpy(out, values->data(), static_cast<size_t>(required));
-      } else if (const std::vector<double>* values = pv.value->as_double_array()) {
+      } else if (auto values = pv.value->as_double_array()) {
         for (size_t i = 0; i < count; ++i) {
           const float value = static_cast<float>((*values)[i]);
           std::memcpy(out + i * sizeof(float), &value, sizeof(float));

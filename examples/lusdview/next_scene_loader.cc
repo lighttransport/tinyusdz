@@ -1531,17 +1531,17 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
       expanded.uv1.push_back(mesh->uv1[size_t(old) * 2 + 1]);
     }
     for (size_t pi = 0; pi < expanded.geomProps.size(); ++pi) {
-      const DrawGeomPropCPU& source = mesh->geomProps[pi];
-      if (source.components == 0 ||
-          (size_t(old) + 1) * source.components > source.values.size()) {
+      const DrawGeomPropCPU& geomProperty = mesh->geomProps[pi];
+      if (geomProperty.components == 0 ||
+          (size_t(old) + 1) * geomProperty.components > geomProperty.values.size()) {
         expanded.geomProps[pi].values.resize(
-            expanded.geomProps[pi].values.size() + source.components, 0.0f);
+            expanded.geomProps[pi].values.size() + geomProperty.components, 0.0f);
         continue;
       }
-      const size_t begin = size_t(old) * source.components;
+      const size_t begin = size_t(old) * geomProperty.components;
       expanded.geomProps[pi].values.insert(
-          expanded.geomProps[pi].values.end(), source.values.begin() + begin,
-          source.values.begin() + begin + source.components);
+          expanded.geomProps[pi].values.end(), geomProperty.values.begin() + begin,
+          geomProperty.values.begin() + begin + geomProperty.components);
     }
     if (hasInfluence)
       expanded.morphInfluence.push_back(mesh->morphInfluence[old]);
@@ -4800,8 +4800,10 @@ static void AddNextBackPlates(const lightusd_stage* stage,
     return;
   lightusd::api::StringList schemas(rawNames);
   constexpr const char* prefix = "BackPlateAPI:";
-  for (size_t i = 0; i < lightusd_strlist_size(schemas.get()); ++i) {
-    const std::string schema = PublicString(lightusd_strlist_get(schemas.get(), i));
+  for (size_t schemaIndex = 0; schemaIndex < lightusd_strlist_size(schemas.get());
+       ++schemaIndex) {
+    const std::string schema =
+        PublicString(lightusd_strlist_get(schemas.get(), schemaIndex));
     if (schema.rfind(prefix, 0) != 0) continue;
     const std::string instance = schema.substr(std::strlen(prefix));
     lightusd_backplate* rawPlate = nullptr;
@@ -7209,7 +7211,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             publishAvailableMeshes();
           };
           size_t pendingInstances = 0;
-          bool previewPublished = false;
+          bool placementPreviewPublished = false;
           for (size_t i = 0; i < n && streamOk; ++i) {
             if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
             const int protoIndex = (i < protoIdx.size()) ? protoIdx[i] : 0;
@@ -7234,11 +7236,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             }
             if (perInstOpacity) opacityChunks[pi].push_back(instOpacity[i]);
             ++pendingInstances;
-            if (!previewPublished &&
+            if (!placementPreviewPublished &&
                 placementChunks[pi].size() >= progressiveInstanceChunk) {
               pendingInstances -= placementChunks[pi].size();
               flushPlacementChunk(pi);
-              previewPublished = true;
+              placementPreviewPublished = true;
             }
           }
           for (size_t pi = 0; pi < protos.size() && streamOk; ++pi) {
@@ -8282,11 +8284,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // inherited result per parent path so sibling meshes do not each walk the
   // entire stage ancestry during serial batching.
   std::unordered_map<std::string, std::string> backMaterialByParent;
-  auto cachedBackMaterialPath = [&](const std::string& path) -> std::string {
+  auto cachedBackMaterialPath = [&](const std::string& primPath) -> std::string {
     const lightusd_prim publicPrim =
-        lightusd_stage_prim_at_path(stage_owner.get(), path.c_str());
+        lightusd_stage_prim_at_path(stage_owner.get(), primPath.c_str());
     if (lightusd_rel_target_count(publicPrim, "material:binding:back") != 0)
-      return PublicBoundMaterialPath(stage_owner.get(), path, "back");
+      return PublicBoundMaterialPath(stage_owner.get(), primPath, "back");
     const lightusd_prim parent = lightusd_prim_parent(publicPrim);
     if (!lightusd_prim_is_valid(parent)) return {};
     const std::string parentPath = PublicString(lightusd_prim_path(parent));
@@ -8613,7 +8615,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   auto appendPlainStatic = [&](const std::string& purpose, bool proxyFallback,
                                const DrawMeshCPU& source,
                                const tydn::RenderMesh& sourceMesh,
-                               const std::string& path) {
+                               const std::string& primPath) {
     Batch& b = getBatch({purpose, source.geometricNormal, proxyFallback,
                          sourceMesh.double_sided, 0, -1, 0, 0, 0});
     if (!b.dm.vertices.empty() &&
@@ -8625,7 +8627,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     b.dm.geometricNormal = source.geometricNormal;
     b.dm.doubleSided = sourceMesh.double_sided;
     if (b.dm.absPath.empty()) {
-      b.dm.absPath = source.absPath.empty() ? path : source.absPath;
+      b.dm.absPath = source.absPath.empty() ? primPath : source.absPath;
       b.dm.name = source.name;
     }
     const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
@@ -8891,9 +8893,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   size_t estimatedGeometryBytes = 0;
   bool estimateOverflow = false;
   auto estimateGeometry = [&](size_t i) {
-    const std::string& path = meshPrims[i].path;
+    const std::string& primPath = meshPrims[i].path;
     const lightusd_prim prim =
-        lightusd_stage_prim_at_path(stage_owner.get(), path.c_str());
+        lightusd_stage_prim_at_path(stage_owner.get(), primPath.c_str());
     if (!lightusd_prim_is_valid(prim)) {
       geometryBytes[i] = 0;
       return;
@@ -8907,7 +8909,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         cfg.mesh.build_vertex_indices ? 1 : 0;
     estimateConfig.time_code = cfg.time_code;
     estimateConfig.max_threads = 1;
-    const auto levelIt = cfg.mesh.subdivision_prim_levels.find(path);
+    const auto levelIt = cfg.mesh.subdivision_prim_levels.find(primPath);
     const int subdivisionLevel =
         levelIt == cfg.mesh.subdivision_prim_levels.end()
             ? cfg.mesh.subdivision_level
@@ -8917,8 +8919,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                            &estimateConfig,
                                            subdivisionLevel, &estimate) !=
         LIGHTUSD_OK ||
-        estimate > static_cast<uint64_t>(
-                       (std::numeric_limits<size_t>::max)())) {
+        estimate != static_cast<uint64_t>(static_cast<size_t>(estimate))) {
       geometryBytes[i] = 0;
       return;
     }
@@ -9721,10 +9722,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
       // reserve(size()+n) per mesh would reallocate the whole batch (O(N^2)).
       const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
-      const bool plainStatic = !b.anySkin && !b.anyMorph && !b.anyColor &&
+      const bool plainBatch = !b.anySkin && !b.anyMorph && !b.anyColor &&
                                !b.anyAlpha && !b.anyUv1 && !hasSkin &&
                                !hasMorph && !hasC && !hasAlpha && !hasUv1;
-      if (plainStatic) {
+      if (plainBatch) {
         const size_t required = b.dm.vertices.size() + loc.vertices.size();
         if (required > b.dm.vertices.capacity()) {
           b.dm.vertices.reserve(

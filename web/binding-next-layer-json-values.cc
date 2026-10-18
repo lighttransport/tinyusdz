@@ -159,7 +159,7 @@ bool ParseLayerJSONMetadataValue(const minijson::Value& encoded,
   return true;
 }
 
-minijson::Value LayerMetadataPayloadJSON(const tn::Value& value) {
+minijson::Value LayerMetadataPayloadJSON(tn::ValueView value) {
   minijson::Value flat = NextValueJSON(value);
   if (flat.is_null() && !value.is_array()) {
     if (value.type_id() == tn::TypeId::Half) {
@@ -249,15 +249,15 @@ minijson::Value LayerMetadataPayloadJSON(const tn::Value& value) {
   return value.is_array() ? grouped : grouped[0];
 }
 
-minijson::Value LayerTypedMetadataValueJSON(const tn::Value& value) {
+minijson::Value LayerTypedMetadataValueJSON(tn::ValueView value) {
   minijson::Value out = minijson::Value::object();
   out["type"] = tn::PrintTypeName(value.type_id(), value.is_array());
-  if (const tn::Dict* dict = value.as_dictionary()) {
+  if (auto dict = value.as_dictionary()) {
     minijson::Value members = minijson::Value::object();
     for (const auto& entry : dict->entries())
       members[entry.first] = LayerTypedMetadataValueJSON(entry.second);
     out["value"] = std::move(members);
-  } else if (const std::string* asset = value.as_asset_path()) {
+  } else if (auto asset = value.as_asset_path()) {
     minijson::Value path = minijson::Value::object();
     path["assetPath"] = *asset;
     path["resolvedPath"] = "";
@@ -268,8 +268,8 @@ minijson::Value LayerTypedMetadataValueJSON(const tn::Value& value) {
   return out;
 }
 
-minijson::Value LayerMetadataValueJSON(const tn::Value& value) {
-  if (const tn::Dict* dictionary = value.as_dictionary()) {
+minijson::Value LayerMetadataValueJSON(tn::ValueView value) {
+  if (auto dictionary = value.as_dictionary()) {
     if (dictionary->typed_json_wrapper())
       return LayerTypedMetadataValueJSON(value);
     minijson::Value out = minijson::Value::object();
@@ -288,16 +288,16 @@ minijson::Value LayerMetadataValueJSON(const tn::Value& value) {
   return NextValueJSON(value);
 }
 
-size_t MetadataValueEntryCount(const tn::Value& value) {
+size_t MetadataValueEntryCount(tn::ValueView value) {
   size_t count = 1;
-  std::vector<const tn::Value*> pending{&value};
+  std::vector<tn::ValueView> pending{value};
   while (!pending.empty()) {
-    const tn::Value* current = pending.back();
+    const tn::ValueView current = pending.back();
     pending.pop_back();
-    if (const tn::Dict* dict = current->as_dictionary()) {
+    if (auto dict = current->as_dictionary()) {
       if (dict->size() > 1000000 - count) return SIZE_MAX;
       count += dict->size();
-      for (const auto& item : dict->entries()) pending.push_back(&item.second);
+      for (const auto& item : dict->entries()) pending.push_back(item.second);
     } else if (current->is_array()) {
       if (current->array_size() > 1000000 - count) return SIZE_MAX;
       count += current->array_size();

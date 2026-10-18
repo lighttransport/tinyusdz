@@ -16,8 +16,7 @@ const nextGlue = wasm64 ? '../src/lightusd/lightusd_next_64.js'
                         : '../src/lightusd/lightusd_next.js';
 const {default: createNextModule} = await import(new URL(nextGlue, import.meta.url));
 const nextModule = await createNextModule();
-await nextModule.loadValidator();
-await nextModule.loadEXR();
+const validator = await nextModule.loadFeature('validator');
 const legacy = new legacyModule.LightUSDLoaderNative();
 const functionInventory = JSON.parse(fs.readFileSync(new URL(
   './next-module-function-api-inventory.json', import.meta.url), 'utf8'));
@@ -31,7 +30,7 @@ const cases = [
 const options = JSON.stringify({groups: ['core', 'geom', 'shade', 'lux', 'physics', 'crate']});
 let nextLayer = null;
 try {
-  assert.equal(typeof nextModule.validateFromBinary, 'function');
+  assert.equal(typeof validator.validateFromBinary, 'function');
   assert.equal(typeof nextModule.LayerDocument, 'function');
   nextLayer = new nextModule.LayerDocument();
   assert.equal(typeof nextLayer.validateLoadedLayer, 'function');
@@ -45,7 +44,7 @@ try {
     const bytes = new Uint8Array(fs.readFileSync(new URL(fixture, import.meta.url)));
     const filename = path.basename(fixture);
     const expected = JSON.parse(legacy.validateFromBinary(bytes, filename, options));
-    const actual = JSON.parse(nextModule.validateFromBinary(bytes, filename, options));
+    const actual = JSON.parse(validator.validateFromBinary(bytes, filename, options));
     if (fixture.endsWith('cube-000.usdc')) {
       const normalizedExpected = {...expected};
       assert.match(actual.warn, /Threading is disabled for this build\./,
@@ -63,7 +62,7 @@ try {
   const legacyCoreOnly = JSON.parse(
     legacy.validateFromBinary(usdcBytes, 'cube-000.usdc', '{}'));
   const nextCoreOnly = JSON.parse(
-    nextModule.validateFromBinary(usdcBytes, 'cube-000.usdc', '{}'));
+    validator.validateFromBinary(usdcBytes, 'cube-000.usdc', '{}'));
   assert.match(nextCoreOnly.warn, /Threading is disabled for this build\./);
   delete legacyCoreOnly.warn;
   delete nextCoreOnly.warn;
@@ -85,9 +84,8 @@ try {
   } finally {
     nextModule._lightusd_next_alloc = alloc;
   }
-  assert.ok(validationAllocations.length > 0 &&
-    validationAllocations.every(size => size < 1024),
-  'loaded-layer validation must not stage a full USDA copy in WASM memory');
+  assert.deepEqual(validationAllocations, [],
+    'loaded-layer validation transfers the retained USDA directly to the validator heap');
   assert.deepEqual(nextLoadedResult,
     JSON.parse(legacy.validateLoadedLayer(options)),
     'loaded-layer validation must preserve the legacy result for authored USDA');
@@ -98,7 +96,7 @@ try {
   assert.equal(afterEdit.ok, true,
     'validation must use the document current state after edits');
   const badBytes = new TextEncoder().encode('not USD');
-  const nextBad = JSON.parse(nextModule.validateFromBinary(badBytes, 'bad.usda', '{}'));
+  const nextBad = JSON.parse(validator.validateFromBinary(badBytes, 'bad.usda', '{}'));
   const legacyBad = JSON.parse(legacy.validateFromBinary(badBytes, 'bad.usda', '{}'));
   assert.equal(nextBad.parse_ok, false);
   assert.equal(legacyBad.parse_ok, false);

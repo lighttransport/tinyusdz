@@ -210,109 +210,27 @@ namespace lightusd_internal {
 
 namespace {
 
-// Storage component type of the (materialized) POD buffer behind a Value.
-lightusd_component_type StorageFor(n::TypeId t, bool is_array) {
-  switch (t) {
-    case n::TypeId::Bool:
-      return LIGHTUSD_COMP_UINT8;
-    case n::TypeId::Int:
-    case n::TypeId::Int2:
-    case n::TypeId::Int3:
-    case n::TypeId::Int4:
-      return LIGHTUSD_COMP_INT32;
-    case n::TypeId::UInt:
-    case n::TypeId::UInt2:
-    case n::TypeId::UInt3:
-    case n::TypeId::UInt4:
-      return LIGHTUSD_COMP_UINT32;
-    case n::TypeId::Int64:
-      return LIGHTUSD_COMP_INT64;
-    case n::TypeId::UInt64:
-      return LIGHTUSD_COMP_UINT64;
-    // Half element types: arrays materialize into float32 buffers; scalar
-    // halves stay 16-bit in the SBO.
-    case n::TypeId::Half:
-    case n::TypeId::Half2:
-    case n::TypeId::Half3:
-    case n::TypeId::Half4:
-    case n::TypeId::Quath:
-    case n::TypeId::Point3h:
-    case n::TypeId::Vector3h:
-    case n::TypeId::Normal3h:
-    case n::TypeId::Color3h:
-    case n::TypeId::Color4h:
-    case n::TypeId::Texcoord2h:
-    case n::TypeId::Texcoord3h:
-      return is_array ? LIGHTUSD_COMP_FLOAT32 : LIGHTUSD_COMP_FLOAT16;
-    case n::TypeId::Float:
-    case n::TypeId::Float2:
-    case n::TypeId::Float3:
-    case n::TypeId::Float4:
-    case n::TypeId::Quatf:
-    case n::TypeId::Point3f:
-    case n::TypeId::Vector3f:
-    case n::TypeId::Normal3f:
-    case n::TypeId::Color3f:
-    case n::TypeId::Color4f:
-    case n::TypeId::Texcoord2f:
-    case n::TypeId::Texcoord3f:
-    case n::TypeId::Matrix2f:
-    case n::TypeId::Matrix3f:
-    case n::TypeId::Matrix4f:
-    case n::TypeId::Extent:
-      return LIGHTUSD_COMP_FLOAT32;
-    case n::TypeId::Double:
-    case n::TypeId::Double2:
-    case n::TypeId::Double3:
-    case n::TypeId::Double4:
-    case n::TypeId::Quatd:
-    case n::TypeId::Point3d:
-    case n::TypeId::Vector3d:
-    case n::TypeId::Normal3d:
-    case n::TypeId::Color3d:
-    case n::TypeId::Color4d:
-    case n::TypeId::Texcoord2d:
-    case n::TypeId::Texcoord3d:
-    case n::TypeId::Matrix2d:
-    case n::TypeId::Matrix3d:
-    case n::TypeId::Matrix4d:
-    case n::TypeId::TimeCode:
-      return LIGHTUSD_COMP_FLOAT64;
-    default:
-      return LIGHTUSD_COMP_NONE;
-  }
+lightusd_component_type StorageFor(n::TypeId t, bool array) {
+  lu_type_descriptor desc{};
+  lu_type_describe(static_cast<uint16_t>(t), array, &desc);
+  return static_cast<lightusd_component_type>(desc.storage);
 }
-
 size_t CompSize(lightusd_component_type c) {
-  switch (c) {
-    case LIGHTUSD_COMP_UINT8:
-      return 1;
-    case LIGHTUSD_COMP_FLOAT16:
-      return 2;
-    case LIGHTUSD_COMP_INT32:
-    case LIGHTUSD_COMP_UINT32:
-    case LIGHTUSD_COMP_FLOAT32:
-      return 4;
-    case LIGHTUSD_COMP_INT64:
-    case LIGHTUSD_COMP_UINT64:
-    case LIGHTUSD_COMP_FLOAT64:
-      return 8;
-    default:
-      return 0;
-  }
+  const auto* info = lu_component_get(static_cast<uint8_t>(c));
+  return info ? info->size : 0;
 }
 
 bool IsStringFamily(n::TypeId t) {
-  return t == n::TypeId::String || t == n::TypeId::Token ||
-         t == n::TypeId::AssetPath;
+  return lu_value_uses_string_storage(static_cast<uint16_t>(t)) != 0;
 }
 
 }  // namespace
 
-lightusd_status MakeView(const n::Value& v, lightusd_value_view* out) {
+lightusd_status MakeView(n::ValueView v, lightusd_value_view* out) {
   if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out view is null");
   std::memset(out, 0, sizeof(*out));
 
+  out->_owner = v.core();
   const n::TypeId t = v.type_id();
   out->type = static_cast<lightusd_type>(t);
   out->is_array = v.is_array() ? 1 : 0;
@@ -368,135 +286,22 @@ lightusd_status MakeView(const n::Value& v, lightusd_value_view* out) {
 
 bool ValueFromRaw(lightusd_type type, uint8_t is_array, const void* data,
                   size_t count, n::Value* out) {
-  const n::TypeId t = static_cast<n::TypeId>(type);
-  if (t == n::TypeId::Invalid || !out) {
-    SetError("invalid type");
-    return false;
-  }
-
-  if (IsStringFamily(t)) {
-    if (is_array) {
-      SetError("string-family arrays must use lightusd_attr_set_token_array");
-      return false;
-    }
-    const char* s = static_cast<const char*>(data);
-    if (!s) {
-      SetError("string data is null");
-      return false;
-    }
-    if (t == n::TypeId::Token) {
-      *out = n::Value::MakeToken(std::string(s));
-    } else if (t == n::TypeId::AssetPath) {
-      *out = n::Value::MakeAssetPath(std::string(s));
-    } else {
-      *out = n::Value(std::string(s));
-    }
-    return true;
-  }
-
-  if ((!data || count == 0) && !(is_array && count == 0)) {
-    SetError("value data is null/empty");
-    return false;
-  }
-  // Empty typed arrays are authored values, not missing values or blocks.
-  alignas(16) const uint8_t empty_storage[16] = {};
-  if (!data) data = empty_storage;
-
+  if (!out || type == LIGHTUSD_TYPE_INVALID) { SetError("invalid type"); return false; }
   const bool array = is_array || count > 1;
-
-  if (!array) {
-    // Scalar: MakeFromRaw copies GetTypeSize(t) bytes.
-    if (n::GetTypeSize(t) == 0) {
-      SetError("type has no fixed size; cannot author as scalar");
-      return false;
-    }
-    // Bool needs a real C++ bool in storage.
-    if (t == n::TypeId::Bool) {
-      bool b = *static_cast<const uint8_t*>(data) != 0;
-      *out = n::Value(b);
-      return true;
-    }
-    *out = n::Value::MakeFromRaw(t, data);
-    return true;
+  if (lu_value_uses_string_storage(type)) {
+    if (array || !data) { SetError("string arrays require the string-array setter"); return false; }
+    const char* text = static_cast<const char*>(data);
+    return lu_value_set_string(out->mutable_core(), type, text, std::strlen(text), nullptr) != 0;
   }
-
-  // Arrays. Component layout is tightly packed elements of the declared type.
-  const size_t comps = n::GetComponentCount(t);
-  switch (t) {
-    case n::TypeId::Bool: {
-      const uint8_t* p = static_cast<const uint8_t*>(data);
-      std::vector<bool> tmp(count);
-      for (size_t i = 0; i < count; ++i) tmp[i] = p[i] != 0;
-      *out = n::Value::MakeBoolArray(tmp);
-      return true;
-    }
-    case n::TypeId::Int: {
-      const int32_t* p = static_cast<const int32_t*>(data);
-      *out = n::Value::MakeIntArray(std::vector<int32_t>(p, p + count));
-      return true;
-    }
-    case n::TypeId::UInt: {
-      const uint32_t* p = static_cast<const uint32_t*>(data);
-      *out = n::Value::MakeUIntArray(std::vector<uint32_t>(p, p + count));
-      return true;
-    }
-    case n::TypeId::Int64: {
-      const int64_t* p = static_cast<const int64_t*>(data);
-      *out = n::Value::MakeInt64Array(std::vector<int64_t>(p, p + count));
-      return true;
-    }
-    case n::TypeId::UInt64: {
-      const uint64_t* p = static_cast<const uint64_t*>(data);
-      *out = n::Value::MakeUInt64Array(std::vector<uint64_t>(p, p + count));
-      return true;
-    }
-    default:
-      break;
-  }
-
-  const lightusd_component_type storage = StorageFor(t, true);
-  if (comps && count > (std::numeric_limits<size_t>::max)() / comps) {
-    SetError("array component count overflows");
-    return false;
-  }
-  if (storage == LIGHTUSD_COMP_INT32 && comps > 0) {
-    const int32_t* p = static_cast<const int32_t*>(data);
-    *out = n::Value::MakeIntCompArray(std::vector<int32_t>(p, p + count * comps), t,
-                                    static_cast<uint32_t>(comps));
-    return true;
-  }
-  if (storage == LIGHTUSD_COMP_UINT32 && comps > 0) {
-    const uint32_t* p = static_cast<const uint32_t*>(data);
-    *out = n::Value::MakeUIntCompArray(std::vector<uint32_t>(p, p + count * comps), t,
-                                     static_cast<uint32_t>(comps));
-    return true;
-  }
-  if (storage == LIGHTUSD_COMP_FLOAT32 && comps > 0) {
-    const float* p = static_cast<const float*>(data);
-    std::vector<float> flat(p, p + count * comps);
-    if (t == n::TypeId::Float) {
-      *out = n::Value::MakeFloatArray(std::move(flat));
-    } else {
-      *out = n::Value::MakeFloatCompArray(std::move(flat), t,
-                                          static_cast<uint32_t>(comps));
-    }
-    return true;
-  }
-  if (storage == LIGHTUSD_COMP_FLOAT64 && comps > 0) {
-    const double* p = static_cast<const double*>(data);
-    std::vector<double> flat(p, p + count * comps);
-    if (t == n::TypeId::Double) {
-      *out = n::Value::MakeDoubleArray(std::move(flat));
-    } else {
-      *out = n::Value::MakeDoubleCompArray(std::move(flat), t,
-                                           static_cast<uint32_t>(comps));
-    }
-    return true;
-  }
-
-  SetError(std::string("unsupported array element type: ") +
-           lightusd_type_name(type));
-  return false;
+  if ((!data && count) || (!array && !count)) { SetError("value data is null/empty"); return false; }
+  bool ok;
+  if (array) ok = lu_value_set_array(out->mutable_core(), type, data, count, nullptr) != 0;
+  else if (type == LIGHTUSD_TYPE_BOOL) {
+    const bool value = *static_cast<const uint8_t*>(data) != 0;
+    ok = lu_value_set_pod(out->mutable_core(), type, &value, sizeof(value), nullptr) != 0;
+  } else ok = lu_value_set_pod(out->mutable_core(), type, data, lu_type_size(type), nullptr) != 0;
+  if (!ok) SetError("unable to create typed value");
+  return ok;
 }
 
 }  // namespace lightusd_internal
@@ -727,6 +532,53 @@ extern "C" {
 // Owned values
 // ------------------------------------------------------------
 
+lightusd_abi_info lightusd_abi_get(void) {
+  return {lu_abi_get(), LIGHTUSD_API_VERSION_MAJOR, sizeof(lightusd_value_view),
+    offsetof(lightusd_value_view, data), offsetof(lightusd_value_view, _owner)};
+}
+int lightusd_type_describe(lightusd_type type, uint8_t array, lu_type_descriptor* out) {
+  return lu_type_describe(type, array, out);
+}
+const lu_component_info* lightusd_component_get(uint8_t storage) { return lu_component_get(storage); }
+lightusd_status lightusd_value_from_numbers(lightusd_type type, uint8_t array, size_t count,
+    lu_number_at read, void* context, lightusd_value** out) {
+  if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out is null");
+  *out = nullptr;
+  auto* value = new (std::nothrow) lightusd_value;
+  if (!value) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "value allocation failed");
+  if (!lu_value_set_numbers(value->v.mutable_core(), type, array, count, read, context, nullptr)) {
+    delete value; return Fail(LIGHTUSD_ERR_INVALID_ARG, "numeric value has an invalid shape, range or component");
+  }
+  *out = value; return LIGHTUSD_OK;
+}
+lightusd_status lightusd_buffer_pin(lightusd_value_view view, lightusd_buffer** out) {
+  if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "out is null");
+  *out = nullptr;
+  if (!view.storage || (view.nbytes && !view.data)) return Fail(LIGHTUSD_ERR_INVALID_ARG, "view has no numeric storage");
+  auto* pin = static_cast<lightusd_buffer*>(std::calloc(1, sizeof(lightusd_buffer)));
+  if (!pin) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "buffer pin allocation failed");
+  if (view._owner) {
+    lu_value_copy(&pin->value, static_cast<const lu_value*>(view._owner));
+    if (MakeView(n::ValueView(&pin->value), &pin->view) != LIGHTUSD_OK) {
+      lightusd_buffer_destroy(pin); return LIGHTUSD_ERR_INVALID_ARG;
+    }
+  } else {
+    const auto* component = lu_component_get(view.storage);
+    if (!component || !component->size) { std::free(pin); return LIGHTUSD_ERR_INVALID_ARG; }
+    pin->copy = lu_buffer_copy(view.data, view.nbytes, component->alignment, nullptr);
+    if (!pin->copy) { std::free(pin); return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "buffer allocation failed"); }
+    pin->view = view;
+    pin->view.data = lu_buffer_data(pin->copy);
+  }
+  *out = pin; return LIGHTUSD_OK;
+}
+lightusd_value_view lightusd_buffer_get_view(const lightusd_buffer* pin) { return pin ? pin->view : lightusd_value_view{}; }
+void lightusd_buffer_destroy(lightusd_buffer* pin) {
+  if (pin) { lu_value_destroy(&pin->value); lu_buffer_release(pin->copy);
+    if (pin->release_external) pin->release_external(pin->external);
+    std::free(pin); }
+}
+
 void lightusd_value_destroy(lightusd_value* v) { delete v; }
 
 lightusd_status lightusd_value_get_view(const lightusd_value* v, lightusd_value_view* out) {
@@ -736,7 +588,7 @@ lightusd_status lightusd_value_get_view(const lightusd_value* v, lightusd_value_
 
 lightusd_status lightusd_value_get_string(const lightusd_value* v, lightusd_sv* out) {
   if (!v || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "value/out is null");
-  const std::string* s = v->v.as_string();
+  auto s = v->v.as_string();
   if (!s) s = v->v.as_token();
   if (!s) s = v->v.as_asset_path();
   if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "value is not string-family");
@@ -747,11 +599,11 @@ lightusd_status lightusd_value_get_string(const lightusd_value* v, lightusd_sv* 
 lightusd_status lightusd_value_get_token_array(const lightusd_value* v,
                                        lightusd_strlist** out) {
   if (!v || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "value/out is null");
-  const std::vector<std::string>* arr = v->v.as_token_array();
+  auto arr = v->v.as_token_array();
   if (!arr) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "value is not a token array");
   lightusd_strlist* l = new (std::nothrow) lightusd_strlist();
   if (!l) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  l->items = *arr;
+  l->items.assign(arr->begin(), arr->end());
   *out = l;
   return LIGHTUSD_OK;
 }
@@ -763,26 +615,26 @@ lightusd_status lightusd_value_get_token_array(const lightusd_value* v,
 int lightusd_dict_is_valid(lightusd_dict_ref d) { return d._dict != nullptr; }
 
 size_t lightusd_dict_size(lightusd_dict_ref d) {
-  const n::Dict* dict = static_cast<const n::Dict*>(d._dict);
+  n::DictView  dict = n::DictView(static_cast<const lu_value*>(d._dict));
   return dict ? dict->size() : 0;
 }
 
-static lightusd_status DictOut(const std::string* key, const n::Value* v,
+static lightusd_status DictOut(n::StringView key, n::ValueView v,
                            lightusd_sv* out_key, lightusd_value_view* val,
                            lightusd_sv* sval, lightusd_dict_ref* subdict) {
-  if (out_key) *out_key = key ? SV(*key) : EmptySV();
+  if (out_key) *out_key = key ? SV(key) : EmptySV();
   if (subdict) subdict->_dict = nullptr;
   if (sval) *sval = EmptySV();
   if (val) std::memset(val, 0, sizeof(*val));
 
   if (!v) return LIGHTUSD_OK;
   if (v->is_dictionary()) {
-    if (subdict) subdict->_dict = v->as_dictionary();
+    if (subdict) subdict->_dict = v->as_dictionary().core();
     if (val) val->type = LIGHTUSD_TYPE_DICTIONARY;
     return LIGHTUSD_OK;
   }
   if (sval) {
-    const std::string* s = v->as_string();
+    auto s = v->as_string();
     if (!s) s = v->as_token();
     if (!s) s = v->as_asset_path();
     if (s) *sval = SV(*s);
@@ -794,21 +646,21 @@ static lightusd_status DictOut(const std::string* key, const n::Value* v,
 lightusd_status lightusd_dict_entry(lightusd_dict_ref d, size_t index, lightusd_sv* key,
                             lightusd_value_view* val, lightusd_sv* sval,
                             lightusd_dict_ref* subdict) {
-  const n::Dict* dict = static_cast<const n::Dict*>(d._dict);
+  n::DictView  dict = n::DictView(static_cast<const lu_value*>(d._dict));
   if (!dict) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid dict");
   if (index >= dict->entries().size()) {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "dict index out of range");
   }
   const auto& kv = dict->entries()[index];
-  return DictOut(&kv.first, &kv.second, key, val, sval, subdict);
+  return DictOut(kv.first, kv.second, key, val, sval, subdict);
 }
 
 lightusd_status lightusd_dict_find(lightusd_dict_ref d, const char* key,
                            lightusd_value_view* val, lightusd_sv* sval,
                            lightusd_dict_ref* subdict) {
-  const n::Dict* dict = static_cast<const n::Dict*>(d._dict);
+  n::DictView  dict = n::DictView(static_cast<const lu_value*>(d._dict));
   if (!dict || !key) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid dict/key");
-  const n::Value* v = dict->find(key);
+  auto v = dict->find(key);
   if (!v) return Fail(LIGHTUSD_ERR_NOT_FOUND, std::string("no dict key: ") + key);
   return DictOut(nullptr, v, nullptr, val, sval, subdict);
 }
@@ -816,15 +668,15 @@ lightusd_status lightusd_dict_find(lightusd_dict_ref d, const char* key,
 lightusd_status lightusd_dict_get_token_array(
     lightusd_dict_ref d, const char* key, lightusd_strlist** out) {
   if (out) *out = nullptr;
-  const auto* dict = static_cast<const n::Dict*>(d._dict);
+  const auto dict = n::DictView(static_cast<const lu_value*>(d._dict));
   if (!dict || !key || !out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid dict/key/out");
-  const auto* value = dict->find(key);
+  const auto value = dict->find(key);
   if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "dictionary key not found");
-  const auto* strings = value->as_token_array();
+  auto strings = value->as_token_array();
   if (!strings) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "dictionary entry is not a string-family array");
   auto* result = new (std::nothrow) lightusd_strlist();
   if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "string list alloc failed");
-  result->items = *strings;
+  result->items.assign(strings->begin(), strings->end());
   *out = result;
   return LIGHTUSD_OK;
 }
@@ -1274,8 +1126,8 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
   n::LayerMeta& lm = layer->meta();
   const std::string k(key);
 
-  auto as_str = [&]() -> const std::string* {
-    const std::string* s = v.as_string();
+  auto as_str = [&]() -> n::StringView {
+    auto s = v.as_string();
     if (!s) s = v.as_token();
     if (!s) s = v.as_asset_path();
     return s;
@@ -1292,13 +1144,13 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
   };
 
   if (k == "defaultPrim") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "defaultPrim expects a token");
     sm.defaultPrim = *s;
     lm.defaultPrim = *s;
     sm.defaultPrim_set = lm.defaultPrim_set = true;
   } else if (k == "upAxis") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s || (*s != "X" && *s != "Y" && *s != "Z")) {
       return Fail(LIGHTUSD_ERR_INVALID_ARG, "upAxis must be X, Y or Z");
     }
@@ -1338,25 +1190,25 @@ lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* k
     lm.kilogramsPerUnit = dbl();
     lm.kilogramsPerUnit_set = true;
   } else if (k == "doc") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "doc expects a string");
     sm.doc = *s;
     lm.doc = *s;
     sm.doc_set = lm.doc_set = true;
   } else if (k == "comment") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "comment expects a string");
     sm.comment = *s;
     lm.comment = *s;
     sm.comment_set = lm.comment_set = true;
   } else if (k == "colorConfiguration") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects an asset path");
     sm.colorConfiguration = *s;
     lm.colorConfiguration = *s;
     sm.colorConfiguration_set = lm.colorConfiguration_set = true;
   } else if (k == "colorManagementSystem") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token");
     sm.colorManagementSystem = *s;
     lm.colorManagementSystem = *s;
@@ -1412,7 +1264,7 @@ lightusd_status lightusd_stage_custom_layer_data(const lightusd_stage* stage,
   const n::Layer* layer = stage->ReadStage().GetRootLayer();
   if (!layer) return LIGHTUSD_OK;
   const n::Value& cld = layer->meta().customLayerData;
-  if (cld.is_dictionary()) out->_dict = cld.as_dictionary();
+  if (cld.is_dictionary()) out->_dict = cld.as_dictionary().core();
   return LIGHTUSD_OK;
 }
 
@@ -1601,9 +1453,9 @@ lightusd_status lightusd_attr_inspect_default(lightusd_prim p, const char* name,
   const auto status = MakeView(*value, out);
   if (status != LIGHTUSD_OK) return status;
   if (text) {
-    if (const auto* string = value->as_string()) *text = SV(*string);
-    else if (const auto* token = value->as_token()) *text = SV(*token);
-    else if (const auto* asset = value->as_asset_path()) *text = SV(*asset);
+    if (auto string = value->as_string()) *text = SV(*string);
+    else if (auto token = value->as_token()) *text = SV(*token);
+    else if (auto asset = value->as_asset_path()) *text = SV(*asset);
   }
   return LIGHTUSD_OK;
 }
@@ -1668,7 +1520,7 @@ lightusd_status lightusd_attr_get_string(lightusd_prim p, const char* name, ligh
   lightusd_status st;
   const n::Value* v = FindDefaultValue(p, name, &st);
   if (!v) return st;
-  const std::string* s = v->as_string();
+  auto s = v->as_string();
   if (!s) s = v->as_token();
   if (!s) s = v->as_asset_path();
   if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "property is not string-family");
@@ -1682,13 +1534,13 @@ lightusd_status lightusd_attr_get_token_array(lightusd_prim p, const char* name,
   lightusd_status st;
   const n::Value* v = FindDefaultValue(p, name, &st);
   if (!v) return st;
-  const std::vector<std::string>* arr = v->as_token_array();
+  auto arr = v->as_token_array();
   if (!arr) {
     return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "property is not a token array");
   }
   lightusd_strlist* l = new (std::nothrow) lightusd_strlist();
   if (!l) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "alloc failed");
-  l->items = *arr;
+  l->items.assign(arr->begin(), arr->end());
   *out = l;
   return LIGHTUSD_OK;
 }
@@ -1751,7 +1603,7 @@ lightusd_status lightusd_attr_custom_data(lightusd_prim p, const char* name,
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::PropMeta* meta = spec->property_meta(std::string(name));
   if (meta && meta->customData.is_dictionary()) {
-    out->_dict = meta->customData.as_dictionary();
+    out->_dict = meta->customData.as_dictionary().core();
   }
   return LIGHTUSD_OK;
 }
@@ -2176,7 +2028,7 @@ lightusd_status lightusd_prim_custom_data(lightusd_prim p, lightusd_dict_ref* ou
   const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::Value& cd = spec->meta().customData();
-  if (cd.is_dictionary()) out->_dict = cd.as_dictionary();
+  if (cd.is_dictionary()) out->_dict = cd.as_dictionary().core();
   return LIGHTUSD_OK;
 }
 
@@ -2186,7 +2038,7 @@ lightusd_status lightusd_prim_asset_info(lightusd_prim p, lightusd_dict_ref* out
   const n::PrimSpec* spec = SpecFromC(p);
   if (!spec) return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim");
   const n::Value& ai = spec->meta().assetInfo();
-  if (ai.is_dictionary()) out->_dict = ai.as_dictionary();
+  if (ai.is_dictionary()) out->_dict = ai.as_dictionary().core();
   return LIGHTUSD_OK;
 }
 
@@ -2272,6 +2124,15 @@ lightusd_status lightusd_stage_rename_prim(lightusd_stage* stage, const char* pa
 lightusd_status lightusd_attr_set(lightusd_stage* stage, const char* prim_path,
                           const char* name, lightusd_type type, uint8_t is_array,
                           const void* data, size_t count, uint16_t flags) {
+  lightusd_value value;
+  if (!ValueFromRaw(type, is_array, data, count, &value.v)) return LIGHTUSD_ERR_INVALID_ARG;
+  return lightusd_attr_set_value(stage, prim_path, name, &value, flags);
+}
+
+lightusd_status lightusd_attr_set_value(lightusd_stage* stage, const char* prim_path,
+    const char* name, const lightusd_value* value, uint16_t flags) {
+  if (!value) return Fail(LIGHTUSD_ERR_INVALID_ARG, "value is null");
+  const auto type = static_cast<lightusd_type>(value->v.type_id());
   if (!name) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name is null");
   if (!IsValidAttrName(name)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "name is not a valid identifier");
@@ -2280,10 +2141,7 @@ lightusd_status lightusd_attr_set(lightusd_stage* stage, const char* prim_path,
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
 
-  n::Value v;
-  if (!ValueFromRaw(type, is_array, data, count, &v)) {
-    return LIGHTUSD_ERR_INVALID_ARG;
-  }
+  n::Value v = value->v;
   const bool array = v.is_array();
   spec->upsert_property(std::string(name), std::move(v),
                         flags & (LIGHTUSD_PROP_CUSTOM | LIGHTUSD_PROP_UNIFORM));
@@ -2327,6 +2185,15 @@ lightusd_status lightusd_attr_set_timesample(lightusd_stage* stage, const char* 
                                      const char* name, double time,
                                      lightusd_type type, uint8_t is_array,
                                      const void* data, size_t count) {
+  lightusd_value value;
+  if (!ValueFromRaw(type, is_array, data, count, &value.v)) return LIGHTUSD_ERR_INVALID_ARG;
+  return lightusd_attr_set_timesample_value(stage, prim_path, name, time, &value);
+}
+
+lightusd_status lightusd_attr_set_timesample_value(lightusd_stage* stage, const char* prim_path,
+    const char* name, double time, const lightusd_value* value) {
+  if (!value) return Fail(LIGHTUSD_ERR_INVALID_ARG, "value is null");
+  const auto type = static_cast<lightusd_type>(value->v.type_id());
   if (!name) return Fail(LIGHTUSD_ERR_INVALID_ARG, "name is null");
   if (!IsValidAttrName(name)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "name is not a valid identifier");
@@ -2335,10 +2202,7 @@ lightusd_status lightusd_attr_set_timesample(lightusd_stage* stage, const char* 
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
 
-  n::Value v;
-  if (!ValueFromRaw(type, is_array, data, count, &v)) {
-    return LIGHTUSD_ERR_INVALID_ARG;
-  }
+  n::Value v = value->v;
   const bool array = v.is_array();
   const n::TypeId tid = v.type_id();
 
@@ -2375,8 +2239,8 @@ lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage, const char* pr
   if (!ValueFromRaw(type, count > 1 ? 1 : 0, data, count ? count : 1, &v)) {
     return LIGHTUSD_ERR_INVALID_ARG;
   }
-  auto as_str = [&]() -> const std::string* {
-    const std::string* s = v.as_string();
+  auto as_str = [&]() -> n::StringView {
+    auto s = v.as_string();
     if (!s) s = v.as_token();
     if (!s) s = v.as_asset_path();
     return s;
@@ -2385,7 +2249,7 @@ lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage, const char* pr
   n::PropMeta& meta = spec->ensure_property_meta(std::string(name));
   const std::string k(key);
   if (k == "interpolation") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token");
     meta.interpolation = *s;
     meta.authored |= n::PropMeta::kInterpolation;
@@ -2395,22 +2259,22 @@ lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage, const char* pr
     meta.elementSize = *i;
     meta.authored |= n::PropMeta::kElementSize;
   } else if (k == "colorSpace") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token");
     meta.colorSpace = *s;
     meta.authored |= n::PropMeta::kColorSpace;
   } else if (k == "displayName") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     meta.displayName = *s;
     meta.authored |= n::PropMeta::kDisplayName;
   } else if (k == "displayGroup") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     meta.displayGroup = *s;
     meta.authored |= n::PropMeta::kDisplayGroup;
   } else if (k == "doc") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     meta.doc = *s;
     meta.authored |= n::PropMeta::kDoc;
@@ -2569,8 +2433,8 @@ lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage, const char* pr
   if (!ValueFromRaw(type, count > 1 ? 1 : 0, data, count ? count : 1, &v)) {
     return LIGHTUSD_ERR_INVALID_ARG;
   }
-  auto as_str = [&]() -> const std::string* {
-    const std::string* s = v.as_string();
+  auto as_str = [&]() -> n::StringView {
+    auto s = v.as_string();
     if (!s) s = v.as_token();
     if (!s) s = v.as_asset_path();
     return s;
@@ -2594,29 +2458,29 @@ lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage, const char* pr
     m.instanceable = *b;
     m.instanceable_authored = true;
   } else if (k == "kind") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token");
     m.kind() = *s;
     m.setKindAuthored();
   } else if (k == "doc") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     m.doc() = *s;
     m.set_doc_authored();
   } else if (k == "comment") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     m.comment() = *s;
     m.set_comment_authored();
   } else if (k == "displayName") {
-    const std::string* s = as_str();
+    auto s = as_str();
     if (!s) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a string");
     m.displayName() = *s;
     m.setDisplayNameAuthored();
   } else if (k == "apiSchemas") {
-    const std::vector<std::string>* arr = v.as_token_array();
+    auto arr = v.as_token_array();
     if (!arr) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token array");
-    m.apiSchemas() = *arr;
+    m.apiSchemas().assign(arr->begin(), arr->end());
   } else {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown prim metadata key: " + k);
   }

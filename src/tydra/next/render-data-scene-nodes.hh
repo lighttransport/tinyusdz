@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
+#include "render-data-enums.hh"
 #include "render-data-math.hh"
+#include "chunked-array.hh"
+#include <string>
+#include <vector>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 // Vertex Attribute
-#include "render-data-vertex.hh"
-#include "render-data-mesh.hh"
 
-#include "render-data-points.hh"
 
-#include "render-data-shaders.hh"
-#include "render-data-material.hh"
-#include "render-data-texture.hh"
-#include "render-data-light.hh"
 
 struct SceneNode {
   std::string name;
@@ -240,3 +238,5 @@ enum class ConversionDisposition : uint8_t {
   Approximated,
   Failed
 };
+
+}}} // namespace lightusd::tydra::next

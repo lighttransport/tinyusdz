@@ -30,6 +30,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "next/c/descriptor.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,7 +48,7 @@ extern "C" {
 #endif
 #endif
 
-#define LIGHTUSD_API_VERSION_MAJOR 4
+#define LIGHTUSD_API_VERSION_MAJOR 5
 #define LIGHTUSD_API_VERSION_MINOR 0
 #define LIGHTUSD_API_VERSION_PATCH 0
 
@@ -181,21 +182,20 @@ enum {
   LIGHTUSD_TYPE_DICTIONARY = 59
 };
 
-/* Storage component type of a lightusd_value_view / buffer. Half-element data is
- * materialized as float32 by the core, so LIGHTUSD_COMP_FLOAT16 never appears in
- * views today (kept for ABI completeness). */
+/* Storage component type of a lightusd_value_view / buffer. Half arrays are
+ * materialized as float32; scalar half values retain float16 storage. */
 typedef enum lightusd_component_type {
-  LIGHTUSD_COMP_NONE = 0, /* no POD buffer (string-family / dictionary / block) */
-  LIGHTUSD_COMP_UINT8 = 1,
-  LIGHTUSD_COMP_INT32 = 2,
-  LIGHTUSD_COMP_UINT32 = 3,
-  LIGHTUSD_COMP_INT64 = 4,
-  LIGHTUSD_COMP_UINT64 = 5,
-  LIGHTUSD_COMP_FLOAT16 = 6,
-  LIGHTUSD_COMP_FLOAT32 = 7,
-  LIGHTUSD_COMP_FLOAT64 = 8,
-  LIGHTUSD_COMP_UINT16 = 9,
-  LIGHTUSD_COMP_INT16 = 10
+  LIGHTUSD_COMP_NONE = LU_COMP_NONE, /* no POD buffer */
+  LIGHTUSD_COMP_UINT8 = LU_COMP_UINT8,
+  LIGHTUSD_COMP_INT32 = LU_COMP_INT32,
+  LIGHTUSD_COMP_UINT32 = LU_COMP_UINT32,
+  LIGHTUSD_COMP_INT64 = LU_COMP_INT64,
+  LIGHTUSD_COMP_UINT64 = LU_COMP_UINT64,
+  LIGHTUSD_COMP_FLOAT16 = LU_COMP_FLOAT16,
+  LIGHTUSD_COMP_FLOAT32 = LU_COMP_FLOAT32,
+  LIGHTUSD_COMP_FLOAT64 = LU_COMP_FLOAT64,
+  LIGHTUSD_COMP_UINT16 = LU_COMP_UINT16,
+  LIGHTUSD_COMP_INT16 = LU_COMP_INT16
 } lightusd_component_type;
 
 LIGHTUSD_API const char* lightusd_type_name(lightusd_type t);
@@ -224,11 +224,32 @@ typedef struct lightusd_value_view {
   size_t count;
   const void* data;
   size_t nbytes;
+  const void* _owner; /* private borrowed C11 value, or NULL for external data */
 } lightusd_value_view;
+
+/* Retained read-only storage. Pins a C11 value without copying its payload;
+ * external render buffers are copied. A pin survives source mutation/closure.
+ * Pin while the borrowed view is valid; destroy each returned pin once. */
+typedef struct lightusd_buffer lightusd_buffer;
+LIGHTUSD_API lightusd_status lightusd_buffer_pin(lightusd_value_view, lightusd_buffer** out);
+LIGHTUSD_API lightusd_value_view lightusd_buffer_get_view(const lightusd_buffer*);
+LIGHTUSD_API void lightusd_buffer_destroy(lightusd_buffer*);
+typedef struct lightusd_abi_info {
+  lu_abi_info core;
+  uint32_t major, value_view_size, value_view_data_offset, value_view_owner_offset;
+} lightusd_abi_info;
+LIGHTUSD_API lightusd_abi_info lightusd_abi_get(void);
+LIGHTUSD_API int lightusd_type_describe(lightusd_type, uint8_t array, lu_type_descriptor*);
+LIGHTUSD_API const lu_component_info* lightusd_component_get(uint8_t storage);
 
 /* Owned value (results of interpolation / eval / metadata queries). */
 typedef struct lightusd_value lightusd_value;
 LIGHTUSD_API void lightusd_value_destroy(lightusd_value* v);
+/* Descriptor-driven numeric ingestion. Callbacks read one flat component at a
+ * time; failure leaves *out NULL and authors nothing. Half arrays are widened
+ * after half quantization. Numeric narrowing is range checked. */
+LIGHTUSD_API lightusd_status lightusd_value_from_numbers(lightusd_type, uint8_t array,
+    size_t count, lu_number_at, void* context, lightusd_value** out);
 /* View into the owned value; lifetime = the lightusd_value's lifetime. */
 LIGHTUSD_API lightusd_status lightusd_value_get_view(const lightusd_value* v,
                                          lightusd_value_view* out);
@@ -242,7 +263,7 @@ LIGHTUSD_API lightusd_status lightusd_value_to_usda(const lightusd_value* v,
 
 /* Borrowed dictionary cursor (customData / assetInfo / customLayerData). */
 typedef struct lightusd_dict_ref {
-  const void* _dict; /* const next::Dict* */
+  const void* _dict; /* borrowed const lu_value* */
 } lightusd_dict_ref;
 
 LIGHTUSD_API int lightusd_dict_is_valid(lightusd_dict_ref d);
@@ -265,6 +286,11 @@ LIGHTUSD_API lightusd_status lightusd_dict_get_token_array(
  * ============================================================ */
 
 typedef struct lightusd_stage lightusd_stage;
+/* Retain the supplied value's C11 storage in the authored property. */
+LIGHTUSD_API lightusd_status lightusd_attr_set_value(lightusd_stage*, const char* prim_path,
+    const char* name, const lightusd_value*, uint16_t flags);
+LIGHTUSD_API lightusd_status lightusd_attr_set_timesample_value(lightusd_stage*, const char* prim_path,
+    const char* name, double time, const lightusd_value*);
 
 typedef enum lightusd_format {
   LIGHTUSD_FORMAT_AUTO = 0,

@@ -38,29 +38,6 @@ int32_t lightusd_next_encode_image(const uint8_t* pixels, uint32_t pixel_size,
 /* EXR query retains one encoded result until copied or released. */
 uintptr_t lightusd_next_encoded_image_data(void);
 void lightusd_next_encoded_image_release(void);
-/* SubdivStreamer inputs are typed, counted arrays. A nonzero callback_id
- * identifies a synchronous JS batch callback. Returns 0 on success, 1 on a
- * refinement error (query subdiv_error), and -1 for invalid arguments. */
-typedef struct lightusd_next_subdiv_options {
-  uint32_t struct_size;
-  int32_t uv_interpolation;
-  int32_t scheme;
-  int32_t boundary;
-  int32_t level;
-  int32_t batch_faces;
-  int32_t block_faces;
-  int32_t halo_rings;
-  uint32_t want_normals;
-} lightusd_next_subdiv_options;
-int32_t lightusd_next_subdiv_refine(
-    uint32_t handle, const float* points, uint32_t point_values,
-    const uint32_t* face_counts, uint32_t face_count,
-    const uint32_t* face_indices, uint32_t index_count,
-    const float* uv_values, uint32_t uv_value_count,
-    const uint32_t* uv_indices, uint32_t uv_index_count,
-    const lightusd_next_subdiv_options* options, uint32_t callback_id);
-int32_t lightusd_next_subdiv_error(uint32_t handle, uint8_t* out,
-                                  uint32_t cap);
 /* Next-only root rewrite. The result bytes remain owned by the converter
  * until its next rewrite or destruction; buffer queries copy them. Format is
  * 0=USDC, 1=USDA. A zero max_memory keeps finite library defaults. */
@@ -1088,14 +1065,6 @@ int NextFlattenStepBuffer(void* object, uint8_t kind, uint32_t index,
                           uint8_t* out, uint32_t cap);
 int NextFlattenLayerDependencyCount(void* object);
 void NextFlattenReleaseStep(void* object);
-int NextSubdivRefine(void* object, const float* points, uint32_t point_values,
-                    const uint32_t* face_counts, uint32_t face_count,
-                    const uint32_t* face_indices, uint32_t index_count,
-                    const float* uv_values, uint32_t uv_value_count,
-                    const uint32_t* uv_indices, uint32_t uv_index_count,
-                    const lightusd_next_subdiv_options* options,
-                    uint32_t callback_id);
-int NextSubdivError(void* object, uint8_t* out, uint32_t cap);
 int NextConverterUDIM(void*, bool, const uint8_t*, uint32_t);
 int NextConverterUDIMCopy(void*, uint8_t*, uint32_t);
 int NextConverterRewrite(void* object, const uint8_t* data, uint32_t size,

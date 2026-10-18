@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "render-data-math.hh"
+#include <cstdint>
+#include <string>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 struct ShaderParam {
@@ -142,3 +147,5 @@ enum class MaterialDiagnosticKind : uint8_t {
   UnsupportedMaterialXNode,
   DegradedMaterial
 };
+
+}}} // namespace lightusd::tydra::next

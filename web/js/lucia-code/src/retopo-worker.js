@@ -78,7 +78,7 @@ self.onmessage = async ({ data }) => {
     const targetIndexCount = Math.max(3, Math.min(indices.length, Math.floor(indices.length * ratio / 3) * 3));
     const targetError = Math.max(0, Math.min(1, Number(data.targetError) || 0));
     const module = await getModule();
-    native = new module.MeshoptSimplifier();
+    native = new (module.loadFeature ? await module.loadFeature('geometry') : module).MeshoptSimplifier();
     const source = { positions, indices, normals: data.normals ? new Float32Array(data.normals) : null, uvs: data.uvs ? new Float32Array(data.uvs) : null, colors: data.colors ? new Float32Array(data.colors) : null, tangents: data.tangents ? new Float32Array(data.tangents) : null, jointIndices: data.jointIndices ? new Uint16Array(data.jointIndices) : null, jointWeights: data.jointWeights ? new Float32Array(data.jointWeights) : null, customAttributes: (data.customAttributes || []).map((attribute) => ({ ...attribute, array: new attribute.array.constructor(attribute.array), output: [] })) };
     for (const attribute of [source.colors, source.tangents, source.jointIndices, source.jointWeights]) if (attribute && attribute.length !== positions.length / 3 * (attribute === source.colors ? 3 : 4)) throw new Error('Aligned retopology attributes must match the source vertex count.');
     const suppliedLocks = validateVertexLockMask(data.locks, positions.length / 3) || new Uint8Array();

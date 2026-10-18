@@ -526,6 +526,10 @@ async function main() {
   console.log(`\nWrote ${path.join(a.out, 'summary.md')}, results.tsv, summary.json`);
 
   // Regression gate.
+  if (a.compare && !rows.some((row) => row.ref === 'REF_PASS' || row.ref === 'REF_WARN')) {
+    console.error('REGRESSION: OpenUSD could not read any corpus input; no reference comparisons ran.');
+    process.exit(1);
+  }
   if (Number.isFinite(a.maxFail)) {
     const hard = (totals.FAIL || 0) + (totals.CRASH || 0);
     if (hard > a.maxFail) {

@@ -82,7 +82,7 @@ bool RenderSceneConverter::Impl::ConvertCamera(const Stage& stage,
     }
   }
   if (const Value* planes = GetAttribute(prim, "clippingPlanes")) {
-    if (const std::vector<float>* values = planes->as_float_array()) {
+    if (auto values = planes->as_float_array()) {
       out->clipping_planes.reserve(values->size() / 4);
       for (size_t i = 0; i + 3 < values->size(); i += 4) {
         out->clipping_planes.emplace_back(

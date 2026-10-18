@@ -6,7 +6,7 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     types/type-info.cc
     types/value.cc
     types/value-constructors.cc
-    types/array-storage.cc
+    types/value-readers.cc
     types/value-dict.cc
     c/string-index.c
     c/usda-string.c
@@ -20,6 +20,9 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/strfmt.c                 # lu_uint_to/lu_int_to (strfmt.hh)
     c/half.c                   # lu_half_to_float/lu_float_to_half (crate-format.hh)
     c/type-names.c             # built-in type metadata (type-info.cc)
+    c/descriptor.c
+    c/chunks.c
+    c/storage.c
     c/value.c                 # C11 lu_value semi-any core (value.cc wrapper)
     c/identifier.c             # identifier/path grammar (identifier.hh)
     c/crate-int.c              # crate integer decode (crate-format.cc)

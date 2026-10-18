@@ -85,8 +85,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     // rotations between keys (SkelAnimation `rotations` is quatf[]); quath
     // arrays materialize into the float buffer like the other half types.
     if (type == TypeId::Quatf || type == TypeId::Quath) {
-      const std::vector<float>* arr_a = a.as_float_array();
-      const std::vector<float>* arr_b = b.as_float_array();
+      auto arr_a = a.as_float_array();
+      auto arr_b = b.as_float_array();
       if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
           (arr_a->size() % 4) == 0) {
         std::vector<float> result(arr_a->size());
@@ -99,8 +99,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       return Value();
     }
     if (type == TypeId::Quatd) {
-      const std::vector<double>* arr_a = a.as_double_array();
-      const std::vector<double>* arr_b = b.as_double_array();
+      auto arr_a = a.as_double_array();
+      auto arr_b = b.as_double_array();
       if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
           (arr_a->size() % 4) == 0) {
         std::vector<double> result(arr_a->size());
@@ -115,8 +115,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
 
     // Any float-backed array (float/half scalars, vectors, matrices — half
     // element types materialize into the float buffer): lerp all lanes.
-    if (const std::vector<float>* arr_a = a.as_float_array()) {
-      const std::vector<float>* arr_b = b.as_float_array();
+    if (auto arr_a = a.as_float_array()) {
+      auto arr_b = b.as_float_array();
       if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
         std::vector<float> result(arr_a->size());
         LerpFloatN(result.data(), arr_a->data(), arr_b->data(), tf,
@@ -131,8 +131,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     }
 
     // Double-backed arrays.
-    if (const std::vector<double>* arr_a = a.as_double_array()) {
-      const std::vector<double>* arr_b = b.as_double_array();
+    if (auto arr_a = a.as_double_array()) {
+      auto arr_b = b.as_double_array();
       if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
         std::vector<double> result(arr_a->size());
         LerpDoubleN(result.data(), arr_a->data(), arr_b->data(), t,

@@ -411,16 +411,16 @@ void ValidatePreliminaryPhysics(const PrimSpec &ps,
                                 const std::string &prim_location,
                                 const PrimTypeByPath &prim_types,
                                 USDValidationResult *result);
-bool GetMetaDouble(const Dict &dict, const std::string &key, double *out);
-bool GetMetaAssetPath(const Dict &dict, const std::string &key,
+bool GetMetaDouble(DictView dict, const std::string &key, double *out);
+bool GetMetaAssetPath(DictView dict, const std::string &key,
                       std::string *out);
-bool GetMetaString(const Dict &dict, const std::string &key,
+bool GetMetaString(DictView dict, const std::string &key,
                    std::string *out);
-bool GetMetaStringArray(const Dict &dict, const std::string &key,
+bool GetMetaStringArray(DictView dict, const std::string &key,
                         std::vector<std::string> *out);
-bool GetMetaDouble2Array(const Dict &dict, const std::string &key,
+bool GetMetaDouble2Array(DictView dict, const std::string &key,
                          std::vector<std::array<double, 2>> *out);
-void ValidateDictionaryKeys(const Dict &dict, const std::string &rule_id,
+void ValidateDictionaryKeys(DictView dict, const std::string &rule_id,
                             const std::string &location,
                             USDValidationResult *result);
 void ValidateDictValue(const Value &v, const std::string &rule_id,
@@ -476,7 +476,7 @@ void ValidateClipPairArray(const std::vector<std::array<double, 2>> &pairs,
                            const std::string &field_name,
                            USDValidationResult *result);
 void ValidateClipSetMetadata(const std::string &clip_set_name,
-                             const Dict &clip_set,
+                             DictView clip_set,
                              const std::string &prim_location,
                              USDValidationResult *result);
 void ValidateClipsMetadata(const PrimSpec &ps,

@@ -627,7 +627,7 @@ bool GetTokenProperty(const PrimSpec &ps, const std::string &name,
   if (!out) return false;
   const Value *v = GetAttrValue(ps, name);
   if (!v) return false;
-  const std::string *tok = v->as_token();
+  auto tok = v->as_token();
   if (!tok) return false;
   *out = *tok;
   return true;
@@ -638,7 +638,7 @@ bool GetStringProperty(const PrimSpec &ps, const std::string &name,
   if (!out) return false;
   const Value *v = GetAttrValue(ps, name);
   if (!v) return false;
-  const std::string *str = v->as_string();
+  auto str = v->as_string();
   if (!str) return false;
   *out = *str;
   return true;
@@ -654,7 +654,7 @@ bool GetAssetPathProperty(const PrimSpec &ps, const std::string &name,
   if (!out) return false;
   const Value *v = GetAttrValue(ps, name);
   if (!v) return false;
-  const std::string *asset = v->as_asset_path();
+  auto asset = v->as_asset_path();
   if (!asset) return false;
   *out = *asset;
   return true;
@@ -679,9 +679,9 @@ bool GetIntArrayProperty(const PrimSpec &ps, const std::string &name,
   if (!out) return false;
   const Value *v = GetAttrValue(ps, name);
   if (!v || v->type_id() != TypeId::Int || !v->is_array()) return false;
-  const std::vector<int32_t> *arr = v->as_int_array();
+  auto arr = v->as_int_array();
   if (!arr) return false;
-  *out = *arr;
+  out->assign(arr->begin(), arr->end());
   return true;
 }
 
@@ -689,13 +689,13 @@ bool GetIntArrayProperty(const PrimSpec &ps, const std::string &name,
 bool ValueToDoubleScalarArray(const Value &v, std::vector<double> *out) {
   if (!out || !v.is_array()) return false;
   if (v.type_id() == TypeId::Double || v.type_id() == TypeId::TimeCode) {
-    const std::vector<double> *arr = v.as_double_array();
+    auto arr = v.as_double_array();
     if (!arr) return false;
-    *out = *arr;
+    out->assign(arr->begin(), arr->end());
     return true;
   }
   if (v.type_id() == TypeId::Float) {
-    const std::vector<float> *arr = v.as_float_array();
+    auto arr = v.as_float_array();
     if (!arr) return false;
     out->assign(arr->begin(), arr->end());
     return true;
@@ -716,13 +716,13 @@ bool GetFloatArrayProperty(const PrimSpec &ps, const std::string &name,
   const Value *v = GetAttrValue(ps, name);
   if (!v || !v->is_array()) return false;
   if (v->type_id() == TypeId::Float) {
-    const std::vector<float> *arr = v->as_float_array();
+    auto arr = v->as_float_array();
     if (!arr) return false;
-    *out = *arr;
+    out->assign(arr->begin(), arr->end());
     return true;
   }
   if (v->type_id() == TypeId::Double) {
-    const std::vector<double> *arr = v->as_double_array();
+    auto arr = v->as_double_array();
     if (!arr) return false;
     out->assign(arr->begin(), arr->end());
     return true;
@@ -735,9 +735,9 @@ bool GetTokenArrayProperty(const PrimSpec &ps, const std::string &name,
   if (!out) return false;
   const Value *v = GetAttrValue(ps, name);
   if (!v || !v->is_array()) return false;
-  const std::vector<std::string> *arr = v->as_token_array();
+  auto arr = v->as_token_array();
   if (!arr) return false;
-  *out = *arr;
+  out->assign(arr->begin(), arr->end());
   return true;
 }
 
@@ -786,7 +786,7 @@ bool GetExtentProperty(const PrimSpec &ps, const std::string &name,
     return true;
   }
   if (v->is_array() && IsFloatTriple(v->type_id())) {
-    const std::vector<float> *flat = v->as_float_array();
+    auto flat = v->as_float_array();
     if (!flat) return false;
     for (size_t i = 0; i + 2 < flat->size(); i += 3) {
       out->push_back({(*flat)[i], (*flat)[i + 1], (*flat)[i + 2]});
@@ -794,7 +794,7 @@ bool GetExtentProperty(const PrimSpec &ps, const std::string &name,
     return true;
   }
   if (v->is_array() && IsDoubleTriple(v->type_id())) {
-    const std::vector<double> *flat = v->as_double_array();
+    auto flat = v->as_double_array();
     if (!flat) return false;
     for (size_t i = 0; i + 2 < flat->size(); i += 3) {
       out->push_back({static_cast<float>((*flat)[i]),

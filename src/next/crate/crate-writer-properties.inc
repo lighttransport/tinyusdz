@@ -178,7 +178,7 @@
             dictionary = std::move(parsed.value);
           }
         }
-        const Dict* dict = dictionary.as_dictionary();
+        auto dict = dictionary.as_dictionary();
         const uint64_t custom_data_count = dict->entries().size();
         put_bytes(&custom_data_count, 8);
         for (const auto& entry : dict->entries()) {
@@ -500,7 +500,7 @@
     spline_block.type = TypeId::Invalid;
     for (const KnotDict& item : custom) {
       append(&item.time, 8);
-      const Dict* dict = item.value.as_dictionary();
+      auto dict = item.value.as_dictionary();
       const uint64_t entry_count = dict ? dict->entries().size() : 0;
       append(&entry_count, 8);
       if (!dict) continue;

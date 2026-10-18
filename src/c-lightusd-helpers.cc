@@ -652,23 +652,23 @@ static bool lookup_physics_typed(const Prim &prim, const std::string &name,
   }
   if (!jb) return false;
   if (name == "physics:localPos0")
-    return fill_attr_from_typed(jb->localPos0, "point3f", name, out);
+    return fill_attr_from_typed_fb(jb->localPos0, "point3f", name, out);
   if (name == "physics:localPos1")
-    return fill_attr_from_typed(jb->localPos1, "point3f", name, out);
+    return fill_attr_from_typed_fb(jb->localPos1, "point3f", name, out);
   if (name == "physics:localRot0")
-    return fill_attr_from_typed(jb->localRot0, "quatf", name, out);
+    return fill_attr_from_typed_fb(jb->localRot0, "quatf", name, out);
   if (name == "physics:localRot1")
-    return fill_attr_from_typed(jb->localRot1, "quatf", name, out);
+    return fill_attr_from_typed_fb(jb->localRot1, "quatf", name, out);
   if (name == "physics:jointEnabled")
-    return fill_attr_from_typed(jb->jointEnabled, "bool", name, out);
+    return fill_attr_from_typed_fb(jb->jointEnabled, "bool", name, out);
   if (name == "physics:collisionEnabled")
-    return fill_attr_from_typed(jb->collisionEnabled, "bool", name, out);
+    return fill_attr_from_typed_fb(jb->collisionEnabled, "bool", name, out);
   if (name == "physics:breakForce")
-    return fill_attr_from_typed(jb->breakForce, "float", name, out);
+    return fill_attr_from_typed_fb(jb->breakForce, "float", name, out);
   if (name == "physics:breakTorque")
-    return fill_attr_from_typed(jb->breakTorque, "float", name, out);
+    return fill_attr_from_typed_fb(jb->breakTorque, "float", name, out);
   if (name == "physics:excludeFromArticulation")
-    return fill_attr_from_typed(jb->excludeFromArticulation, "bool", name, out);
+    return fill_attr_from_typed_fb(jb->excludeFromArticulation, "bool", name, out);
   // Joint-type-specific typed attributes.
   if (tid == value::TYPE_ID_PHYSICS_REVOLUTE_JOINT) {
     const auto *r = prim.data().as<PhysicsRevoluteJoint>();

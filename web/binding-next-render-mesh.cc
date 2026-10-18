@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
 #include "tydra/next/render-extract.hh"
+#include "tydra/next/render-converter-clip.hh"
 namespace lightusd {
 namespace web_next {
 bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *soup_out,
@@ -14,7 +15,10 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
     tr::ValueArrayRead<float> N;
     tr::ValueArrayRead<float> UV;
     tr::ValueArrayRead<int32_t> stIdx;
-    (void)readFloatArray_(prim, "points", &P);
+    if (!readFloatArray_(prim, "points", &P)) {
+      tr::ReadFloatArrayFromValueClips(prim, "points", 0.0,
+                                      valueClipLoader_(), &P);
+    }
     (void)readIntArray_(prim, "faceVertexCounts", &fvc);
     (void)readIntArray_(prim, "faceVertexIndices", &fvi);
     (void)readFloatArray_(prim, "normals", &N);
@@ -163,7 +167,7 @@ bool RenderStream::buildRenderMesh_(const lightusd::next::UsdPrim &prim, bool *s
       }
       if (const lightusd::next::Value *orientation =
               prim.GetPropertyValue("orientation")) {
-        if (const std::string *token = orientation->as_token()) {
+        if (auto token = orientation->as_token()) {
           mesh_only_triangulation.left_handed = (*token == "leftHanded");
         }
       }

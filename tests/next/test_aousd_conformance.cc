@@ -302,7 +302,7 @@ void TestSchemaRegistryBreadth() {
     const SchemaPropertyDefinition* def =
         GetSchemaRegistry().FindProperty(*p.GetPrimSpec(), attr);
     assert(def && def->has_fallback);
-    const std::string* t = def->fallback.as_token();
+    auto t = def->fallback.as_token();
     assert(t && *t == want);
   };
   expect_tok("/M", "purpose", "default");
@@ -376,10 +376,10 @@ void TestDictionaryAndRelationshipComposition() {
   assert(composed);
   const PrimSpec* root = composed->prim_at_path("/Root");
   assert(root);
-  const Dict* custom = root->meta().customData().as_dictionary();
+  auto custom = root->meta().customData().as_dictionary();
   assert(custom && custom->find("weak") && custom->find("strong"));
-  const Value* nested_value = custom->find("nested");
-  const Dict* nested = nested_value ? nested_value->as_dictionary() : nullptr;
+  auto nested_value = custom->find("nested");
+  auto nested = nested_value ? nested_value->as_dictionary() : nullptr;
   assert(nested && nested->find("a") && nested->find("b"));
   assert(nested->find("a")->as_int() && *nested->find("a")->as_int() == 9);
   const std::vector<Path>* targets = root->relationship("r");
@@ -472,14 +472,14 @@ void TestDictionaryAndRelationshipComposition() {
          merged_meta->unknownMeta.size() == 2);
   assert(composed_prop.meta().unknownMeta().size() == 2 &&
          "unknown prim metadata must fill by field name across sites");
-  const Dict* merged_custom = merged_meta->customData.as_dictionary();
-  const Dict* merged_nested =
+  auto merged_custom = merged_meta->customData.as_dictionary();
+  auto merged_nested =
       merged_custom->find("nested")->as_dictionary();
   assert(merged_nested->find("a") && merged_nested->find("b"));
   assert(merged_meta->unknownFields.size() == 1);
-  const Dict* merged_extension =
+  auto merged_extension =
       merged_meta->unknownFields[0].value.as_dictionary();
-  const Dict* merged_extension_nested =
+  auto merged_extension_nested =
       merged_extension->find("nested")->as_dictionary();
   assert(merged_extension->find("weak") &&
          merged_extension_nested->find("a") &&
@@ -505,7 +505,7 @@ void TestDictionaryAndRelationshipComposition() {
         return field.name == "extensionDict";
       });
   assert(extension_dict != extension_back_meta->unknownFields.end());
-  const Dict* extension_back_dict = extension_dict->value.as_dictionary();
+  auto extension_back_dict = extension_dict->value.as_dictionary();
   assert(WriteUSDAToString(extension_back.stage).find("strongMeta = \"yes\"") != std::string::npos);
   assert(extension_back_dict && extension_back_dict->find("weak") &&
          extension_back_dict->find("nested")->as_dictionary()->find("a") &&
@@ -2186,7 +2186,7 @@ void TestVariantExtensionFields() {
 
 void TestVariableExpressionGrammar() {
   Value vars = Value::MakeDictionary();
-  Dict* d = vars.as_dictionary();
+  auto d = vars.as_dictionary();
   d->set("A", Value(std::string("v1")));
   d->set("B", Value(std::string("v2")));
   d->set("N", Value(int32_t(3)));

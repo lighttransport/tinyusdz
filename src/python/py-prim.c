@@ -126,17 +126,14 @@ static int apply_normalized(lightusd_state* st, lightusd_stage* stage,
     PyObject* data = PyTuple_GetItem(norm, 3);
     Py_ssize_t count = PyLong_AsSsize_t(PyTuple_GetItem(norm, 4));
     if (PyErr_Occurred()) { Py_XDECREF(kind_tmp); return -1; }
-    char* buf = NULL;
-    Py_ssize_t nbytes = 0;
-    if (PyBytes_AsStringAndSize(data, &buf, &nbytes) != 0) { Py_XDECREF(kind_tmp); return -1; }
-    if (time_ptr) {
-      status = lightusd_attr_set_timesample(stage, path, name, *time_ptr, type,
-                                        (uint8_t)is_array, buf,
-                                        (size_t)count);
-    } else {
-      status = lightusd_attr_set(stage, path, name, type, (uint8_t)is_array, buf,
-                             (size_t)count, flags);
+    if (count < 0) { Py_XDECREF(kind_tmp); PyErr_SetString(PyExc_ValueError, "negative array count"); return -1; }
+    lightusd_value* numeric = NULL;
+    if (lightusd_numbers_from_python(st, type, (uint8_t)is_array, (size_t)count, data, &numeric) != 0) {
+      Py_XDECREF(kind_tmp); return -1;
     }
+    if (time_ptr) status = lightusd_attr_set_timesample_value(stage, path, name, *time_ptr, numeric);
+    else status = lightusd_attr_set_value(stage, path, name, numeric, flags);
+    lightusd_value_destroy(numeric);
   } else if (strcmp(kind, "str") == 0) {
     PyObject* stmp = NULL;
     const char* s = lightusd_utf8(PyTuple_GetItem(norm, 2), &stmp);

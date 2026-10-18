@@ -130,18 +130,18 @@ bool ValuesEquivalentForDiff(const Value &lhs, const Value &rhs,
 // Dictionary compare (order-insensitive over keys). Records changed keys
 // (+added / -removed / ~modified) into `changed` if non-null; otherwise
 // returns early on the first difference.
-bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
+bool CompareDicts(DictView lhs, DictView rhs, const DiffOptions &opts,
                   int depth, std::vector<std::string> *changed) {
   static const Dict kEmpty;
-  const Dict &l = lhs ? *lhs : kEmpty;
-  const Dict &r = rhs ? *rhs : kEmpty;
+  DictView l = lhs ? *lhs : kEmpty;
+  DictView r = rhs ? *rhs : kEmpty;
   if (depth > int(kMaxTraversalDepth)) {
     if (changed) changed->push_back("<too-deep>");
     return false;
   }
   bool equal = true;
   for (const auto &kv : l.entries()) {
-    const Value *rv = r.find(kv.first);
+    auto rv = r.find(kv.first);
     if (!rv) {
       equal = false;
       if (changed) changed->push_back("-" + kv.first); else return false;
@@ -165,11 +165,11 @@ bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
 // conflict" differential: composition would keep the stronger opinion and
 // silently shadow the weaker subtree.
 bool DictsHaveTypeConflict(const Value &l, const Value &r) {
-  const Dict *ld = l.as_dictionary();
-  const Dict *rd = r.as_dictionary();
+  auto ld = l.as_dictionary();
+  auto rd = r.as_dictionary();
   if (!ld || !rd) return false;
   for (const auto &e : ld->entries()) {
-    const Value *o = rd->find(e.first);
+    auto o = rd->find(e.first);
     if (!o) continue;
     if (e.second.is_dictionary() != o->is_dictionary()) return true;
     if (e.second.is_dictionary() && DictsHaveTypeConflict(e.second, *o)) {
@@ -182,8 +182,8 @@ bool DictsHaveTypeConflict(const Value &l, const Value &r) {
 bool CompareDictValues(const Value &lhs, const Value &rhs,
                        const DiffOptions &opts,
                        std::vector<std::string> *changed) {
-  const Dict *ld = lhs.is_dictionary() ? lhs.as_dictionary() : nullptr;
-  const Dict *rd = rhs.is_dictionary() ? rhs.as_dictionary() : nullptr;
+  auto ld = lhs.is_dictionary() ? lhs.as_dictionary() : nullptr;
+  auto rd = rhs.is_dictionary() ? rhs.as_dictionary() : nullptr;
   return CompareDicts(ld, rd, opts, 0, changed);
 }
 
@@ -282,18 +282,18 @@ bool NumericPodAlmostEqual(const Value &l, const Value &r,
 bool NumericArrayAlmostEqual(const Value &l, const Value &r,
                              const DiffOptions &o, bool &handled) {
   handled = false;
-  if (const std::vector<float> *lf = l.as_float_array()) {
+  if (auto lf = l.as_float_array()) {
     handled = true;
-    const std::vector<float> *rf = r.as_float_array();
+    auto rf = r.as_float_array();
     if (!rf || rf->size() != lf->size()) return false;
     for (size_t i = 0; i < lf->size(); ++i) {
       if (!ScalarAlmostEqual((*lf)[i], (*rf)[i], o)) return false;
     }
     return true;
   }
-  if (const std::vector<double> *ld = l.as_double_array()) {
+  if (auto ld = l.as_double_array()) {
     handled = true;
-    const std::vector<double> *rd = r.as_double_array();
+    auto rd = r.as_double_array();
     if (!rd || rd->size() != ld->size()) return false;
     for (size_t i = 0; i < ld->size(); ++i) {
       if (!ScalarAlmostEqual((*ld)[i], (*rd)[i], o)) return false;
@@ -317,8 +317,8 @@ bool ValuesEquivalentForDiff(const Value &lhs, const Value &rhs,
 
   // 1. AssetPath fuzzy equivalence (path suffix / leaf), scalar only.
   if (opts.fuzzyAssetPaths && !lhs.is_array() && !rhs.is_array()) {
-    const std::string *la = lhs.as_asset_path();
-    const std::string *ra = rhs.as_asset_path();
+    auto la = lhs.as_asset_path();
+    auto ra = rhs.as_asset_path();
     if (la && ra) {
       return AssetPathStringsEquivalentForDiff(*la, *ra);
     }

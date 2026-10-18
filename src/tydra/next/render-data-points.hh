@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
+#include "render-data-enums.hh"
 #include "render-data-math.hh"
+#include "chunked-array.hh"
+#include <string>
+#include <vector>
+
+namespace lightusd { namespace tydra { namespace next {
+struct RenderMesh;
+struct RenderMaterial;
 
 //
 // RenderPoints - GPU-ready point cloud data for UsdGeomPoints
@@ -187,3 +194,5 @@ struct RenderPointInstanceDrawRange {
   const RenderPointInstanceDraw* end() const { return data ? data + size : nullptr; }
   const RenderPointInstanceDraw& operator[](size_t i) const { return data[i]; }
 };
+
+}}} // namespace lightusd::tydra::next

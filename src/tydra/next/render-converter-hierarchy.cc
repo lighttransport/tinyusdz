@@ -8,10 +8,10 @@ namespace {
 bool LocalVisibility(const UsdPrim& prim) {
   const Value* value = prim.GetPropertyValue("visibility");
   if (!value) return true;
-  if (const std::string* token = value->as_token()) {
+  if (auto token = value->as_token()) {
     return *token != "invisible";
   }
-  if (const std::string* str = value->as_string()) {
+  if (auto str = value->as_string()) {
     return *str != "invisible";
   }
   return true;

@@ -24,6 +24,7 @@ const NODE_TESTS = [
   ['next-only usdzconvert', 'tests/usdzconvert-next-only.test.mjs'],
   ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
   ['next HTTP asset fallback', 'tests/next-http-asset-fallback.test.mjs'],
+  ['next independent feature modules', 'tests/next-features.test.mjs'],
   ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
   ['next binding copy contracts', 'tests/next-binding-copy-contracts.test.mjs'],
   ['next material format parity', 'tests/material-format-parity.test.mjs'],
@@ -255,6 +256,8 @@ async function runPhysics(results, opts) {
 }
 
 async function runBrowserTests(results, opts) {
+  results.push(await run('Independent features in browser and Worker', NODE,
+    ['tests/next-features-browser.test.mjs'], {}));
   results.push(await run('USD validation demos', NODE,
     ['tests/validation-browser.test.mjs'], {}));
   results.push(await run('UDIM browser and Worker baking', NODE,

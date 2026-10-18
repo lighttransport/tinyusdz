@@ -97,11 +97,11 @@ bool RenderStream::expandMergePrimvars_(int source_index,
       m.name = pv->name;
       m.format = pv->format;
       m.components = pv->components;
-      const std::vector<float>* floats = pv->value->as_float_array();
-      const std::vector<double>* doubles = pv->value->as_double_array();
-      const std::vector<int32_t>* ints = pv->value->as_int_array();
+      auto floats = pv->value->as_float_array();
+      auto doubles = pv->value->as_double_array();
+      auto ints = pv->value->as_int_array();
       const size_t elements = pv->scalar_count / pv->components;
-      const std::vector<int32_t>* indices =
+      lightusd::next::ValueArrayView<const int32_t> indices =
           pv->indices && !pv->indices->empty() ? pv->indices : nullptr;
       const bool constant = pv->interpolation == tr::Interpolation::Constant;
       const size_t comps = pv->components;

@@ -1,8 +1,4 @@
 [
-  "checkUSD",
-  "decodeEXR",
-  "loadEXR",
-  "loadValidator",
-  "usddiff",
-  "validateFromBinary"
+  "loadFeature",
+  "usddiff"
 ]

@@ -25,11 +25,11 @@ bool GetStringLike(const UsdPrim &prim, const std::string &property,
   if (!out) return false;
   const Value *v = prim.GetPropertyValue(property);
   if (!v) return false;
-  if (const std::string *s = v->as_token()) {
+  if (auto s = v->as_token()) {
     *out = *s;
     return true;
   }
-  if (const std::string *s = v->as_string()) {
+  if (auto s = v->as_string()) {
     *out = *s;
     return true;
   }

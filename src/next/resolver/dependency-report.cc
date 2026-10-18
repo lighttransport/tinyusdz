@@ -115,10 +115,10 @@ class Collector {
     if (stopped) return;
     if (nesting > opt.max_depth) { Issue("metadata depth limit at " + site); return; }
     if (value.is_array() && value.type_id() == TypeId::AssetPath) {
-      if (const auto* a = value.as_token_array())
+      if (auto a = value.as_token_array())
         for (const auto& v : *a) Add(v, layer, site, kind, depth, vars);
-    } else if (const auto* a = value.as_asset_path()) Add(*a, layer, site, kind, depth, vars);
-    else if (const auto* dict = value.as_dictionary()) {
+    } else if (auto a = value.as_asset_path()) Add(*a, layer, site, kind, depth, vars);
+    else if (auto dict = value.as_dictionary()) {
       for (const auto& item : dict->entries())
         ValueAssets(item.second, layer, site + ":" + item.first, kind, depth, vars, nesting + 1);
     }

@@ -291,6 +291,10 @@ public:
   void clear_array_edit(PropNameId name_id);
   const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const;
 
+  /// Sparse arrays or qualified relationship/connection targets still need
+  /// composition even when this prim has no composition arcs.
+  bool needs_property_composition() const;
+
   // ============================================================
   // Relationships
   // ============================================================
@@ -466,48 +470,13 @@ private:
   // TimeSamples storage with deduplication
   std::unique_ptr<TimeSampleBlock> time_samples_;
 
-  // Relationships: name -> targets
-  std::unordered_map<std::string, std::vector<Path>> relationships_;
-
-  // Attribute connections: interned property-name id -> connection targets.
-  // (Keyed by PropNameId.id rather than a string to avoid a key string per
-  // connected property on shader-heavy scenes.)
-  std::unordered_map<uint32_t, std::vector<Path>> connections_;
-
-  // Rare authored fields share one lazy block. Keeping these eight hash-map
-  // objects inline cost hundreds of bytes on every prim even though ordinary
-  // geometry/xform prims use none of them.
-  struct ColdData {
-    std::unordered_map<std::string, ArcListOp> rel_edits;
-    std::unordered_map<std::string, std::vector<RelationshipOpinion>>
-        rel_opinion_stacks;
-    std::unordered_map<std::string, uint16_t> rel_flags;
-    std::unordered_map<uint32_t, ArcListOp> connection_edits;
-    std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
-        connection_opinion_stacks;
-    // Raw USDA `.spline` values and unsupported defaults are keyed by property
-    // id. Sparse array edits keep a structured twin of the raw default text.
-    std::unordered_map<uint32_t, std::string> spline_sources;
-    std::unordered_map<uint32_t, std::string> raw_default_sources;
-    std::unordered_map<uint32_t, ArrayEditData> array_edits;
-  };
+  // Connections, relationship opinions and authored property metadata are
+  // sparse. Their STL containers are private to the compiled implementation.
+  struct ColdData;
   ColdData& ensure_cold_data();
+  ColdData& cold();
+  const ColdData& cold() const;
   std::unique_ptr<ColdData> cold_data_;
-
-  // Declared USD type names: interned property-name id -> interned typeName id
-  // (both interned in the global PropNameTable). Lets the writer re-emit the
-  // exact `typeName` (incl. role types and value-less / connection-only attrs)
-  // while storing only two uint32s per property instead of two strings — the
-  // "string pooling" of the original low-memory plan (typeNames are highly
-  // repeated, so interning collapses ~150k strings to a few dozen).
-  // Declared type spellings are cold metadata. Keep their ordinary strings
-  // here instead of pinning them in the hot global property-name pool.
-  std::unordered_map<uint32_t, std::string> prop_type_names_;
-
-  // Per-property metadata, keyed by interned PropNameId.id (lazily allocated, so
-  // ordinary properties cost nothing). Same side-table pattern as
-  // prop_type_names_ / connections_ — sort-stable across finalize_properties().
-  std::unordered_map<uint32_t, std::unique_ptr<PropMeta>> prop_metas_;
 
   // Children stored as indices into parent Layer's prim array
   std::vector<uint32_t> child_indices_;

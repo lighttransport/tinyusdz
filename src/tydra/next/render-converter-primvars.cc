@@ -33,19 +33,19 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 // every UV/color/normal primvar (40 MB for a 5M-vertex `st` set) on top of the
 // copies the caller already makes.
 uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
-                         const std::vector<float>** view) {
+                         ::lightusd::next::ValueArrayView<const float>* view) {
   if (!v.is_array()) return 0;
   const uint32_t comps =
       static_cast<uint32_t>(GetComponentCount(v.type_id()));
   if (comps == 0) return 0;
-  if (const std::vector<float>* fa = v.as_float_array()) {
+  if (auto fa = v.as_float_array()) {
     *view = fa;
     return comps;
   }
-  if (const std::vector<double>* da = v.as_double_array()) {
+  if (auto da = v.as_double_array()) {
     scratch->reserve(da->size());
     for (double d : *da) scratch->push_back(static_cast<float>(d));
-    *view = scratch;
+    *view = *scratch;
     return comps;
   }
   return 0;
@@ -136,8 +136,8 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
   };
 
   // Expand an indexed primvar to direct form; false on any out-of-range index.
-  auto expand_indexed = [](const std::vector<float>& data, uint32_t comps,
-                           const std::vector<int32_t>& idxs,
+  auto expand_indexed = [](::lightusd::next::ValueArrayView<const float> data, uint32_t comps,
+                           ::lightusd::next::ValueArrayView<const int32_t> idxs,
                            std::vector<float>* out) -> bool {
     const size_t elems = comps ? data.size() / comps : 0;
     out->clear();
@@ -196,7 +196,7 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
     if (custom_only && builtin) continue;
 
     std::vector<float> data;
-    const std::vector<float>* fdata = nullptr;
+    ::lightusd::next::ValueArrayView<const float> fdata;
     const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
 
     // Unauthored interpolation defaults to `constant` per the USD spec
@@ -215,7 +215,7 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
     if (comps == 0) {
       // Non-float primvar: only representable as a generic int attribute.
       if (builtin) continue;
-      const std::vector<int32_t>* ia = pv.value->as_int_array();
+      auto ia = pv.value->as_int_array();
       if (!ia || ia->empty()) continue;
       VertexAttribute attr;
       attr.name = pv.name;
@@ -250,7 +250,7 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
         continue;
       }
       data = std::move(expanded);
-      fdata = &data;
+      fdata = data;
     }
 
     if (builtin) {

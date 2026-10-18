@@ -57,7 +57,7 @@ std::string IndentContinuation(const std::string& s, const std::string& prefix) 
 std::string DictMetaLine(const std::string& key, const Value& v, int level,
                          const USDAWriteOptions& opts) {
   if (!v.is_dictionary()) return "";
-  const Dict* d = v.as_dictionary();
+  auto d = v.as_dictionary();
   if (!d) return "";
   PrintOptions print_opts;
   print_opts.indent = opts.indent;

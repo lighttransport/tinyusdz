@@ -92,32 +92,6 @@ EMSCRIPTEN_KEEPALIVE void lightusd_next_destroy(uint32_t handle) {
   lightusd::web_next::NextDestroyObject(kind, object);
 }
 
-EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_subdiv_refine(
-    uint32_t handle, const float* points, uint32_t point_values,
-    const uint32_t* face_counts, uint32_t face_count,
-    const uint32_t* face_indices, uint32_t index_count,
-    const float* uv_values, uint32_t uv_value_count,
-    const uint32_t* uv_indices, uint32_t uv_index_count,
-    const lightusd_next_subdiv_options* options, uint32_t callback_id) {
-  const Slot* slot = Lookup(handle);
-  if (!slot || slot->kind != 2 || !options ||
-      options->struct_size < sizeof(lightusd_next_subdiv_options) ||
-      (!points && point_values) || (!face_counts && face_count) ||
-      (!face_indices && index_count) || (!uv_values && uv_value_count) ||
-      (!uv_indices && uv_index_count) || !callback_id) return -1;
-  return lightusd::web_next::NextSubdivRefine(
-      slot->object, points, point_values, face_counts, face_count,
-      face_indices, index_count, uv_values, uv_value_count,
-      uv_indices, uv_index_count, options, callback_id);
-}
-
-EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_subdiv_error(
-    uint32_t handle, uint8_t* out, uint32_t cap) {
-  const Slot* slot = Lookup(handle);
-  if (!slot || slot->kind != 2) return -1;
-  return lightusd::web_next::NextSubdivError(slot->object, out, cap);
-}
-
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_next_converter_udim(
     uint32_t handle, uint32_t apply, const uint8_t* data, uint32_t size) {
   const Slot* slot = Lookup(handle);

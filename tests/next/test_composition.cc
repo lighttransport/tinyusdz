@@ -439,11 +439,11 @@ static void test_variant_selection_over_reference() {
   CHECK(which != nullptr,
         "/C1.which present (selected variant's opinion applied to host)");
   if (which) {
-    const std::string* s = which->as_string();
+    auto s = which->as_string();
     CHECK(s && *s == "I_am_ChairB",
           std::string("local 'ChairB' wins over referenced default 'ChairA' "
                       "(got '") +
-              (s ? *s : std::string("<non-string>")) + "')");
+              (s ? std::string(*s) : std::string("<non-string>")) + "')");
   }
 }
 
@@ -579,11 +579,11 @@ static void test_variant_ref_payload_chain() {
         "/C1.which present (deep populated variant content reached the host "
         "through the ref->payload->ref chain)");
   if (which) {
-    const std::string* s = which->as_string();
+    auto s = which->as_string();
     CHECK(s && *s == "I_am_ChairB",
           std::string("local 'ChairB' wins across the full ref+payload chain "
                       "(got '") +
-              (s ? *s : std::string("<non-string>")) + "', want 'I_am_ChairB')");
+              (s ? std::string(*s) : std::string("<non-string>")) + "', want 'I_am_ChairB')");
   }
 }
 
@@ -710,7 +710,7 @@ static void test_variant_selected_field_over_reference() {
   };
   auto whichOf = [](const Layer* out, const std::string& prim) {
     const Value* w = out ? PropOf(*out, prim, "which") : nullptr;
-    return (w && w->as_string()) ? *w->as_string() : std::string("<none>");
+    return (w && w->as_string()) ? std::string(*w->as_string()) : std::string("<none>");
   };
 
   // (1) reader-consistent host: BOTH per-set selected AND the string = "ChairB".
@@ -1423,8 +1423,8 @@ static void test_dictionary_type_conflict_diagnostic() {
   CHECK(out != nullptr, "compose succeeds");
   const PrimSpec* p = out->prim_at_path("/p");
   CHECK(p != nullptr, "prim composed");
-  const Dict* cd = p ? p->meta().customData().as_dictionary() : nullptr;
-  const Value* k = cd ? cd->find("k") : nullptr;
+  auto cd = p ? p->meta().customData().as_dictionary() : nullptr;
+  auto k = cd ? cd->find("k") : nullptr;
   CHECK(k && k->as_int() && *k->as_int() == 3,
         "stronger scalar opinion wins the conflicting key");
   bool saw = false;

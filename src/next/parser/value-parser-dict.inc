@@ -15,7 +15,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
   }
 
   Value v = Value::MakeDictionary();
-  Dict* d = v.as_dictionary();
+  auto d = v.as_dictionary();
 
   // Dictionary keys/type names may collide with lexer keywords ("add",
   // "custom", "delete", "true", ...): accept any keyword-ish token as a name

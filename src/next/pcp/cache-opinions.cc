@@ -358,3 +358,503 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
 }  // namespace pcp
 }  // namespace next
 }  // namespace lightusd
+
+namespace lightusd { namespace next { namespace pcp {
+
+auto Cache::Impl::SelectInlineArc(const PrimMetadata &m,
+                                                         ArcSel f) -> const std::vector<std::string> & {
+    switch (f) {
+      case ArcSel::References: return m.references;
+      case ArcSel::Payloads: return m.payloads;
+      case ArcSel::Inherits: return m.inherits;
+      default: return m.specializes;
+    }
+  }
+
+auto Cache::Impl::SelectArcEdit(const PrimMetadata &m, ArcSel f) -> const ArcListOp * {
+    const ArcListOps *e = m.arc_edits();
+    if (!e) return nullptr;
+    switch (f) {
+      case ArcSel::References: return &e->references;
+      case ArcSel::Payloads: return &e->payloads;
+      case ArcSel::Inherits: return &e->inherits;
+      default: return &e->specializes;
+    }
+  }
+
+auto Cache::Impl::MergeArcField(
+      const std::vector<SpecRef> &specs, ArcSel f) const -> std::vector<std::pair<std::string, std::string>> {
+    std::vector<std::pair<std::string, std::string>> result;
+    for (auto it = specs.rbegin(); it != specs.rend(); ++it) {
+      const PrimMetadata &m = it->spec->meta();
+      const std::string &lid = it->layer_id;
+      const ArcListOp *e = SelectArcEdit(m, f);
+      const std::vector<std::string> &inl = SelectInlineArc(m, f);
+      if ((!e || !e->authored) && inl.empty()) {
+        continue;
+      }
+      auto tag = [&](const std::vector<std::string> &v) {
+        std::vector<std::pair<std::string, std::string>> out;
+        out.reserve(v.size());
+        for (const std::string &s : v) out.emplace_back(s, lid);
+        return out;
+      };
+      if (!e || !e->authored || e->is_explicit) {
+        result = tag(inl);
+        continue;
+      }
+      auto removeAll = [&](const std::vector<std::string> &rm) {
+        for (const std::string &x : rm) {
+          result.erase(std::remove_if(result.begin(), result.end(),
+                                      [&](const auto &p) { return p.first == x; }),
+                       result.end());
+        }
+      };
+      removeAll(e->deleted);
+      removeAll(e->prepended);
+      removeAll(e->appended);
+      for (const auto &added : tag(e->added)) {
+        const bool present = std::find_if(
+            result.begin(), result.end(), [&](const auto &p) {
+              return p.first == added.first;
+            }) != result.end();
+        if (!present) result.push_back(added);
+      }
+      std::vector<std::pair<std::string, std::string>> merged;
+      merged.reserve(e->prepended.size() + result.size() + e->appended.size());
+      auto pre = tag(e->prepended), app = tag(e->appended);
+      merged.insert(merged.end(), pre.begin(), pre.end());
+      merged.insert(merged.end(), result.begin(), result.end());
+      merged.insert(merged.end(), app.begin(), app.end());
+      result.swap(merged);
+
+      // `reorder` changes only effective order; it neither adds nor removes
+      // arcs. Apply the shared SdfListOp ordering rule to arc keys, then carry
+      // each key's authoring-layer tag along so relative assets retain their
+      // original anchor.
+      if (!e->ordered.empty() && !result.empty()) {
+        const auto tagged = result;
+        std::vector<std::string> keys;
+        keys.reserve(result.size());
+        for (const auto &item : result) keys.push_back(item.first);
+        ApplyStringListOrder(e->ordered, &keys);
+        result.clear();
+        result.reserve(keys.size());
+        for (const std::string &key : keys) {
+          const auto found = std::find_if(
+              tagged.begin(), tagged.end(), [&](const auto &item) {
+                return item.first == key;
+              });
+          if (found != tagged.end()) result.push_back(*found);
+        }
+      }
+    }
+    return result;
+  }
+
+auto Cache::Impl::ComposeInto(const std::vector<Src> &srcs,
+                                        PrimSpec *out) -> std::vector<std::string> {
+    ComposeOpinions(srcs, out);
+    // Pass 2 (weak->strong): compose child-name ORDER.
+    return ComposeChildNames(srcs);
+  }
+
+auto Cache::Impl::ComposedActive(const std::vector<Src> &srcs) -> bool {
+    for (const Src &s : srcs) {
+      if (s.variant) {
+        if (!s.variant->active) return false;
+        continue;  // variant active=true is not an authored opinion
+      }
+      const std::vector<SpecRef> &specs = SpecsFor(s);
+      for (const SpecRef &sr : specs) {
+        if (sr.spec->meta().active_authored) return sr.spec->meta().active;
+      }
+    }
+    return true;
+  }
+
+auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector<std::string> {
+    // Namespace edits authored by any contributing layer stack: a relocated-away
+    // name is PROHIBITED here (it no longer exists at this parent, even when a
+    // weaker stack still authors a spec for it -- the "shadow spec" case), and a
+    // relocated-in name is a child of this prim regardless of where its content
+    // physically lives.
+    const ChildRelocations edits = RelocationsAt(srcs);
+    std::vector<std::string> child_names;
+    std::set<std::string> seen_child;
+    for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
+      const Src &s = *sit;
+      if (s.variant) continue;  // variant child prims not modeled yet
+      // Opinions authored at a relocation SOURCE path are prohibited (pxr
+      // "salted earth"): their child prims must NOT enter the composed child
+      // list either. The Src itself stays for traversal (chained relocations),
+      // but its own spec children are suppressed — a child authored at the
+      // source (ErrorInvalidReferenceToRelocationSource PreReloChild) leaked
+      // while arc-delivered children (model.usd ModelChild) correctly follow.
+      if (s.suppress_site_specs) continue;
+      const std::vector<SpecRef> &specs = SpecsFor(s);
+      for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
+        const PrimSpec *spec = rit->spec;
+        const Layer *layer = rit->layer;
+        for (uint32_t ci : spec->child_indices()) {
+          const PrimSpec *cs = layer->prim(ci);
+          if (!cs) continue;
+          // Bracketed variant HOLDER prims ("{set=sel}") are namespace markers,
+          // not real children -- the selected holder's descendants are grafted
+          // onto the host as a Variant source (see ExpandArcs). Skip the markers
+          // so they never leak into the composed child list.
+          if (!cs->name().empty() && cs->name().front() == '{') continue;
+          if (edits.departed.count(cs->name())) continue;
+          if (seen_child.insert(cs->name()).second) {
+            child_names.push_back(cs->name());
+          }
+        }
+      }
+    }
+    for (const std::string &name : edits.arrived) {
+      // A name that one stack relocates IN and another relocates OUT is a
+      // chained-relocation pass-through (CHARACTER -> Character -> Model): the
+      // content flows to the final destination, so the intermediate name must
+      // NOT materialize (pxr collapses the chain). TrickyMultipleRelocations5.
+      if (edits.departed.count(name)) continue;
+      if (seen_child.insert(name).second) child_names.push_back(name);
+    }
+    return child_names;
+  }
+
+auto Cache::Impl::ComposePrim_locked(const Path &prim_path, std::string *warn,
+                                     std::string *err) -> const PrimSpec * {
+    const std::string key = prim_path.str();
+    auto it = composed_cache_.find(key);
+    if (it != composed_cache_.end()) return it->second.get();
+
+    const std::vector<Src> &srcs = SourcesForPath(prim_path, warn, err);
+    if (!AnyAuthors(srcs)) return nullptr;
+
+    auto spec = std::unique_ptr<PrimSpec>(new PrimSpec(prim_path.name()));
+    spec->set_path(prim_path);
+    std::vector<std::string> children = ComposeInto(srcs, spec.get());
+
+    const PrimSpec *ret = spec.get();
+    composed_cache_.emplace(key, std::move(spec));
+    composed_children_[key] = std::move(children);
+    return ret;
+  }
+
+auto Cache::Impl::ComputePrimIndex(const Path &prim_path, std::string *warn,
+                                    std::string *err) -> const PrimIndex * {
+#if defined(LIGHTUSD_ENABLE_THREAD) && defined(LIGHTUSD_NEXT_FINE_LOCKS)
+    // F4 fast path: a shared lock lets cache hits resolve concurrently. On a
+    // miss we fall through to the exclusive build; ComputePrimIndex_locked
+    // re-checks index_cache under the write lock, so a prim contended by many
+    // threads is still built exactly once.
+    {
+      NEXT_PCP_READ_LOCK(api_mu_);
+      auto it = index_cache.find(prim_path.str());
+      if (it != index_cache.end()) return it->second.get();
+    }
+#endif
+    NEXT_PCP_WRITE_LOCK(api_mu_);
+    return ComputePrimIndex_locked(prim_path, warn, err);
+  }
+
+auto Cache::Impl::ComputePrimIndex_locked(const Path &prim_path,
+                                           std::string *warn, std::string *err) -> const PrimIndex * {
+    const std::string key = prim_path.str();
+    auto it = index_cache.find(key);
+    if (it != index_cache.end()) return it->second.get();
+
+    const std::vector<Src> &srcs = SourcesForPath(prim_path, warn, err);
+    if (!AnyAuthors(srcs)) {
+      return nullptr;  // prim does not exist in the composed namespace.
+    }
+
+    auto index = std::unique_ptr<PrimIndex>(new PrimIndex());
+    index->SetPath(prim_path);
+    index->SetLayerStacks(&layer_stacks);
+
+    std::vector<uint16_t> order;
+    std::vector<Site> sites;
+    for (size_t i = 0; i < srcs.size(); ++i) {
+      const Src &s = srcs[i];
+      CompNode n;
+      n.arc_type = (i == 0) ? ArcType::Root : s.arc_kind;
+      n.parent = (i == 0) ? 0xFFFF : 0;
+      n.layer_stack_idx = s.stack_idx;
+      n.site_path_idx = InternPath(s.site);
+      n.map_to_root = Mapping(s.map_idx);
+      n.offset = s.offset;
+      const std::vector<SpecRef> &specs = SpecsFor(s);
+      if (!specs.empty()) {
+        n.flags |= NodeFlags::HasSpecs;
+        for (const SpecRef &sr : specs) {
+          sites.push_back(Site{sr.layer_id.empty()
+                                   ? layer_stacks[s.stack_idx].identifier
+                                   : sr.layer_id,
+                               s.site});
+        }
+      }
+      uint16_t ni = index->AddNode(std::move(n));
+      if (ni == PrimIndex::kInvalidNode) {
+        AddIssue(ErrorCode::IndexCapacityExceeded, key,
+                 "PrimIndex node count exceeds uint16 capacity for " + key, err);
+        return nullptr;
+      }
+      if (i != 0) index->MutableNode(0).children.push_back(ni);
+      order.push_back(ni);
+    }
+    index->SetStrengthOrder(std::move(order));
+    // Bind the path table AFTER the node loop interned every site, so the
+    // size snapshot covers all of this index's site_path_idx values (F3).
+    index->SetPathTable(&path_table, path_table.size());
+
+    // Per-prim cache: pick the prototype deterministically (min path) so the
+    // grouping does not depend on the order/threads of ComputePrimIndex (F5).
+    RegisterInstance(key, srcs, /*prefer_min=*/true);
+
+    for (const Site &site : sites) site_to_indices[site].insert(key);
+    index_to_sites[key] = std::move(sites);
+
+    const PrimIndex *ret = index.get();
+    index_cache.emplace(key, std::move(index));
+    return ret;
+  }
+
+auto Cache::Impl::IsPreviewProperty(const std::string &name) -> bool {
+    if (name == "extent" || name == "extentsHint" ||
+        name == "visibility" || name == "purpose" ||
+        name == "xformOpOrder" || name == "radius" ||
+        name == "height" || name == "width" || name == "size" ||
+        name == "axis" || name == "orientation" ||
+        name == "primvars:displayColor" ||
+        name == "primvars:displayOpacity") {
+      return true;
+    }
+    if (name.compare(0, 8, "xformOp:") == 0) return true;
+    return name == "projection" || name == "horizontalAperture" ||
+           name == "verticalAperture" ||
+           name == "horizontalApertureOffset" ||
+           name == "verticalApertureOffset" || name == "focalLength" ||
+           name == "clippingRange" || name == "clippingPlanes" ||
+           name == "fStop" || name == "focusDistance" ||
+           name == "shutter:open" || name == "shutter:close" ||
+           name == "exposure";
+  }
+
+auto Cache::Impl::ComposePreviewOpinions(const std::vector<Src> &srcs, PrimSpec *out) -> void {
+    if (!out) return;
+    for (const Src &s : srcs) {
+      if (s.variant) {
+        for (const VariantProperty &property : s.variant->properties) {
+          if (!IsPreviewProperty(property.name) ||
+              out->property_value(property.name)) continue;
+          out->add_property(property.name, property.value, property.flags);
+        }
+        continue;
+      }
+      if (s.suppress_site_specs) continue;
+      const std::vector<SpecRef> &specs = SpecsFor(s);
+      for (const SpecRef &source : specs) {
+        const PrimSpec *spec = source.spec;
+        if (!spec) continue;
+        if (out->type_name().empty() && !spec->type_name().empty()) {
+          out->set_type_name(spec->type_name());
+        }
+        for (const PropSlot &slot : spec->properties().slots()) {
+          if (slot.is_relationship()) continue;
+          const std::string name(GetPropNameTable().get(slot.name_id));
+          if (!IsPreviewProperty(name) || out->property_value(slot.name_id)) {
+            continue;
+          }
+          const Value *value = spec->property_value(slot.name_id);
+          if (!value) continue;
+          out->add_property(slot.name_id, *value, slot.flags);
+          if (const std::string *type_name = spec->property_type_name(name)) {
+            out->set_property_type_name(name, *type_name);
+          }
+        }
+      }
+    }
+    if (!ComposedActive(srcs)) {
+      out->meta().active = false;
+      out->meta().active_authored = true;
+    }
+  }
+
+auto Cache::Impl::ClassifyPreviewEndpoint(const std::vector<Src> &srcs) -> PreviewEndpoint {
+    bool bound = false;
+    for (const Src &s : srcs) {
+      if (s.variant) {
+        for (const VariantProperty &property : s.variant->properties) {
+          if (property.name == "extent" || property.name == "extentsHint") {
+            bound = true;
+          }
+        }
+        continue;
+      }
+      if (s.suppress_site_specs) continue;
+      for (const SpecRef &source : SpecsFor(s)) {
+        const PrimSpec *spec = source.spec;
+        if (!spec) continue;
+        if (spec->type_name() == "Camera") return PreviewEndpointCamera;
+        if (spec->property("extent") || spec->property("extentsHint")) {
+          bound = true;
+        }
+      }
+    }
+    return bound ? PreviewEndpointBound : PreviewEndpointNone;
+  }
+
+auto Cache::Impl::BuildPreviewLayer(const Layer &structure) -> Layer {
+    const size_t count = structure.prim_count();
+    std::vector<uint32_t> parent(count, UINT32_MAX);
+    for (uint32_t i = 0; i < count; ++i) {
+      const PrimSpec *prim = structure.prim(i);
+      if (!prim) continue;
+      for (uint32_t child : prim->child_indices()) {
+        if (child < count) parent[child] = i;
+      }
+    }
+
+    std::vector<uint8_t> selected(count, 0);
+    size_t selected_bounds = 0;
+    constexpr size_t kMaxPreviewBounds = 20000;
+    for (const auto &record : fill_) {
+      if (record.first >= count || !record.second) continue;
+      const PreviewEndpoint endpoint =
+          ClassifyPreviewEndpoint(*record.second);
+      if (endpoint == PreviewEndpointNone) continue;
+      if (endpoint == PreviewEndpointBound &&
+          selected_bounds >= kMaxPreviewBounds) continue;
+      if (endpoint == PreviewEndpointBound) ++selected_bounds;
+      uint32_t index = record.first;
+      while (index != UINT32_MAX && !selected[index]) {
+        selected[index] = 1;
+        index = parent[index];
+      }
+    }
+
+    Layer preview;
+    std::vector<uint32_t> remap(count, UINT32_MAX);
+    std::vector<std::pair<uint32_t, const std::vector<Src>*>> preview_fill;
+    preview_fill.reserve(fill_.size());
+    for (const auto &record : fill_) {
+      const uint32_t old_index = record.first;
+      if (old_index >= count || !selected[old_index]) continue;
+      const PrimSpec *source = structure.prim(old_index);
+      if (!source) continue;
+      PrimSpec prim(source->name());
+      prim.set_path(source->path());
+      const uint32_t new_index = preview.add_prim(std::move(prim));
+      remap[old_index] = new_index;
+      preview_fill.push_back({new_index, record.second});
+    }
+    for (uint32_t old_index = 0; old_index < count; ++old_index) {
+      const uint32_t new_index = remap[old_index];
+      if (new_index == UINT32_MAX) continue;
+      const uint32_t old_parent = parent[old_index];
+      if (old_parent != UINT32_MAX && remap[old_parent] != UINT32_MAX) {
+        preview.set_parent(new_index, remap[old_parent]);
+      } else {
+        preview.add_root(new_index);
+      }
+    }
+
+    GetPropNameTable().freeze();
+    // This set is capped at 20k. A serial pass avoids thread launch and lock
+    // traffic, and keeps this latency-only path independent of anonymous Src
+    // linkage (important for strict GCC warning builds).
+    for (const auto &record : preview_fill) {
+      if (record.second) {
+        ComposePreviewOpinions(*record.second,
+                               preview.prim_mutable(record.first));
+      }
+    }
+    return preview;
+  }
+
+auto Cache::Impl::FillOpinions(Layer *out) -> void {
+    // The serial structure pass has parsed every referenced layer, so the full
+    // set of property names is now interned. Freeze the name table: the parallel
+    // fill below does heavy find() (and intern() that all HIT) on it, and the
+    // per-call shared_lock otherwise contends purely on the lock's cache line.
+    // Frozen, those go lock-free. A genuinely new name would unfreeze and fall
+    // back to locking.
+    GetPropNameTable().freeze();
+    // With release_build_sources, free each slot's composition sources the
+    // moment its opinions are composed, so the transient compose state (~600
+    // MB of Src vectors on Island) drains as the output fills in instead of
+    // coexisting in full with the finished stage. The structure walk is done,
+    // so nothing resolves sources again during the fill, and the caller drops
+    // sources_cache right after it (those emptied entries must never be read
+    // back as "no sources"). A vector shared by several slots (one source path
+    // placed at two output paths) is left for the final drop.
+    const bool release = options.release_build_sources;
+    std::vector<const std::vector<Src> *> shared_srcs;
+    if (release) {
+      std::vector<const std::vector<Src> *> seen;
+      seen.reserve(fill_.size());
+      for (const auto &record : fill_) {
+        if (record.second) seen.push_back(record.second);
+      }
+      std::sort(seen.begin(), seen.end());
+      for (size_t i = 1; i < seen.size(); ++i) {
+        if (seen[i] == seen[i - 1] &&
+            (shared_srcs.empty() || shared_srcs.back() != seen[i])) {
+          shared_srcs.push_back(seen[i]);
+        }
+      }
+    }
+    auto do_range = [&](size_t b, size_t e) {
+      for (size_t i = b; i < e; ++i) {
+        const std::vector<Src> *srcs = fill_[i].second;
+        if (!srcs) continue;
+        if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
+          ComposeOpinions(*srcs, ps);
+        }
+        if (release &&
+            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs)) {
+          // sources_cache owns the vector (address-stable deque storage);
+          // fill_ only borrows it read-only for the structure pass.
+          std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
+        }
+      }
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    int nt = options.num_threads;
+    if (nt < 0) {
+      nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                         kMaxExecutionThreads);
+    }
+    if (nt > 1 && fill_.size() >= 2048) {
+      if (nt > kMaxExecutionThreads) nt = kMaxExecutionThreads;
+      // Namespace order clusters heavy mesh/material prims. Static contiguous
+      // partitions leave workers idle when one district contains most of the
+      // authored properties, so claim modest batches dynamically instead.
+      const size_t opinion_batch = options.opinion_batch_size != 0
+                                       ? options.opinion_batch_size
+                                       : std::max<size_t>(
+                                             1, fill_.size() /
+                                                    (static_cast<size_t>(nt) *
+                                                     static_cast<size_t>(32)));
+      std::atomic<size_t> next{0};
+      std::vector<std::thread> pool;
+      pool.reserve(nt);
+      for (int t = 0; t < nt; ++t) {
+        pool.emplace_back([&]() {
+          for (;;) {
+            const size_t b = next.fetch_add(opinion_batch,
+                                            std::memory_order_relaxed);
+            if (b >= fill_.size()) break;
+            do_range(b, std::min(fill_.size(), b + opinion_batch));
+          }
+        });
+      }
+      for (std::thread &th : pool) th.join();
+      return;
+    }
+#endif
+    do_range(0, fill_.size());
+  }
+
+}}} // namespace lightusd::next::pcp

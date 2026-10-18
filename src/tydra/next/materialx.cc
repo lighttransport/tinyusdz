@@ -43,15 +43,15 @@ bool GetStringLikeProperty(const lightusd::next::UsdPrim& prim,
   const lightusd::next::Value* value = prim.GetPropertyValue(name);
   if (!value) return false;
 
-  if (const std::string* s = value->as_string()) {
+  if (auto s = value->as_string()) {
     *out = *s;
     return true;
   }
-  if (const std::string* s = value->as_token()) {
+  if (auto s = value->as_token()) {
     *out = *s;
     return true;
   }
-  if (const std::string* s = value->as_asset_path()) {
+  if (auto s = value->as_asset_path()) {
     *out = *s;
     return true;
   }

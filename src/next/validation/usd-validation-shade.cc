@@ -362,69 +362,69 @@ void ValidateMaterialXSynthesizedMaterial(
 // Dictionary metadata helpers (next::Dict)
 // ---------------------------------------------------------------------------
 
-bool GetMetaDouble(const Dict &dict, const std::string &key, double *out) {
-  const Value *v = dict.find(key);
+bool GetMetaDouble(DictView dict, const std::string &key, double *out) {
+  auto v = dict.find(key);
   if (!v || !out) {
     return false;
   }
   return ValueToDouble(*v, out);
 }
 
-bool GetMetaAssetPath(const Dict &dict, const std::string &key,
+bool GetMetaAssetPath(DictView dict, const std::string &key,
                       std::string *out) {
-  const Value *v = dict.find(key);
+  auto v = dict.find(key);
   if (!v || !out) {
     return false;
   }
-  if (const std::string *asset = v->as_asset_path()) {
+  if (auto asset = v->as_asset_path()) {
     *out = *asset;
     return true;
   }
-  if (const std::string *str = v->as_string()) {
+  if (auto str = v->as_string()) {
     *out = *str;
     return true;
   }
   return false;
 }
 
-bool GetMetaString(const Dict &dict, const std::string &key,
+bool GetMetaString(DictView dict, const std::string &key,
                    std::string *out) {
-  const Value *v = dict.find(key);
+  auto v = dict.find(key);
   if (!v || !out) {
     return false;
   }
-  if (const std::string *str = v->as_string()) {
+  if (auto str = v->as_string()) {
     *out = *str;
     return true;
   }
-  if (const std::string *tok = v->as_token()) {
+  if (auto tok = v->as_token()) {
     *out = *tok;
     return true;
   }
   return false;
 }
 
-bool GetMetaStringArray(const Dict &dict, const std::string &key,
+bool GetMetaStringArray(DictView dict, const std::string &key,
                         std::vector<std::string> *out) {
-  const Value *v = dict.find(key);
+  auto v = dict.find(key);
   if (!v || !out || !v->is_array()) {
     return false;
   }
-  const std::vector<std::string> *arr = v->as_token_array();
+  auto arr = v->as_token_array();
   if (!arr) {
     return false;
   }
-  *out = *arr;
+  out->assign(arr->begin(), arr->end());
   return true;
 }
 
-bool GetMetaDouble2Array(const Dict &dict, const std::string &key,
+bool GetMetaDouble2Array(DictView dict, const std::string &key,
                          std::vector<std::array<double, 2>> *out) {
-  const Value *v = dict.find(key);
+  auto v = dict.find(key);
   if (!v || !out || !v->is_array() || v->type_id() != TypeId::Double2) {
     return false;
   }
-  const std::vector<double> *flat = v->as_double_array();
+  auto flat = v->as_double_array();
   if (!flat) {
     return false;
   }

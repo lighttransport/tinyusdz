@@ -31,7 +31,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn = nullptr, std::string* err = nullptr,
                      const pcp::CompositionOptions* comp_opts = nullptr);
 
-/// True when a plain single-layer load leaves composition arcs unresolved.
+/// True when a plain layer load leaves arcs or local stage edits unresolved.
 bool StageNeedsComposition(const Stage& stage);
 
 /// Compose an already-loaded stage through the PCP engine.

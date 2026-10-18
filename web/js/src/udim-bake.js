@@ -80,6 +80,8 @@ function info(native, handle) {
 export async function inspectUDIMTiles(native, source, pattern, opts = {}, baseDir = '') {
   const options = udimOptions(opts);
   const tiles = discoverUDIMTiles(source.keys, pattern, baseDir, options.maxTiles);
+  if (native.loadFeature && (String(opts.textureFormat).toLowerCase() === 'exr' ||
+      tiles.some(tile => /\.(exr|hdr)$/i.test(tile.key)))) await native.loadFeature('exr');
   const fetch = async key => {
     const data = await source.fetch(key, {maxBytes: options.memoryBudgetBytes});
     if (!ArrayBuffer.isView(data) || data.byteLength >= options.memoryBudgetBytes) {
@@ -111,6 +113,8 @@ export async function bakeUDIMAtlas(native, source, pattern, opts = {}, baseDir 
   if (options.mode === 'off') throw new Error('UDIM baking is disabled');
   if (typeof native._lightusd_udim_begin !== 'function') throw new Error('Rebuild WASM to enable UDIM baking');
   const tiles = discoverUDIMTiles(source.keys, pattern, baseDir, options.maxTiles);
+  if (native.loadFeature && (String(opts.textureFormat).toLowerCase() === 'exr' ||
+      tiles.some(tile => /\.(exr|hdr)$/i.test(tile.key)))) await native.loadFeature('exr');
   let atlasBytes = 0;
   const fetch = async key => {
     const limit = options.memoryBudgetBytes - atlasBytes;
@@ -197,6 +201,8 @@ export async function bakeLayerUDIM(native, layer, source, opts, baseDir = '', r
     const ids = new Set();
     for (const pattern of patterns) {
       const tiles = discoverUDIMTiles(source.keys, pattern, baseDir, options.maxTiles);
+  if (native.loadFeature && (String(opts.textureFormat).toLowerCase() === 'exr' ||
+      tiles.some(tile => /\.(exr|hdr)$/i.test(tile.key)))) await native.loadFeature('exr');
       for (const tile of tiles) ids.add(tile.id);
     }
     if (ids.size > options.maxTiles) throw new Error('UDIM bake: animation tile count exceeds configured limit');

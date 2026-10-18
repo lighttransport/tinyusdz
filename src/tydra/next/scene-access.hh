@@ -108,9 +108,9 @@ std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name);
 /// above duplicate the whole array, which for something like
 /// `primvars:skel:jointIndices:indices` on a dense skin is tens of MB copied
 /// and thrown away.
-const std::vector<int32_t>* GetIntArrayView(const UsdPrim& prim,
+::lightusd::next::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
                                             const std::string& name);
-const std::vector<float>* GetFloatArrayView(const UsdPrim& prim,
+::lightusd::next::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
                                             const std::string& name);
 
 //
@@ -165,14 +165,10 @@ struct GeomSubset {
   /// full duplicate of every subset's face-index list per mesh, on top of the
   /// working copy the consumer builds anyway. Null when unauthored; use
   /// indices() for an empty-safe read.
-  const std::vector<int32_t>* indices_view = nullptr;
+  ::lightusd::next::ValueArrayView<const int32_t> indices_view = nullptr;
 
-  static const std::vector<int32_t>& empty_indices() {
-    static const std::vector<int32_t> kEmpty;
-    return kEmpty;
-  }
-  const std::vector<int32_t>& indices() const {
-    return indices_view ? *indices_view : empty_indices();
+  ::lightusd::next::ValueArrayView<const int32_t> indices() const {
+    return indices_view;
   }
 
   std::string material_path;
@@ -204,14 +200,10 @@ struct Primvar {
   /// Copying every index array here duplicated arrays the caller often throws
   /// away immediately (the render converter skips `skel:`-prefixed primvars
   /// outright). Use indices() for an empty-safe read.
-  const std::vector<int32_t>* indices_view = nullptr;
+  ::lightusd::next::ValueArrayView<const int32_t> indices_view = nullptr;
 
-  static const std::vector<int32_t>& empty_indices() {
-    static const std::vector<int32_t> kEmpty;
-    return kEmpty;
-  }
-  const std::vector<int32_t>& indices() const {
-    return indices_view ? *indices_view : empty_indices();
+  ::lightusd::next::ValueArrayView<const int32_t> indices() const {
+    return indices_view;
   }
 };
 

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
+#include "render-data-enums.hh"
+#include "render-data-math.hh"
 #include <string>
+#include <vector>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 // RenderLight
@@ -144,3 +148,5 @@ struct RenderCamera {
 //
 // Scene Node (transform hierarchy)
 //
+
+}}} // namespace lightusd::tydra::next

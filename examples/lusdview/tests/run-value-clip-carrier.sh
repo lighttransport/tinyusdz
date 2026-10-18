@@ -8,7 +8,7 @@ BIN="${1:-${LUSDVIEW:-$ROOT/build_ninja/lusdview}}"
 OUT="${LUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 [ -n "${LUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 mkdir -p "$OUT"
-FIXTURE="$ROOT/examples/lusdview/tests/fixtures/value-clip/main.usda"
+FIXTURE="$ROOT/tests/feat/value-clip/carrier/main.usda"
 for time in 0 1; do
   "$BIN" --headless --backend vk --time "$time" --frames 1 --no-grid \
     --size 192x192 --screenshot "$OUT/frame-$time.ppm" "$FIXTURE" \

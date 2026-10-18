@@ -5,7 +5,9 @@ const {default: createLightUSD} = await import(process.env.LIGHTUSD_WASM64 === '
 import { raycastTriangles } from '../lucia-code/src/projection-bake.js';
 
 const module = await createLightUSD();
-const simplifier = new module.MeshoptSimplifier();
+const geometry = await module.loadFeature('geometry');
+const raytrace = await module.loadFeature('raytrace');
+const simplifier = new geometry.MeshoptSimplifier();
 const simplifyPositions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
 const simplifyIndices = new Uint32Array([0, 1, 2, 0, 2, 3]);
 const simplified = simplifier.simplify(simplifyPositions, simplifyIndices,
@@ -43,8 +45,9 @@ try {
   if (previousRetopoSelf === undefined) delete globalThis.self;
   else globalThis.self = previousRetopoSelf;
 }
-assert.equal(typeof module.LightRTPathTracer, 'function');
-const tracer = new module.LightRTPathTracer();
+assert.equal(typeof module.LightRTPathTracer, 'undefined');
+assert.equal(typeof raytrace.LightRTPathTracer, 'function');
+const tracer = new raytrace.LightRTPathTracer();
 const positions = new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
 const normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
 const colors = new Float32Array(9).fill(1);
@@ -85,10 +88,10 @@ assert.equal(tracer.triangleCount(), 0);
 assert.equal(tracer.build(new Float32Array(8), new Float32Array(8),
   new Float32Array(8), params, new Int32Array([0]), materials), false);
 assert.match(tracer.error(), /positions must contain triangle soup/);
-const staleHandle = module._lightusd_lrt_create();
+const staleHandle = raytrace._lightusd_lrt_create();
 assert.ok(staleHandle);
-module._lightusd_lrt_destroy(staleHandle);
-assert.equal(module._lightusd_lrt_triangle_count(staleHandle), -1);
+raytrace._lightusd_lrt_destroy(staleHandle);
+assert.equal(raytrace._lightusd_lrt_triangle_count(staleHandle), -1);
 tracer.clear();
 assert.equal(tracer.triangleCount(), 0);
 assert.equal(tracer.webGPUScene(), undefined);

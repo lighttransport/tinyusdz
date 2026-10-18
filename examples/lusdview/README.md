@@ -387,28 +387,22 @@ unaffected:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
   -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build -j16 --target lusdview
 ```
 
-- **Vulkan** is enabled automatically when `find_package(Vulkan)` succeeds (needs
-  `glslangValidator` to compile the shaders). Force a GL-only build with
-  `-DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON`.
-- **Vulkan ray tracing** additionally needs a `glslangValidator` that supports
-  `GL_EXT_ray_query` (≈ glslang ≥ 11 / a Vulkan SDK build). CMake probes the
-  compiler at configure time and only enables RT if it can compile
-  `vk/shaders/raytrace.comp`; otherwise it prints a notice and the Vulkan backend
-  uses rasterization. If your system glslang is too old, build a local one once
-  (Linux):
+The compatibility product configures the viewer and links the refactored next
+and Tydra-next libraries used by its default loader. See
+[`doc/lusdview.md`](../../doc/lusdview.md#build) for the current Vulkan build setup.
 
-  ```bash
-  examples/common/build-glslang.sh      # clones + installs to examples/common/glslang
-  cmake -S . -B build                    # auto-detects it (see the configure log)
-  ```
-
-  CMake prefers, in order: `-DLUSDVIEW_GLSLANG=/path`, `examples/common/glslang`,
-  then the system compiler.
+- **Vulkan** defaults on, using vendored headers, the runtime-loaded volk loader
+  and embedded SPIR-V. A Vulkan SDK and `glslangValidator` are unnecessary for
+  this build. Force a GL-only build with `-DLUSDVIEW_WITH_VULKAN=OFF`.
+- **Vulkan ray tracing** uses embedded shaders and selects hardware ray query or
+  the compute-BVH fallback at runtime. Regenerating shaders requires
+  `glslangValidator`; see the build and debugging procedure linked above.
 - The **native file dialog** (File > Open) is enabled when GTK3 is available on
   Linux (always on Windows/macOS); otherwise pass a file on the command line.
 

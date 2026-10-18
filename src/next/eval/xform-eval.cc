@@ -146,7 +146,7 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
 
   // xformOpOrder is uniform (not time-sampled) -> default value.
   const Value* orderv = prim.GetPropertyValue(kXformOpOrder());
-  const std::vector<std::string>* order =
+  auto order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order || order->empty()) return true;  // no ops -> identity
 
@@ -309,7 +309,7 @@ bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matri
 bool HasResetXformStack(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;
   const Value* orderv = prim.GetPropertyValue(kXformOpOrder());
-  const std::vector<std::string>* order =
+  auto order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order || order->empty()) return false;
   return (*order)[0] == "!resetXformStack!";

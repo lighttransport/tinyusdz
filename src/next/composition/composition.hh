@@ -376,5 +376,9 @@ std::vector<CompositionArc> GetPayloads(const Layer& layer);
 /// Check if a prim has any composition arcs
 bool HasCompositionArcs(const PrimSpec& prim);
 
+/// Whether returning the authored layer directly would skip stage composition,
+/// including local edits, namespace changes and inactive-subtree pruning.
+bool LayerNeedsComposition(const Layer& layer);
+
 }  // namespace next
 }  // namespace lightusd

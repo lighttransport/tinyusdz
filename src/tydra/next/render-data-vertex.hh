@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "render-data-enums.hh"
+#include "chunked-array.hh"
+#include <string>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 // Stores raw vertex data with format and interpolation info
@@ -58,3 +63,5 @@ struct VertexAttribute {
            uint_data.memory_usage() + indices.memory_usage();
   }
 };
+
+}}} // namespace lightusd::tydra::next

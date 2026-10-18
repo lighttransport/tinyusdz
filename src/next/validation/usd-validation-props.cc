@@ -154,7 +154,7 @@ void ValidateTokenSetProperty(const PrimSpec &ps, const std::string &prop_name,
   // DEFAULT of the wrong type is an error. GetAttrValue returns null for
   // slots without an authored default.
   if (const Value *v = GetAttrValue(ps, prop_name)) {
-    const std::string *token = v->as_token();
+    auto token = v->as_token();
     if (!token) {
       AddError(result, rule_id, location,
                prop_name + " must have a token value");
@@ -173,7 +173,7 @@ void ValidateTokenSetProperty(const PrimSpec &ps, const std::string &prop_name,
     for (const auto &sample : *samples) {
       const Value *sv = ps.time_sample_value(sample.second);
       if (!sv || sv->is_block()) continue;
-      const std::string *token = sv->as_token();
+      auto token = sv->as_token();
       if (token && allowed.count(*token) > 0) continue;
       AddError(result, rule_id, location,
                prop_name + " timeSample at " + std::to_string(sample.first) +
@@ -783,7 +783,7 @@ void ValidateConnectionTargets(const PrimSpec &ps,
   }
 }
 
-void ValidateDictionaryKeys(const Dict &dict, const std::string &rule_id,
+void ValidateDictionaryKeys(DictView dict, const std::string &rule_id,
                             const std::string &location,
                             USDValidationResult *result) {
   for (const auto &entry : dict.entries()) {
@@ -793,7 +793,7 @@ void ValidateDictionaryKeys(const Dict &dict, const std::string &rule_id,
                "dictionary key `" + entry.first +
                    "` is not a valid namespaced identifier");
     }
-    if (const Dict *child = entry.second.as_dictionary()) {
+    if (auto child = entry.second.as_dictionary()) {
       ValidateDictionaryKeys(*child, rule_id, key_location, result);
     }
   }
@@ -802,7 +802,7 @@ void ValidateDictionaryKeys(const Dict &dict, const std::string &rule_id,
 void ValidateDictValue(const Value &v, const std::string &rule_id,
                        const std::string &location,
                        USDValidationResult *result) {
-  if (const Dict *dict = v.as_dictionary()) {
+  if (auto dict = v.as_dictionary()) {
     ValidateDictionaryKeys(*dict, rule_id, location, result);
   }
 }

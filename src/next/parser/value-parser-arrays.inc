@@ -35,7 +35,7 @@ bool IsHalfLike(TypeId type) {
          type == TypeId::Texcoord3h || type == TypeId::Quath;
 }
 
-void QuantizeHalfValues(std::vector<float>* values) {
+void QuantizeHalfValues(detail::ArrayBuilder<float>* values) {
   if (!values) return;
   for (float& value : *values) value = HalfToFloat(FloatToHalf(value));
 }
@@ -375,10 +375,10 @@ constexpr size_t kMaxArrayScalars = size_t(1) << 30;  // ~1.07e9 scalars
 // Count-only instantiations validate without materializing any values.
 template <class T, bool Materialize = true, class ParseOne>
 bool WalkArray(SliceParser* sp, unsigned rows, unsigned columns,
-               std::vector<T>* out, size_t max_elements, size_t* out_count,
+               detail::ArrayBuilder<T>* out, size_t max_elements, size_t* out_count,
                ParseOne parse_one) {
   struct Context {
-    std::vector<T>* out;
+    detail::ArrayBuilder<T>* out;
     ParseOne parse;
   } context{out, parse_one};
   if constexpr (Materialize) out->clear();
@@ -391,7 +391,9 @@ bool WalkArray(SliceParser* sp, unsigned rows, unsigned columns,
     do {
       T value{};
       if (!ctx.parse(&scalar, &value)) break;
-      if constexpr (Materialize) ctx.out->push_back(std::move(value));
+      if constexpr (Materialize) { ctx.out->push_back(std::move(value));
+        if constexpr (std::is_arithmetic<T>::value) if (ctx.out->failed()) break;
+      }
       ++count;
       last_value = scalar.p;
       if (count == max_values || !scalar.maybe_consume(',')) break;
@@ -410,14 +412,14 @@ bool WalkArray(SliceParser* sp, unsigned rows, unsigned columns,
 }
 
 template <class T, class ParseOne>
-bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) {
-  return WalkArray(sp, 0, 1, out, SIZE_MAX, nullptr, parse_one);
+bool ParseScalarArray(SliceParser* sp, detail::ArrayBuilder<T>* out, ParseOne parse_one) {
+  return WalkArray<T>(sp, 0, 1, out, SIZE_MAX, nullptr, parse_one);
 }
 
 // Keep tuple scalar conversion inlined: row callbacks regress comment-heavy
 // WASM arrays. Count-only traversal still shares the bounded C grammar.
 template <class ScalarT, uint32_t FixedColumns, class ParseOne>
-bool ParseTupleArrayImpl(SliceParser* sp, std::vector<ScalarT>* out,
+bool ParseTupleArrayImpl(SliceParser* sp, detail::ArrayBuilder<ScalarT>* out,
                          ParseOne parse_one, uint32_t columns) {
   if constexpr (FixedColumns != 0) columns = FixedColumns;
   if (!sp->consume('[')) return false;
@@ -429,6 +431,7 @@ bool ParseTupleArrayImpl(SliceParser* sp, std::vector<ScalarT>* out,
       ScalarT v{};
       if (!parse_one(sp, &v)) return false;
       out->push_back(v);
+      if (out->failed()) return false;
       if (i + 1 < columns && !sp->consume(',')) return false;
     }
     if (!sp->consume(')')) return false;
@@ -442,7 +445,7 @@ bool ParseTupleArrayImpl(SliceParser* sp, std::vector<ScalarT>* out,
 }
 
 template <class ScalarT, uint32_t N, class ParseOne>
-bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
+bool ParseTupleArray(SliceParser* sp, detail::ArrayBuilder<ScalarT>* out,
                      ParseOne parse_one) {
 #if defined(__wasm__) && !defined(__wasm64__)
   // wasm32 benefits from sharing tuple dimensions. Keep the unrolled form on
@@ -462,7 +465,7 @@ template <class ScalarT, uint32_t N, class ParseOne>
 // and its compiler-generated specializations.
 __attribute__((noinline))
 #endif
-bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
+bool ParseMatrixArray(SliceParser* sp, detail::ArrayBuilder<ScalarT>* out,
                       ParseOne parse_one) {
   if (!sp->consume('[')) return false;
   out->clear();
@@ -475,6 +478,7 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
         ScalarT v{};
         if (!parse_one(sp, &v)) return false;
         out->push_back(v);
+      if (out->failed()) return false;
         if (c + 1 < N && !sp->consume(',')) return false;
       }
       if (!sp->consume(')')) return false;
@@ -518,7 +522,7 @@ constexpr size_t kParallelChunkMinBytes = size_t(1) << 20;  // 1 MiB
 // stay byte-for-byte equivalent to the serial parse on malformed input.
 template <class T, uint32_t N, class ParseOne>
 bool ParseChunkFlat(const char* b, const char* e, bool is_last,
-                    std::vector<T>* local, ParseOne parse_one) {
+                    detail::ArrayBuilder<T>* local, ParseOne parse_one) {
   (void)is_last;  // trailing comma before ']' is valid on any chunk
   SliceParser sp{b, e};
   // Inline whitespace skip. `simple` arrays (the only ones reaching here) contain
@@ -544,6 +548,7 @@ bool ParseChunkFlat(const char* b, const char* e, bool is_last,
       T v{};
       if (!parse_one(&sp, &v)) return false;  // parse_one's own skip_ws is a no-op here
       local->push_back(v);
+      if (local->failed()) return false;
     } else {
       if (sp.p >= end || *sp.p != '(') return false;
       ++sp.p;
@@ -551,6 +556,7 @@ bool ParseChunkFlat(const char* b, const char* e, bool is_last,
         T v{};
         if (!parse_one(&sp, &v)) return false;  // parse_one skips leading ws
         local->push_back(v);
+      if (local->failed()) return false;
         skipws();
         if (i + 1 < N) {
           if (sp.p >= end || *sp.p != ',') return false;
@@ -793,7 +799,7 @@ static int ResolveParseThreads(int requested) {
 // Returns true and fills *out on success; false => caller does a serial fallback.
 template <class T, uint32_t N, class ParseOne>
 bool ParseNumericArrayParallel(const char* data, size_t len, int nt_hint,
-                               std::vector<T>* out, ParseOne parse_one) {
+                               detail::ArrayBuilder<T>* out, ParseOne parse_one) {
   // Captured span includes the outer '[' .. ']'.
   if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
   const char* content_begin = data + 1;
@@ -816,7 +822,7 @@ bool ParseNumericArrayParallel(const char* data, size_t len, int nt_hint,
     cut[k] = c;
   }
 
-  std::vector<std::vector<T>> locals(nchunks);
+  std::vector<detail::ArrayBuilder<T>> locals(nchunks);
   std::vector<char> ok(nchunks, 1);
   std::vector<std::thread> threads;
   threads.reserve(nchunks);
@@ -857,7 +863,7 @@ bool ParseNumericArrayParallel(const char* data, size_t len, int nt_hint,
 // parser blow the inline budget and un-inline fast_float.
 template <class T, uint32_t N, class ParseOne>
 bool ParseSimpleArraySerial(const char* data, size_t len,
-                            size_t expected_scalars, std::vector<T>* out,
+                            size_t expected_scalars, detail::ArrayBuilder<T>* out,
                             ParseOne parse_one) {
   if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
   out->clear();
@@ -870,7 +876,7 @@ bool ParseSimpleArraySerial(const char* data, size_t len,
 
 template <class T, class ParseOne>
 bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
-                                   int nt_hint, std::vector<T>* out,
+                                   int nt_hint, detail::ArrayBuilder<T>* out,
                                    ParseOne parse_one,
                                    size_t expected_scalars = 0) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -892,7 +898,7 @@ bool ParseScalarArrayMaybeParallel(const char* data, size_t len, bool simple,
 // Same, for paren-wrapped single-level vector tuples (float3, double2, ...).
 template <class T, uint32_t N, class ParseOne>
 bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
-                                  int nt_hint, std::vector<T>* out,
+                                  int nt_hint, detail::ArrayBuilder<T>* out,
                                   ParseOne parse_one,
                                   size_t expected_scalars = 0) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -924,6 +930,13 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
 
 // `expected_scalars` (0 = unknown) only pre-sizes the output vectors of the
 // simple-array fast paths; it never changes what is parsed.
+template<class T>
+ParseResult FinishNumericArray(detail::ArrayBuilder<T>& values, TypeId type) {
+  Value v = values.take(type);
+  return v.is_array() ? ParseResult::Ok(std::move(v))
+                      : ParseResult::Error("Unable to allocate array storage");
+}
+
 ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
                                          bool simple, int nt_hint,
                                          TypeId element_type,
@@ -935,48 +948,48 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
   auto parse_double = [](SliceParser* s, double* v) { return s->parse_double(v); };
 
   if (element_type == TypeId::Float) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, nt_hint,
                                              &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float array");
     }
-    return ParseResult::Ok(Value::MakeFloatArray(std::move(values)));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Double) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, nt_hint,
                                               &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double array");
     }
-    return ParseResult::Ok(Value::MakeDoubleArray(std::move(values)));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Half) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, nt_hint,
                                              &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse half array");
     }
     QuantizeHalfValues(&values);
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 1));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::TimeCode) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, nt_hint,
                                               &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse timecode array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 1));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Bool) {
-    std::vector<bool> values;
+    detail::ArrayBuilder<bool> values;
     auto parse_bool = [](SliceParser* s, bool* v) { return s->parse_bool(v); };
     if (!ParseScalarArray<bool>(&sp, &values, parse_bool)) {
       return ParseResult::Error("Failed to parse bool array");
     }
-    return ParseResult::Ok(Value::MakeBoolArray(values));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Int) {
-    std::vector<int32_t> values;
+    detail::ArrayBuilder<int32_t> values;
     auto parse_i32 = [](SliceParser* s, int32_t* v) {
       int64_t tmp = 0;
       if (!s->parse_i64(&tmp) || tmp < std::numeric_limits<int32_t>::min() ||
@@ -988,10 +1001,10 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
                                                &values, parse_i32, xs)) {
       return ParseResult::Error("Failed to parse int array");
     }
-    return ParseResult::Ok(Value::MakeIntArray(std::move(values)));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::UInt) {
-    std::vector<uint32_t> values;
+    detail::ArrayBuilder<uint32_t> values;
     auto parse_u32 = [](SliceParser* s, uint32_t* v) {
       uint64_t tmp = 0;
       if (!s->parse_u64(&tmp) || tmp > std::numeric_limits<uint32_t>::max()) return false;
@@ -1002,11 +1015,11 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
                                                 &values, parse_u32, xs)) {
       return ParseResult::Error("Failed to parse uint array");
     }
-    return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::UChar) {
     // uchar[]: widened into the uint32 array storage (element type UChar).
-    std::vector<uint32_t> values;
+    detail::ArrayBuilder<uint32_t> values;
     auto parse_u8 = [](SliceParser* s, uint32_t* v) {
       uint64_t tmp = 0;
       if (!s->parse_u64(&tmp) || tmp > 255) return false;
@@ -1021,27 +1034,27 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
         Value::MakeUIntCompArray(std::move(values), TypeId::UChar, 1));
   }
   if (element_type == TypeId::Int64) {
-    std::vector<int64_t> values;
+    detail::ArrayBuilder<int64_t> values;
     auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
     if (!ParseScalarArrayMaybeParallel<int64_t>(data, len, simple, nt_hint,
                                                &values, parse_i64, xs)) {
       return ParseResult::Error("Failed to parse int64 array");
     }
-    return ParseResult::Ok(Value::MakeInt64Array(std::move(values)));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::UInt64) {
-    std::vector<uint64_t> values;
+    detail::ArrayBuilder<uint64_t> values;
     auto parse_u64 = [](SliceParser* s, uint64_t* v) { return s->parse_u64(v); };
     if (!ParseScalarArrayMaybeParallel<uint64_t>(data, len, simple, nt_hint,
                                                &values, parse_u64, xs)) {
       return ParseResult::Error("Failed to parse uint64 array");
     }
-    return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Token || element_type == TypeId::String ||
       element_type == TypeId::PathExpression) {
     // pathExpression elements are quoted strings, like string[].
-    std::vector<std::string> values;
+    detail::ArrayBuilder<std::string> values;
     auto parse_stringish = [](SliceParser* s, std::string* v) {
       return s->parse_token(v);
     };
@@ -1098,7 +1111,7 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
       ++s->p;  // closing '@'
       return true;
     };
-    std::vector<std::string> values;
+    detail::ArrayBuilder<std::string> values;
     if (!ParseScalarArray<std::string>(&sp, &values, parse_asset)) {
       return ParseResult::Error("Failed to parse asset array");
     }
@@ -1115,7 +1128,7 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
       *v = static_cast<int32_t>(tmp);
       return true;
     };
-    std::vector<int32_t> values;
+    detail::ArrayBuilder<int32_t> values;
     bool ok = false;
     if (element_type == TypeId::Int2) {
       ok = ParseTupleArrayMaybeParallel<int32_t, 2>(
@@ -1128,10 +1141,7 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
           data, len, simple, nt_hint, &values, parse_i32, xs);
     }
     if (!ok) return ParseResult::Error("Failed to parse int-vector array");
-    const uint32_t comps = (element_type == TypeId::Int2)   ? 2u
-                           : (element_type == TypeId::Int3) ? 3u
-                                                            : 4u;
-    return ParseResult::Ok(Value::MakeIntCompArray(std::move(values), element_type, comps));
+    return FinishNumericArray(values, element_type);
   }
 
   if (element_type == TypeId::UInt2 || element_type == TypeId::UInt3 ||
@@ -1143,7 +1153,7 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
       *v = static_cast<uint32_t>(tmp);
       return true;
     };
-    std::vector<uint32_t> values;
+    detail::ArrayBuilder<uint32_t> values;
     bool ok = false;
     if (element_type == TypeId::UInt2) {
       ok = ParseTupleArrayMaybeParallel<uint32_t, 2>(
@@ -1156,104 +1166,101 @@ ParseResult ParseArrayValueFromSliceSized(const char* data, size_t len,
           data, len, simple, nt_hint, &values, parse_u32, xs);
     }
     if (!ok) return ParseResult::Error("Failed to parse uint-vector array");
-    const uint32_t comps = (element_type == TypeId::UInt2)   ? 2u
-                           : (element_type == TypeId::UInt3) ? 3u
-                                                             : 4u;
-    return ParseResult::Ok(Value::MakeUIntCompArray(std::move(values), element_type, comps));
+    return FinishNumericArray(values, element_type);
   }
 
   if (IsFloat2Like(element_type)) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseTupleArrayMaybeParallel<float, 2>(data, len, simple, nt_hint,
                                                &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float2 array");
     }
     if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 2));
+    return FinishNumericArray(values, element_type);
   }
   if (IsFloat3Like(element_type)) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseTupleArrayMaybeParallel<float, 3>(data, len, simple, nt_hint,
                                                &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float3 array");
     }
     if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 3));
+    return FinishNumericArray(values, element_type);
   }
   if (IsFloat4Like(element_type)) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseTupleArrayMaybeParallel<float, 4>(data, len, simple, nt_hint,
                                                &values, parse_float, xs)) {
       return ParseResult::Error("Failed to parse float4 array");
     }
     if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
+    return FinishNumericArray(values, element_type);
   }
   if (IsDouble2Like(element_type)) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseTupleArrayMaybeParallel<double, 2>(data, len, simple, nt_hint,
                                                 &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double2 array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 2));
+    return FinishNumericArray(values, element_type);
   }
   if (IsDouble3Like(element_type)) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseTupleArrayMaybeParallel<double, 3>(data, len, simple, nt_hint,
                                                 &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double3 array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 3));
+    return FinishNumericArray(values, element_type);
   }
   if (IsDouble4Like(element_type)) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseTupleArrayMaybeParallel<double, 4>(data, len, simple, nt_hint,
                                                 &values, parse_double, xs)) {
       return ParseResult::Error("Failed to parse double4 array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Matrix2f) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseMatrixArray<float, 2>(&sp, &values, parse_float)) {
       return ParseResult::Error("Failed to parse matrix2f array");
     }
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Matrix3f) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseMatrixArray<float, 3>(&sp, &values, parse_float)) {
       return ParseResult::Error("Failed to parse matrix3f array");
     }
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 9));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Matrix4f) {
-    std::vector<float> values;
+    detail::ArrayBuilder<float> values;
     if (!ParseMatrixArray<float, 4>(&sp, &values, parse_float)) {
       return ParseResult::Error("Failed to parse matrix4f array");
     }
-    return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 16));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Matrix2d) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseMatrixArray<double, 2>(&sp, &values, parse_double)) {
       return ParseResult::Error("Failed to parse matrix2d array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Matrix3d) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseMatrixArray<double, 3>(&sp, &values, parse_double)) {
       return ParseResult::Error("Failed to parse matrix3d array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 9));
+    return FinishNumericArray(values, element_type);
   }
   if (element_type == TypeId::Matrix4d) {
-    std::vector<double> values;
+    detail::ArrayBuilder<double> values;
     if (!ParseMatrixArray<double, 4>(&sp, &values, parse_double)) {
       return ParseResult::Error("Failed to parse matrix4d array");
     }
-    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 16));
+    return FinishNumericArray(values, element_type);
   }
 
   return ParseResult::Error("No optimized array parser for type");
@@ -1594,11 +1601,11 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
         float_data.push_back(f[3]);
       }
     } else if (element_type == TypeId::Token) {
-      if (const std::string* s = elem.value.as_token()) {
+      if (auto s = elem.value.as_token()) {
         string_data.push_back(*s);
       }
     } else if (element_type == TypeId::String) {
-      if (const std::string* s = elem.value.as_string()) {
+      if (auto s = elem.value.as_string()) {
         string_data.push_back(*s);
       }
     }

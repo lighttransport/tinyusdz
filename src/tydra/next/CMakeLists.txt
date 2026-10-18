@@ -20,6 +20,7 @@ set(TYDRA_NEXT_SOURCES
     render-converter-convert.cc
     render-converter-points.cc
     render-converter-curves.cc
+    render-converter-clip.cc
     render-converter-tangents.cc
     render-converter-topology.cc
     render-converter-mesh-data.cc

@@ -387,8 +387,8 @@ std::vector<int32_t> RenderStream::matIntStatic_(
     const lightusd::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
     lightusd::next::Value tmp = v->materialized_copy();
-    std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? std::move(*a) : std::vector<int32_t>{};
+    auto a = tmp.as_int_array();
+    return a ? std::vector<int32_t>(a->begin(), a->end()) : std::vector<int32_t>{};
   }
 
 void RenderStream::computeNormals_(const std::vector<float> &pos,

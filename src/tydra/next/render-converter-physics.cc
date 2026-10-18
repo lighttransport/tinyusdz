@@ -12,9 +12,9 @@ std::string ValueSummary(const Value& value) {
   if (const int64_t* v = value.as_int64()) return std::to_string(*v);
   if (const float* v = value.as_float()) return std::to_string(*v);
   if (const double* v = value.as_double()) return std::to_string(*v);
-  if (const std::string* v = value.as_string()) return *v;
-  if (const std::string* v = value.as_token()) return *v;
-  if (const std::string* v = value.as_asset_path()) return *v;
+  if (auto v = value.as_string()) return *v;
+  if (auto v = value.as_token()) return *v;
+  if (auto v = value.as_asset_path()) return *v;
   const char* name = ::lightusd::next::GetTypeName(value.type_id());
   return name ? name : "value";
 }

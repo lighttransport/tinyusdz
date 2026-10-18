@@ -105,29 +105,31 @@ void MergeWeakerDictionaryValue(
   // a time; descending immediately also keeps Value pointers stable while a
   // parent Dict's entry vector may grow.
   struct Frame {
-    Value* destination_value;
-    const Value* source_value;
+    lu_value* destination_value;
+    ValueView source_value;
     size_t next_entry;
     std::string prefix;
   };
   std::vector<Frame> stack;
-  stack.push_back(Frame{stronger, &weaker, 0, key_prefix});
+  stack.push_back(Frame{stronger->mutable_core(), weaker.view(), 0, key_prefix});
   while (!stack.empty()) {
     Frame& frame = stack.back();
-    Dict* destination = frame.destination_value->as_dictionary();
-    const Dict* source = frame.source_value->as_dictionary();
+    auto destination = MutableDictView(frame.destination_value);
+    auto source = frame.source_value->as_dictionary();
     if (!destination || !source || frame.next_entry >= source->entries().size()) {
       stack.pop_back();
       continue;
     }
 
     const auto& entry = source->entries()[frame.next_entry++];
-    Value* existing = destination->find(entry.first);
+    auto existing = destination->find(entry.first);
     if (!existing) {
       destination->set(entry.first, entry.second);
     } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
-      stack.push_back(
-          Frame{existing, &entry.second, 0, frame.prefix + entry.first + "."});
+      lu_value* mutable_child = lu_value_dict_mutable_value(
+          frame.destination_value, entry.first.data(), entry.first.size());
+      if (mutable_child) stack.push_back(
+          Frame{mutable_child, entry.second, 0, frame.prefix + entry.first + "."});
     } else if (conflicts &&
                existing->is_dictionary() != entry.second.is_dictionary()) {
       conflicts->push_back(frame.prefix + entry.first);
@@ -584,7 +586,7 @@ size_t TimeSampleBlock::remap_asset_paths(
   if (remap.empty()) return 0;
   size_t count = 0;
   for (Value& value : values_) {
-    const std::string* path = value.as_asset_path();
+    auto path = value.as_asset_path();
     if (!path) continue;
     const std::string* mapped = FindAssetPathRemap(remap, *path);
     if (!mapped) continue;

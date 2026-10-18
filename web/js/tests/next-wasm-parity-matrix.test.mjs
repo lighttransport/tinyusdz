@@ -56,7 +56,10 @@ for (const row of matrix) {
     assert.ok(row.knownDifference, 'test-only exclusion must document its scope');
   } else if (row.parityStatus === 'known_behavior_gap') {
     assert.ok(row.knownDifference, 'known behavior gap must document the observed delta');
-    if (row.nextSurface === 'NextModule') {
+    if (row.nextSurface === 'ValidatorFeature') {
+      assert.equal(row.nextEquivalent, 'validateFromBinary');
+      assert.ok(nextModule.has('loadFeature'), 'validator must be available through loadFeature');
+    } else if (row.nextSurface === 'NextModule') {
       assert.equal(row.family, 'loading_and_diagnostics');
       assert.ok(nextModule.has(row.nextEquivalent),
         `mapped NextModule function missing: ${row.nextEquivalent}`);

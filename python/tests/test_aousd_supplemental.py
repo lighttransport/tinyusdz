@@ -113,7 +113,7 @@ def test_aousd_file_formats_load():
             if "points" in prim:
                 arr = prim["points"]
                 a = np.asarray(arr)
-                assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+                assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
                 break
         ok += 1
     print(f"[aousd] file_formats ok {ok}/{len(files)}")

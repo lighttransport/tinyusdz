@@ -322,7 +322,7 @@ def Xform "W" (
     assert(w.GetMeta().instanceable == true);
     // customData dictionary
     assert(w.GetMeta().customData().is_dictionary());
-    const Dict* cd = w.GetMeta().customData().as_dictionary();
+    auto cd = w.GetMeta().customData().as_dictionary();
     assert(cd && cd->find("note") && cd->find("note")->as_string());
     assert(*cd->find("note")->as_string() == "hello");
     // String/token arrays carry real values (regression for the data-loss bug)

@@ -456,12 +456,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     add_dependencies(lightusd_next_distribution lightusd_exr_wasm)
   endif()
 
-  # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
-  target_sources(lightusd_next_wasm PRIVATE
-    ${PROJECT_SOURCE_DIR}/../src/sha256.cc
-    ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
-    ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
-    ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
+  target_sources(lightusd_next_wasm PRIVATE ../src/sha256.cc binding-feature.c)
+  add_executable(lightusd_geometry_wasm EXCLUDE_FROM_ALL
+    binding-geometry.cc meshopt-wasm.cc binding-feature.c
+    $<TARGET_OBJECTS:lightusd_subdiv_objects>
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/allocator.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/clusterizer.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexanalyzer.cpp
@@ -478,11 +476,22 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp)
+  add_executable(lightusd_raytrace_wasm EXCLUDE_FROM_ALL
+    lightrt-wasm.cc binding-feature.c
+    ../src/external/lightrt/lightrt_c.c ../src/external/lightrt/lightrt_c_tri.c)
+  foreach(feature geometry raytrace)
+    target_include_directories(lightusd_${feature}_wasm PRIVATE ../src)
+    target_compile_definitions(lightusd_${feature}_wasm PRIVATE LIGHTUSD_NEXT_TYPED_BINDINGS=1)
+    target_compile_options(lightusd_${feature}_wasm PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions> $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    add_dependencies(lightusd_next_distribution lightusd_${feature}_wasm)
+  endforeach()
   target_link_libraries(lightusd_next_wasm PRIVATE
     tydra_next lightusd_c lightusd_next)
   target_include_directories(lightusd_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
   target_compile_features(lightusd_next_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_next_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/feature-runtime.js"
     "${PROJECT_SOURCE_DIR}/next-api.js")
   target_compile_options(lightusd_next_wasm
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
@@ -540,7 +549,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   endif()
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
   string(APPEND LIGHTUSD_NEXT_EMCC_LINK_FLAGS
-    " --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
+    " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/next-api.js\"")
 
   set_target_properties(
       lightusd_next_wasm
@@ -548,6 +557,24 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
                  SUFFIX ".js"
                  RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
                  LINK_FLAGS "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+  foreach(feature geometry raytrace)
+    set(feature_output lightusd_${feature})
+    if(LIGHTUSD_WASM64)
+      string(APPEND feature_output "_64")
+    endif()
+    string(REPLACE "${PROJECT_SOURCE_DIR}/next-api.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js"
+      feature_flags "${LIGHTUSD_NEXT_EMCC_LINK_FLAGS}")
+    set_target_properties(lightusd_${feature}_wasm PROPERTIES OUTPUT_NAME ${feature_output}
+      SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${feature_flags}")
+    set_property(TARGET lightusd_${feature}_wasm APPEND PROPERTY LINK_DEPENDS
+      "${PROJECT_SOURCE_DIR}/feature-runtime.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js")
+  endforeach()
+  foreach(feature validator exr)
+    if(TARGET lightusd_${feature}_wasm)
+      target_sources(lightusd_${feature}_wasm PRIVATE binding-feature.c)
+      target_include_directories(lightusd_${feature}_wasm PRIVATE ../src)
+    endif()
+  endforeach()
   set(VALIDATOR_OUTPUT lightusd_validator)
   if(LIGHTUSD_WASM64)
     string(APPEND VALIDATOR_OUTPUT "_64")
@@ -591,6 +618,7 @@ list(
   SOURCES
   binding.cc
   lightrt-wasm.cc
+  meshopt-wasm.cc
   ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/allocator.cpp
   ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/clusterizer.cpp
   ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/indexanalyzer.cpp

@@ -205,7 +205,7 @@ double D(const PrimSpec &prim, const std::string &name) {
 }
 
 std::string Tok(const PrimSpec &prim, const std::string &name) {
-  const std::string *t = Val(prim, name).as_token();
+  auto t = Val(prim, name).as_token();
   assert(t);
   return *t;
 }
@@ -231,9 +231,9 @@ std::vector<std::string> Children(const std::string &path) {
 }
 
 std::vector<double> Doubles(const PrimSpec &prim, const std::string &name) {
-  const std::vector<double> *values = Val(prim, name).as_double_array();
+  auto values = Val(prim, name).as_double_array();
   assert(values);
-  return *values;
+  return {values->begin(), values->end()};
 }
 
 using Strings = std::vector<std::string>;

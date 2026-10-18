@@ -938,7 +938,8 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     } else if (key == "displayGroupOrder") {
       ParseResult r = ParseArrayValue(*lexer_, TypeId::String);
       if (r.success && r.value.as_token_array()) {
-        prim->meta().editDisplayGroupOrder() = *r.value.as_token_array();
+        const auto names = r.value.as_token_array();
+            prim->meta().editDisplayGroupOrder().assign(names.begin(), names.end());
         prim->meta().setDisplayGroupOrderAuthored();
       }
     } else if (key == "instanceable") {

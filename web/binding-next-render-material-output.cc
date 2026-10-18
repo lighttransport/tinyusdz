@@ -785,7 +785,7 @@ int RenderStream::meshSubsetOutputCopy(int mesh_id, uint8_t* out,
     if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
     const lightusd::next::Value* family = child.GetPropertyValue("familyName");
     if (family) {
-      const std::string* token = family->as_token();
+      auto token = family->as_token();
       if (token && *token != "materialBind") continue;
     }
     std::vector<int32_t> faces = matIntStatic_(child, "indices");

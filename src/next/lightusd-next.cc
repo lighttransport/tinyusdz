@@ -176,23 +176,6 @@ bool LoadUSD(const std::string& filename, Stage* stage,
   }
 }
 
-namespace {
-
-// True if the root layer carries any composition arc the compositor must
-// resolve: sublayers, or per-prim references/payloads/inherits/specializes/
-// variants. A self-contained layer flattens to itself, so composing it is pure
-// overhead (and must be skipped to preserve the lazy single-file fast path).
-bool RootNeedsComposition(const Layer& root) {
-  if (!root.meta().subLayers.empty()) return true;
-  for (const PrimSpec& prim : root.prims()) {
-    if (HasCompositionArcs(prim)) return true;
-  }
-  return false;
-}
-
-
-}  // namespace
-
 bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn, std::string* err,
                      const pcp::CompositionOptions* comp_opts) {
@@ -202,7 +185,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
 
 bool StageNeedsComposition(const Stage& stage) {
   const Layer* root = stage.GetRootLayer();
-  return root && RootNeedsComposition(*root);
+  return root && LayerNeedsComposition(*root);
 }
 
 bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
@@ -220,8 +203,8 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     return false;
   }
   Layer* root = stage->GetRootLayer();
-  if (!root || !RootNeedsComposition(*root)) {
-    // No external/internal arcs to resolve — keep the lazy stage as-is. This is
+  if (!root || !LayerNeedsComposition(*root)) {
+    // No composition work to resolve — keep the lazy stage as-is. This is
     // the byte-identical fast path for pre-flattened / self-contained scenes.
     return true;
   }

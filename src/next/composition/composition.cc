@@ -898,5 +898,26 @@ bool HasCompositionArcs(const PrimSpec& prim) {
          !meta.variantSets().empty();
 }
 
+bool LayerNeedsComposition(const Layer& layer) {
+  if (!layer.meta().subLayers.empty() || !layer.meta().relocates.empty())
+    return true;
+  for (const PrimSpec& prim : layer.prims()) {
+    const PrimMetadata& meta = prim.meta();
+    if (HasCompositionArcs(prim) || prim.needs_property_composition() ||
+        (meta.active_authored && !meta.active) || !meta.relocates().empty() ||
+        meta.variantSetNameEdits().authored ||
+        !meta.variantSelections().empty() ||
+        (meta.apiSchemaEdits().authored && !meta.apiSchemaEdits().is_explicit))
+      return true;
+    const ArcListOps* edits = meta.arc_edits();
+    if (edits && (edits->references.has_authored_opinion() ||
+                  edits->payloads.has_authored_opinion() ||
+                  edits->inherits.has_authored_opinion() ||
+                  edits->specializes.has_authored_opinion()))
+      return true;
+  }
+  return false;
+}
+
 }  // namespace next
 }  // namespace lightusd

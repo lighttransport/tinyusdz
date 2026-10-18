@@ -325,8 +325,8 @@ void Compositor::CopyLocalOpinions(
       if (target_value && source_value &&
           target_value->type_id() == TypeId::PathExpression &&
           source_value->type_id() == TypeId::PathExpression) {
-        const std::string* stronger = target_value->as_string();
-        const std::string* weaker = source_value->as_string();
+        auto stronger = target_value->as_string();
+        auto weaker = source_value->as_string();
         if (stronger && weaker) {
           const std::string resolved = ResolveWeakerPathExpressionText(
               *stronger, *weaker);

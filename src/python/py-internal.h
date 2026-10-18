@@ -4,7 +4,7 @@
  * lightusd._core — shared internals.
  *
  * Single source, two build configurations:
- *   - abi3 wheel:  compiled with Py_LIMITED_API=0x030A0000 (Python 3.10+)
+ *   - abi3 wheel:  compiled with Py_LIMITED_API=0x030B0000 (Python 3.11+)
  *   - cp31Xt wheel: compiled non-limited on free-threaded CPython
  *     (Py_GIL_DISABLED comes from pyconfig.h), declares Py_mod_gil.
  *
@@ -27,16 +27,6 @@
 #include <string.h>
 
 #include "lightusd-c.h"
-
-/* PyBUF_READ/WRITE live behind the 3.11 limited-API guard in pybuffer.h, but
- * PyMemoryView_FromMemory (limited API since 3.3) needs them. Values are
- * ABI-stable. */
-#ifndef PyBUF_READ
-#define PyBUF_READ 0x100
-#endif
-#ifndef PyBUF_WRITE
-#define PyBUF_WRITE 0x200
-#endif
 
 /* ============================================================
  * Module state
@@ -76,6 +66,9 @@ typedef struct {
    * items:tuple[str]) */
   PyObject* normalizer;
 } lightusd_state;
+
+int lightusd_numbers_from_python(lightusd_state*, lightusd_type, uint8_t array,
+    size_t count, PyObject* data, lightusd_value** out);
 
 /* State lookup: module-level functions receive the module as self; methods on
  * our heap types recover the module via their defining type. */
@@ -123,18 +116,14 @@ typedef struct {
   PyObject* attr; /* strong ref to Attribute (LightUSDNamedRef) */
 } LightUSDTimeSamples;
 
-/* Zero-copy array view. Data lives either in stage-owned storage (owner keeps
- * the Stage/lightusd_value wrapper alive) or in an owned lightusd_value. */
+/* Immutable array backed by a retained C11 storage pin. */
 typedef struct {
   PyObject_HEAD
-  PyObject* owner;        /* strong ref keeping the memory alive (may be NULL
-                             when owned_value is set) */
-  lightusd_value* owned;      /* owned value destroyed in dealloc (may be NULL) */
+  lightusd_buffer* buffer;
   lightusd_value_view view;
-  Py_ssize_t shape[2];
+  Py_ssize_t shape[2], strides[2];
   int ndim;
-  char format[4];       /* struct-style format char for the storage type */
-  char typestr[8];      /* numpy __array_interface__ typestr, e.g. "<f4" */
+  char format[4];
   Py_ssize_t itemsize;
 } LightUSDArray;
 
@@ -163,6 +152,7 @@ PyObject* lightusd_raise(lightusd_state* st, lightusd_status status, const char*
 
 /* Wrap helpers (all return new references, NULL on error). */
 PyObject* lightusd_wrap_prim(lightusd_state* st, PyObject* stage_obj, lightusd_prim prim);
+PyObject* lightusd_wrap_array_pin(lightusd_state* st, lightusd_buffer* pin);
 PyObject* lightusd_wrap_array_borrowed(lightusd_state* st, PyObject* owner,
                                    const lightusd_value_view* view);
 PyObject* lightusd_wrap_array_owned(lightusd_state* st, lightusd_value* owned,

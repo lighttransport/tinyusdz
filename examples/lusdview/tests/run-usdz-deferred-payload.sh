@@ -161,8 +161,12 @@ child.on('exit', (code, signal) => {
     throw new Error(`payload recomposition did not start: ${JSON.stringify(started)}`);
   }
 
+  // Wall-clock deadline (sanitizer builds recompose much slower); the
+  // completion assertion below is unchanged.
+  const budgetMs = Number(process.env.LUSDVIEW_DEFERRED_PAYLOAD_TIMEOUT_MS) || 10000;
+  const deadline = Date.now() + budgetMs;
   let lastInfo = initial;
-  for (let attempt = 0; attempt < 120; ++attempt) {
+  while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 25));
     const info = await call('get_scene_info');
     lastInfo = info;

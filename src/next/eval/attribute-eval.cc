@@ -84,7 +84,7 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
     if (conn_slot && conn_slot->is_connection()) {
       const Value* conn_value = spec->property_value(conn_slot->name_id);
       if (conn_value) {
-        const std::string* path = conn_value->as_string();
+        auto path = conn_value->as_string();
         if (path && !path->empty()) {
           EvalResult conn_result = FollowConnection(*path, opts, depth + 1);
           if (conn_result.success) {
@@ -411,7 +411,7 @@ std::optional<std::string> AttributeEval::EvalString(const UsdPrim& prim,
                                                       const std::string& attr_name) const {
   EvalResult result = Eval(prim, attr_name);
   if (!result.success) return std::nullopt;
-  const std::string* v = result.value.as_string();
+  auto v = result.value.as_string();
   return v ? std::optional<std::string>(*v) : std::nullopt;
 }
 
@@ -419,7 +419,7 @@ std::optional<std::string> AttributeEval::EvalToken(const UsdPrim& prim,
                                                      const std::string& attr_name) const {
   EvalResult result = Eval(prim, attr_name);
   if (!result.success) return std::nullopt;
-  const std::string* v = result.value.as_token();
+  auto v = result.value.as_token();
   return v ? std::optional<std::string>(*v) : std::nullopt;
 }
 
@@ -427,7 +427,7 @@ std::optional<std::string> AttributeEval::EvalAssetPath(const UsdPrim& prim,
                                                          const std::string& attr_name) const {
   EvalResult result = Eval(prim, attr_name);
   if (!result.success) return std::nullopt;
-  const std::string* v = result.value.as_asset_path();
+  auto v = result.value.as_asset_path();
   return v ? std::optional<std::string>(*v) : std::nullopt;
 }
 
@@ -435,9 +435,9 @@ bool AttributeEval::EvalFloatArray(const UsdPrim& prim, const std::string& attr_
                                     std::vector<float>* out) const {
   EvalResult result = Eval(prim, attr_name);
   if (!result.success) return false;
-  const std::vector<float>* v = result.value.as_float_array();
+  auto v = result.value.as_float_array();
   if (!v) return false;
-  *out = *v;
+  out->assign(v->begin(), v->end());
   return true;
 }
 
@@ -445,9 +445,9 @@ bool AttributeEval::EvalIntArray(const UsdPrim& prim, const std::string& attr_na
                                   std::vector<int32_t>* out) const {
   EvalResult result = Eval(prim, attr_name);
   if (!result.success) return false;
-  const std::vector<int32_t>* v = result.value.as_int_array();
+  auto v = result.value.as_int_array();
   if (!v) return false;
-  *out = *v;
+  out->assign(v->begin(), v->end());
   return true;
 }
 

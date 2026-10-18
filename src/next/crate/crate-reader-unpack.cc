@@ -214,7 +214,7 @@ bool CrateReader::Impl::DecodeTimeSamples(
 
   Value times_val;
   if (!UnpackValue(ValueRep(times_rep_raw), times_val, depth + 1)) return false;
-  const std::vector<double>* times = times_val.as_double_array();
+  auto times = times_val.as_double_array();
   if (!times) return false;
   for (double time : *times) {
     if (!std::isfinite(time)) return false;
@@ -294,7 +294,7 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
       return false;
     }
     Value dict_value = Value::MakeDictionary();
-    Dict* dict = dict_value.as_dictionary();
+    auto dict = dict_value.as_dictionary();
     for (uint64_t di = 0; di < dict_count; ++di) {
       uint32_t key_index = 0;
       if (!reader()->read_u32(key_index)) return false;

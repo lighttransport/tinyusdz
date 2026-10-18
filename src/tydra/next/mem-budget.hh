@@ -247,6 +247,12 @@ class MemBudget {
 // Oversize requests bypass the pool. A retained-free-bytes cap prevents hoarding.
 class MemPool {
  public:
+  ~MemPool() {
+    for (const auto& bucket : free_) {
+      for (void* block : bucket) std::free(block);
+    }
+  }
+
   static MemPool &Get() {
     static MemPool p;
     return p;

@@ -566,7 +566,7 @@ void TestDeferredAndCompressedBudget() {
     CrateReader raw_reader(raw_options);
     const auto raw = raw_reader.Read(raw_bytes.data(), raw_bytes.size());
     assert(raw.success);
-    const auto* actual = raw.stage.GetRootLayer()->prim_at_path("/P")
+    const auto actual = raw.stage.GetRootLayer()->prim_at_path("/P")
         ->property_value("a")->as_bool_array();
     assert(actual && *actual == std::vector<uint8_t>({0, 1, 1, 1, 1}));
   }
@@ -627,7 +627,7 @@ void TestCompressedFloatingArrays() {
         assert(prim);
         const auto* value = prim->property_value("a");
         assert(value);
-        const auto* actual = value->as_float_array();
+        auto actual = value->as_float_array();
         assert(actual && *actual == expected);
       }
     }

@@ -12584,16 +12584,16 @@ class RenderStream {
   std::vector<float> matFloat_(const lightusd::next::UsdPrim &prim, const char *name) {
     const lightusd::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    lightusd::next::Value tmp = *v;
-    const std::vector<float> *a = tmp.as_float_array();
-    return a ? *a : std::vector<float>{};
+    const auto a = v->as_float_array();
+    if (!a || a.empty()) return {};
+    return std::vector<float>(a.begin(), a.end());
   }
   std::vector<int32_t> matInt_(const lightusd::next::UsdPrim &prim, const char *name) {
     const lightusd::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    lightusd::next::Value tmp = *v;
-    const std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? *a : std::vector<int32_t>{};
+    const auto a = v->as_int_array();
+    if (!a || a.empty()) return {};
+    return std::vector<int32_t>(a.begin(), a.end());
   }
 
   // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
@@ -13205,8 +13205,8 @@ class RenderStream {
     if (!tex.IsValid()) return "";
     const lightusd::next::Value *v = tex.GetPropertyValue("inputs:file");
     if (!v) return "";
-    if (const std::string *a = v->as_asset_path()) return *a;
-    if (const std::string *s = v->as_string()) return *s;
+    if (auto a = v->as_asset_path()) return *a;
+    if (auto s = v->as_string()) return *s;
     return "";
   }
 
@@ -13272,9 +13272,9 @@ class RenderStream {
       const lightusd::next::UsdPrim &prim, const char *name) {
     const lightusd::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    lightusd::next::Value tmp = *v;
-    const std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? *a : std::vector<int32_t>{};
+    const auto a = v->as_int_array();
+    if (!a || a.empty()) return {};
+    return std::vector<int32_t>(a.begin(), a.end());
   }
 
   // Area-weighted vertex normals from the triangulated indices.
@@ -13478,7 +13478,7 @@ class RenderStream {
       if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
       const lightusd::next::Value *family = child.GetPropertyValue("familyName");
       if (family) {
-        const std::string *tok = family->as_token();
+        auto tok = family->as_token();
         if (tok && *tok != "materialBind") continue;
       }
       std::vector<int32_t> faces = matIntStatic_(child, "indices");

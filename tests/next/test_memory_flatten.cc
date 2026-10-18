@@ -694,7 +694,7 @@ def Xform "Scene"
       CHECK(image != nullptr, "localized MaterialX image node composed");
       if (image) {
         const Value* file = image->property_value("inputs:file");
-        const std::string* path = file ? file->as_asset_path() : nullptr;
+        auto path = file ? file->as_asset_path() : nullptr;
         CHECK(path && *path == "textures/wood.jpg",
               "MaterialX image filename remains layer-relative");
       }
@@ -715,7 +715,35 @@ def Xform "Scene"
   }
 }
 
+static void test_local_array_edits_without_arcs() {
+  const std::string source =
+      "#usda 1.0\ndef Xform \"Root\" {\n"
+      "custom int[] a = edit [append 1; append 2]\n}\n";
+  for (bool pcp : {false, true}) {
+    pipeline::FlattenOptions options;
+    options.use_pcp_compose = pcp;
+    std::vector<uint8_t> out;
+    std::string err;
+    const bool ok = pipeline::FlattenUSDMemoryToUSDCOwned(
+        "root.usda", std::string(source), out, options, nullptr, &err);
+    CHECK(ok, "local array edits flatten through both composition engines");
+    if (!ok) continue;
+    USDCLoadResult read = LoadUSDCFromMemory(out.data(), out.size());
+    CHECK(read.success, "locally flattened crate parses");
+    if (!read.success) continue;
+    const PrimSpec* prim = read.stage.GetRootLayer()->prim_at_path("/Root");
+    CHECK(prim != nullptr, "local flatten retains the prim");
+    if (!prim) continue;
+    const Value* value = prim->property_value("a");
+    auto items = value ? value->as_int_array() : ValueArrayView<const int32_t>();
+    CHECK(items && items->size() == 2 && (*items)[0] == 1 && (*items)[1] == 2,
+          "local array edits materialize into the final numeric array");
+    CHECK(prim->array_edits().empty(), "flattened crate has no residual edit");
+  }
+}
+
 int main() {
+  test_local_array_edits_without_arcs();
   test_shared_asset_payload_budget();
   test_usda_progress_and_cancellation();
   test_crate_and_usdz_file_size_limits();

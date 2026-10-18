@@ -5793,7 +5793,7 @@ def Xform "World"
     UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
     assert(anim.IsValid());
     Value mid = anim.GetInterpolatedValue("rotations", 2.0);
-    const std::vector<float>* lanes = mid.as_float_array();
+    auto lanes = mid.as_float_array();
     assert(lanes && lanes->size() == 8);
     assert(std::fabs((*lanes)[0] - 0.9238795f) < 1e-4f);  // cos(22.5deg)
     assert(std::fabs((*lanes)[1] - 0.3826834f) < 1e-4f);  // sin(22.5deg)

@@ -663,7 +663,6 @@ class Gui {
   bool showGrid_{true};
   bool showAxes_{true};
   bool showSceneBbox_{false};
-  bool showPrimBbox_{false};  // legacy config state; selection mode owns display
   bool showSkeleton_{true};
   bool virtualHumanProfile_{false};
   std::vector<VcharControl> facialControls_;

@@ -310,6 +310,12 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
     // Static reference to LightUSD WASM module for EXR fallback
     static _lightusd = null;
+    static _exr = null;
+    static async loadEXRFeature() {
+        const native = this._lightusd;
+        this._exr = native?.loadFeature ? await native.loadFeature('exr') : native;
+        return this._exr;
+    }
 
     // Lazily detected WebGL block-compression target. undefined = not probed,
     // null = no supported target. Tests may temporarily replace the detector.
@@ -386,6 +392,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
      */
     static setLightUSD(lightusd) {
         LightUSDLoaderUtils._lightusd = lightusd;
+        LightUSDLoaderUtils._exr = null;
     }
 
     /**
@@ -858,7 +865,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
                 return this.loadKTX2Texture(uri, textureId, uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
             } else if (lowerUri.endsWith('.exr')) {
-                await LightUSDLoaderUtils._lightusd?.loadEXR?.();
+                await LightUSDLoaderUtils.loadEXRFeature();
                 // EXR: Use EXRLoader
                 return new EXRLoader().loadAsync(uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
@@ -914,7 +921,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
                     // Check if HDR/EXR format - use specialized decoders
                     if (mimeType === 'image/x-exr') {
-                        await LightUSDLoaderUtils._lightusd?.loadEXR?.();
+                        await LightUSDLoaderUtils.loadEXRFeature();
                         // EXR: Use LightUSD fallback decoder
                         const texture = this.decodeEXRFromBuffer(texImage.data, 'float16');
                         if (texture) {
@@ -3121,7 +3128,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
      * @returns {THREE.DataTexture|null}
      */
     static decodeEXRFromBuffer(buffer, outputFormat = 'float16') {
-        const result = decodeEXRWithFallback(buffer, LightUSDLoaderUtils._lightusd, {
+        const result = decodeEXRWithFallback(buffer, LightUSDLoaderUtils._exr || LightUSDLoaderUtils._lightusd, {
             outputFormat,
             preferThreeJS: true,
             verbose: false,
@@ -3159,7 +3166,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             let texture = null;
 
             if (lowerUri.endsWith('.exr')) {
-                await LightUSDLoaderUtils._lightusd?.loadEXR?.();
+                await LightUSDLoaderUtils.loadEXRFeature();
                 // Use EXR decoder with LightUSD fallback
                 texture = this.decodeEXRFromBuffer(buffer, 'float16');
 
@@ -3316,7 +3323,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
             const buffer = await response.arrayBuffer();
 
             if (lowerFile.endsWith('.exr')) {
-                await LightUSDLoaderUtils._lightusd?.loadEXR?.();
+                await LightUSDLoaderUtils.loadEXRFeature();
                 // Use EXR decoder with LightUSD fallback
                 texture = this.decodeEXRFromBuffer(buffer, 'float16');
 

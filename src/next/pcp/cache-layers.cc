@@ -5,26 +5,25 @@ namespace lightusd {
 namespace next {
 namespace pcp {
 
-void Cache::Impl::AppendExpressionVarsFingerprint(const Value &vars,
+void Cache::Impl::AppendExpressionVarsFingerprint(ValueView vars,
                                               std::string *out) {
-    const Dict *d = vars.as_dictionary();
+    auto d = vars.as_dictionary();
     if (!d || d->entries().empty()) return;
-    std::vector<const std::pair<std::string, Value> *> sorted;
+    std::vector<DictEntryView> sorted;
     sorted.reserve(d->entries().size());
-    for (const auto &entry : d->entries()) sorted.push_back(&entry);
+    for (const auto &entry : d->entries()) sorted.push_back(entry);
     std::sort(sorted.begin(), sorted.end(),
-              [](const std::pair<std::string, Value> *a,
-                 const std::pair<std::string, Value> *b) {
-                return a->first < b->first;
+              [](const DictEntryView& a, const DictEntryView& b) {
+                return a.first < b.first;
               });
-    for (const auto *entry : sorted) {
+    for (const auto& entry : sorted) {
       *out += '\x1f';
-      *out += entry->first;
+      *out += entry.first;
       *out += '=';
-      const Value &v = entry->second;
-      if (const std::string *s = v.as_string()) *out += *s;
-      else if (const std::string *s = v.as_token()) *out += *s;
-      else if (const std::string *s = v.as_asset_path()) *out += *s;
+      const ValueView v = entry.second;
+      if (auto s = v.as_string()) *out += *s;
+      else if (auto s = v.as_token()) *out += *s;
+      else if (auto s = v.as_asset_path()) *out += *s;
       else if (const bool *b = v.as_bool()) *out += *b ? '1' : '0';
       else if (const int32_t *i = v.as_int()) *out += IntToStr(*i);
       else if (const int64_t *i = v.as_int64()) *out += IntToStr(*i);
@@ -45,7 +44,7 @@ uint32_t Cache::Impl::InternLayerStack(
       std::string *warn, std::string *err,
       const std::shared_ptr<const Value> &inherited_vars) {
     std::string key = identifier;
-    if (inherited_vars) AppendExpressionVarsFingerprint(*inherited_vars, &key);
+    if (inherited_vars) AppendExpressionVarsFingerprint(inherited_vars->view(), &key);
     auto it = stack_by_id.find(key);
     if (it != stack_by_id.end()) return it->second;
 
@@ -355,3 +354,13 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
 }  // namespace pcp
 }  // namespace next
 }  // namespace lightusd
+
+namespace lightusd { namespace next { namespace pcp {
+
+auto Cache::Impl::AddIssue(ErrorCode code, const std::string &site,
+                const std::string &message, std::string *err) -> void {
+    issues_.push_back(CompositionIssue{code, site, message});
+    if (err) *err += message + "\n";
+  }
+
+}}} // namespace lightusd::next::pcp

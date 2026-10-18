@@ -651,7 +651,7 @@ void test_crate_reader_audit_cluster() {
     assert(b->as_uchar() && *b->as_uchar() == 255);
     const Value* ba = a.GetPropertyValue("ba");
     assert(ba && ba->is_array() && ba->type_id() == TypeId::UChar);
-    const std::vector<uint32_t>* lanes = ba->as_uint_array();
+    auto lanes = ba->as_uint_array();
     assert(lanes && lanes->size() == 4 && (*lanes)[2] == 128 &&
            (*lanes)[3] == 255);
   }
@@ -718,7 +718,7 @@ void test_array_edit_rep_rejected() {
     assert(rr.success);
     const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
     assert(p);
-    const Dict* d = p->meta().customData().as_dictionary();
+    auto d = p->meta().customData().as_dictionary();
     assert(d && d->find("v") && d->find("v")->as_double() &&
            *d->find("v")->as_double() == 10.5);
   }
@@ -732,8 +732,8 @@ void test_array_edit_rep_rejected() {
     assert(rr.success);
     const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
     assert(p);
-    const Dict* d = p->meta().customData().as_dictionary();
-    const Value* v = d ? d->find("v") : nullptr;
+    auto d = p->meta().customData().as_dictionary();
+    auto v = d ? d->find("v") : nullptr;
     assert(!(v && v->as_double() && *v->as_double() != 10.5) &&
            "array-edit rep must not decode as a garbage scalar");
     bool warned = false;
@@ -799,8 +799,8 @@ void test_inlined_never_types_rejected() {
     assert(rr.success);
     const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
     assert(p);
-    const Dict* d = p->meta().customData().as_dictionary();
-    const Value* v = d ? d->find("v") : nullptr;
+    auto d = p->meta().customData().as_dictionary();
+    auto v = d ? d->find("v") : nullptr;
     // The value must be dropped/empty — not fabricated from the payload bits.
     assert((!v || v->is_empty()) &&
            "inlined quat/TimeSamples rep must not fabricate a value");
@@ -872,7 +872,7 @@ void test_pre070_array_count() {
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, CrateVersion{0, 6, 0},
                             no_tokens, 1024, &out));
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 3);
     assert((*fa)[0] == 1.5f && (*fa)[1] == -2.25f && (*fa)[2] == 4.0f);
 
@@ -909,7 +909,7 @@ void test_pre070_array_count() {
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, CrateVersion{0, 8, 0},
                             no_tokens, 1024, &out));
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 3);
     assert((*fa)[0] == 1.5f && (*fa)[1] == -2.25f && (*fa)[2] == 4.0f);
   }
@@ -955,7 +955,7 @@ void test_lazy_quat_array_swizzle() {
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, v08, no_tokens, 16, &out));
     assert(out.type_id() == TypeId::Quatf && out.is_array());
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 8);
     const float expect[8] = {4, 1, 2, 3, 8, 5, 6, 7};  // real-first
     for (int i = 0; i < 8; ++i) assert((*fa)[i] == expect[i]);
@@ -973,7 +973,7 @@ void test_lazy_quat_array_swizzle() {
     Value out;
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, v08, no_tokens, 16, &out));
-    const std::vector<double>* da = out.as_double_array();
+    auto da = out.as_double_array();
     assert(da && da->size() == 4);
     assert((*da)[0] == 4.0 && (*da)[1] == 1.0 && (*da)[2] == 2.0 &&
            (*da)[3] == 3.0);
@@ -992,7 +992,7 @@ void test_lazy_quat_array_swizzle() {
     Value out;
     assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
                             bytes.size(), rep, v08, no_tokens, 16, &out));
-    const std::vector<float>* fa = out.as_float_array();
+    auto fa = out.as_float_array();
     assert(fa && fa->size() == 4);
     assert((*fa)[0] == 4.0f && (*fa)[1] == 1.0f && (*fa)[2] == 2.0f &&
            (*fa)[3] == 3.0f);

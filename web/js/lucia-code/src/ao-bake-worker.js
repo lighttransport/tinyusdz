@@ -8,7 +8,7 @@ self.onmessage = async ({ data }) => {
   if (data?.type !== 'bake-occlusion') return;
   try {
     createLightUSD ||= (await import('../../src/lightusd/lightusd_next.js')).default;
-    const module = await createLightUSD(), tracer = new module.LightRTPathTracer();
+    const module = await createLightUSD(), tracer = new (module.loadFeature ? await module.loadFeature('raytrace') : module).LightRTPathTracer();
     try {
       const resolution = Math.max(64, Math.min(2048, data.resolution | 0)), samples = Math.max(1, Math.min(16, data.samples | 0));
     const triangles = data.indices.length / 3, soupPositions = expandIndexedAttribute(data.positions, data.indices, 3), soupNormals = expandIndexedAttribute(data.normals, data.indices, 3), soupColors = new Float32Array(triangles * 9).fill(1), params = new Float32Array(triangles * 12), materialIds = new Int32Array(triangles), materials = new Float32Array(10);

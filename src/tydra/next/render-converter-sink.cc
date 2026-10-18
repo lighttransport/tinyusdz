@@ -274,9 +274,9 @@ StreamConvertResult RenderSceneConverter::Impl::ConvertToSink(Stage& stage,
     if (light.type == LightType::Dome) {
       std::string texture;
       if (const Value* value = rec.prim.GetPropertyValue(kIdInputsTextureFile())) {
-        if (const std::string* p = value->as_asset_path()) texture = *p;
-        else if (const std::string* p = value->as_string()) texture = *p;
-        else if (const std::string* p = value->as_token()) texture = *p;
+        if (auto p = value->as_asset_path()) texture = *p;
+        else if (auto p = value->as_string()) texture = *p;
+        else if (auto p = value->as_token()) texture = *p;
       }
       light.params.dome.texture_id =
           texture.empty() ? -1

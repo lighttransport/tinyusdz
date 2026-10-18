@@ -78,7 +78,7 @@ int32_t NextLayerDocument::mhProfileJSONSize() {
         for (double time : times) {
           const tn::Value* sample = prim.GetValueAtTime(name, time);
           if (!sample) continue;
-          const auto* floats = sample->as_float_array();
+          auto floats = sample->as_float_array();
           if (!floats) continue;
           if (floats->size() > (kMaxJSONBytes - estimated_bytes) / 32) {
             exceeded = true; return false;
@@ -185,7 +185,7 @@ int32_t NextLayerDocument::shadingGraphJSONSize() {
           return false;
         }
         if (!charge(strings + value->array_size() * 512)) return false;
-        if (const std::string* asset = value->as_asset_path()) {
+        if (auto asset = value->as_asset_path()) {
           minijson::Value record = minijson::Value::object();
           record["primPath"] = prim.GetPath().str();
           record["propertyPath"] = prim.GetPath().str() + "." + name;

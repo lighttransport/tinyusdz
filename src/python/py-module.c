@@ -327,6 +327,19 @@ static PyObject* mod_set_normalizer(PyObject* module, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+static PyObject* mod_type_descriptor(PyObject* module, PyObject* args) {
+  unsigned int type;
+  lu_type_descriptor desc;
+  (void)module;
+  if (!PyArg_ParseTuple(args, "I:_type_descriptor", &type)) return NULL;
+  if (type > UINT16_MAX || !lightusd_type_describe((lightusd_type)type, 0, &desc) || !desc.storage) {
+    PyErr_SetString(PyExc_TypeError, "type has no numeric storage"); return NULL;
+  }
+  const lu_component_info* info = lightusd_component_get(desc.storage);
+  char format[2] = {info->format, 0};
+  return Py_BuildValue("(is)", (int)desc.components, format);
+}
+
 static PyObject* mod_type_from_name(PyObject* module, PyObject* args) {
   (void)module;
   const char* name;
@@ -359,6 +372,7 @@ static PyMethodDef module_methods[] = {
      "to_render_scene(stage, *, triangulate=True, compute_normals=True, "
      "compute_tangents=False, load_textures=True, time=0.0, "
      "duplicate_instance_meshes=False) -> RenderScene"},
+    {"_type_descriptor", mod_type_descriptor, METH_VARARGS, "Numeric type layout."},
     {"_set_normalizer", mod_set_normalizer, METH_VARARGS,
      "Register the value normalizer used by authoring APIs (internal)."},
     {"type_from_name", mod_type_from_name, METH_VARARGS,

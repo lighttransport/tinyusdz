@@ -5,7 +5,7 @@
 #include "minijson.hh"
 #include <cstddef>
 #include <string>
-namespace lightusd { namespace next { class Value; } }
+namespace lightusd { namespace next { class Value; class ValueView; } }
 
 namespace lightusd {
 namespace web_next {
@@ -18,8 +18,8 @@ bool ParseLayerJSONValue(const minijson::Value& encoded,
 bool ParseLayerJSONMetadataValue(const minijson::Value& encoded,
                                 ::lightusd::next::Value* out, size_t depth,
                                 size_t* value_count);
-minijson::Value LayerMetadataValueJSON(const ::lightusd::next::Value& value);
-size_t MetadataValueEntryCount(const ::lightusd::next::Value& value);
+minijson::Value LayerMetadataValueJSON(::lightusd::next::ValueView value);
+size_t MetadataValueEntryCount(::lightusd::next::ValueView value);
 }  // namespace layer_json_detail
 
 }  // namespace web_next

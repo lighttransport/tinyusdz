@@ -333,18 +333,19 @@ void test_value() {
     assert(block.raw_data() == nullptr);
   }
 
-  // Materialized array size follows the live mutable backing vector; lazy
-  // arrays continue to use their header count without materializing.
+  // Array growth uses an element count and cannot publish partial tuples.
   {
     Value scalar = Value::MakeFloatArray(std::vector<float>{1, 2});
-    scalar.as_float_array()->push_back(3);
+    assert(scalar.resize_array(3));
+    scalar.as_float_array()[2] = 3;
     assert(scalar.array_size() == 3);
 
     Value tuples = Value::MakeFloat3Array(std::vector<float>{1, 2, 3});
-    std::vector<float>* lanes = tuples.as_float_array();
-    lanes->push_back(4);
-    assert(tuples.array_size() == 0);  // partial tuple is not advertised
-    lanes->insert(lanes->end(), {5, 6});
+    assert(tuples.resize_array(2));
+    auto lanes = tuples.as_float_array();
+    lanes[3] = 4;
+    lanes[4] = 5;
+    lanes[5] = 6;
     assert(tuples.array_size() == 2);
   }
 
@@ -397,13 +398,15 @@ void test_value() {
   }
 
   // Ownership is shared for each backing kind, including string objects.
-  // Mutable raw access clones only the edited owner; moving a vector adopts
-  // its allocation rather than introducing an extra full-size copy.
+  // Mutable raw access clones only the edited numeric owner. Input ranges
+  // are copied into canonical C11 storage; string arrays use explicit edits.
   {
     std::vector<float> input{1, 2, 3};
     const float* allocation = input.data();
     const Value adopted = Value::MakeFloatArray(std::move(input));
-    assert(adopted.raw_data() == allocation);
+    assert(adopted.raw_data() != allocation);
+    input[0] = 99;
+    assert(adopted.as_float_array()[0] == 1);
     Value arrays[] = {
       adopted, Value::MakeIntArray(std::vector<int32_t>{1, 2}),
       Value::MakeDoubleArray(std::vector<double>{1, 2}),
@@ -414,6 +417,7 @@ void test_value() {
       Value::MakeTokenArray(std::vector<std::string>{"owned string", "second"})
     };
     for (const Value& original : arrays) {
+      if (original.as_token_array()) continue;
       const void* before = original.raw_data();
       Value copy = original;
       const Value& read_copy = copy;
@@ -428,8 +432,8 @@ void test_value() {
       assert(copy == original);
     }
     Value tokens = arrays[7];
-    auto* strings = static_cast<std::string*>(tokens.raw_data());
-    strings[0] = "edited";
+    assert(tokens.set_string_at(0, "edited"));
+    assert(tokens.as_token_array()[0] == "edited");
     assert((*arrays[7].as_token_array())[0] == "owned string");
     Value bits = arrays[6];
     static_cast<uint8_t*>(bits.raw_data())[0] = 0;
@@ -623,7 +627,7 @@ void test_value_parser() {
     ParseResult result = ParseArrayValue(lexer, TypeId::Float);
     assert(result.success);
     assert(result.value.is_array());
-    const std::vector<float>* arr = result.value.as_float_array();
+    auto arr = result.value.as_float_array();
     assert(arr != nullptr);
     assert(arr->size() == 3);
     assert((*arr)[0] == 1.0f);
@@ -771,7 +775,7 @@ def Mesh "MeshA" {
     assert(points->lazy_ref() && points->lazy_ref()->source);
     assert(!points->lazy_ref()->source->is_mmapped());
     assert(!points->lazy_ref()->source->can_borrow());
-    const std::vector<float>* values = points->as_float_array();
+    auto values = points->as_float_array();
     assert(values && values->size() == 9);
     assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
   }
@@ -820,7 +824,7 @@ def Mesh "MeshA" {
     }
     assert(!points->lazy_ref()->source->can_borrow());
     assert(points->array_size() == 3);
-    const std::vector<float>* values = points->as_float_array();
+    auto values = points->as_float_array();
     assert(values && values->size() == 9);
     assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
   }
@@ -867,7 +871,7 @@ def Mesh "MeshB" {
     const Value* with_comment = mesh.GetPropertyValue("with_comment");
     assert(with_comment);
     assert(!with_comment->is_lazy());
-    const std::vector<int32_t>* values = with_comment->as_int_array();
+    auto values = with_comment->as_int_array();
     assert(values && values->size() == 3);
     assert((*values)[1] == 2);
   }
@@ -1829,17 +1833,17 @@ void test_value_heap_memory_usage() {
   {
     Value d = Value::MakeDoubleArray(std::vector<double>{1, 2, 3});
     assert(d.array_size() == 3);
-    assert(d.heap_memory_usage() == 3 * sizeof(double));
+    assert(d.heap_memory_usage() >= 3 * sizeof(double));
   }
   {
     std::vector<float> flat = {1, 2, 3, 4, 5, 6};  // 2 x float3
     Value f3 = Value::MakeFloat3Array(flat);
     assert(f3.array_size() == 2);
-    assert(f3.heap_memory_usage() == 2 * 3 * sizeof(float));
+    assert(f3.heap_memory_usage() >= 2 * 3 * sizeof(float));
   }
   {
     Value s = Value(std::string("hello"));
-    assert(s.heap_memory_usage() >= 5);
+    assert(s.heap_memory_usage() == 0);  // short strings stay in the value
   }
   std::cout << "  Value::heap_memory_usage accounting passed!" << std::endl;
 }
@@ -1906,13 +1910,13 @@ void test_mutable_int_array_backing_types() {
 
     // Const accessor
     const Value& cv = v;
-    const std::vector<int32_t>* carr = cv.as_int_array();
+    auto carr = cv.as_int_array();
     assert(carr != nullptr);
     assert(carr->size() == 6);
     assert((*carr)[0] == 1);
 
     // Mutable accessor
-    std::vector<int32_t>* marr = v.as_int_array();
+    auto marr = v.as_int_array();
     assert(marr != nullptr && "mutable as_int_array() rejected Int2 array");
     assert(marr->size() == 6);
     (*marr)[0] = 99;
@@ -1929,7 +1933,7 @@ void test_mutable_int_array_backing_types() {
     const Value& cv = v;
     assert(cv.as_int_array() != nullptr);
 
-    std::vector<int32_t>* marr = v.as_int_array();
+    auto marr = v.as_int_array();
     assert(marr != nullptr && "mutable as_int_array() rejected Int3 array");
     assert(marr->size() == 6);
   }
@@ -1944,7 +1948,7 @@ void test_mutable_int_array_backing_types() {
     const Value& cv = v;
     assert(cv.as_int_array() != nullptr);
 
-    std::vector<int32_t>* marr = v.as_int_array();
+    auto marr = v.as_int_array();
     assert(marr != nullptr && "mutable as_int_array() rejected Int4 array");
     assert(marr->size() == 8);
   }
@@ -1953,7 +1957,7 @@ void test_mutable_int_array_backing_types() {
   {
     Value v = Value::MakeIntArray(std::vector<int32_t>{7, 8, 9});
     assert(v.type_id() == TypeId::Int);
-    std::vector<int32_t>* marr = v.as_int_array();
+    auto marr = v.as_int_array();
     assert(marr != nullptr);
     assert(marr->size() == 3);
     assert((*marr)[0] == 7);

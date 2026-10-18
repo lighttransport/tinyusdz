@@ -719,9 +719,9 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
           std::string tex;
           const Value* fv = rec.prim.GetPropertyValue(kIdInputsTextureFile());
           if (fv) {
-            if (const std::string* ap = fv->as_asset_path()) tex = *ap;
-            else if (const std::string* s = fv->as_string()) tex = *s;
-            else if (const std::string* t = fv->as_token()) tex = *t;
+            if (auto ap = fv->as_asset_path()) tex = *ap;
+            else if (auto s = fv->as_string()) tex = *s;
+            else if (auto t = fv->as_token()) tex = *t;
           }
           if (!tex.empty()) {
             light.params.dome.texture_id = ResolveImageId(

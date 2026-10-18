@@ -349,6 +349,29 @@ void usdz_convert_png_roundtrip_test(void) {
   }
 }
 
+// Exercise SIMD sRGB encoding at black/midpoint/white without forming a
+// pointer before the lookup table. Alpha remains linear for RGBA.
+void usdz_convert_srgb_resize_test(void) {
+  using namespace lightusd;
+  for (int channels = 1; channels <= 4; ++channels) {
+    for (uint8_t value : {uint8_t(0), uint8_t(128), uint8_t(255)}) {
+      const Image img = MakeSolidImage(32, 16, channels, value, value, value, 200);
+      Image out;
+      std::string err;
+      const bool ok = tydra::ResizeImage(
+          img, 16, 8, &out, tydra::ResizeFilter::SRGB, &err);
+      TEST_CHECK(ok);
+      if (!ok) { TEST_MSG("sRGB resize: %s", err.c_str()); continue; }
+      TEST_CHECK(out.width == 16 && out.height == 8 && out.channels == channels);
+      TEST_CHECK(out.data.size() == size_t(16 * 8 * channels));
+      for (size_t i = 0; i < out.data.size(); ++i) {
+        const uint8_t expected = channels == 4 && i % 4 == 3 ? uint8_t(200) : value;
+        TEST_CHECK(std::abs(int(out.data[i]) - int(expected)) <= 1);
+      }
+    }
+  }
+}
+
 // ResizeImage downsamples and preserves channel count.
 void usdz_convert_resize_test(void) {
   using namespace lightusd;

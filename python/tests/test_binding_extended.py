@@ -74,11 +74,11 @@ def test_array_dtype_variants():
     assert len(f_arr) == 10
     # zero-copy: numpy view shares pointer
     a = np.asarray(f_arr)
-    assert a.__array_interface__["data"][0] == f_arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(f_arr).__array_interface__["data"][0]
     assert a.dtype == np.float32
-    # memoryview is raw bytes, length == nbytes
-    mv = f_arr.memoryview()
-    assert len(mv) == f_arr.nbytes
+    # memoryview carries the immutable typed layout
+    mv = memoryview(f_arr)
+    assert mv.nbytes == f_arr.nbytes
     # tolist / iter / getitem
     assert f_arr[0] == pytest.approx(0.0)
     assert list(f_arr)[1] == pytest.approx(1.0)
@@ -315,7 +315,7 @@ def test_tydra_full_scene_and_zero_copy():
     arr = mesh.points
     assert arr is not None
     a = np.asarray(arr)
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
     # triangulated indices dtype
     tri = mesh.triangulated_indices
     if tri is not None:
@@ -361,7 +361,7 @@ def test_synthetic_large_array_performance(capsys):
     a = np.asarray(arr)
     t_view = time.perf_counter() - t0
     # zero-copy: pointer equality
-    assert a.__array_interface__["data"][0] == arr.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(arr).__array_interface__["data"][0]
     assert a.shape == (n, 3)
     # timing prints for manual inspection (pytest -s)
     print(f"[large synthetic] set {t_set:.3f}s export {t_exp:.3f}s load {t_load:.3f}s view {t_view*1e3:.1f}ms n={n}")

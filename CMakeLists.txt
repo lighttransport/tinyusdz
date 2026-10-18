@@ -1385,6 +1385,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors"
   )
 
+  # C11 leaves share the strict warning policy. Mixed declarations are valid
+  # in C11; disable only the pre-C99 compatibility diagnostic for C sources.
+  set_property(SOURCE ${LIGHTUSD_SOURCES} ${LIGHTUSD_C_API_SOURCES}
+    APPEND PROPERTY COMPILE_OPTIONS
+    "$<$<COMPILE_LANGUAGE:C>:-Wno-declaration-after-statement>")
+
   # Suppress informational `#pragma message` output. miniz.c no longer needs
   # this, but src/prim-types.hh and some vendored deps (wamr, wuffs) still
   # emit it, and it is not worth a diagnostic per translation unit.
@@ -2795,6 +2801,11 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-aousd-conformance PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview")
+    # Each fixture starts both viewers. ASan/LSan startup and shutdown costs
+    # accumulate across the external suite; retain the normal-build deadline.
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-aousd-conformance PROPERTIES TIMEOUT 2700)
+    endif()
 
     add_test(
       NAME lusdview-gl-vk-parity
@@ -3790,6 +3801,11 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-rt-geomsubset-material
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    # Instrumented RT renders exceed the 60 s per-render default.
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-rt-geomsubset-material PROPERTIES
+                           TIMEOUT 1500 ENVIRONMENT "LUSDVIEW_RENDER_TIMEOUT=240s")
+    endif()
 
     # Deferred package payloads must survive the async recomposition handoff in
     # both loaders. Drive the actual MCP action so the test covers the same
@@ -3802,6 +3818,13 @@ if(LIGHTUSD_BUILD_TESTS)
       )
     set_tests_properties(lusdview-usdz-deferred-payload
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+    # Instrumented recomposition is slower; widen only the harness poll
+    # deadline (the completion assertion is unchanged).
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-usdz-deferred-payload PROPERTIES
+                           TIMEOUT 300
+                           ENVIRONMENT "LUSDVIEW_DEFERRED_PAYLOAD_TIMEOUT_MS=120000")
+    endif()
 
     add_test(
       NAME lusdview-incremental-topology
@@ -3962,6 +3985,11 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(lusdview-openchess-materials PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 240
                          LABELS "lusdview;rt;materialx;openpbr")
+    # The ~7M-triangle CPU RT capture exceeds 180 s under ASan/UBSan.
+    if(SANITIZE_ADDRESS OR SANITIZE_UNDEFINED)
+      set_tests_properties(lusdview-openchess-materials PROPERTIES
+                           TIMEOUT 1200 ENVIRONMENT "LUSDVIEW_OPENCHESS_TIMEOUT=900s")
+    endif()
 
     add_test(
       NAME lusdview-openchess-path-trace

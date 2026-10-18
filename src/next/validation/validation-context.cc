@@ -463,14 +463,14 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
           AddWarning(result, "geom.subset.familyType", p.path().str(), "Subset family mixes element types");
         element_type = element;
         const auto* indices = subset->property_value("indices");
-        const auto* values = indices ? indices->as_int_array() : nullptr;
+        auto values = indices ? indices->as_int_array() : nullptr;
         if (element == "edge" || element == "segment") {
           possible_pairs.clear();
           if (element == "edge" && registry.InheritsFrom(p.type_name(), "Mesh")) {
             const auto* cv = p.property_value("faceVertexCounts");
             const auto* iv = p.property_value("faceVertexIndices");
-            const auto* counts = cv ? cv->as_int_array() : nullptr;
-            const auto* indices = iv ? iv->as_int_array() : nullptr;
+            auto counts = cv ? cv->as_int_array() : nullptr;
+            auto indices = iv ? iv->as_int_array() : nullptr;
             if (counts && indices) {
               have_count = true;
               size_t offset = 0;
@@ -485,7 +485,7 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
             }
           } else if (element == "segment" && registry.InheritsFrom(p.type_name(), "BasisCurves")) {
             const auto* cv = p.property_value("curveVertexCounts");
-            const auto* counts = cv ? cv->as_int_array() : nullptr;
+            auto counts = cv ? cv->as_int_array() : nullptr;
             std::string type = Text(p, "type"), basis = Text(p, "basis"), wrap = Text(p, "wrap");
             if (type.empty()) type = "cubic";
             if (basis.empty()) basis = "bezier";

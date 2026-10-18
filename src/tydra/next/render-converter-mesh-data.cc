@@ -5,6 +5,7 @@
 
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
+#include "render-converter-clip.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -68,7 +69,10 @@ bool RenderSceneConverter::Impl::ExtractMeshTopology(const UsdPrim& prim, Render
 
 bool RenderSceneConverter::Impl::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
   ValueArrayRead<float> points;
-  ReadFloatArray(prim, "points", config_.time_code, &points);
+  if (!ReadFloatArray(prim, "points", config_.time_code, &points)) {
+    ReadFloatArrayFromValueClips(prim, "points", config_.time_code,
+                                config_.animation.clip_stage_loader, &points);
+  }
   if (points.empty()) {
     SetLastError("Invalid points data");
     return false;

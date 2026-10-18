@@ -535,6 +535,46 @@ uintptr_t RenderStream::stageUSDCData() const {
         : reinterpret_cast<uintptr_t>(stage_usdc_export_.data());
 }
 
+tr::AnimationConfig::ClipStageLoader RenderStream::valueClipLoader_() {
+    if (!enable_value_clips_) return {};
+    return [this](const std::string& asset_path, tn::Stage* stage,
+               std::string* warn, std::string* err) {
+          std::string key = NormalizeRenderAssetKey(asset_path);
+          auto it = clip_assets_.find(key);
+          if (it == clip_assets_.end()) {
+            for (const std::string& candidate :
+                 tn::AssetResolver::SuffixCandidates(key)) {
+              it = clip_assets_.find(candidate);
+              if (it != clip_assets_.end()) break;
+            }
+          }
+          if (it == clip_assets_.end()) {
+            const tn::ResolvedAsset resolved =
+                asset_resolver_.Resolve(key, "memory-root");
+            std::vector<uint8_t> bytes;
+            std::string read_error;
+            if (!resolved.exists || !asset_resolver_.ReadAsset(
+                    resolved.resolved_path, &bytes, &read_error)) {
+              if (err) *err = "asset was not supplied to RenderStream";
+              return false;
+            }
+            tn::LoadUSDOptions options;
+            options.usda_options.parse_options.enable_usda_lazy_arrays = true;
+            std::string owned;
+            if (!bytes.empty())
+              owned.assign(reinterpret_cast<const char*>(bytes.data()),
+                           bytes.size());
+            return tn::LoadUSDFromMemoryOwned(std::move(owned), stage, options,
+                                              warn, err);
+          }
+          tn::LoadUSDOptions options;
+          options.usda_options.parse_options.enable_usda_lazy_arrays = true;
+          std::string bytes = it->second;
+          return tn::LoadUSDFromMemoryOwned(std::move(bytes), stage, options,
+                                            warn, err);
+        };
+}
+
 void RenderStream::buildRenderScene_() {
     tr::ConverterConfig cfg;
     cfg.time_code = 0.0;
@@ -616,43 +656,7 @@ void RenderStream::buildRenderScene_() {
     cfg.material.render_settings_path = render_settings_path_;
     cfg.asset_resolver = &asset_resolver_;
     cfg.point_instancer.duplicate_meshes = false;
-    if (enable_value_clips_) cfg.animation.clip_stage_loader =
-        [this](const std::string& asset_path, tn::Stage* stage,
-               std::string* warn, std::string* err) {
-          std::string key = NormalizeRenderAssetKey(asset_path);
-          auto it = clip_assets_.find(key);
-          if (it == clip_assets_.end()) {
-            for (const std::string& candidate :
-                 tn::AssetResolver::SuffixCandidates(key)) {
-              it = clip_assets_.find(candidate);
-              if (it != clip_assets_.end()) break;
-            }
-          }
-          if (it == clip_assets_.end()) {
-            const tn::ResolvedAsset resolved =
-                asset_resolver_.Resolve(key, "memory-root");
-            std::vector<uint8_t> bytes;
-            std::string read_error;
-            if (!resolved.exists || !asset_resolver_.ReadAsset(
-                    resolved.resolved_path, &bytes, &read_error)) {
-              if (err) *err = "asset was not supplied to RenderStream";
-              return false;
-            }
-            tn::LoadUSDOptions options;
-            options.usda_options.parse_options.enable_usda_lazy_arrays = true;
-            std::string owned;
-            if (!bytes.empty())
-              owned.assign(reinterpret_cast<const char*>(bytes.data()),
-                           bytes.size());
-            return tn::LoadUSDFromMemoryOwned(std::move(owned), stage, options,
-                                              warn, err);
-          }
-          tn::LoadUSDOptions options;
-          options.usda_options.parse_options.enable_usda_lazy_arrays = true;
-          std::string bytes = it->second;
-          return tn::LoadUSDFromMemoryOwned(std::move(bytes), stage, options,
-                                            warn, err);
-        };
+    cfg.animation.clip_stage_loader = valueClipLoader_();
     cfg.animation.bake_value_clips = enable_value_clips_;
     cfg.animation.value_clip_sample_rate = value_clip_sample_rate_;
     cfg.animation.value_clip_use_time_range = value_clip_use_time_range_;

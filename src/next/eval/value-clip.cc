@@ -17,7 +17,7 @@ namespace {
 
 constexpr size_t kMaxTemplateClipCount = 1000000;
 
-bool ToDouble(const Value* value, double* out) {
+bool ToDouble(ValueView value, double* out) {
   if (!value || !out) return false;
   if (const double* v = value->as_double()) *out = *v;
   else if (const float* v = value->as_float()) *out = *v;
@@ -27,29 +27,29 @@ bool ToDouble(const Value* value, double* out) {
   return true;
 }
 
-bool ToString(const Value* value, std::string* out) {
+bool ToString(ValueView value, std::string* out) {
   if (!value || !out) return false;
-  if (const std::string* v = value->as_string()) *out = *v;
-  else if (const std::string* v = value->as_token()) *out = *v;
-  else if (const std::string* v = value->as_asset_path()) *out = *v;
+  if (auto v = value->as_string()) *out = *v;
+  else if (auto v = value->as_token()) *out = *v;
+  else if (auto v = value->as_asset_path()) *out = *v;
   else return false;
   return true;
 }
 
-std::vector<std::pair<double, double>> PairArray(const Value* value) {
+std::vector<std::pair<double, double>> PairArray(ValueView value) {
   std::vector<std::pair<double, double>> out;
   if (!value || !value->is_array()) return out;
-  if (const std::vector<double>* flat = value->as_double_array()) {
+  if (auto flat = value->as_double_array()) {
     for (size_t i = 0; i + 1 < flat->size(); i += 2)
       out.emplace_back((*flat)[i], (*flat)[i + 1]);
-  } else if (const std::vector<float>* flat = value->as_float_array()) {
+  } else if (auto flat = value->as_float_array()) {
     for (size_t i = 0; i + 1 < flat->size(); i += 2)
       out.emplace_back((*flat)[i], (*flat)[i + 1]);
   }
   return out;
 }
 
-bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
+bool ExpandTemplate(DictView  dict, ValueClipSet* out, std::string* error) {
   if (!out) return false;
   std::string pattern;
   if (!ToString(dict.find("templateAssetPath"), &pattern)) {
@@ -62,12 +62,12 @@ bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
     if (error) *error = "Missing value-clip template time range";
     return false;
   }
-  const Value* stride_value = dict.find("templateStride");
+  auto stride_value = dict.find("templateStride");
   if (stride_value && !ToDouble(stride_value, &stride)) {
     if (error) *error = "Invalid templateStride";
     return false;
   }
-  const Value* offset_value = dict.find("templateActiveOffset");
+  auto offset_value = dict.find("templateActiveOffset");
   if (offset_value && !ToDouble(offset_value, &active_offset)) {
     if (error) *error = "Invalid templateActiveOffset";
     return false;
@@ -260,19 +260,19 @@ double ClipTime(const ValueClipSet& set, double time) {
 bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                         std::string* error) {
   if (!out || !prim.GetPrimSpec()) return false;
-  const Dict* clips = prim.GetPrimSpec()->meta().clips().as_dictionary();
+  auto clips = prim.GetPrimSpec()->meta().clips().as_dictionary();
   if (!clips) return false;
   for (const auto& entry : clips->entries()) {
-    const Dict* dict = entry.second.as_dictionary();
+    auto dict = entry.second.as_dictionary();
     if (!dict) continue;
     ValueClipSet set;
     set.name = entry.first;
     if (dict->find("templateAssetPath")) {
       if (!ExpandTemplate(*dict, &set, error)) return false;
     } else {
-      if (const Value* assets = dict->find("assetPaths")) {
-        if (const std::vector<std::string>* paths = assets->as_token_array())
-          set.asset_paths = *paths;
+      if (auto assets = dict->find("assetPaths")) {
+        if (auto paths = assets->as_token_array())
+          set.asset_paths.assign(paths->begin(), paths->end());
       }
       set.times = PairArray(dict->find("times"));
       for (const auto& pair : PairArray(dict->find("active"))) {
@@ -291,7 +291,7 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
                   &set.manifest_asset_path)) {
       ToString(dict->find("manifestPath"), &set.manifest_asset_path);
     }
-    const Value* interpolate = dict->find("interpolateMissingClipValues");
+    auto interpolate = dict->find("interpolateMissingClipValues");
     if (interpolate && interpolate->as_bool())
       set.interpolate_missing = *interpolate->as_bool();
     for (const std::string& path : set.asset_paths) {

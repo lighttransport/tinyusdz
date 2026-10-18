@@ -19,11 +19,11 @@ inline bool GetPropToken(const ::lightusd::next::UsdPrim& prim,
   if (!out) return false;
   const ::lightusd::next::Value* value = prim.GetPropertyValue(name);
   if (!value) return false;
-  if (const std::string* token = value->as_token()) {
+  if (auto token = value->as_token()) {
     *out = *token;
     return true;
   }
-  if (const std::string* text = value->as_string()) {
+  if (auto text = value->as_string()) {
     *out = *text;
     return true;
   }

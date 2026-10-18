@@ -1,6 +1,98 @@
 # LightUSD refactor checkpoint
 
-## Current continuation (2026-10-16)
+
+## Current continuation (2026-10-18)
+
+The C11 storage / compact-view / independent-WASM-feature refactor is implemented
+on top of `abc530f7c`. This request explicitly authorizes ABI breakage and renewed
+compile-time/object-size work; the earlier stopping points below are historical.
+Native C API major is 5 and core C API major is 2. Python now requires 3.11,
+uses the real read-only buffer protocol and retains C11 storage pins. Optional
+WASM APIs live on modules returned by `await module.loadFeature(name)`.
+
+See [the implementation report](doc/refactor-c-core.md#c11-storage-compact-views-and-split-features-2026-10-18)
+for ownership, ABI migration, measurements and regression results. Core build,
+original-artifact and comparison reports are under ignored
+`build_ninja/c11-storage/`. No commit or push has been made for this continuation.
+
+- Native clean build wall: 19.44 → 14.81 s; CPU: 252.60 → 203.71 s.
+- wasm32 full-distribution wall: 24.17 → 23.25 s; CPU is effectively unchanged.
+- Optimized object text/data: native -0.06%, wasm32 -0.40%. Full distributed
+  JS/WASM grows 4.65% raw / 5.48% gzip because features have separate runtimes
+  and subdivision remains linked into both main and geometry.
+- Native optimized, Debug, threaded and ASan/UBSan checks pass. All 890 fixture
+  rewrites match baseline. Python abi3/free-threaded: 136 passed, 10 skipped each.
+- Follow-up compatibility build passes with `lusdview` (OpenGL/Vulkan), examples,
+  tools, C API and standalone MCP enabled. Missed renderer view migrations and
+  legacy C API joint fallback calls are fixed. Focused checks: 99 passed, one
+  OpenUSD skip; headless capture/CPU rendering pass on software Vulkan. See the
+  [consumer build report](doc/refactor-c-core.md#viewer-example-and-tool-build-follow-up).
+- Headless hardware follow-up passes on NVIDIA RTX 5060 Ti: three direct Vulkan
+  raster/hardware-ray-query/CUDA renders and all eight selected GPU CTests.
+  HIP is unavailable and OptiX is disabled. Results and screenshots are under
+  ignored `build_ninja/viewer-refactor-check/hardware/`; see the
+  [hardware report](doc/refactor-c-core.md#headless-hardware-gpu-follow-up).
+- Pinned USD-WG/AOUSD corpora are downloaded under `.cache/lightusd-verification/`.
+  All 280 USD files parse in both native products and WASM32/memory64; AOUSD
+  native conformance and 83 viewer fixtures through both loaders pass. Python
+  corpus checks pass on 3.11/3.14t (16 passed, two optional skips combined).
+  The complete 160-case hardware/CPU render profile and 28 animation renders
+  pass, retaining warning and `no_renderable` classifications. The WASM corpus
+  runner now uses the next `LayerDocument` API. See the
+  [corpus report](doc/refactor-c-core.md#pinned-external-corpus-follow-up).
+- The complete web matrix passes across final profiles: 57 Node suites per
+  width, MuJoCo smoke/simulation and all 67 Menagerie closures per width, five
+  regular browser models and all 67 Worker models. Feature contracts, validation
+  demos and UDIM browser cases pass. Fresh combined builds repair three missed
+  array-view migrations; shared clip fixtures and validator diagnostics are
+  fixed. Npm staging and compatibility loading pass at the earlier checkpoint.
+- Pinned OpenUSD v26.05 with Python and MaterialX passes checker parity (685
+  fixtures), sampled values (304), serialization and the USD-assets ratchet.
+  Strict flatten originally reported 15 unlisted differences, all matching the
+  saved pre-refactor binary; the strict follow-up below fixes them. A
+  single-worker serialization retry passes after
+  one intermittent oracle shutdown crash. See the
+  [oracle and web report](doc/refactor-c-core.md#openusd-and-complete-web-regression-follow-up).
+  The previous full legacy-native gap is closed by the complete run below.
+- Broader native NVIDIA/Xvfb coverage finishes with 115 passes, six skips and
+  no remaining failures after focused retries. Both GPU-assisted hardware RT
+  captures (headless/threaded) and renderer/viewer OpenPBR parity pass. Mesh and
+  curve clip points share a compiled fallback, including WASM's lazy mesh path;
+  the public mesh converter's clip loader and its opt-out have regression
+  coverage. Final Node profiles pass 57/57 per width, and focused browser checks
+  pass again. See the
+  [broader GPU report](doc/refactor-c-core.md#broader-native-gpu-regression-follow-up).
+- Full legacy native CTest now passes (2026-10-19): 361 passed, ten skipped,
+  zero failed across 371 registered tests, including all 1,023 legacy unit
+  cases. The initial run took 26.5 minutes; two external tool skips pass after
+  supplying `USD_ASSETS_ROOT`. All 81 material-resolver renders pass across
+  27 assets; resolver differences remain advisory. NVIDIA/Xvfb viewer coverage,
+  examples/tools, roundtrips, feature tests, MCP and 685-fixture checker parity
+  pass. Skips are five HIP tests, an unavailable external production scene and
+  four opt-in profiles. No product source fixes were needed. See the
+  [full native report](doc/refactor-c-core.md#full-legacy-native-regression-follow-up-2026-10-19)
+  and ignored `build_ninja/legacy-native-full/final-summary.json`.
+- Strict next/OpenUSD flatten now passes all 840 inputs: 814 matches, 18
+  existing intentional/oracle differences, eight fixture skips, zero failures.
+  A shared composition eligibility check fixes all 15 differences without
+  changing the comparator, tolerances or expected-failure ledger. Local array
+  edits, relationship/connection list ops, explicit arc clears, relocates and
+  inactive subtrees now reach composition through public loading and flatten
+  paths. Ordinary layers retain their original storage. Focused native tests,
+  standalone Debug (58 passes, one optional AOUSD skip), and affected WASM
+  checks on both widths pass. HIP is explicitly excluded from this follow-up.
+- Parser fuzz smoke passes with ASan, UBSan and leak checking: 10,000
+  iterations each for legacy USDA and USDC, seeded by 646 and 232 unique fixture
+  inputs. The USDC harness now reconstructs the stage to cover value/array
+  decoding. The full legacy sanitizer gate completed on 2026-10-19 (see
+  [resume-test.md](resume-test.md)): 361 passes and five justified skips across
+  366 non-HIP CTests, with zero project sanitizer reports. It found a pool
+  shutdown leak, now fixed by freeing cached blocks. Strict Clang consumer
+  build warnings are repaired. Reports are under ignored
+  `build_ninja/regression-flatten-sanitize/`.
+
+
+## Previous continuation (2026-10-16)
 
 The requested seven-area maintainability refactor is implemented: the load /
 session facade, layer diff, crate reconstruction, shader extraction, URDF/MJCF

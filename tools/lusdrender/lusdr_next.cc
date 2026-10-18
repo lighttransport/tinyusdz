@@ -91,9 +91,9 @@ std::vector<std::string> ReadTokenArrayNext(
     const lightusd::next::UsdPrim &prim, const char *name) {
   const lightusd::next::Value *v = prim.GetPropertyValue(name);
   if (!v) return {};
-  if (const std::vector<std::string> *arr = v->as_token_array()) return *arr;
-  if (const std::string *tok = v->as_token()) return {*tok};
-  if (const std::string *str = v->as_string()) return {*str};
+  if (const auto arr = v->as_token_array()) return {arr.begin(), arr.end()};
+  if (auto tok = v->as_token()) return {*tok};
+  if (auto str = v->as_string()) return {*str};
   return {};
 }
 
@@ -109,7 +109,7 @@ std::unordered_map<std::string, float> GatherBlendShapeWeightsNext(
     eval.SetTime(time);
     lightusd::next::EvalResult result = eval.Eval(prim, "blendShapeWeights");
     if (!result.success || !result.value.is_array()) return true;
-    const std::vector<float> *arr = result.value.as_float_array();
+    const auto arr = result.value.view().as_float_array();
     if (!arr) return true;
     const size_t n = std::min(names.size(), arr->size());
     for (size_t i = 0; i < n; ++i) weights[names[i]] = (*arr)[i];
@@ -1153,14 +1153,14 @@ void ResolveScalarTextureNext(const lightusd::next::Stage &stage,
   if (!tex.IsValid()) return;
   const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file");
   if (!fv) return;
-  const std::string *ap = fv->as_asset_path();
+  auto ap = fv->as_asset_path();
   if (!ap) ap = fv->as_string();
   if (!ap || ap->empty()) return;
   WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
   if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
-    if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+    if (auto t = v->as_token()) ws = ParseWrapMode(*t);
   if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
-    if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+    if (auto t = v->as_token()) wt = ParseWrapMode(*t);
   int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, /*srgb=*/false);
   if (id < 0) return;
   out->id = id;
@@ -1194,7 +1194,7 @@ UvXform ResolveUvXform(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim st = ConnectedPrimNext(stage, uvtex, "inputs:st");
   if (!st.IsValid()) return x;
   const lightusd::next::Value *idv = st.GetPropertyValue("info:id");
-  const std::string *id = idv ? idv->as_token() : nullptr;
+  auto id = idv ? idv->as_token() : nullptr;
   if (!id || *id != "UsdTransform2d") return x;
   float rot = 0.0f, sx = 1.0f, sy = 1.0f, tx = 0.0f, ty = 0.0f;
   if (const lightusd::next::Value *v = st.GetPropertyValue("inputs:rotation"))
@@ -1355,18 +1355,18 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
     if (stex.IsValid()) {
       if (const lightusd::next::Value *fv =
               stex.GetPropertyValue("inputs:file")) {
-        const std::string *ap = fv->as_asset_path();
+        auto ap = fv->as_asset_path();
         if (!ap) ap = fv->as_string();
         if (ap && !ap->empty()) {
           WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
           if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapS"))
-            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+            if (auto t = v->as_token()) ws = ParseWrapMode(*t);
           if (const lightusd::next::Value *v = stex.GetPropertyValue("inputs:wrapT"))
-            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+            if (auto t = v->as_token()) wt = ParseWrapMode(*t);
           bool srgb = true;
           if (const lightusd::next::Value *v =
                   stex.GetPropertyValue("inputs:sourceColorSpace"))
-            if (const std::string *t = v->as_token()) srgb = (*t != "raw");
+            if (auto t = v->as_token()) srgb = (*t != "raw");
           int32_t id = LoadTextureCached(tc, AnchorAssetNext(stex, *ap), ws, wt, srgb);
           if (id >= 0) {
             *specular_tex_id = id;
@@ -1388,14 +1388,14 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
     if (etex.IsValid()) {
       if (const lightusd::next::Value *fv =
               etex.GetPropertyValue("inputs:file")) {
-        const std::string *ap = fv->as_asset_path();
+        auto ap = fv->as_asset_path();
         if (!ap) ap = fv->as_string();
         if (ap && !ap->empty()) {
           WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
           if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapS"))
-            if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+            if (auto t = v->as_token()) ws = ParseWrapMode(*t);
           if (const lightusd::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
-            if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+            if (auto t = v->as_token()) wt = ParseWrapMode(*t);
           int32_t id = LoadTextureCached(tc, AnchorAssetNext(etex, *ap), ws, wt, /*srgb=*/true);
           if (id >= 0) {
             *emission_tex_id = id;
@@ -1419,18 +1419,18 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
       ConnectedPrimNext(stage, surf, "inputs:diffuseColor");
   if (tex.IsValid()) {
     if (const lightusd::next::Value *fv = tex.GetPropertyValue("inputs:file")) {
-      const std::string *ap = fv->as_asset_path();
+      auto ap = fv->as_asset_path();
       if (!ap) ap = fv->as_string();
       if (ap && !ap->empty()) {
         WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
         if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapS"))
-          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (auto t = v->as_token()) ws = ParseWrapMode(*t);
         if (const lightusd::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
-          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          if (auto t = v->as_token()) wt = ParseWrapMode(*t);
         bool srgb = true;
         if (const lightusd::next::Value *v =
                 tex.GetPropertyValue("inputs:sourceColorSpace")) {
-          if (const std::string *t = v->as_token()) srgb = (*t != "raw");
+          if (auto t = v->as_token()) srgb = (*t != "raw");
         }
         // inputs:scale/bias tint the sampled color (default identity).
         Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
@@ -1458,14 +1458,14 @@ void ResolveMeshMaterialNext(const lightusd::next::Stage &stage,
   lightusd::next::UsdPrim ntex = ConnectedPrimNext(stage, surf, "inputs:normal");
   if (ntex.IsValid()) {
     if (const lightusd::next::Value *fv = ntex.GetPropertyValue("inputs:file")) {
-      const std::string *ap = fv->as_asset_path();
+      auto ap = fv->as_asset_path();
       if (!ap) ap = fv->as_string();
       if (ap && !ap->empty()) {
         WrapMode ws = WrapMode::Repeat, wt = WrapMode::Repeat;
         if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:wrapS"))
-          if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
+          if (auto t = v->as_token()) ws = ParseWrapMode(*t);
         if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:wrapT"))
-          if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
+          if (auto t = v->as_token()) wt = ParseWrapMode(*t);
         Vec3 scale{2.0f, 2.0f, 2.0f}, bias{-1.0f, -1.0f, -1.0f};
         if (const lightusd::next::Value *v = ntex.GetPropertyValue("inputs:scale")) {
           ReadVec3Value(*v, &scale);
@@ -2214,12 +2214,12 @@ void ExpandGeomSubsetJobsNext(const lightusd::next::Stage &stage, double time,
       // elementType defaults to "face"; other element types don't split faces.
       bool is_face = true;
       if (const lightusd::next::Value *et = c.GetPropertyValue("elementType"))
-        if (const std::string *t = et->as_token())
+        if (auto t = et->as_token())
           is_face = t->empty() || *t == "face";
       if (!is_face) continue;
       // Material subsets are familyName "materialBind" (accept unauthored).
       if (const lightusd::next::Value *fn = c.GetPropertyValue("familyName"))
-        if (const std::string *t = fn->as_token())
+        if (auto t = fn->as_token())
           if (!t->empty() && *t != "materialBind") continue;
       // Only subsets that bind a material split faces; an unbound subset keeps
       // falling back to the whole-mesh material (no ancestor walk here -- that
@@ -2303,11 +2303,10 @@ bool PathMatchesMask(const std::string &path,
 // transform varies with time).
 bool PrimHasAnimatedXform(const lightusd::next::UsdPrim &prim) {
   const lightusd::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
-  const std::vector<std::string> *order =
-      orderv ? orderv->as_token_array() : nullptr;
+  const auto order = orderv ? orderv->as_token_array()
+                            : lightusd::next::StringArrayView();
   if (!order) return false;
-  for (const std::string &raw : *order) {
-    std::string op = raw;
+  for (std::string op : *order) {
     if (op.rfind("!invert!", 0) == 0) op = op.substr(8);
     if (op == "!resetXformStack!") continue;
     if (prim.HasTimeSamples(op)) return true;
@@ -2473,7 +2472,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
   // legacy path (BuildLegacyPurposeVisibility) and per UsdGeomImageable. It
   // used to be ignored here, so invisible prims rendered.
   if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
-    if (const std::string *t = vv->as_token()) {
+    if (auto t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
@@ -2487,7 +2486,7 @@ static void CollectPreviewImplNext(const lightusd::next::Stage &stage,
 
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") {
         purpose = lightusd::Purpose::Render;
       } else if (*t == "proxy") {
@@ -2839,11 +2838,11 @@ void CollectVolumesNext(const lightusd::next::Stage &stage,
       if (!field) continue;
 
       const lightusd::next::Value *fp = field.GetPropertyValue("filePath");
-      const std::string *ap = fp ? fp->as_asset_path() : nullptr;
+      auto ap = fp ? fp->as_asset_path() : nullptr;
       if (!ap || ap->empty()) continue;
       std::string fieldName = relName.substr(std::strlen("field:"));
       if (const lightusd::next::Value *fn = field.GetPropertyValue("fieldName")) {
-        if (const std::string *tk = fn->as_token()) fieldName = *tk;
+        if (auto tk = fn->as_token()) fieldName = *tk;
       }
       std::string vpath = *ap;
       if (!vpath.empty() &&
@@ -2985,7 +2984,7 @@ bool FindNextCameraFrameRecursive(const lightusd::next::Stage &stage,
       }
       std::string proj = "perspective";
       if (const lightusd::next::Value *v = prim.GetPropertyValue("projection")) {
-        if (const std::string *t = v->as_token()) proj = *t;
+        if (auto t = v->as_token()) proj = *t;
       }
       frame->origin = Vec3{float(world.m[3][0]), float(world.m[3][1]),
                            float(world.m[3][2])};
@@ -3902,7 +3901,7 @@ void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
   // visibility="invisible" prunes the prim and its subtree (parity with the
   // legacy path and UsdGeomImageable).
   if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
-    if (const std::string *t = vv->as_token()) {
+    if (auto t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
@@ -3913,7 +3912,7 @@ void CollectCurvesNextRec(const lightusd::next::UsdPrim &prim,
   const matrix4d world = reset ? local : (local * parent_world);
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") purpose = lightusd::Purpose::Render;
       else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
       else if (*t == "guide") purpose = lightusd::Purpose::Guide;
@@ -4122,7 +4121,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
   // visibility="invisible" prunes the prim and its subtree (parity with the
   // legacy path and UsdGeomImageable).
   if (const lightusd::next::Value *vv = prim.GetPropertyValue("visibility")) {
-    if (const std::string *t = vv->as_token()) {
+    if (auto t = vv->as_token()) {
       if (*t == "invisible") return;
     }
   }
@@ -4134,7 +4133,7 @@ void CollectSceneSplit(const lightusd::next::Stage &stage,
 
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") purpose = lightusd::Purpose::Render;
       else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
       else if (*t == "guide") purpose = lightusd::Purpose::Guide;
@@ -4248,7 +4247,7 @@ void CollectProtoMeshNestingRec(
 
   lightusd::Purpose purpose = inherited_purpose;
   if (const lightusd::next::Value *pv = prim.GetPropertyValue("purpose")) {
-    if (const std::string *t = pv->as_token()) {
+    if (auto t = pv->as_token()) {
       if (*t == "render") purpose = lightusd::Purpose::Render;
       else if (*t == "proxy") purpose = lightusd::Purpose::Proxy;
       else if (*t == "guide") purpose = lightusd::Purpose::Guide;
@@ -6129,13 +6128,13 @@ bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
       have_dome = true;
       if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:file")) {
-        const std::string *ap = v->as_asset_path();
+        auto ap = v->as_asset_path();
         if (!ap) ap = v->as_string();
         if (ap) env_path = *ap;
       }
       if (const lightusd::next::Value *v =
               dome.GetPropertyValue("inputs:texture:format")) {
-        const std::string *t = v->as_token();
+        auto t = v->as_token();
         if (!t) t = v->as_string();
         if (t) {
           if (*t == "mirroredBall") probe_format = 2;
@@ -6615,7 +6614,7 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
   std::string budget_error;
   const uint64_t image_bytes = uint64_t(std::max(0, ctx.width)) * uint64_t(std::max(0, ctx.height)) * 16;
   if (ctx.width <= 0 || ctx.width > 32768 || ctx.height <= 0 || ctx.height > 32768 ||
-      image_bytes > std::numeric_limits<size_t>::max() ||
+      image_bytes != static_cast<uint64_t>(static_cast<size_t>(image_bytes)) ||
       MemBudget::Get().WouldExceed(size_t(image_bytes), &budget_error)) {
     std::cerr << "Capture image dimensions exceed limits: " << budget_error << "\n"; return -1;
   }

@@ -29,6 +29,14 @@ struct lightusd_strlist {
   std::vector<std::string> items;
 };
 
+struct lightusd_buffer {
+  lu_value value;
+  lu_buffer* copy;
+  const void* external;
+  void (*release_external)(const void*);
+  lightusd_value_view view;
+};
+
 struct lightusd_value {
   lightusd::next::Value v;
 };
@@ -97,7 +105,7 @@ inline lightusd_sv EmptySV() {
 // Build a borrowed zero-copy view from a Value. Materializes lazy arrays
 // (serialized by an internal mutex). String-family / dictionary / token-array
 // values yield data == NULL with storage == LIGHTUSD_COMP_NONE.
-lightusd_status MakeView(const lightusd::next::Value& v, lightusd_value_view* out);
+lightusd_status MakeView(lightusd::next::ValueView v, lightusd_value_view* out);
 
 // Build a next::Value from raw (type, is_array, data, count) as documented on
 // lightusd_attr_set. Returns an empty Value and sets the error on failure.

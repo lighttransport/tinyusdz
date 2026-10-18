@@ -86,8 +86,8 @@ bool CrateReader::Impl::UnpackArrayEditData(ValueRep rep, ArrayEditData* out) {
       AddWarning("Failed to decode array-edit op stream");
       return false;
     }
-    if (const std::vector<int64_t>* v = idx_val.as_int64_array()) {
-      ins = *v;
+    if (auto v = idx_val.as_int64_array()) {
+      ins.assign(v->begin(), v->end());
     }
   }
 

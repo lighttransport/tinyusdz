@@ -422,7 +422,7 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   // after it. We must read sequentially and restore the position after each
   // value decode (which seeks to the ValueRep's payload elsewhere).
   Value dv = Value::MakeDictionary();
-  Dict* d = dv.as_dictionary();
+  auto d = dv.as_dictionary();
   for (uint64_t i = 0; i < count; ++i) {
     uint32_t kidx = 0;
     if (!reader()->read_u32(kidx)) return false;

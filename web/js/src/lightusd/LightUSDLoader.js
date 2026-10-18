@@ -1861,8 +1861,8 @@ class LightUSDLoader extends Loader {
 
             if (options.locateFeature) initOptions.locateFeature = options.locateFeature;
             this.native_ = await initLightUSDNative(initOptions);
-            if (options.preloadEXR) await this.native_?.loadEXR?.();
-            if (options.preloadValidator) await this.native_?.loadValidator?.();
+            if (options.preloadEXR && this.native_?.loadFeature) await this.native_.loadFeature('exr');
+            if (options.preloadValidator && this.native_?.loadFeature) await this.native_.loadFeature('validator');
             if (!this.native_) {
                 throw new Error('LightUSDLoader: Failed to initialize native module.');
             }

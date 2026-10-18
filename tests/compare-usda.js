@@ -1968,9 +1968,12 @@ function compareAttributes(attrs1, attrs2, primPath, options = {}) {
 
 // Custom authoring does not change targets, but list-op qualifiers do:
 // an explicit empty list clears weaker targets; prepend/append/delete do not.
-function normalizeRelationshipName(name) {
+function normalizeRelationshipName(name, declarationOnly = false) {
   const words = name.split(' ');
   const targetName = words.pop();
+  // A declaration without '=' authors no target list-op. OpenUSD drops its
+  // list-op keyword on export; explicit empty target opinions still matter.
+  if (declarationOnly) return targetName;
   return [...words.filter(word => word !== 'custom'), targetName].join(' ');
 }
 
@@ -1993,12 +1996,12 @@ function compareRelationships(rels1, rels2, primPath, options = {}) {
   const relMap2 = {};
 
   for (const key of Object.keys(rels1)) {
-    const normName = normalizeRelationshipName(key);
+    const normName = normalizeRelationshipName(key, rels1[key] === null);
     relMap1[normName] = key;
   }
 
   for (const key of Object.keys(rels2)) {
-    const normName = normalizeRelationshipName(key);
+    const normName = normalizeRelationshipName(key, rels2[key] === null);
     relMap2[normName] = key;
   }
 

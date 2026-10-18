@@ -5,7 +5,7 @@
 
 #include "render-converter-internal.hh"
 #include "../../next/layer/layer.hh"
-#include "next/eval/value-clip.hh"
+#include "render-converter-clip.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -224,58 +224,9 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   bool have_points = ReadFloatArray(prim, "points", config_.time_code,
                                     &points);
   if (!have_points) {
-    // Baked procedural curves commonly put clips metadata on their GEO
-    // container while the sampled points live on descendant curves.
-    for (UsdPrim owner = prim; owner.IsValid(); owner = owner.GetParent()) {
-      const ::lightusd::next::PrimSpec* spec = owner.GetPrimSpec();
-      if (!spec || !spec->meta().clips().is_dictionary()) continue;
-      std::vector<::lightusd::next::ValueClipSet> sets;
-      if (!::lightusd::next::ParseValueClipSets(owner, &sets, nullptr))
-        break;
-      for (auto& set : sets) set.prim_path = prim.GetPath().str();
-      Value clipped;
-      if (!config_.animation.clip_stage_loader ||
-          !::lightusd::next::ResolveValueClipFromSets(
-              sets, prim, "points", config_.time_code,
-              config_.animation.clip_stage_loader, &clipped))
-        break;
-      points.scratch.materialized = std::move(clipped);
-      have_points = ::lightusd::next::GetFloatArrayView(
-          points.scratch.materialized, &points.scratch, &points.view);
-      break;
-    }
-    // Some composed variant paths do not retain parent links in the compact
-    // stage index. Walk the path index directly as a fallback.
-    if (!have_points && prim.GetLayer()) {
-      const ::lightusd::next::Layer* layer = prim.GetLayer();
-      std::string parent_path = prim.GetPath().str();
-      while (!have_points) {
-        const size_t slash = parent_path.rfind('/');
-        if (slash == std::string::npos || slash == 0) break;
-        parent_path.resize(slash);
-        const uint32_t index = layer->index_at_path(parent_path);
-        if (index == UINT32_MAX) continue;
-        const ::lightusd::next::PrimSpec* parent_spec =
-            layer->prim_at_path(::lightusd::next::Path(parent_path));
-        if (!parent_spec || !parent_spec->meta().clips().is_dictionary())
-          continue;
-        std::vector<::lightusd::next::ValueClipSet> sets;
-        if (!::lightusd::next::ParseValueClipSets(
-                ::lightusd::next::UsdPrim(parent_spec, layer, index), &sets,
-                nullptr))
-          break;
-        for (auto& set : sets) set.prim_path = prim.GetPath().str();
-        Value clipped;
-        if (!config_.animation.clip_stage_loader ||
-            !::lightusd::next::ResolveValueClipFromSets(
-                sets, prim, "points", config_.time_code,
-                config_.animation.clip_stage_loader, &clipped))
-          break;
-        points.scratch.materialized = std::move(clipped);
-        have_points = ::lightusd::next::GetFloatArrayView(
-            points.scratch.materialized, &points.scratch, &points.view);
-      }
-    }
+    have_points = ReadFloatArrayFromValueClips(
+        prim, "points", config_.time_code,
+        config_.animation.clip_stage_loader, &points);
   }
   if (!have_points || points.empty() || (points.view.size % 3) != 0) {
     SetLastError("Invalid curves.points data");

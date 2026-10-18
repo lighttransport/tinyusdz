@@ -221,8 +221,10 @@ v26.05 unless a test intentionally targets another OpenUSD release. Set
 
 The comparison runner writes detailed logs to `tests/comparison-results/` and
 prints a failure/warning summary. It continues across individual files so one
-failure does not hide later failures; inspect the summary and log even when the
-shell command itself completes.
+failure does not hide later failures, and exits nonzero for unexpected USDA,
+USDC, or written-crate checker failures. Declaration-only relationships have no
+target list-op; the comparator ignores their unused qualifiers while preserving
+the distinction between declarations and authored `None`/`[]` target opinions.
 
 ### Headless NVIDIA viewer regression
 
@@ -246,6 +248,13 @@ xvfb-run -a -s "-screen 0 1280x800x24" \
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ctest --test-dir build_ninja --output-on-failure
 ```
+
+For a downloaded USD-WG assets checkout, also export
+`USD_ASSETS_ROOT=/path/to/usd-assets` so external tool tests find it. The native
+parser corpus can use CMake's `LIGHTUSD_USD_ASSETS_ROOT` or the parser harness's
+`USD_WG_ASSETS_DIR`; those do not set the tool harnesses' environment variable.
+The viewer golden, broad-render and animation profiles have additional opt-in
+gates and report skips unless explicitly enabled.
 
 `LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD=ON` is evaluated during CMake configure. If
 the NVIDIA kernel device, GLVND vendor file, and an NVIDIA Vulkan physical
@@ -284,6 +293,15 @@ should use the command-line option. True headless Vulkan/CUDA/HIP tests do not
 need Xvfb. For the complete variable reference, direct commands, AMD behavior,
 and recovery from a broken sandbox X socket, see
 [`doc/lusdview.md`](lusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
+
+`lusdview-value-clip-carrier` uses the shared small fixtures in
+`tests/feat/value-clip/carrier/`. The CPU `lusdview_next_mesh_adapter_test` checks
+the clip points at both times, ownership after stage release, and filesystem
+resolver opt-out. The WASM dispatch suite checks the same supplied clip assets
+through the lazy mesh path and the clips enable flag; disabled geometry retains
+its mesh slot. Run it on both pointer widths after editing shared clip readers.
+Vulkan live reload additionally requires `glslc`; `LUSDVIEW_GLSLC` selects its
+executable or SDK launcher. Embedded SPIR-V remains sufficient for normal builds.
 
 #### External asset gates
 
@@ -499,6 +517,28 @@ ctest --output-on-failure -LE benchmark
 ```
 
 ## Regression Test Procedure
+
+Local edits can require composition even when a layer has no external arcs.
+The public-loader tests check sparse arrays, relationship/connection list ops,
+explicit arc clears, relocates and inactive-subtree pruning. They also verify
+that ordinary explicit values/targets retain the original prim storage. The
+memory pipeline checks local array edits through both composition engines:
+
+```sh
+ctest --test-dir build_ninja \
+  -R '^next_test_(pcp|memory_flatten)$' --output-on-failure
+```
+
+The strict OpenUSD flatten runner additionally compares the complete USDA,
+USDC and optional supplemental composition corpora without relaxing list-op
+semantics or numeric tolerances:
+
+```sh
+PXR_WORK_THREAD_LIMIT=1 node tests/next/run-next-pxr-flatten-diff.mjs \
+  --next-usdcat build_ninja/lightusd_next_build/next_usdcat \
+  --usdcat ref/dist/bin/usdcat --jobs 4 \
+  --suite-root /path/to/aousd/releases/1.0.1
+```
 
 USDC reader hardening regressions can be run with:
 
@@ -1174,6 +1214,27 @@ node tests/compare-usda.js \
   --detailed-diff \
   tests/usda/somefile.usda
 ```
+
+The full oracle gate also needs OpenUSD Python bindings and MaterialX support.
+Without MaterialX, shader-registry and `.mtlx` resolver findings differ from the
+reference configuration used by checker parity. After preparing the pinned
+checkout, build the core, tools, validators, Python and MaterialX without imaging:
+
+```bash
+python3 ref/openusd/build_scripts/build_usd.py ref/dist \
+  --build ref/openusd-build --generator Ninja --onetbb \
+  --python --tools --usdValidation --materialx \
+  --no-imaging --no-usdview --no-tests --no-examples --no-tutorials \
+  --no-docs --no-python-docs --no-openvdb --no-ptex --no-prman \
+  --no-openimageio --no-opencolorio --no-alembic --no-draco -j 16
+```
+
+Use an interpreter with development headers; run the sampled-value harness with
+the same Python major/minor version as the oracle bindings. Verify `usdcat` on a
+known valid fixture before interpreting reference skips in a restricted sandbox.
+Both differential corpus runners reject a run with no readable reference input.
+Keep reference crashes visible in the report. `PXR_WORK_THREAD_LIMIT=1` can be
+used for a deterministic oracle retry without changing comparison tolerances.
 
 ## Python Bindings Test
 
@@ -1957,3 +2018,104 @@ composition, relocated dependencies, LOD selectors, worker budgets/cancellation
 and sampled rig diagnostics. Run the complete Lucia Node suite and browser smoke
 suite after editing those paths. Printing/archival quality gates now require
 verified wall-thickness/provenance evidence; missing evidence fails explicitly.
+
+## C11 storage and binding ABI regression
+
+The value/storage refactor uses native C API major 5 and core C API major 2.
+Build consumers against the new headers and libraries together. Value payloads,
+ordered dictionary ownership, numeric buffers and Tydra chunk allocations now
+use retained C11 storage. C++ string/array/dictionary accessors return borrowed
+views; keep the owning value alive and reacquire views after edits. Numeric
+parser and eager/lazy crate decoding fill the final allocation directly.
+
+`next_c11_storage` checks alignment, retained budgets, COW, allocation-failure
+atomicity, inline strings, string arenas, ordered/deep dictionaries, lazy
+publication, descriptors, bounded numeric ingestion and shared chunk tables.
+It links with the C compiler and needs no C++ runtime. The C API test also pins
+numeric and inline-scalar buffers across source mutation/destruction. Retained
+render pins keep their immutable scene catalog alive.
+
+Run the standalone Debug suite as documented above. For a sanitizer pass without
+precompiled headers, configure a separate Ninja directory with
+`LIGHTUSD_NEXT_USE_PCH=OFF`, `LIGHTUSD_NEXT_ENABLE_THREAD=ON`, and ASan/UBSan on
+both C and C++ compilation/linking. This repository disables C++ RTTI, so use
+`-fno-sanitize=vptr`. Leak detection may need disabling in sandbox environments.
+Check the individual `render-data*.hh` headers with `-fsyntax-only` and no PCH.
+
+Python requires 3.11+. Run `python -m pytest python/tests -q` after rebuilding
+with `pip install -e . --no-build-isolation`. Run the same tests with
+`PYTHON_GIL=0` on free-threaded CPython. `test_buffer_lifetime.py` verifies typed,
+read-only memoryviews, retained NumPy views, stage replacement/closure, render
+catalog lifetime, strided/big-endian authoring and integer overflow atomicity.
+Use `memoryview(array)`; the old `.memoryview()` and `__array_interface__`
+interfaces have been removed.
+
+The independent WASM feature contracts are in
+[web regression documentation](../web/js/docs/regression.md#independent-next-feature-modules).
+Build and ship the complete `lightusd_next_distribution`, including geometry,
+raytrace, validator and EXR for each pointer width. `loadFeature(name)` is the
+feature loader; constructors and functions belong to its returned module.
+
+### Viewer, examples and tool consumers
+
+The compatibility product configures `lusdview` and the older examples/tools,
+while also linking the refactored next/Tydra-next libraries for their next paths.
+Use this build in addition to the standalone next checks:
+
+```sh
+cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON \
+  -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
+  -DLIGHTUSD_WITH_TYDRA=ON -DLIGHTUSD_WITH_C_API=ON \
+  -DLIGHTUSD_WITH_MCP_SERVER=ON -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON \
+  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DLIGHTUSD_NEXT_BUILD_EXAMPLES=OFF \
+  -DLIGHTUSD_NEXT_BUILD_C_API_EXAMPLE=OFF \
+  -DLIGHTUSD_ENABLE_THREAD=ON -DLIGHTUSD_NEXT_ENABLE_THREAD=ON
+cmake --build build_ninja --parallel 12
+ctest --test-dir build_ninja --parallel 4 --output-on-failure \
+  -R '^lusdview_.*_test$|^lusdview-gpu-material-abi$|^lusdchecker_|^lusddiff_|^workflow_tools$|^next_(workflow_examples|comprehensive_example)$'
+```
+
+Keep the two standalone next example options off in this compatibility tree:
+the top-level example directories already define several of the same targets.
+Build the full standalone next example set in its separate Ninja tree.
+For display/GPU execution, follow [the viewer procedure](lusdview.md); these
+consumer checks do not replace the full native and GPU regression gates.
+
+For the full legacy sanitizer gate, use a separate Clang Debug Ninja tree with
+`-O1`, ASan/UBSan on both C and C++, assertions enabled and PCH disabled. Keep
+leak checking enabled on a host that supports LeakSanitizer, and save sanitizer
+diagnostics separately from CTest output: a negative-input harness can accept
+a child failure that still needs inspection. Run the viewer suite under Xvfb
+with the verified GPU environment above. Exclude HIP only when requested with
+`-E '(^|[-_])hip([-_]|$)'`; the broader expression `hip` also matches relationship
+tests. For instrumented material-resolver runs, the existing
+`LUSDR_MATERIAL_RESOLVER_TIMEOUT` override allows extra render time without
+changing the normal regression threshold.
+The AOUSD viewer sweep starts both loaders for every fixture. Its CTest budget
+is 1,200 seconds with ASan or UBSan enabled, versus 300 seconds normally, to
+cover the instrumentation cost across those processes.
+
+Image checks include `usdz_convert_srgb_resize_test` and the
+`png_stream_resize_*` cases. They exercise SIMD sRGB encoding and streaming
+pixel callbacks, including null backing-image pointers. Keep these checks
+enabled when updating the vendored image resizer.
+
+For the external corpora, `scripts/prepare-usd-assets.sh` populates the pinned
+USD-WG checkout under `.cache/lightusd-verification/usd-assets`. Run
+`scripts/fetch-aousd-supplemental.sh` with
+`AOUSD_SUPPLEMENTAL_CACHE="$PWD/.cache/lightusd-verification/aousd-supplemental"`
+to prepare the pinned AOUSD release. Set `LIGHTUSD_USD_ASSETS_ROOT` to the first
+checkout, `USD_WG_ASSETS_DIR` when configuring the next corpus test, and
+`LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT` to the AOUSD `releases/1.0.1` directory.
+The viewer's `lusdview-aousd-conformance` test instead accepts `AOUSD_ROOT`
+pointing at the AOUSD checkout root, which contains `README.md`.
+
+Run `lusdview-usd-assets-broad-smoke` with `LUSDVIEW_RUN_USD_ASSETS_BROAD=1`, and
+`lusdview-usd-assets-animation-smoke` with `LUSDVIEW_RUN_USD_ASSETS_ANIMATION=1`.
+Their output directories can be retained through `LUSDVIEW_USD_ASSETS_OUT` and
+`LUSDVIEW_USD_ASSETS_ANIM_OUT`. The broad profile requires all 40 selected scenes
+and runs Vulkan raster/RT plus renderer CPU/Vulkan. Keep `no_renderable` and
+warning statuses visible in the report. See [the viewer corpus procedure](lusdview.md#external-usd-assets-smoke-rendering)
+and [the WASM corpus parser](../web/js/docs/regression.md#usd-wg-corpus-parsing).

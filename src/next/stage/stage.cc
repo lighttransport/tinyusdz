@@ -871,9 +871,9 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.playbackMode = lm.playbackMode;
   meta_.playbackMode_set = lm.playbackMode_set;
   meta_.copyright.clear();
-  if (const Dict* custom = lm.customLayerData.as_dictionary()) {
-    if (const Value* value = custom->find("copyright")) {
-      if (const std::string* text = value->as_string()) meta_.copyright = *text;
+  if (auto custom = lm.customLayerData.as_dictionary()) {
+    if (auto value = custom->find("copyright")) {
+      if (auto text = value->as_string()) meta_.copyright = *text;
     }
   }
   meta_.doc_set = lm.doc_set;

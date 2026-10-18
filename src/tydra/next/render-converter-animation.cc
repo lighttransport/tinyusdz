@@ -356,18 +356,18 @@ std::vector<std::string> ReadTokenArrayProperty(const UsdPrim& prim,
   std::vector<std::string> out;
   const Value* value = prim.GetPropertyValue(name);
   if (!value) return out;
-  if (const std::vector<std::string>* arr = value->as_token_array()) {
-    return *arr;
+  if (auto arr = value->as_token_array()) {
+    return {arr->begin(), arr->end()};
   }
-  if (const std::string* tok = value->as_token()) {
+  if (auto tok = value->as_token()) {
     out.push_back(*tok);
-  } else if (const std::string* str = value->as_string()) {
+  } else if (auto str = value->as_string()) {
     out.push_back(*str);
   }
   return out;
 }
 
-bool FirstArrayElementToFloat4(const std::vector<float>& values,
+bool FirstArrayElementToFloat4(::lightusd::next::ValueArrayView<const float> values,
                                uint32_t stride,
                                Float4* out) {
   if (!out || values.empty() || stride == 0) return false;
@@ -694,7 +694,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
         // by copy; for a 3000-joint rig that copied tens of thousands of
         // floats once per frame and then copied them again into the channel.
         const Value* sampled = prim.GetValueAtTime(prop_name, t);
-        const std::vector<float>* values =
+        auto values =
             sampled ? sampled->as_float_array() : nullptr;
         if (!values || values->empty() || ((*values).size() % stride) != 0) {
           continue;
@@ -757,7 +757,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
             swizzled[i + 2] = (*values)[i + 3];  // z
             swizzled[i + 3] = (*values)[i + 0];  // w (real)
           }
-          values = &swizzled;
+          values = swizzled;
         }
 
         Float4 preview;

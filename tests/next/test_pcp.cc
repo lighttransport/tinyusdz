@@ -21,6 +21,7 @@
 #include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
 #include "next/load-usd.hh"
+#include "next/reader/usda-reader.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
@@ -4654,7 +4655,83 @@ static void test_reorder_children() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_local_opinions_require_composition() {
+  struct Case {
+    const char* authored;
+    const char* composed;
+  };
+  const Case cases[] = {
+    {"def Xform \"P\" { custom int[] a = edit [append 1; append 2] }",
+     "def Xform \"P\" { custom int[] a = [1, 2] }"},
+    {"def Xform \"P\" { add rel r = </Target> }",
+     "def Xform \"P\" { rel r = </Target> }"},
+    {"def Xform \"P\" { append float x.connect = </Target.x> }",
+     "def Xform \"P\" { float x.connect = </Target.x> }"},
+    {"def Xform \"P\" (references = None) {}", "def Xform \"P\" {}"},
+    {"def Xform \"P\" (payload = None) {}", "def Xform \"P\" {}"},
+    {"def Xform \"P\" (inherits = []) {}", "def Xform \"P\" {}"},
+    {"def Xform \"P\" (specializes = []) {}", "def Xform \"P\" {}"},
+    {"(relocates = { </P/old/deep>: </P/new> })\ndef Xform \"P\" {}",
+     "def Xform \"P\" { over \"new\" {} }"},
+    {"def Xform \"P\" (active = false) { def Scope \"Child\" {} }",
+     "def Xform \"P\" (active = false) {}"},
+    {"def Xform \"P\" (prepend apiSchemas = [\"TestAPI\"]) {}",
+     "def Xform \"P\" (apiSchemas = [\"TestAPI\"]) {}"},
+  };
+  AssetResolver resolver;
+  USDAWriteOptions write_options;
+  write_options.composed_stage_output = true;
+  for (const Case& c : cases) {
+    const std::string source = std::string("#usda 1.0\n") + c.authored + "\n";
+    LoadResult expected = LoadUSDAFromString(
+        std::string("#usda 1.0\n") + c.composed + "\n");
+    PCP_CHECK(expected.success, "canonical local-opinion fixture parses");
+    if (!expected.success) continue;
+    const std::string canonical = WriteUSDAToString(expected.stage, write_options);
+    for (bool public_loader : {false, true}) {
+      LoadResult loaded = LoadUSDAFromString(source);
+      PCP_CHECK(loaded.success, "authored local-opinion fixture parses");
+      if (!loaded.success) continue;
+      PCP_CHECK(StageNeedsComposition(loaded.stage),
+                "local authored operations require stage composition");
+      Stage result;
+      std::string warn, err;
+      bool ok;
+      if (public_loader) {
+        result = std::move(loaded.stage);
+        ok = ComposeLoadedStage(&result, resolver, "", {}, &warn, &err);
+      } else {
+        ok = pcp::ComposeStageFromLayer(loaded.stage.ReleaseRootLayer(),
+                                        resolver, &result, "", {}, &warn, &err);
+      }
+      PCP_CHECK(ok, "local opinions compose without external arcs");
+      if (!ok) continue;
+      const std::string actual = WriteUSDAToString(result, write_options);
+      if (actual != canonical) {
+        std::cerr << "Authored: " << c.authored << "\nExpected:\n" << canonical
+                  << "Actual:\n" << actual;
+      }
+      PCP_CHECK(actual == canonical, "composed output resolves local opinions");
+    }
+  }
+
+  LoadResult plain = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"P\" { int[] a = [1, 2]\n"
+      "rel r = </Target>\nfloat x.connect = </Target.x> }\n");
+  PCP_CHECK(plain.success, "ordinary single-layer fixture parses");
+  if (!plain.success) return;
+  PCP_CHECK(!StageNeedsComposition(plain.stage),
+            "explicit values and targets need no composition");
+  const PrimSpec* retained = plain.stage.GetRootLayer()->prim(0);
+  Stage result;
+  PCP_CHECK(pcp::ComposeStageFromLayer(plain.stage.ReleaseRootLayer(), resolver,
+                                      &result), "ordinary layer composes");
+  PCP_CHECK(result.GetRootLayer() && result.GetRootLayer()->prim(0) == retained,
+            "ordinary layer retains its original prim storage");
+}
+
 int main() {
+  test_local_opinions_require_composition();
   test_compute_prim_index();
   test_typed_composition_issues();
   test_prototype_order_independent();

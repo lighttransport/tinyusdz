@@ -42,7 +42,7 @@ def test_tydra_mesh_buffers_and_zero_copy():
     assert pts is not None
     a = np.asarray(pts)
     assert a.shape == (4, 3) and a.dtype == np.float32
-    assert a.__array_interface__["data"][0] == pts.__array_interface__["data"][0]
+    assert np.asarray(a).__array_interface__["data"][0] == np.asarray(pts).__array_interface__["data"][0]
     # triangulated indices
     tri = m.triangulated_indices
     assert tri is not None

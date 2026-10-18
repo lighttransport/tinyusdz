@@ -169,7 +169,7 @@ class VulkanRenderer final : public Renderer {
       std::shared_ptr<AsyncShaderReloadResult> result,
       std::string* err) override;
   bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
-  bool rayTracingUsesProceduralMaterialX() const {
+  bool rayTracingUsesProceduralMaterialX() const override {
     return rtUsesProceduralMaterialX_;
   }
   void setMaterialXVulkanShaderLimits(size_t maxSourceBytes,

@@ -88,10 +88,10 @@ static void TestSharedDeferredBudget() {
   assert(results[0].is_empty() != results[1].is_empty());
 #endif
   std::vector<uint8_t> flags{0, 1, 2, 128, 255};
-  const uint8_t* storage = flags.data();
   Value bools = Value::MakeBoolByteArray(std::move(flags));
   assert(bools.type_id() == TypeId::Bool && bools.array_size() == 5);
-  assert(bools.as_bool_array()->data() == storage);
+  flags[0] = 99;
+  assert(bools.as_bool_array()[0] == 0);
   assert(*bools.as_bool_array() == std::vector<uint8_t>({0, 1, 1, 1, 1}));
 }
 
@@ -293,7 +293,7 @@ int main() {
   Value v1_copy = v1->materialized_copy();
   assert(!v1_copy.is_lazy());
   assert(v1->is_lazy());
-  const std::vector<float>* v1_arr = v1_copy.as_float_array();
+  auto v1_arr = v1_copy.as_float_array();
   assert(v1_arr && *v1_arr == velocities1);
   std::cout << "  time-sampled array values came back lazy" << std::endl;
 
@@ -317,7 +317,7 @@ int main() {
     long uc_before = pv->lazy_ref()->source.use_count();
     assert(uc_before >= 2);  // pv + copy both reference it
     // Materializing the copy must not disturb the original.
-    const std::vector<float>* carr = copy.as_float_array();
+    auto carr = copy.as_float_array();
     assert(carr && carr->size() == points.size());
     assert(!copy.is_lazy());
     assert(pv->is_lazy());   // original untouched
@@ -332,7 +332,7 @@ int main() {
     Value mc = pv->materialized_copy();
     assert(!mc.is_lazy());                 // returned value is decoded
     assert(pv->is_lazy());                 // ORIGINAL untouched (still lazy)
-    const std::vector<float>* mcarr = mc.as_float_array();
+    auto mcarr = mc.as_float_array();
     assert(mcarr && mcarr->size() == points.size());
     for (size_t i = 0; i < points.size(); i++) assert((*mcarr)[i] == points[i]);
   }
@@ -482,7 +482,7 @@ int main() {
   }
 
   // Materialize the original via accessor; verify contents byte-for-byte.
-  const std::vector<float>* arr = pv->as_float_array();
+  auto arr = pv->as_float_array();
   assert(arr);
   assert(pv->type_id() == TypeId::Point3f);
   assert(arr->size() == points.size());
@@ -505,7 +505,7 @@ int main() {
     std::cout << "  indices view reads without materializing source"
               << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
   }
-  const std::vector<int32_t>* ia = iv->as_int_array();
+  auto ia = iv->as_int_array();
   assert(ia);
   assert(*ia == indices);
   assert(!iv->is_lazy());
@@ -560,23 +560,23 @@ int main() {
     assert(qv->is_lazy() && !qv->is_dirty());
   }
   Value qcopy = qv->materialized_copy();
-  const std::vector<float>* qa = qcopy.as_float_array();
+  auto qa = qcopy.as_float_array();
   assert(qa && *qa == quats);
   assert(qv->is_lazy());
   const Value* mv = ps->property_value("xforms");
   assert(mv && mv->is_array() && mv->is_lazy());
-  const std::vector<double>* ma = mv->as_double_array();
+  auto ma = mv->as_double_array();
   assert(ma && *ma == matrices);
   std::cout << "  quat/matrix arrays came back lazy and materialized correctly" << std::endl;
 
   // ---- vec4f / vec2d: doc-named POD types must also be lazy -----------------
   const Value* tv = ps->property_value("tangents");
   assert(tv && tv->is_array() && tv->is_lazy());
-  const std::vector<float>* ta = tv->as_float_array();
+  auto ta = tv->as_float_array();
   assert(ta && *ta == tangents);
   const Value* ev = ps->property_value("extent");
   assert(ev && ev->is_array() && ev->is_lazy());
-  const std::vector<double>* ea = ev->as_double_array();
+  auto ea = ev->as_double_array();
   assert(ea && *ea == extents);
   std::cout << "  vec4f/vec2d arrays came back lazy and materialized correctly" << std::endl;
 
@@ -598,7 +598,8 @@ int main() {
     const Value* cv = clone.property_value("points");
     assert(cv && cv->is_lazy());
     assert(cv->lazy_ref()->source.get() == src);
-    assert(sv->lazy_ref()->source.use_count() > uc0);  // buffer shared, not copied
+    assert(cv->lazy_ref() == sv->lazy_ref());  // C11 retains the shared lazy owner
+    assert(sv->lazy_ref()->source.use_count() == uc0);
     std::cout << "  Clone() preserved lazy + shared source" << std::endl;
 
     // Compositor::Compose() preserves laziness and shares the source buffer.
@@ -613,7 +614,7 @@ int main() {
     std::cout << "  Compose() preserved lazy + shared source" << std::endl;
 
     // Materializing the composed value must not disturb the source layer value.
-    const std::vector<float>* compArr = compv->as_float_array();
+    auto compArr = compv->as_float_array();
     assert(compArr && compArr->size() == points.size());
     assert(!compv->is_lazy());
     assert(sv->is_lazy());  // original opinion untouched
@@ -648,29 +649,29 @@ int main() {
     assert(mesh4.IsValid());
     const PrimSpec* ps4 = lr4.stage.GetRootLayer()->prim_at_path("/Mesh1");
     assert(ps4);
-    const std::vector<float>* pa = ps4->property_value("points")->as_float_array();
+    auto pa = ps4->property_value("points")->as_float_array();
     assert(pa && pa->size() == points.size());
     for (size_t i = 0; i < points.size(); i++) assert((*pa)[i] == points[i]);
-    const std::vector<int32_t>* ix =
+    auto ix =
         ps4->property_value("faceVertexIndices")->as_int_array();
     assert(ix && *ix == indices);
-    const std::vector<uint32_t>* ux =
+    auto ux =
         ps4->property_value("primvars:ids")->as_uint_array();
     assert(ux && *ux == uids);
-    const std::vector<uint64_t>* u64x =
+    auto u64x =
         ps4->property_value("primvars:hashes")->as_uint64_array();
     assert(u64x && *u64x == hashes);
-    const std::vector<float>* oq =
+    auto oq =
         ps4->property_value("orientations")->as_float_array();
     assert(oq && *oq == quats);
-    const std::vector<double>* xm =
+    auto xm =
         ps4->property_value("xforms")->as_double_array();
     assert(xm && *xm == matrices);
     const Value* rv0 = mesh4.GetValueAtTime("velocities", 0.0);
     const Value* rv1 = mesh4.GetValueAtTime("velocities", 1.0);
     assert(rv0 && rv1 && rv0->is_lazy() && rv1->is_lazy());
-    const std::vector<float>* rv0a = rv0->as_float_array();
-    const std::vector<float>* rv1a = rv1->as_float_array();
+    auto rv0a = rv0->as_float_array();
+    auto rv1a = rv1->as_float_array();
     assert(rv0a && *rv0a == velocities0);
     assert(rv1a && *rv1a == velocities1);
     std::cout << "  pass-through output re-reads identically" << std::endl;
@@ -705,20 +706,20 @@ int main() {
     assert(mesh5.IsValid());
     const PrimSpec* ps5 = lr5.stage.GetRootLayer()->prim_at_path("/Mesh1");
     assert(ps5);
-    const std::vector<float>* fpa = ps5->property_value("points")->as_float_array();
+    auto fpa = ps5->property_value("points")->as_float_array();
     assert(fpa && fpa->size() == points.size());
     for (size_t i = 0; i < points.size(); i++) assert((*fpa)[i] == points[i]);
-    const std::vector<float>* fqa =
+    auto fqa =
         ps5->property_value("orientations")->as_float_array();
     assert(fqa && *fqa == quats);
-    const std::vector<double>* fma =
+    auto fma =
         ps5->property_value("xforms")->as_double_array();
     assert(fma && *fma == matrices);
     const Value* fv0 = mesh5.GetValueAtTime("velocities", 0.0);
     const Value* fv1 = mesh5.GetValueAtTime("velocities", 1.0);
     assert(fv0 && fv1);
-    const std::vector<float>* fv0a = fv0->as_float_array();
-    const std::vector<float>* fv1a = fv1->as_float_array();
+    auto fv0a = fv0->as_float_array();
+    auto fv1a = fv1->as_float_array();
     assert(fv0a && *fv0a == velocities0);
     assert(fv1a && *fv1a == velocities1);
     std::cout << "  facade output re-reads identically" << std::endl;
@@ -815,7 +816,7 @@ int main() {
     assert(mpv && mpv->is_lazy());
     assert(mpv->lazy_ref()->source->is_mmapped() &&
            "default file load should be mmap-backed");
-    const std::vector<float>* mpa = mpv->as_float_array();
+    auto mpa = mpv->as_float_array();
     assert(mpa && mpa->size() == points.size());
     for (size_t i = 0; i < points.size(); i++) assert((*mpa)[i] == points[i]);
     // The mapping must outlive the reader: a lazy value materialized after the
@@ -835,7 +836,7 @@ int main() {
     assert(opv && opv->is_lazy());
     assert(!opv->lazy_ref()->source->is_mmapped() &&
            "use_mmap=false must use the owned buffer");
-    const std::vector<float>* opa = opv->as_float_array();
+    auto opa = opv->as_float_array();
     assert(opa && *opa == *mpa);
     std::cout << "  use_mmap=false falls back to owned buffer, same data"
               << std::endl;

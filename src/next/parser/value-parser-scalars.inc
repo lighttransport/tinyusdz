@@ -569,7 +569,7 @@ ParseResult ParsePathExpression(Lexer& lexer) {
   // SdfPathExpression is authored as a quoted string.
   ParseResult r = ParseString(lexer);
   if (r.success) {
-    if (const std::string* sp = r.value.as_string()) {
+    if (auto sp = r.value.as_string()) {
       return ParseResult::Ok(
           Value::MakeStringLike(*sp, TypeId::PathExpression));
     }

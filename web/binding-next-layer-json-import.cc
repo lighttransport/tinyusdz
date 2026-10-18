@@ -623,7 +623,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
             bool parsed_array = false;
             if (!ParseLayerJSONValue(field, "string", &parsed,
                                      &parsed_array, nullptr)) return false;
-            const std::string* text = parsed.as_string();
+            auto text = parsed.as_string();
             if (!text) return false;
             *out = *text;
           } else {

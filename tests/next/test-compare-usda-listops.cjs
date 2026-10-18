@@ -12,6 +12,9 @@ function different(left, right) {
   assert.notDeepEqual(compareUsda(right, left), []);
 }
 for (const qualifier of ['', 'prepend ', 'append ', 'delete ', 'add ', 'reorder ']) {
+  equal(scene(`${qualifier}rel r`), scene('rel r'));
+  equal(scene(`${qualifier}custom rel r`), scene('rel r'));
+  different(scene(`${qualifier}rel r`), scene(`${qualifier}rel r = []`));
   equal(scene(`${qualifier}rel r = None`), scene(`${qualifier}rel r = []`));
   for (const field of ['inherits', 'specializes', 'references', 'payload',
                        'apiSchemas', 'variantSets', 'clipSets']) {

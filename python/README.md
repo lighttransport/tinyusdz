@@ -9,7 +9,7 @@ no legacy core in the wheel; native `cmake -S .` and WASM still
 provide the legacy path via `web/binding.cc`). **v1.0.0**, npm `preview`
 dist-tag. Wheels:
 
-- `cp310-abi3` — one stable-ABI wheel covers CPython **3.10+**
+- `cp311-abi3` — one stable-ABI wheel covers CPython **3.11+**
 - `cp314t` — native **free-threaded** (GIL-less) CPython 3.14 wheel
 
 ```bash
@@ -62,6 +62,13 @@ for mesh in scene.meshes:
 
 ## Notes
 
+- Arrays implement Python's read-only buffer protocol. Use `memoryview(array)`
+  or `np.asarray(array)`; `Array.memoryview()` and `__array_interface__` have
+  been removed. A view retains its C11 storage after attribute replacement,
+  stage closure, or render-scene deletion. Later writes detach shared storage.
+- Numeric authoring accepts sequences and typed buffers, including strided and
+  big-endian buffers. Shared native descriptors validate and convert components;
+  integer overflow rejects the write without changing the attribute.
 - NumPy is optional (interop only, not a dependency).
 - `lightusd.flatten_file(src, dst)` runs a low-memory compose+flatten
   pipeline that streams large arrays through without decoding them.

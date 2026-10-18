@@ -10,6 +10,7 @@
 #include "../crate/crate-format.hh"
 #include "../crate/lazy-array.hh"
 #include "../types/type-info.hh"
+#include "../types/array-builder.hh"
 
 #include <algorithm>
 #include <cstdlib>

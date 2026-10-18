@@ -21,11 +21,11 @@ namespace lightusd {
 namespace web_next {
 using namespace layer_json_detail;
 namespace {
-size_t LazyDecodedBytes(const tn::Value& value) {
+size_t LazyDecodedBytes(tn::ValueView value) {
   size_t bytes = 0;
-  std::vector<const tn::Value*> pending{&value};
+  std::vector<tn::ValueView> pending{value};
   while (!pending.empty()) {
-    const tn::Value* current = pending.back();
+    const tn::ValueView current = pending.back();
     pending.pop_back();
     if (current->is_lazy()) {
       size_t stride = tn::GetTypeSize(current->type_id());
@@ -34,14 +34,14 @@ size_t LazyDecodedBytes(const tn::Value& value) {
       if (count > (kMaxLayerJSONBytes / 16 - bytes) / stride) return SIZE_MAX;
       bytes += count * stride;
     }
-    if (const tn::Dict* dict = current->as_dictionary()) {
-      for (const auto& entry : dict->entries()) pending.push_back(&entry.second);
+    if (auto dict = current->as_dictionary()) {
+      for (const auto& entry : dict->entries()) pending.push_back(entry.second);
     }
   }
   return bytes;
 }
 
-bool ChargeLayerJSONValue(const tn::Value& value, size_t elements,
+bool ChargeLayerJSONValue(tn::ValueView value, size_t elements,
                           size_t* estimate) {
   if (!estimate || *estimate > kMaxLayerJSONBytes || elements == SIZE_MAX)
     return false;
@@ -55,7 +55,7 @@ bool ChargeLayerJSONValue(const tn::Value& value, size_t elements,
   return true;
 }
 
-std::string LayerJSONValueText(const tn::Value& value) {
+std::string LayerJSONValueText(tn::ValueView value) {
   std::string text = tn::PrintValue(value);
   switch (value.type_id()) {
     case tn::TypeId::Matrix2f: case tn::TypeId::Matrix2d:
@@ -322,7 +322,7 @@ minijson::Value LayerPrimJSON(const tn::Layer& layer, uint32_t index,
         metadata["allowedTokens"] = std::move(tokens);
       }
       const auto add_value_meta = [&](uint32_t flag, const char* key,
-                                      const tn::Value& value) {
+                                      tn::ValueView value) {
         if (!(meta->authored & flag)) return true;
         const size_t elements = MetadataValueEntryCount(value);
         if (!ChargeLayerJSONValue(value, elements, estimate)) return false;
@@ -608,7 +608,7 @@ int32_t NextLayerDocument::exportJSONSize() {
     }
     encoded_meta["unregisteredMetas"] = std::move(unknown);
   }
-  const auto add_dictionary_meta = [&](const char* key, const tn::Value& value,
+  const auto add_dictionary_meta = [&](const char* key, tn::ValueView value,
                                       bool authored) {
     if (!authored) return true;
     const size_t entries = MetadataValueEntryCount(value);

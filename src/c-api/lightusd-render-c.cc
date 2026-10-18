@@ -63,6 +63,7 @@ static_assert(!(BufferCacheKey{1, 0, 0, 0} ==
               "cache keys must retain the full subresource index");
 
 struct lightusd_render_scene {
+  std::atomic<size_t> references{1};
   td::RenderScene scene;
   std::shared_ptr<const td::RenderScene> shared_scene;
   const td::RenderScene& data() const {
@@ -132,6 +133,23 @@ static const td::ConverterConfig& ConfigureDefaultResolver(
     config.asset_resolver = &resolver;
   }
   return config;
+}
+
+static void ConfigureClipStageLoader(
+    td::ConverterConfig& config,
+    const std::shared_ptr<n::AssetResolver>& resolver) {
+  config.animation.clip_stage_loader =
+      [resolver](const std::string& asset_path, n::Stage* clip_stage,
+                 std::string* warning, std::string* error) {
+        if (!clip_stage) return false;
+        const n::ResolvedAsset asset = resolver->Resolve(asset_path);
+        if (!asset.exists) {
+          if (error) *error = "asset not found: " + asset_path;
+          return false;
+        }
+        return n::LoadUSDComposed(asset.resolved_path, clip_stage, warning,
+                                  error);
+      };
 }
 
 struct lightusd_render_session {
@@ -1043,18 +1061,7 @@ lightusd_status lightusd_render_convert_curves(
     resolver_config.search_paths.emplace_back(asset_search_paths[i]);
   }
   resolver->SetConfig(resolver_config);
-  config.animation.clip_stage_loader =
-      [resolver](const std::string& asset_path, n::Stage* clip_stage,
-                 std::string* warning, std::string* error) {
-        if (!clip_stage) return false;
-        const n::ResolvedAsset asset = resolver->Resolve(asset_path);
-        if (!asset.exists) {
-          if (error) *error = "asset not found: " + asset_path;
-          return false;
-        }
-        return n::LoadUSDComposed(asset.resolved_path, clip_stage, warning,
-                                  error);
-      };
+  ConfigureClipStageLoader(config, resolver);
 
   td::RenderSceneConverter converter(config);
   td::RenderCurves curves;
@@ -1082,6 +1089,15 @@ lightusd_status lightusd_render_convert_mesh(
   const lightusd_status config_status = BuildConverterConfig(stage, cfg, &config);
   if (config_status != LIGHTUSD_OK) return config_status;
   config.mesh.subdivision_level = subdivision_level;
+  if (cfg && cfg->use_default_asset_resolver) {
+    auto resolver = std::make_shared<n::AssetResolver>();
+    n::ResolverConfig resolver_config;
+    resolver_config.working_directory = stage->source_dir;
+    resolver_config.search_paths.push_back(stage->source_dir);
+    resolver->SetConfig(resolver_config);
+    config.asset_resolver = resolver.get();
+    ConfigureClipStageLoader(config, resolver);
+  }
   td::RenderSceneConverter converter(config);
   td::RenderMesh mesh;
   const auto native_prim = lightusd_internal::FromC(prim);
@@ -1470,7 +1486,32 @@ void lightusd_render_session_abort(
   delete prepared;
 }
 
-void lightusd_render_scene_destroy(lightusd_render_scene* scene) { delete scene; }
+void lightusd_render_scene_retain(lightusd_render_scene* scene) {
+  if (scene) scene->references.fetch_add(1, std::memory_order_relaxed);
+}
+void lightusd_render_scene_destroy(lightusd_render_scene* scene) {
+  if (scene && scene->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete scene;
+}
+lightusd_status lightusd_render_buffer_pin(const lightusd_render_scene* scene,
+    const lightusd_buffer_view* view, lightusd_buffer** out) {
+  if (out) *out = nullptr;
+  if (!scene || !view || !out || (view->nbytes && !view->data))
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid render buffer");
+  auto* pin = static_cast<lightusd_buffer*>(std::calloc(1, sizeof(lightusd_buffer)));
+  if (!pin) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "render buffer pin allocation failed");
+  pin->external = scene;
+  pin->release_external = [](const void* owner) {
+    lightusd_render_scene_destroy(const_cast<lightusd_render_scene*>(static_cast<const lightusd_render_scene*>(owner)));
+  };
+  pin->view.is_array = 1;
+  pin->view.storage = view->component_type;
+  pin->view.components = view->components;
+  pin->view.count = view->count;
+  pin->view.data = view->data;
+  pin->view.nbytes = view->nbytes;
+  lightusd_render_scene_retain(const_cast<lightusd_render_scene*>(scene));
+  *out = pin; return LIGHTUSD_OK;
+}
 
 lightusd_status lightusd_render_scene_warnings(const lightusd_render_scene* scene,
                                        lightusd_strlist** out) {

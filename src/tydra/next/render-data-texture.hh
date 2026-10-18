@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-
+#include "render-data-enums.hh"
+#include "render-data-math.hh"
+#include "chunked-array.hh"
 #include <string>
+#include <vector>
+
+namespace lightusd { namespace tydra { namespace next {
 
 //
 // RenderTexture
@@ -118,3 +123,5 @@ struct TextureImage {
   bool is_loaded() const { return !data.empty(); }
   size_t memory_usage() const { return data.memory_usage(); }
 };
+
+}}} // namespace lightusd::tydra::next

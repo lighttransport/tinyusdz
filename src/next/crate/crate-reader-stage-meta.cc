@@ -23,7 +23,7 @@ DecodedExtensionField MakeTypedExtensionField(std::string name,
   extension.name = std::move(name);
   extension.value = std::move(value);
   extension.unregistered = true;
-  if (const std::string* source = extension.value.as_string()) {
+  if (auto source = extension.value.as_string()) {
     extension.unregistered_source = *source;
     Value dictionary = ParseDictText(*source);
     if (dictionary.is_dictionary()) {
@@ -66,22 +66,22 @@ void CrateReader::Impl::DecodeStageMetadata(
 
     for (auto& field : fields) {
       if (field.first == "primChildren") {
-        if (const std::vector<std::string>* names =
+        if (auto names =
                 field.second.as_token_array()) {
-          if (!names->empty()) prim_children_order["/"] = *names;
+          if (!names->empty()) prim_children_order["/"].assign(names->begin(), names->end());
         }
       } else if (field.first == "primOrder") {
         layer.meta().rootPrimOrder_set = true;
-        if (const std::vector<std::string>* names =
+        if (auto names =
                 field.second.as_token_array()) {
-          layer.meta().rootPrimOrder = *names;
+          layer.meta().rootPrimOrder.assign(names->begin(), names->end());
         }
       } else if (field.first == "defaultPrim") {
         layer.meta().defaultPrim_set = true;
-        if (const std::string* s = field.second.as_token())
+        if (auto s = field.second.as_token())
           layer.meta().defaultPrim = *s;
       } else if (field.first == "upAxis") {
-        if (const std::string* s = field.second.as_token()) {
+        if (auto s = field.second.as_token()) {
           layer.meta().upAxis = *s;
           layer.meta().upAxis_set = true;
         }
@@ -132,9 +132,9 @@ void CrateReader::Impl::DecodeStageMetadata(
         Value d;
         if (field.second.is_dictionary()) {
           d = std::move(field.second);
-        } else if (const std::string* s = field.second.as_string()) {
+        } else if (auto s = field.second.as_string()) {
           d = ParseDictText(*s);
-        } else if (const std::string* s = field.second.as_token()) {
+        } else if (auto s = field.second.as_token()) {
           d = ParseDictText(*s);
         }
         if (d.is_dictionary()) {
@@ -149,51 +149,51 @@ void CrateReader::Impl::DecodeStageMetadata(
       } else if (field.first == "layerRelocates" ||
                  field.first == "relocates") {
         layer.meta().relocates_set = true;
-        if (const std::vector<std::string>* pairs =
+        if (auto pairs =
                 field.second.as_token_array()) {
           for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
             layer.meta().relocates.emplace_back((*pairs)[i], (*pairs)[i + 1]);
           }
         }
       } else if (field.first == "colorConfiguration") {
-        if (const std::string* s = field.second.as_asset_path()) {
+        if (auto s = field.second.as_asset_path()) {
           layer.meta().colorConfiguration = *s;
           layer.meta().colorConfiguration_set = true;
-        } else if (const std::string* s = field.second.as_token()) {
+        } else if (auto s = field.second.as_token()) {
           layer.meta().colorConfiguration = *s;
           layer.meta().colorConfiguration_set = true;
         }
       } else if (field.first == "colorManagementSystem") {
-        if (const std::string* s = field.second.as_token()) {
+        if (auto s = field.second.as_token()) {
           layer.meta().colorManagementSystem = *s;
           layer.meta().colorManagementSystem_set = true;
-        } else if (const std::string* s = field.second.as_string()) {
+        } else if (auto s = field.second.as_string()) {
           layer.meta().colorManagementSystem = *s;
           layer.meta().colorManagementSystem_set = true;
         }
       } else if (field.first == "renderSettingsPrimPath") {
-        if (const std::string* s = field.second.as_string()) {
+        if (auto s = field.second.as_string()) {
           layer.meta().renderSettingsPrimPath = *s;
           layer.meta().renderSettingsPrimPath_set = true;
-        } else if (const std::string* s = field.second.as_token()) {
+        } else if (auto s = field.second.as_token()) {
           layer.meta().renderSettingsPrimPath = *s;
           layer.meta().renderSettingsPrimPath_set = true;
         }
       } else if (field.first == "documentation" || field.first == "doc") {
-        if (const std::string* s = field.second.as_string()) {
+        if (auto s = field.second.as_string()) {
           layer.meta().doc = *s;
           layer.meta().doc_set = true;
         }
       } else if (field.first == "comment") {
-        if (const std::string* s = field.second.as_string()) {
+        if (auto s = field.second.as_string()) {
           layer.meta().comment = *s;
           layer.meta().comment_set = true;
         }
       } else if (field.first == "owner") {
-        if (const std::string* s = field.second.as_string()) {
+        if (auto s = field.second.as_string()) {
           layer.meta().owner = *s;
           layer.meta().owner_set = true;
-        } else if (const std::string* s = field.second.as_token()) {
+        } else if (auto s = field.second.as_token()) {
           layer.meta().owner = *s;
           layer.meta().owner_set = true;
         }
@@ -203,7 +203,7 @@ void CrateReader::Impl::DecodeStageMetadata(
           layer.meta().autoPlay_set = true;
         }
       } else if (field.first == "playbackMode") {
-        const std::string* value = field.second.as_token();
+        auto value = field.second.as_token();
         if (!value) value = field.second.as_string();
         if (value) {
           layer.meta().playbackMode = *value == "loop" ? "loop" : "none";
@@ -212,7 +212,7 @@ void CrateReader::Impl::DecodeStageMetadata(
       } else if (field.first == "__lightusd_unknownMeta") {
         // lightusd-private: length-prefixed (key, raw-value) pairs of unmodeled
         // LAYER metadata the parser preserved (see the writer).
-        const std::string* s = field.second.as_string();
+        auto s = field.second.as_string();
         if (!s) s = field.second.as_token();
         if (s) {
           size_t p = 0;
@@ -241,7 +241,7 @@ void CrateReader::Impl::DecodeStageMetadata(
           }
         }
       } else if (field.first == "subLayerOffsets") {
-        if (const std::vector<double>* arr = field.second.as_double_array()) {
+        if (auto arr = field.second.as_double_array()) {
           layer.meta().subLayerOffsets.clear();
           for (size_t i = 0; i + 1 < arr->size(); i += 2) {
             layer.meta().subLayerOffsets.emplace_back((*arr)[i], (*arr)[i + 1]);
@@ -249,11 +249,11 @@ void CrateReader::Impl::DecodeStageMetadata(
         }
       } else if (field.first == "subLayers") {
         layer.meta().subLayers_set = true;
-        if (const std::vector<std::string>* arr = field.second.as_token_array()) {
+        if (auto arr = field.second.as_token_array()) {
           for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
-        } else if (const std::string* s = field.second.as_string()) {
+        } else if (auto s = field.second.as_string()) {
           layer.meta().subLayers.push_back(*s);
-        } else if (const std::string* s = field.second.as_token()) {
+        } else if (auto s = field.second.as_token()) {
           layer.meta().subLayers.push_back(*s);
         }
       } else {

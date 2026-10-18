@@ -333,9 +333,9 @@ async function decodeHDRTexture(data, mimeType) {
     const buffer = data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
 
     if (mimeType === 'image/x-exr') {
-        await _lightusd?.loadEXR?.();
+        const exr = _lightusd?.loadFeature ? await _lightusd.loadFeature('exr') : _lightusd;
         // Use EXR decoder with LightUSD fallback
-        const result = decodeEXRWithFallback(buffer, _lightusd, {
+        const result = decodeEXRWithFallback(buffer, exr, {
             outputFormat: 'float16',
             preferThreeJS: true,
         });

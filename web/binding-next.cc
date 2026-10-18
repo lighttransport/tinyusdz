@@ -38,7 +38,6 @@
 #include "next/pcp/layer-registry.hh"
 #include "next/pipeline/flatten.hh"
 #include "next/crate/crate-reader.hh"
-#include "tsd/tinysubdiv.hh"
 
 #include "minijson.hh"
 #include "binding-next-scene.hh"
@@ -75,108 +74,6 @@ using namespace lightusd::web_next;
 // synchronous callback in bounded batches. Input and output arrays cross the
 // browser boundary as counted buffers, without emval handles.
 // ===========================================================================
-EM_JS(int, NextSubdivEmit,
-      (uint32_t callback_id, const float* positions, uint32_t position_count,
-       const float* normals, uint32_t normal_count,
-       const uint32_t* indices, uint32_t index_count,
-       const uint32_t* face_source, uint32_t face_count,
-       const float* uvs, uint32_t uv_count,
-       uint32_t num_vertices, uint32_t num_faces, uint32_t batch_index), {
-  return Module['__lightusdNextSubdivEmit'](
-      callback_id, Number(positions), position_count, Number(normals),
-      normal_count, Number(indices), index_count, Number(face_source),
-      face_count, Number(uvs), uv_count, num_vertices, num_faces, batch_index);
-});
-class SubdivStreamer {
- public:
-  int refineStream(const float* points, uint32_t point_values,
-                   const uint32_t* fvc, uint32_t face_count,
-                   const uint32_t* fvi, uint32_t index_count,
-                   const float* uv_values, uint32_t uv_value_count,
-                   const uint32_t* uv_indices, uint32_t uv_index_count,
-                   const lightusd_next_subdiv_options& options,
-                   uint32_t callback_id) {
-    namespace tsd = lightusd::tsd;
-    error_.clear();
-    if ((point_values % 3) != 0) {
-      error_ = "points length must be a multiple of 3";
-      return 1;
-    }
-    if (!face_count || !index_count) {
-      error_ = "empty mesh";
-      return 1;
-    }
-    const bool has_uv = uv_value_count >= 2 && (uv_value_count % 2) == 0;
-
-    tsd::MeshView mesh;
-    mesh.points = points;
-    mesh.num_points = point_values / 3;
-    mesh.face_vertex_counts = fvc;
-    mesh.num_faces = face_count;
-    mesh.face_vertex_indices = fvi;
-    mesh.num_face_vertex_indices = index_count;
-
-    tsd::FVarChannelView uvchan;
-    if (has_uv) {
-      uvchan.values = uv_values;
-      uvchan.num_values = uv_value_count / 2;
-      uvchan.indices = uv_index_count ? uv_indices : nullptr;
-      uvchan.stride = 2;
-      uvchan.interpolation = (options.uv_interpolation == 1)
-                                 ? tsd::FVarLinearInterpolation::CornersPlus1
-                                 : tsd::FVarLinearInterpolation::All;
-    }
-
-    tsd::Options opts;
-    opts.scheme = (options.scheme == 1)   ? tsd::Scheme::Loop
-                  : (options.scheme == 2) ? tsd::Scheme::Bilinear
-                                  : tsd::Scheme::CatmullClark;
-    opts.boundary = (options.boundary == 1)   ? tsd::BoundaryInterpolation::EdgeOnly
-                    : (options.boundary == 2) ? tsd::BoundaryInterpolation::None
-                                      : tsd::BoundaryInterpolation::EdgeAndCorner;
-    opts.level = options.level;
-    opts.remove_holes = true;
-
-    tsd::StreamOptions so;
-    so.batch_faces = (options.batch_faces > 0) ? uint32_t(options.batch_faces) : 4096u;
-    so.emit_triangles = true;
-    so.want_normals = options.want_normals != 0;
-    so.dedup_within_batch = true;
-    so.block_faces = (options.block_faces > 0) ? uint32_t(options.block_faces) : 0u;
-    so.halo_rings = (options.halo_rings > 0) ? uint32_t(options.halo_rings) : 0u;
-
-    struct SinkCtx { uint32_t callback_id; bool want_normals; };
-    SinkCtx ctx{callback_id, so.want_normals};
-
-    auto sink = [](void *user, const tsd::StreamBatch *b) -> bool {
-      SinkCtx *c = static_cast<SinkCtx *>(user);
-      const bool have_normals = c->want_normals && b->normals;
-      const bool have_uv = b->num_fvar == 1 && b->fvar[0].values;
-      return NextSubdivEmit(
-          c->callback_id, b->positions, b->num_vertices * 3,
-          have_normals ? b->normals : nullptr,
-          have_normals ? b->num_vertices * 3 : 0,
-          b->indices, b->num_indices, b->face_source, b->num_faces,
-          have_uv ? b->fvar[0].values : nullptr,
-          have_uv ? b->num_indices * 2 : 0,
-          b->num_vertices, b->num_faces, b->batch_index) != 0;
-    };
-
-    const tsd::Result r = tsd::RefineStream(
-        mesh, has_uv ? &uvchan : nullptr, has_uv ? 1u : 0u, nullptr, 0, opts, so,
-        sink, &ctx, &error_);
-    if (r != tsd::Result::Success) {
-      error_ = std::string("RefineStream failed (") + tsd::to_string(r) +
-               "): " + error_;
-      return 1;
-    }
-    return 0;
-  }
-  const std::string& error() const { return error_; }
- private:
-  std::string error_;
-};
-
 // Resumable multi-layer flatten session: JS drives a need-layer loop,
 // providing dependency layer bytes (USDA / USDC / USDZ, fetched over HTTP or
 // pulled from a package) until the flatten converges, then receives a
@@ -846,25 +743,6 @@ class NextFlattenSession {
 
 namespace lightusd {
 namespace web_next {
-int NextSubdivRefine(void* object, const float* points, uint32_t point_values,
-                    const uint32_t* face_counts, uint32_t face_count,
-                    const uint32_t* face_indices, uint32_t index_count,
-                    const float* uv_values, uint32_t uv_value_count,
-                    const uint32_t* uv_indices, uint32_t uv_index_count,
-                    const lightusd_next_subdiv_options* options,
-                    uint32_t callback_id) {
-  return static_cast<SubdivStreamer*>(object)->refineStream(
-      points, point_values, face_counts, face_count, face_indices, index_count,
-      uv_values, uv_value_count, uv_indices, uv_index_count, *options,
-      callback_id);
-}
-int NextSubdivError(void* object, uint8_t* out, uint32_t cap) {
-  const std::string& error = static_cast<SubdivStreamer*>(object)->error();
-  if (error.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
-    return -1;
-  if (out && cap >= error.size()) std::memcpy(out, error.data(), error.size());
-  return static_cast<int>(error.size());
-}
 int NextFlattenBegin(void* object, const uint8_t* root, uint32_t root_size,
                      const uint8_t* name, uint32_t name_size, bool lazy_arrays) {
   return static_cast<NextFlattenSession*>(object)->beginBytes(
@@ -1805,7 +1683,6 @@ uint8_t* NextDiffJSON(const lightusd_next_diff_options* options,
 void* NextCreateObject(uint32_t kind) {
   switch (kind) {
     case 1: return new (std::nothrow) NextUSDZConverterNative;
-    case 2: return new (std::nothrow) SubdivStreamer;
     case 3: return new (std::nothrow) NextFlattenSession;
     case 4: return new (std::nothrow) RenderStream;
     case 5: return new (std::nothrow) NextAssetStore;
@@ -1816,7 +1693,6 @@ void* NextCreateObject(uint32_t kind) {
 void NextDestroyObject(uint32_t kind, void* object) {
   switch (kind) {
     case 1: delete static_cast<NextUSDZConverterNative*>(object); return;
-    case 2: delete static_cast<SubdivStreamer*>(object); return;
     case 3: delete static_cast<NextFlattenSession*>(object); return;
     case 4: delete static_cast<RenderStream*>(object); return;
     case 5: delete static_cast<NextAssetStore*>(object); return;

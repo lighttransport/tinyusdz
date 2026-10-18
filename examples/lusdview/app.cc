@@ -456,20 +456,20 @@ void App::updateTextureResidency() {
       size_t residentBytes = 0;
       if (renderThreadActive_) {
         residentBytes = EstimateTextureResidentBytes(ready.texture);
-        auto upload =
+        auto queuedTexture =
             std::make_shared<DrawTextureCPU>(std::move(ready.texture));
         // Keep identity/dimensions for UI and future source re-decode, while the
         // render-thread closure exclusively owns the large staging payload.
         DrawTextureCPU& retained = draw_.textures[ready.slot];
-        retained.image.width = upload->image.width;
-        retained.image.height = upload->image.height;
-        retained.image.channels = upload->image.channels;
+        retained.image.width = queuedTexture->image.width;
+        retained.image.height = queuedTexture->image.height;
+        retained.image.channels = queuedTexture->image.channels;
         retained.deferredDecode = false;
-        retained.requestedCompressed = upload->requestedCompressed;
-        retained.compressed.format = upload->compressed.format;
-        retained.compressed.width = upload->compressed.width;
-        retained.compressed.height = upload->compressed.height;
-        postGpu([this, slot = ready.slot, upload = std::move(upload)] {
+        retained.requestedCompressed = queuedTexture->requestedCompressed;
+        retained.compressed.format = queuedTexture->compressed.format;
+        retained.compressed.width = queuedTexture->compressed.width;
+        retained.compressed.height = queuedTexture->compressed.height;
+        postGpu([this, slot = ready.slot, upload = std::move(queuedTexture)] {
           renderer_->uploadTexture(static_cast<int>(slot), *upload);
         });
       } else {
@@ -630,13 +630,13 @@ void App::updateTextureResidency() {
     const bool full = selectedMask[slot] || state.forceFull;
     TextureRuntimeOptions runtime = loadOpts_.textureOptions;
     if (full) runtime.maxTextureSize = 0;
-    DrawTextureCPU placeholder = draw_.textures[slot];
-    placeholder.deferredDecode = true;
+    DrawTextureCPU queuedPlaceholder = draw_.textures[slot];
+    queuedPlaceholder.deferredDecode = true;
     state.state = TextureResidencyState::Decoding;
     const uint64_t generation = state.generation;
     textureDecodeJobs_.push_back(std::async(
         std::launch::async,
-        [slot, full, generation, placeholder = std::move(placeholder), runtime,
+        [slot, full, generation, placeholder = std::move(queuedPlaceholder), runtime,
          perDecodeBudget]() mutable {
           TextureDecodeResult result;
           result.slot = slot;
@@ -2059,14 +2059,9 @@ bool App::initWindow(std::string* err) {
 
   if (backend_ == Backend::GL) {
     glfwMakeContextCurrent(window_);
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wcast-function-type"
-#endif
-    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+    if (!gladLoadGLLoader([](const char* name) -> void* {
+          return reinterpret_cast<void*>(glfwGetProcAddress(name));
+        })) {
       *err = "Failed to load OpenGL via glad";
       return false;
     }
@@ -3592,8 +3587,8 @@ void App::drainProgressiveLoad() {
         // Keep the payload alive in the GPU-op closure, matching the upload
         // marshalling used by the completion and residency paths below.
         if (renderThreadActive_) {
-          auto upload = std::make_shared<DrawTextureCPU>(event.texture);
-          postGpu([this, slot, upload = std::move(upload)] {
+          auto queuedTexture = std::make_shared<DrawTextureCPU>(event.texture);
+          postGpu([this, slot, upload = std::move(queuedTexture)] {
             renderer_->uploadTexture(static_cast<int>(slot), *upload);
           });
         } else {
@@ -3688,8 +3683,8 @@ void App::drainProgressiveLoad() {
              !draw_.textures[i].compressed.data.empty() ||
              draw_.textures[i].streamingMutable)) {
           if (renderThreadActive_) {
-            auto upload = std::make_shared<DrawTextureCPU>(draw_.textures[i]);
-            postGpu([this, i, upload = std::move(upload)] {
+            auto queuedTexture = std::make_shared<DrawTextureCPU>(draw_.textures[i]);
+            postGpu([this, i, upload = std::move(queuedTexture)] {
               renderer_->uploadTexture(static_cast<int>(i), *upload);
             });
           } else {
@@ -3796,10 +3791,10 @@ void App::pollPrototypeLodBuilds() {
   // competes with rendering and texture decode precisely when interactivity is
   // most valuable.
   while (pendingPrototypeLods_.size() < 2 && !queuedPrototypeLods_.empty()) {
-    PrototypeLodBuildInput input = std::move(queuedPrototypeLods_.front());
+    PrototypeLodBuildInput lodInput = std::move(queuedPrototypeLods_.front());
     queuedPrototypeLods_.pop_front();
     pendingPrototypeLods_.push_back({std::async(
-        std::launch::async, [input = std::move(input)]() mutable {
+        std::launch::async, [input = std::move(lodInput)]() mutable {
           return BuildPrototypeLods(std::move(input));
         })});
   }
@@ -5560,8 +5555,8 @@ void App::applyDomeLightRequest(const Gui::DomeLightRequest& request) {
   draw_.lights = std::move(lights);
   std::vector<DrawLightCPU> gpuLights = draw_.lights;
   const size_t meshCount = draw_.meshes.size();
-  postGpu([this, lights = std::move(gpuLights), meshCount]() {
-    renderer_->setLights(lights, meshCount);
+  postGpu([this, snapshot = std::move(gpuLights), meshCount]() {
+    renderer_->setLights(snapshot, meshCount);
   });
   gui_.setDomeStatus(status);
 }
@@ -8097,11 +8092,11 @@ int App::run(const std::string& initialFile, int maxFrames,
         const uint64_t rendererGeneration = rendererGeneration_;
         postGpu([this, rendererGeneration, materialId, materialCopy] {
           if (!renderer_ || rendererGeneration != rendererGeneration_) return;
-          std::string err;
+          std::string updateError;
           if (!renderer_->updateMaterialConstants(materialId, materialCopy,
-                                                  &err) &&
-              !err.empty()) {
-            LOGW("live OpenPBR renderer update: %s", err.c_str());
+                                                  &updateError) &&
+              !updateError.empty()) {
+            LOGW("live OpenPBR renderer update: %s", updateError.c_str());
           }
         });
         std::string editErr;

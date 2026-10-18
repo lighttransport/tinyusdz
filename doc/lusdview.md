@@ -15,10 +15,16 @@ unaffected:
 
 ```sh
 cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_WITH_TYDRA=ON \
   -DLIGHTUSD_BUILD_GUI_VIEWER=ON
 cmake --build build_ninja -j16 --target lusdview
 ```
+
+The viewer is currently configured by the compatibility product. It also builds
+and links the refactored `lightusd_next`, `tydra_next` and public C API libraries;
+the viewer's default next loader uses those libraries. The next-only top-level
+product does not create the `lusdview` target.
 
 - **Vulkan** is ON by default (`-DLUSDVIEW_WITH_VULKAN=ON`) and needs **no Vulkan
   SDK, no `libvulkan-dev`, and no `glslangValidator`**: the API is resolved at

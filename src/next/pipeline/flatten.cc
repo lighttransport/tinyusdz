@@ -62,18 +62,6 @@ void FlattenMemLog(const char* stage) {
 #endif
 }
 
-// True if the root layer is self-contained: no sublayers and no per-prim
-// composition arcs (references/payloads/inherits/specializes/variants). Such a
-// root flattens to itself, so the structural clone Compose() would do is pure
-// overhead and can be skipped.
-bool IsSelfContained(const Layer& root) {
-  if (!root.meta().subLayers.empty()) return false;
-  for (const auto& prim : root.prims()) {
-    if (HasCompositionArcs(prim)) return false;
-  }
-  return true;
-}
-
 void CollectReferencedAssets(const Layer& layer, std::vector<std::string>* out) {
   if (!out) return;
   std::set<std::string> unique;
@@ -81,7 +69,7 @@ void CollectReferencedAssets(const Layer& layer, std::vector<std::string>* out) 
     for (const PropSlot& slot : prim.properties().slots()) {
       const Value* value = prim.property_value(slot.name_id);
       if (!value) continue;
-      const std::string* path = value->as_asset_path();
+      auto path = value->as_asset_path();
       if (path && !path->empty()) {
         unique.insert(*path);
       }
@@ -110,7 +98,7 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
   const Layer* layer = root;
   const auto compose_begin = Clock::now();
 #if defined(LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
-  if (opts.flatten && opts.use_pcp_compose && !IsSelfContained(*root)) {
+  if (opts.flatten && opts.use_pcp_compose && LayerNeedsComposition(*root)) {
     // Parallel pcp composition. A non-owning shared_ptr hands the root to pcp
     // for the call; `root_owner` retains ownership and outlives the write, and
     // the composed layer's lazy Values carry their own source-buffer keepalive.
@@ -143,7 +131,7 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     layer = composed.get();
   } else
 #endif
-  if (opts.flatten && !IsSelfContained(*root)) {
+  if (opts.flatten && LayerNeedsComposition(*root)) {
     Compositor comp;
     comp.SetOptions(opts.composition);
     if (opts.resolver) comp.SetResolver(opts.resolver);

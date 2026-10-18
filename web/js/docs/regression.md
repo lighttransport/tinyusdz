@@ -403,3 +403,37 @@ static bundles. `PUPPETEER_EXECUTABLE_PATH` selects an installed Chrome.
 See [the checker API guide](../../../tools/lusdchecker/README.md#javascript--wasm)
 for build options and the browser API. Legacy validation parity remains covered
 separately by `next-validation-parity.test.mjs`.
+## Independent next feature modules
+
+Build `lightusd_next_distribution` to produce the main next module plus geometry,
+raytrace, validator and EXR, for each required pointer width. These are separate
+WASM heaps. Feature consumers use `await module.loadFeature(name)` and call the
+returned object. See [the packaging documentation](../../npm/README.md) for the
+API migration and custom module locations.
+
+`tests/next-features.test.mjs` runs the same contract in Node and a Node Worker.
+Run with `LIGHTUSD_WASM64=1` for memory64.
+`tests/next-features-browser.test.mjs` checks both widths in Chrome's main thread
+and module Workers. Both are registered in the regression runner. Coverage
+includes all ABI metadata mismatches, failed-load retry, promise deduplication,
+independent heaps, core-to-feature array transfers, subdivision, simplification,
+ray hits, validation and EXR encoding/decoding. No external models are needed.
+
+## USD-WG corpus parsing
+
+Prepare the pinned corpus with `scripts/prepare-usd-assets.sh` from the repository
+root. After preparing the WASM artifacts, run from `web/js`:
+
+```sh
+USD_WG_ASSETS_DIR="$PWD/../../.cache/lightusd-verification/usd-assets" \
+  LIGHTUSD_SKIP_WASM_PREPARE=1 npm run test:corpus -- --wasm32
+USD_WG_ASSETS_DIR="$PWD/../../.cache/lightusd-verification/usd-assets" \
+  LIGHTUSD_SKIP_WASM_PREPARE=1 npm run test:corpus -- --wasm64
+```
+
+The runner uses `LayerDocument.load` with the default next-only module and
+`loadAsLayerFromBinary` with the legacy module. It parses individual layers
+without composition or rendering. The next document API enforces its 512 MiB
+input/resident limit. `--max-fail 0`, supplied by the npm command, fails on any
+rejected input; a missing loader API is an error. The pinned corpus currently
+contains 280 USD-family files.

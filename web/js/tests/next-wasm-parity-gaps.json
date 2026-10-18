@@ -2101,7 +2101,7 @@
     "family": "loading_and_diagnostics",
     "nextNameMatch": false,
     "parityStatus": "known_behavior_gap",
-    "nextSurface": "NextModule",
+    "nextSurface": "ValidatorFeature",
     "nextEquivalent": "validateFromBinary",
     "knownDifference": "For USDC, next now validates the decoded crate structure and reports the crate checked-group. The compatibility adapter preserves the CrateReader threading warning text without legacy's source-location prefix. Parse-failure wording differs.",
     "behaviorTest": "next-validation-parity.test.mjs"

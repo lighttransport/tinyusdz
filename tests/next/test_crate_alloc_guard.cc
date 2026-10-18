@@ -141,7 +141,7 @@ int main() {
     bool ok = DecodeCrateArray(buf.data(), buf.size(), raw_rep, tokens,
                                1024ull * 1024 * 1024, &out);
     assert(ok);
-    const std::vector<uint8_t>* arr = out.as_bool_array();
+    auto arr = out.as_bool_array();
     assert(arr && arr->size() == 3);
     assert((*arr)[0] == 0);
     assert((*arr)[1] == 1);
@@ -178,7 +178,7 @@ int main() {
 
       Value compressed_bool;
       assert(decode(CrateTypeId::Bool, &compressed_bool));
-      const std::vector<uint8_t>* compressed_arr =
+      auto compressed_arr =
           compressed_bool.as_bool_array();
       assert(compressed_arr && compressed_arr->size() == lanes.size());
       for (size_t i = 0; i < lanes.size(); ++i) {
@@ -187,7 +187,7 @@ int main() {
 
       Value compressed_int;
       assert(decode(CrateTypeId::Int, &compressed_int));
-      const std::vector<int32_t>* ints = compressed_int.as_int_array();
+      auto ints = compressed_int.as_int_array();
       assert(ints && ints->size() == lanes.size());
       for (size_t i = 0; i < lanes.size(); ++i) {
         assert((*ints)[i] == static_cast<int32_t>(lanes[i]));

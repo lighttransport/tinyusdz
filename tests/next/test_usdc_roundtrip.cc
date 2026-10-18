@@ -47,7 +47,7 @@ constexpr bool kExpectUsdaLazyMmap = true;
 constexpr bool kExpectUsdaLazyMmap = false;
 #endif
 
-static const Value* DictFind(const Value& dv, const char* key) {
+static ValueView DictFind(ValueView dv, const char* key) {
   if (!dv.is_dictionary() || !dv.as_dictionary()) return nullptr;
   return dv.as_dictionary()->find(key);
 }
@@ -69,21 +69,21 @@ static const Value* MustProp(const PrimSpec* prim, const char* name) {
 static void CheckFloatArray(const Value* value, TypeId type,
                             const std::vector<float>& expected) {
   assert(value && value->is_array() && value->type_id() == type);
-  const std::vector<float>* arr = value->as_float_array();
+  auto arr = value->as_float_array();
   assert(arr && *arr == expected);
 }
 
 static void CheckIntArray(const Value* value,
                           const std::vector<int32_t>& expected) {
   assert(value && value->is_array() && value->type_id() == TypeId::Int);
-  const std::vector<int32_t>* arr = value->as_int_array();
+  auto arr = value->as_int_array();
   assert(arr && *arr == expected);
 }
 
 static void CheckInt64Array(const Value* value,
                             const std::vector<int64_t>& expected) {
   assert(value && value->is_array() && value->type_id() == TypeId::Int64);
-  const std::vector<int64_t>* arr = value->as_int64_array();
+  auto arr = value->as_int64_array();
   assert(arr && *arr == expected);
 }
 
@@ -703,13 +703,13 @@ void test_roundtrip_vec_matrix_arrays() {
   auto check_f = [&](const char* name, const std::vector<float>& expect, TypeId t) {
     const Value* val = geo->property_value(name);
     assert(val && val->is_array() && val->type_id() == t);
-    const std::vector<float>* arr = val->as_float_array();
+    auto arr = val->as_float_array();
     assert(arr && *arr == expect);
   };
   auto check_d = [&](const char* name, const std::vector<double>& expect, TypeId t) {
     const Value* val = geo->property_value(name);
     assert(val && val->is_array() && val->type_id() == t);
-    const std::vector<double>* arr = val->as_double_array();
+    auto arr = val->as_double_array();
     assert(arr && *arr == expect);
   };
   check_f("v4", v4, TypeId::Float4);
@@ -983,7 +983,7 @@ void test_roundtrip_half_arrays() {
     auto check = [&](const char* name, const std::vector<float>& expect, TypeId t) {
       const Value* v = geo->property_value(name);
       assert(v && v->is_array() && v->type_id() == t);
-      const std::vector<float>* arr = v->as_float_array();  // materializes half->float
+      auto arr = v->as_float_array();  // materializes half->float
       assert(arr && *arr == expect);
     };
     check("h1", h1, TypeId::Half);
@@ -1103,8 +1103,8 @@ void test_roundtrip_byte_arrays() {
       CrateReadResult rr = reader.Read(buf.data(), buf.size());
       assert(rr.success);
       const PrimSpec* prim = MustPrim(rr.stage.GetRootLayer(), "/Data");
-      const auto* actual_bytes = MustProp(prim, "bytes")->as_uint_array();
-      const auto* actual_flags = MustProp(prim, "flags")->as_bool_array();
+      auto actual_bytes = MustProp(prim, "bytes")->as_uint_array();
+      auto actual_flags = MustProp(prim, "flags")->as_bool_array();
       assert(actual_bytes && *actual_bytes == bytes);
       assert(actual_flags && actual_flags->size() == flags.size());
       for (size_t i = 0; i < count; ++i) {
@@ -1207,19 +1207,19 @@ void test_roundtrip_arc_metadata_dicts() {
 
   const Value& cd = p->meta().customData();
   assert(cd.is_dictionary());
-  const Value* source = DictFind(cd, "source");
+  auto source = DictFind(cd, "source");
   assert(source && source->as_string() && *source->as_string() == "reference-fixture");
-  const Value* enabled = DictFind(cd, "enabled");
+  auto enabled = DictFind(cd, "enabled");
   assert(enabled && enabled->as_bool() && *enabled->as_bool());
-  const Value* revision = DictFind(cd, "revision");
+  auto revision = DictFind(cd, "revision");
   assert(revision && revision->as_int() && *revision->as_int() == 7);
 
   const Value& ai = p->meta().assetInfo();
   assert(ai.is_dictionary());
-  const Value* identifier = DictFind(ai, "identifier");
+  auto identifier = DictFind(ai, "identifier");
   assert(identifier && identifier->as_asset_path() &&
          *identifier->as_asset_path() == "asset.usda");
-  const Value* kind = DictFind(ai, "kind");
+  auto kind = DictFind(ai, "kind");
   assert(kind && kind->as_token() && *kind->as_token() == "component");
 
   std::cout << "  arc metadata dictionary crate roundtrip passed!\n\n";
@@ -1443,7 +1443,7 @@ void test_comprehensive_usdc_fixture() {
   assert(rl->meta().framesPerSecond_set);
   assert(rl->meta().framesPerSecond == 24.0);
   assert(rl->meta().customLayerData.is_dictionary());
-  const Value* fixture = DictFind(rl->meta().customLayerData, "fixture");
+  auto fixture = DictFind(rl->meta().customLayerData, "fixture");
   assert(fixture && fixture->as_string() &&
          *fixture->as_string() == "comprehensive-usdc");
 
@@ -2125,7 +2125,7 @@ void test_roundtrip_writer_audit_cluster() {
     assert(av && av->is_array());
     assert(av->array_size() == 2 && "uint3[] must not come back empty");
     assert(av->type_id() == TypeId::UInt3);
-    const std::vector<uint32_t>* ua = av->as_uint_array();
+    auto ua = av->as_uint_array();
     assert(ua && ua->size() == 6 && (*ua)[5] == 4294967295u);
   }
 
@@ -2284,7 +2284,7 @@ void test_roundtrip_deferred_items() {
            *bv2->as_uchar() == 200);
     const Value* ba = p->property_value("ba");
     assert(ba && ba->is_array() && ba->type_id() == TypeId::UChar);
-    const std::vector<uint32_t>* lanes = ba->as_uint_array();
+    auto lanes = ba->as_uint_array();
     assert(lanes && lanes->size() == 3 && (*lanes)[2] == 255);
   }
 

@@ -694,16 +694,16 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
                             GpuInstProto *out) {
   const lightusd::next::Value *val = prim.GetPropertyValue("points");
   if (!val) return false;
-  const std::vector<float> *pts = val->as_float_array();
+  const auto pts = val->as_float_array();
   if (!pts || pts->empty()) return false;
   const uint32_t nv = uint32_t(pts->size() / 3);
-  out->verts = *pts;
+  out->verts.assign(pts.begin(), pts.end());
 
   std::vector<Vec3> vn(nv, Vec3{0, 0, 0});
   bool perVertexN = false;
   val = prim.GetPropertyValue("normals");
   if (val) {
-    const std::vector<float> *nrm = val->as_float_array();
+    const auto nrm = val->as_float_array();
     if (nrm && nrm->size() == size_t(nv) * 3) {
       perVertexN = true;
       for (uint32_t j = 0; j < nv; ++j)
@@ -714,8 +714,8 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
   val = prim.GetPropertyValue("faceVertexIndices");
   const lightusd::next::Value *cval = prim.GetPropertyValue("faceVertexCounts");
   if (!val) return false;
-  const std::vector<int> *idx = val->as_int_array();
-  const std::vector<int> *cnt = cval ? cval->as_int_array() : nullptr;
+  const auto idx = val->as_int_array();
+  const auto cnt = cval ? cval->as_int_array() : nullptr;
   if (!idx || idx->empty()) return false;
   if (cnt && !cnt->empty()) {
     size_t off = 0;
@@ -750,8 +750,8 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
   if (opt.displace && opt.displace_scale != 0.0f) {
     std::vector<float> uvs;
     if (const lightusd::next::Value *uv = prim.GetPropertyValue("primvars:st")) {
-      const std::vector<float> *u = uv->as_float_array();
-      if (u && !u->empty()) uvs = *u;
+      const auto u = uv->as_float_array();
+      if (u && !u->empty()) uvs.assign(u.begin(), u.end());
     }
     float disp_const = 0.0f;
     ScalarTex disp_tex;
@@ -819,7 +819,7 @@ static bool ExtractProtoGeo(const lightusd::next::Stage &stage,
   out->base_color = Vec3{0.5f, 0.5f, 0.5f};
   if (const lightusd::next::Value *dcv =
           prim.GetPropertyValue("primvars:displayColor")) {
-    const std::vector<float> *dc = dcv->as_float_array();
+    const auto dc = dcv->as_float_array();
     if (dc && dc->size() >= 3) out->base_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
   }
   return true;
@@ -1363,7 +1363,7 @@ int main(int argc, char **argv) {
         uint32_t nv = 0;
         const lightusd::next::Value *val = prim.GetPropertyValue("points");
         if (!val) continue;
-        const std::vector<float> *pts = val->as_float_array();
+        const auto pts = val->as_float_array();
         if (!pts || pts->empty()) continue;
         nv = uint32_t(pts->size() / 3);
         // Transform local points into world space by the job's world matrix.
@@ -1379,7 +1379,7 @@ int main(int argc, char **argv) {
 
         val = prim.GetPropertyValue("normals");
         if (val) {
-          const std::vector<float> *nrm = val->as_float_array();
+          const auto nrm = val->as_float_array();
           if (nrm && nrm->size() >= nv * 3) {
             geo.normals.resize(size_t(nv) * 3);
             for (uint32_t j = 0; j < nv; ++j) {
@@ -1398,9 +1398,9 @@ int main(int argc, char **argv) {
 
         val = prim.GetPropertyValue("primvars:st");
         if (val) {
-          const std::vector<float> *uv = val->as_float_array();
+          const auto uv = val->as_float_array();
           if (uv && !uv->empty()) {
-            geo.uvs = *uv;
+            geo.uvs.assign(uv.begin(), uv.end());
           }
         }
         if (geo.uvs.empty()) geo.uvs.resize(nv * 2, 0);
@@ -1415,8 +1415,8 @@ int main(int argc, char **argv) {
         const lightusd::next::Value *cval =
             prim.GetPropertyValue("faceVertexCounts");
         if (val) {
-          const std::vector<int> *idx = val->as_int_array();
-          const std::vector<int> *cnt = cval ? cval->as_int_array() : nullptr;
+          const auto idx = val->as_int_array();
+          const auto cnt = cval ? cval->as_int_array() : nullptr;
           if (idx && !idx->empty()) {
             if (cnt && !cnt->empty()) {
               size_t off = 0;
@@ -1511,7 +1511,7 @@ int main(int argc, char **argv) {
         Vec3 display_color{1.0f, 1.0f, 1.0f};
         if (const lightusd::next::Value *dcv =
                 prim.GetPropertyValue("primvars:displayColor")) {
-          const std::vector<float> *dc = dcv->as_float_array();
+          const auto dc = dcv->as_float_array();
           if (dc && dc->size() >= 3)
             display_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
         }

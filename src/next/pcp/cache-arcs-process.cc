@@ -171,7 +171,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       memo_key += evaluated_asset_path;
       memo_key += '\1';
       if (src.expression_variables) {
-        AppendExpressionVarsFingerprint(*src.expression_variables, &memo_key);
+        AppendExpressionVarsFingerprint(src.expression_variables->view(), &memo_key);
       }
 
       std::shared_ptr<Layer> arc_layer;

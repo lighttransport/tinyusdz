@@ -70,8 +70,8 @@ size_t ScalarByteSize(TypeId comp) {
   return lu_scalar_byte_size(static_cast<uint16_t>(comp));
 }
 
-template <typename T>
-bool FinishBorrowedView(const std::vector<T>* storage, ArrayView<T>* out) {
+template <typename T, typename U>
+bool FinishBorrowedView(ValueArrayView<U> storage, ArrayView<T>* out) {
   if (!storage) return false;
   *out = ArrayView<T>{storage->empty() ? nullptr : storage->data(),
                       storage->size(), true};
@@ -139,7 +139,7 @@ bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<float>* arr = value.as_float_array();
+    auto arr = value.as_float_array();
     if (arr) {
       *out = ArrayView<float>{arr->empty() ? nullptr : arr->data(),
                               arr->size(), true};
@@ -164,7 +164,7 @@ bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<double>* arr = value.as_double_array();
+    auto arr = value.as_double_array();
     if (!arr) return false;
     *out = ArrayView<double>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -181,7 +181,7 @@ bool GetIntArrayView(const Value& value, ArrayScratch<int32_t>* scratch,
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<int32_t>* arr = value.as_int_array();
+    auto arr = value.as_int_array();
     if (!arr) return false;
     *out = ArrayView<int32_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -198,7 +198,7 @@ bool GetInt64ArrayView(const Value& value, ArrayScratch<int64_t>* scratch,
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<int64_t>* arr = value.as_int64_array();
+    auto arr = value.as_int64_array();
     if (!arr) return false;
     *out = ArrayView<int64_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -215,7 +215,7 @@ bool GetUIntArrayView(const Value& value, ArrayScratch<uint32_t>* scratch,
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<uint32_t>* arr = value.as_uint_array();
+    auto arr = value.as_uint_array();
     if (!arr) return false;
     *out = ArrayView<uint32_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
@@ -232,7 +232,7 @@ bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
     return true;
   }
   if (!value.is_lazy()) {
-    const std::vector<uint64_t>* arr = value.as_uint64_array();
+    auto arr = value.as_uint64_array();
     if (!arr) return false;
     *out = ArrayView<uint64_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;

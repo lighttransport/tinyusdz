@@ -441,7 +441,7 @@ void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
   ValidateDictValue(m.customData(), "core.prim.customData",
                     prim_location + ".customData", result);
 
-  if (const Dict *asset_info = m.assetInfo().as_dictionary()) {
+  if (auto asset_info = m.assetInfo().as_dictionary()) {
     ValidateDictionaryKeys(*asset_info, "core.prim.assetInfo",
                            prim_location + ".assetInfo", result);
 
@@ -520,7 +520,7 @@ void ValidateClipPairArray(const std::vector<std::array<double, 2>> &pairs,
 }
 
 void ValidateClipSetMetadata(const std::string &clip_set_name,
-                             const Dict &clip_set,
+                             DictView clip_set,
                              const std::string &prim_location,
                              USDValidationResult *result) {
   const std::string location = prim_location + ".clips[" + clip_set_name + "]";
@@ -650,7 +650,7 @@ void ValidateClipSetMetadata(const std::string &clip_set_name,
 void ValidateClipsMetadata(const PrimSpec &ps,
                            const std::string &prim_location,
                            USDValidationResult *result) {
-  const Dict *clips = ps.meta().clips().as_dictionary();
+  auto clips = ps.meta().clips().as_dictionary();
   if (!clips) {
     return;
   }
@@ -661,7 +661,7 @@ void ValidateClipsMetadata(const PrimSpec &ps,
   }
 
   for (const auto &clip_entry : clips->entries()) {
-    const Dict *clip_set = clip_entry.second.as_dictionary();
+    auto clip_set = clip_entry.second.as_dictionary();
     if (!clip_set) {
       AddError(result, "core.clips", prim_location + ".clips",
                "clip set `" + clip_entry.first + "` must be a dictionary");
@@ -794,7 +794,7 @@ void ValidateAttributeMetadata(const PrimSpec &ps,
 
     const Value *v = GetAttrValue(ps, prop_name);
     if (v && !allowed_set.empty()) {
-      if (const std::string *token_value = v->as_token()) {
+      if (auto token_value = v->as_token()) {
         if (allowed_set.count(*token_value) == 0) {
           AddError(result, "core.attr.allowedTokens", location,
                    prop_name + " value `" + *token_value +
@@ -802,7 +802,7 @@ void ValidateAttributeMetadata(const PrimSpec &ps,
         }
       }
       if (v->is_array() && v->type_id() == TypeId::Token) {
-        const std::vector<std::string> *token_array = v->as_token_array();
+        auto token_array = v->as_token_array();
         if (token_array) {
           for (size_t i = 0; i < token_array->size(); i++) {
             const std::string &token = (*token_array)[i];

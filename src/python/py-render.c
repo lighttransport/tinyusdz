@@ -26,16 +26,10 @@ static lightusd_render_scene* item_scene(LightUSDRenderItem* it) {
 static PyObject* wrap_buffer(lightusd_state* st, PyObject* scene_obj,
                              const lightusd_buffer_view* buf) {
   if (!buf->data || buf->count == 0) Py_RETURN_NONE;
-  lightusd_value_view view;
-  memset(&view, 0, sizeof(view));
-  view.type = LIGHTUSD_TYPE_INVALID;
-  view.is_array = 1;
-  view.storage = buf->component_type;
-  view.components = buf->components;
-  view.count = buf->count;
-  view.data = buf->data;
-  view.nbytes = buf->nbytes;
-  return lightusd_wrap_array_borrowed(st, scene_obj, &view);
+  lightusd_buffer* pin = NULL;
+  lightusd_status status = lightusd_render_buffer_pin(((LightUSDRenderScene*)scene_obj)->scene, buf, &pin);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "pin render buffer");
+  return lightusd_wrap_array_pin(st, pin);
 }
 
 static PyObject* matrix16f_to_python(const float m[16]) {

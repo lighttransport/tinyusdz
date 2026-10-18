@@ -156,8 +156,8 @@ RenderTexture::Channel ChannelFromConnection(
   if (channel == "out" && texture_prim.IsValid()) {
     std::string type;
     if (const Value* value = texture_prim.GetPropertyValue(kIdOutputsOut())) {
-      if (const std::string* token = value->as_token()) type = *token;
-      else if (const std::string* str = value->as_string()) type = *str;
+      if (auto token = value->as_token()) type = *token;
+      else if (auto str = value->as_string()) type = *str;
     }
     if (type.empty()) {
       if (const ::lightusd::next::PrimSpec* spec =
@@ -243,7 +243,7 @@ bool MaterialXConfiguredColorSpace(const UsdPrim& prim, std::string* out) {
     const Value* value =
         current.GetPropertyValue("config:mtlx:colorspace");
     if (!value) continue;
-    const std::string* token = value->as_token();
+    auto token = value->as_token();
     if (!token) token = value->as_string();
     if (token && !token->empty()) {
       *out = ::lightusd::color::CanonicalizeToken(*token);
