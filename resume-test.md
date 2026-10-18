@@ -78,8 +78,30 @@ Under `build_ninja/regression-flatten-sanitize/sanitizer/`:
 - Avoid concurrent heavy builds during the AOUSD sweep; CPU contention made it
   overrun 1,200 s.
 
+## Opt-in profiles under sanitizers (2026-10-19, stopped by request)
+
+Run with all four `LUSDVIEW_RUN_*` switches via `resume/optin.sh`; stopped at
+the user's request during the golden profile. Golden baselines were verified
+unchanged (`resume/goldens.sha256`).
+
+| CTest | Result |
+| --- | --- |
+| `lusdview-openchess-path-trace` | **Failed (open finding).** Vulkan PT matches the reference (SSIM 0.9997, nRMSE 0.006); the CUDA PT candidate missed thresholds (SSIM 0.645, nRMSE 0.252, relative mean error 0.887) after 368 s, not a timeout. 0 sanitizer reports. Not yet known whether this reproduces on the normal build. |
+| `lusdview-usd-assets-golden` | Interrupted after ~55 min; 0 sanitizer reports so far. |
+| `lusdview-usd-assets-broad-smoke` | Not run. |
+| `lusdview-usd-assets-animation-smoke` | Not run. |
+
+A CPU-only background process kept load at ~31 during these runs, so timings
+from this session are pessimistic.
+
 ## Remaining
 
-Nothing required for the sanitizer gate. Optional: enable the opt-in profiles
-explicitly if their sanitizer coverage is wanted; provide `ISLAND_USD` for the
-production smoke. Commit/push only on separate request.
+Nothing required for the default sanitizer gate. Next:
+
+1. Rerun `lusdview-openchess-path-trace` with `LUSDVIEW_RUN_OPENCHESS_PATH=1`
+   on the normal build (`build_ninja`) to classify the CUDA PT mismatch as a
+   CUDA path-tracer bug or a sanitizer-only effect; inspect the CUDA image.
+2. Finish the golden, broad and animation opt-in profiles on an idle machine.
+3. Provide `ISLAND_USD` for the production smoke if wanted.
+
+Commit/push only on separate request.
