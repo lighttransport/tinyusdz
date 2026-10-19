@@ -104,6 +104,13 @@ SchemaRegistry::SchemaRegistry() {
       {"RenderProduct", "RenderSettingsBase"},
       {"RenderVar", "Typed"},
       {"RenderPass", "Typed"},
+      {"ClipsAPI", "Typed"},
+      {"CollectionAPI", "Typed"},
+      {"MaterialBindingAPI", "Typed"},
+      {"LightListAPI", "Typed"},
+      {"LightAPI", "Typed"},
+      {"GenerativeProcedural", "Boundable"},
+      {"Backdrop", "Typed"},
   };
 
   auto add = [&](const char* schema, const char* name, const char* type,
