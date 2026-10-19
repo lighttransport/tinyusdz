@@ -14,6 +14,7 @@
 #include "next/layer/layer.hh"
 #include "next/layer/prim-spec.hh"
 #include "next/layer/property-index.hh"
+#include "next/schema/schema-registry.hh"
 
 using namespace lightusd::next;
 
@@ -685,6 +686,25 @@ void test_time_samples_variable_array() {
 
 
 
+
+
+void test_schema_registry_new_schemas() {
+  std::cout << "Testing schema registry new schemas..." << std::endl;
+  const auto& reg = GetSchemaRegistry();
+  assert(reg.IsKnownSchema("GenerativeProcedural"));
+  assert(reg.IsKnownSchema("Backdrop"));
+  assert(reg.IsKnownSchema("NodeGraphNodeAPI"));
+  assert(reg.IsKnownSchema("SceneGraphPrimAPI"));
+  assert(reg.IsKnownSchema("AccessibilityAPI"));
+  assert(reg.IsKnownSchema("ClipsAPI"));
+  assert(reg.IsKnownSchema("CollectionAPI"));
+  assert(reg.IsKnownSchema("MaterialBindingAPI"));
+  assert(reg.IsKnownSchema("LightListAPI"));
+  assert(reg.InheritsFrom("GenerativeProcedural", "Boundable"));
+  assert(reg.InheritsFrom("Backdrop", "Typed"));
+  assert(reg.InheritsFrom("ClipsAPI", "Typed"));
+  std::cout << "  schema registry new schemas: PASSED" << std::endl;
+}
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
@@ -703,6 +723,7 @@ int main() {
   test_prim_metadata_memory_usage();
   test_interpolation();
   test_time_samples();
+  test_schema_registry_new_schemas();
   test_time_samples_variable_array();
   test_relationships();
   test_path_authoring();
