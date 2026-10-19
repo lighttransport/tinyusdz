@@ -646,6 +646,45 @@ void test_prim_metadata_memory_usage() {
          "shared variant content Layer must not be charged twice");
 }
 
+void test_time_samples_variable_array() {
+  std::cout << "Testing variable-size time samples..." << std::endl;
+  PrimSpec prim("varArrPrim", "Mesh");
+  PropNameTable& table = GetPropNameTable();
+  PropNameId points_id = table.intern("points");
+
+  for (int f = 0; f < 6; ++f) {
+    size_t n = (size_t(f) % 4) + 1;
+    std::vector<float> data(n * 3);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = float(f) + float(i) * 0.1f;
+    prim.add_time_sample(points_id, double(f), Value::MakeFloat3Array(data));
+  }
+  // repeated equal arrays to exercise dedup
+  std::vector<float> shared = {9,9,9, 8,8,8, 7,7,7};
+  prim.add_time_sample(points_id, 6.0, Value::MakeFloat3Array(shared));
+  prim.add_time_sample(points_id, 7.0, Value::MakeFloat3Array(shared));
+
+  const auto* samples = prim.time_samples(points_id);
+  assert(samples != nullptr);
+  assert(samples->size() == 8);
+
+  auto stats = prim.time_sample_stats();
+  assert(stats.total_samples == 8);
+  // 6 variable + 2 shared -> 7 unique (one dedup)
+  assert(stats.dedup_count >= 1);
+
+  // read back lengths
+  for (int f = 0; f < 6; ++f) {
+    const Value* v = prim.time_sample_value((*samples)[f].second);
+    assert(v != nullptr);
+    size_t n = (size_t(f) % 4) + 1;
+    // float3 array -> n elements
+    assert(v->array_size() == n);
+  }
+  std::cout << "  Variable-size time samples: PASSED" << std::endl;
+}
+
+
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
@@ -664,6 +703,7 @@ int main() {
   test_prim_metadata_memory_usage();
   test_interpolation();
   test_time_samples();
+  test_time_samples_variable_array();
   test_relationships();
   test_path_authoring();
   test_define_prim_name_validation();

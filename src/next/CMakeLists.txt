@@ -741,14 +741,15 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     # lusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --lusdcat $<TARGET_FILE:next_usdcat>).
-    add_executable(next_usdcat
+    add_executable(lusdcat
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
     )
     # Allocator (if found, see LIGHTUSD_NEXT_WITH_ALLOCATOR) first, so it wins
     # symbol resolution.
-    target_link_libraries(next_usdcat PRIVATE
+    target_link_libraries(lusdcat PRIVATE
         ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
-    lightusd_next_harden(next_usdcat)
+    lightusd_next_harden(lusdcat)
+    add_executable(next_usdcat ALIAS lusdcat)
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
