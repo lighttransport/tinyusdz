@@ -18,6 +18,8 @@
 namespace lightusd {
 namespace next {
 
+class AssetResolver;
+
 /// Thread-safe retained-payload budget shared by asset stores and consumers.
 /// Reservations live as long as the last owner of the corresponding bytes.
 class AssetPayloadBudget : public std::enable_shared_from_this<AssetPayloadBudget> {
@@ -45,7 +47,39 @@ struct ResolvedAsset {
   std::string asset_in_package; // If in package, path within package
 };
 
-/// Asset resolver configuration
+/// Resolver context (static, API-driven; no DLL plugins).
+struct ResolverContext {
+  std::string context_string;
+  bool is_default = true;
+};
+
+/// Asset metadata.
+struct AssetInfo {
+  std::string resolved_path;
+  std::string asset_name;
+  std::string repository_path;
+  bool exists = false;
+};
+
+/// Asset modification timestamp.
+struct AssetTimestamp {
+  bool valid = false;
+  uint64_t seconds = 0;
+  uint64_t nanoseconds = 0;
+};
+
+/// Scoped resolution cache handle.
+class ResolverScopedCache {
+ public:
+  ResolverScopedCache(AssetResolver* resolver);
+  ~ResolverScopedCache();
+  ResolverScopedCache(const ResolverScopedCache&) = delete;
+  ResolverScopedCache& operator=(const ResolverScopedCache&) = delete;
+
+ private:
+  AssetResolver* resolver_ = nullptr;
+  void* data_ = nullptr;
+};
 struct ResolverConfig {
   std::vector<std::string> search_paths;  // Directories to search
   std::string working_directory;           // Base directory for relative paths
@@ -178,6 +212,40 @@ public:
   /// Create an identifier for an asset (for caching/comparison)
   std::string CreateIdentifier(const std::string& asset_path,
                                const std::string& anchor_path = "") const;
+
+  /// Resolve a path for creating a new asset
+  ResolvedAsset ResolveForNewAsset(const std::string& asset_path,
+                                  const std::string& anchor_path = "") const;
+
+  /// Context operations
+  ResolverContext CreateDefaultContext() const;
+  ResolverContext CreateContextFromString(const std::string& context_str) const;
+  void BindContext(const ResolverContext& context, void** binding_data = nullptr);
+  void UnbindContext(const ResolverContext& context, void** binding_data = nullptr);
+  ResolverContext GetCurrentContext() const;
+  bool IsContextDependentPath(const std::string& asset_path) const;
+
+  /// Asset info / timestamp
+  AssetInfo GetAssetInfo(const std::string& asset_path,
+                         const ResolvedAsset& resolved_path) const;
+  AssetTimestamp GetModificationTimestamp(const std::string& asset_path,
+                                          const ResolvedAsset& resolved_path) const;
+
+  /// Open asset bytes
+  std::shared_ptr<std::vector<uint8_t>> OpenAsset(
+      const ResolvedAsset& resolved_path) const;
+
+  /// Scoped cache
+  void BeginCacheScope(void** cache_scope_data);
+  void EndCacheScope(void** cache_scope_data);
+
+  /// Package resolver registration (static, no DLL)
+  using PackageResolverCallback = std::function<bool(const std::string& package_path,
+                                                     const std::string& asset_path,
+                                                     std::string* resolved)>;
+  void RegisterPackageResolver(const std::string& extension,
+                              PackageResolverCallback callback);
+  bool UnregisterPackageResolver(const std::string& extension);
 
   // ============================================================
   // Path utilities

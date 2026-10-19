@@ -878,6 +878,131 @@ std::string AssetResolver::MakeRelative(const std::string& path, const std::stri
   return path;
 }
 
+
+// ============================================================
+// OpenUSD-parity additions
+// ============================================================
+
+thread_local ResolverContext g_current_context;
+
+ResolvedAsset AssetResolver::ResolveForNewAsset(const std::string& asset_path,
+                                              const std::string& anchor_path) const {
+  // For new assets, resolve parent directory and append filename.
+  ResolvedAsset r = Resolve(asset_path, anchor_path, /*allow_suffix_fallback=*/false);
+  if (!r.resolved_path.empty()) return r;
+  // Fallback: ensure parent exists
+  std::string dir = GetDirectory(asset_path.empty() ? anchor_path : asset_path);
+  if (!dir.empty() && FileExists(dir)) {
+    r.resolved_path = NormalizePath(JoinPath(dir, asset_path));
+    r.exists = false;
+  }
+  return r;
+}
+
+ResolverContext AssetResolver::CreateDefaultContext() const {
+  ResolverContext ctx;
+  ctx.context_string.clear();
+  ctx.is_default = true;
+  return ctx;
+}
+
+ResolverContext AssetResolver::CreateContextFromString(const std::string& context_str) const {
+  ResolverContext ctx;
+  ctx.context_string = context_str;
+  ctx.is_default = context_str.empty();
+  return ctx;
+}
+
+void AssetResolver::BindContext(const ResolverContext& context, void** binding_data) {
+  g_current_context = context;
+  if (binding_data) *binding_data = nullptr;
+}
+
+void AssetResolver::UnbindContext(const ResolverContext& context, void** binding_data) {
+  g_current_context = CreateDefaultContext();
+  if (binding_data) *binding_data = nullptr;
+}
+
+ResolverContext AssetResolver::GetCurrentContext() const {
+  return g_current_context;
+}
+
+bool AssetResolver::IsContextDependentPath(const std::string& asset_path) const {
+  // A path is context-dependent if it contains scheme-like or relative
+  // components that may resolve differently under different contexts.
+  return GetIdentifierScheme(asset_path).empty() && !IsAbsolutePath(asset_path);
+}
+
+AssetInfo AssetResolver::GetAssetInfo(const std::string& asset_path,
+                                     const ResolvedAsset& resolved_path) const {
+  AssetInfo info;
+  info.resolved_path = resolved_path.resolved_path;
+  info.exists = resolved_path.exists;
+  // asset name = basename
+  std::string p = resolved_path.resolved_path.empty() ? asset_path : resolved_path.resolved_path;
+  size_t slash = p.find_last_of("/\\");
+  info.asset_name = (slash == std::string::npos) ? p : p.substr(slash + 1);
+  info.repository_path = GetDirectory(p);
+  return info;
+}
+
+AssetTimestamp AssetResolver::GetModificationTimestamp(const std::string& asset_path,
+                                                     const ResolvedAsset& resolved_path) const {
+  AssetTimestamp ts;
+  // Use filesystem modification time if available.
+  struct stat st;
+  std::string path = resolved_path.resolved_path.empty() ? asset_path : resolved_path.resolved_path;
+  if (!path.empty() && stat(path.c_str(), &st) == 0) {
+    ts.valid = true;
+    ts.seconds = static_cast<uint64_t>(st.st_mtime);
+    ts.nanoseconds = 0;
+  }
+  return ts;
+}
+
+std::shared_ptr<std::vector<uint8_t>> AssetResolver::OpenAsset(
+    const ResolvedAsset& resolved_path) const {
+  auto out = std::make_shared<std::vector<uint8_t>>();
+  std::string err;
+  if (ReadAsset(resolved_path.resolved_path, out.get(), &err)) {
+    return out;
+  }
+  return nullptr;
+}
+
+void AssetResolver::BeginCacheScope(void** cache_scope_data) {
+  if (cache_scope_data) *cache_scope_data = nullptr;
+}
+
+void AssetResolver::EndCacheScope(void** cache_scope_data) {
+  if (cache_scope_data) *cache_scope_data = nullptr;
+}
+
+ResolverScopedCache::ResolverScopedCache(AssetResolver* resolver) : resolver_(resolver) {
+  if (resolver_) resolver_->BeginCacheScope(&data_);
+}
+
+ResolverScopedCache::~ResolverScopedCache() {
+  if (resolver_) resolver_->EndCacheScope(&data_);
+}
+
+// Package resolver registry (static, no DLL)
+static std::unordered_map<std::string, AssetResolver::PackageResolverCallback>&
+PackageResolvers() {
+  static std::unordered_map<std::string, AssetResolver::PackageResolverCallback> m;
+  return m;
+}
+
+void AssetResolver::RegisterPackageResolver(const std::string& extension,
+                                          PackageResolverCallback callback) {
+  PackageResolvers()[extension] = std::move(callback);
+}
+
+bool AssetResolver::UnregisterPackageResolver(const std::string& extension) {
+  return PackageResolvers().erase(extension) > 0;
+}
+
+
 // ============================================================
 // Global resolver
 // ============================================================
