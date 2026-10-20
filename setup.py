@@ -184,6 +184,7 @@ ext = Extension(
         "src/python/py-numeric.c",
         "src/python/py-prim.c",
         "src/python/py-render.c",
+        "src/python/py-resolver.c",
         "src/python/py-stage.c",
     ],
     include_dirs=[

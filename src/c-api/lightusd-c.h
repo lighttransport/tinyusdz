@@ -436,6 +436,59 @@ LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_alias(
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_read(
     const lightusd_asset_resolver* resolver, const char* resolved_identifier,
     lightusd_string** out);
+/* Resolve an authored asset path. `anchor_path` may be null/empty. The owned
+ * `resolved_path` may be empty when the identifier is unresolved. `exists` and
+ * `is_package` are optional. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_resolve(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
+    uint8_t* is_package);
+/* Resolve a path for creating a new asset (no existence requirement). */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_resolve_for_new_asset(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
+    uint8_t* is_package);
+
+/* Resolver contexts. The context object owns a copy of its context string and
+ * may be bound to any number of resolvers (bindings are per-thread). */
+typedef struct lightusd_resolver_context lightusd_resolver_context;
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create_context(
+    const lightusd_asset_resolver* resolver, const char* context_string,
+    lightusd_resolver_context** out);
+LIGHTUSD_API void lightusd_resolver_context_destroy(
+    lightusd_resolver_context* context);
+LIGHTUSD_API lightusd_sv lightusd_resolver_context_string(
+    const lightusd_resolver_context* context);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_bind_context(
+    lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
+    void** binding_data);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unbind_context(
+    lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
+    void** binding_data);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_context(
+    const lightusd_asset_resolver* resolver, lightusd_resolver_context** out);
+LIGHTUSD_API int lightusd_asset_resolver_is_context_dependent(
+    const lightusd_asset_resolver* resolver, const char* asset_path);
+
+/* Scoped resolution cache. Create/destroy around a group of resolutions. */
+typedef struct lightusd_resolver_cache_scope lightusd_resolver_cache_scope;
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create_cache_scope(
+    lightusd_asset_resolver* resolver, lightusd_resolver_cache_scope** out);
+LIGHTUSD_API void lightusd_resolver_cache_scope_destroy(
+    lightusd_resolver_cache_scope* scope);
+
+/* Custom package formats. `resolved` is a NUL-terminated string owned by the
+ * callback and valid only for the duration of the call; the resolver copies
+ * it. Returning 0 falls back to normal package resolution. */
+typedef int (*lightusd_package_resolver_callback)(
+    void* userdata, const char* package_path, const char* asset_path,
+    const char** resolved);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_package(
+    lightusd_asset_resolver* resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_package(
+    lightusd_asset_resolver* resolver, const char* extension);
+
 LIGHTUSD_API lightusd_status lightusd_dependency_report_json(
     lightusd_asset_resolver* resolver, const char* root,
     lightusd_string** out, uint8_t* complete);

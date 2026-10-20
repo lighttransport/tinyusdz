@@ -41,6 +41,10 @@ using String = Owner<lightusd_string, lightusd_string_destroy>;
 using StringList = Owner<lightusd_strlist, lightusd_strlist_destroy>;
 using AssetResolver = Owner<lightusd_asset_resolver,
                             lightusd_asset_resolver_destroy>;
+using ResolverContext = Owner<lightusd_resolver_context,
+                              lightusd_resolver_context_destroy>;
+using ResolverCacheScope = Owner<lightusd_resolver_cache_scope,
+                                 lightusd_resolver_cache_scope_destroy>;
 
 inline lightusd_sv StringView(const String& string) noexcept {
   return lightusd_string_view(string.get());
@@ -172,6 +176,91 @@ inline lightusd_status ReadResolvedAsset(const AssetResolver& resolver,
                                          const char* identifier, String* out) {
   if (!out) return LIGHTUSD_ERR_INVALID_ARG;
   return lightusd_asset_resolver_read(resolver.get(), identifier, out->put());
+}
+
+inline lightusd_status ResolveAsset(const AssetResolver& resolver,
+                                    const char* asset_path,
+                                    const char* anchor_path, String* out,
+                                    bool* exists = nullptr,
+                                    bool* is_package = nullptr) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  uint8_t e = 0, p = 0;
+  const lightusd_status status = lightusd_asset_resolver_resolve(
+      resolver.get(), asset_path, anchor_path, out->put(), &e, &p);
+  if (status == LIGHTUSD_OK) {
+    if (exists) *exists = e != 0;
+    if (is_package) *is_package = p != 0;
+  }
+  return status;
+}
+
+inline lightusd_status ResolveNewAsset(const AssetResolver& resolver,
+                                       const char* asset_path,
+                                       const char* anchor_path, String* out,
+                                       bool* exists = nullptr,
+                                       bool* is_package = nullptr) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  uint8_t e = 0, p = 0;
+  const lightusd_status status =
+      lightusd_asset_resolver_resolve_for_new_asset(
+          resolver.get(), asset_path, anchor_path, out->put(), &e, &p);
+  if (status == LIGHTUSD_OK) {
+    if (exists) *exists = e != 0;
+    if (is_package) *is_package = p != 0;
+  }
+  return status;
+}
+
+inline lightusd_status CreateResolverContext(const AssetResolver& resolver,
+                                             const char* context_string,
+                                             ResolverContext* out) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  return lightusd_asset_resolver_create_context(resolver.get(), context_string,
+                                                out->put());
+}
+
+inline lightusd_status BindResolverContext(AssetResolver& resolver,
+                                           const ResolverContext& context,
+                                           void** binding_data = nullptr) {
+  return lightusd_asset_resolver_bind_context(resolver.get(), context.get(),
+                                              binding_data);
+}
+
+inline lightusd_status UnbindResolverContext(AssetResolver& resolver,
+                                             const ResolverContext& context,
+                                             void** binding_data = nullptr) {
+  return lightusd_asset_resolver_unbind_context(resolver.get(), context.get(),
+                                                binding_data);
+}
+
+inline lightusd_status GetResolverContext(const AssetResolver& resolver,
+                                          ResolverContext* out) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  return lightusd_asset_resolver_get_context(resolver.get(), out->put());
+}
+
+inline bool IsContextDependentPath(const AssetResolver& resolver,
+                                   const char* asset_path) {
+  return lightusd_asset_resolver_is_context_dependent(resolver.get(),
+                                                      asset_path) != 0;
+}
+
+inline lightusd_status CreateResolverCacheScope(AssetResolver& resolver,
+                                                ResolverCacheScope* out) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  return lightusd_asset_resolver_create_cache_scope(resolver.get(), out->put());
+}
+
+inline lightusd_status RegisterPackageResolver(
+    AssetResolver& resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata) {
+  return lightusd_asset_resolver_register_package(resolver.get(), extension,
+                                                  callback, userdata);
+}
+
+inline lightusd_status UnregisterPackageResolver(AssetResolver& resolver,
+                                                 const char* extension) {
+  return lightusd_asset_resolver_unregister_package(resolver.get(), extension);
 }
 
 inline lightusd_status DependencyReportJSON(AssetResolver& resolver,

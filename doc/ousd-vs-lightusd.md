@@ -393,7 +393,9 @@ Deterministic default-resolver contexts are now supported: `ResolverConfig::cont
 is inherited by composition/worker threads, `BindContext`/`UnbindContext`
 provide nested thread-local overrides, `ResolverScopedCache` memoizes
 resolution for a scope, and `RegisterPackageResolver` handles custom package
-formats. Context strings are parsed as platform-separated search paths.
+formats. Context strings are parsed as platform-separated search paths. These
+APIs are exposed through the portable C ABI and the Python `AssetResolver`
+type, including context managers for bindings and scoped caches.
 
 **Remaining fix needed:** add scheme-specific context objects for custom URI
 handlers as demanded. Address the documented `lstat`-then-open TOCTOU window

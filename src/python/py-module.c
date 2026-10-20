@@ -432,6 +432,7 @@ static int module_exec(PyObject* module) {
   if (lightusd_register_prim_types(module, st) < 0) return -1;
   if (lightusd_register_stage_type(module, st) < 0) return -1;
   if (lightusd_register_render_types(module, st) < 0) return -1;
+  if (lightusd_register_resolver_types(module, st) < 0) return -1;
 
   /* ValueBlock sentinel */
   {
@@ -478,6 +479,9 @@ static int module_traverse(PyObject* module, visitproc visit, void* arg) {
   Py_VISIT(st->RenderNodeType);
   Py_VISIT(st->RenderLightType);
   Py_VISIT(st->RenderCameraType);
+  Py_VISIT(st->ResolverType);
+  Py_VISIT(st->ResolverBindingType);
+  Py_VISIT(st->ResolverCacheScopeType);
   Py_VISIT(st->ValueBlock);
   Py_VISIT(st->normalizer);
   return 0;
@@ -508,6 +512,9 @@ static int module_clear(PyObject* module) {
   Py_CLEAR(st->RenderNodeType);
   Py_CLEAR(st->RenderLightType);
   Py_CLEAR(st->RenderCameraType);
+  Py_CLEAR(st->ResolverType);
+  Py_CLEAR(st->ResolverBindingType);
+  Py_CLEAR(st->ResolverCacheScopeType);
   Py_CLEAR(st->ValueBlock);
   Py_CLEAR(st->normalizer);
   return 0;

@@ -524,6 +524,18 @@ static int test_core_transforms_and_ownership(void) {
   return 0;
 }
 
+static int test_package_resolver_callback(void* userdata,
+                                          const char* package_path,
+                                          const char* asset_path,
+                                          const char** resolved) {
+  int* calls = (int*)userdata;
+  static char buffer[512];
+  if (calls) ++*calls;
+  snprintf(buffer, sizeof(buffer), "virtual:%s|%s", package_path, asset_path);
+  *resolved = buffer;
+  return 1;
+}
+
 static int test_dependency_boundary(void) {
   static const char source[] =
       "#usda 1.0\n(defaultPrim = \"World\")\n"
@@ -534,6 +546,64 @@ static int test_dependency_boundary(void) {
   static const uint8_t note[] = {'a', 0, 'b'};
   lightusd_asset_resolver* resolver = NULL;
   CHECK_OK(lightusd_asset_resolver_create(&resolver));
+
+  lightusd_resolver_context* context = NULL;
+  void* context_binding = NULL;
+  CHECK_OK(lightusd_asset_resolver_create_context(resolver, "/tmp", &context));
+  lightusd_sv context_text = lightusd_resolver_context_string(context);
+  CHECK(context_text.len == 4 && memcmp(context_text.data, "/tmp", 4) == 0);
+  CHECK(lightusd_asset_resolver_is_context_dependent(resolver, "rel.usda") == 1);
+  CHECK(lightusd_asset_resolver_is_context_dependent(resolver, "/abs.usda") == 0);
+  CHECK_OK(lightusd_asset_resolver_bind_context(resolver, context,
+                                                &context_binding));
+  lightusd_resolver_context* current_context = NULL;
+  CHECK_OK(lightusd_asset_resolver_get_context(resolver, &current_context));
+  context_text = lightusd_resolver_context_string(current_context);
+  CHECK(context_text.len == 4 && memcmp(context_text.data, "/tmp", 4) == 0);
+  lightusd_resolver_context_destroy(current_context);
+  CHECK_OK(lightusd_asset_resolver_unbind_context(resolver, context,
+                                                  &context_binding));
+  lightusd_resolver_context_destroy(context);
+
+  lightusd_string* resolved = NULL;
+  uint8_t exists = 0, is_package = 0;
+  CHECK_OK(lightusd_asset_resolver_resolve_for_new_asset(
+      resolver, "sub/new.usda", "/tmp/look/layer.usda", &resolved, &exists,
+      &is_package));
+  {
+    lightusd_sv text = lightusd_string_view(resolved);
+    CHECK(!exists && !is_package && text.len == strlen("/tmp/look/sub/new.usda") &&
+          memcmp(text.data, "/tmp/look/sub/new.usda", text.len) == 0);
+  }
+  lightusd_string_destroy(resolved);
+
+  int package_calls = 0;
+  CHECK_OK(lightusd_asset_resolver_register_package(
+      resolver, ".pkg", test_package_resolver_callback, &package_calls));
+  lightusd_resolver_cache_scope* cache = NULL;
+  CHECK_OK(lightusd_asset_resolver_create_cache_scope(resolver, &cache));
+  CHECK_OK(lightusd_asset_resolver_resolve(resolver, "bundle.pkg[entry.usda]",
+                                           NULL, &resolved, &exists,
+                                           &is_package));
+  {
+    lightusd_sv text = lightusd_string_view(resolved);
+    CHECK(exists && is_package && text.len != 0 &&
+          strstr(text.data, "virtual:bundle.pkg|entry.usda") != NULL);
+  }
+  lightusd_string_destroy(resolved);
+  CHECK_OK(lightusd_asset_resolver_resolve(resolver, "bundle.pkg[entry.usda]",
+                                           NULL, &resolved, NULL, NULL));
+  lightusd_string_destroy(resolved);
+  CHECK(package_calls == 1);
+  lightusd_resolver_cache_scope_destroy(cache);
+  CHECK_OK(lightusd_asset_resolver_resolve(resolver, "bundle.pkg[entry.usda]",
+                                           NULL, &resolved, NULL, NULL));
+  lightusd_string_destroy(resolved);
+  CHECK(package_calls == 2);
+  CHECK_OK(lightusd_asset_resolver_unregister_package(resolver, "pkg"));
+  CHECK(lightusd_asset_resolver_unregister_package(resolver, "pkg") ==
+        LIGHTUSD_ERR_NOT_FOUND);
+
   CHECK_OK(lightusd_asset_resolver_register_memory(
       resolver, "demo:root.usda", (const uint8_t*)source, sizeof(source) - 1));
   CHECK_OK(lightusd_asset_resolver_register_memory(

@@ -245,6 +245,19 @@ void TestPackageResolvers() {
   CHECK(calls == 1 && last_package == "bundle.pkg",
         "package callback is invoked once");
 
+  const ResolvedAsset new_virtual =
+      resolver.ResolveForNewAsset("bundle.pkg[dir/new.usda]");
+  CHECK(new_virtual.is_package && !new_virtual.exists &&
+            new_virtual.resolved_path ==
+                "virtual:bundle.pkg|dir/new.usda",
+        "new package asset consults the package resolver");
+  const ResolvedAsset new_anchor =
+      resolver.ResolveForNewAsset("new.usda", "bundle.pkg[dir/root.usda]");
+  CHECK(new_anchor.is_package && !new_anchor.exists &&
+            new_anchor.resolved_path ==
+                "virtual:bundle.pkg|dir/new.usda",
+        "new package-anchored asset consults the package resolver");
+
   resolver.SetAssetReader(
       [&virtual_package](const std::string& identifier,
                          std::vector<uint8_t>* out, std::string*) {
@@ -322,6 +335,8 @@ void TestAssetInfoAndTimestamp() {
       resolver.GetModificationTimestamp("tex.usda", resolved);
   CHECK(timestamp.valid && timestamp.seconds > 0,
         "file modification timestamp is reported");
+  CHECK(timestamp.nanoseconds < 1000000000ull,
+        "file timestamp nanoseconds are in range");
 
   ResolvedAsset package;
   package.is_package = true;
@@ -338,8 +353,9 @@ void TestAssetInfoAndTimestamp() {
 
   const AssetTimestamp package_timestamp =
       resolver.GetModificationTimestamp("bundle.usdz[dir/entry.usda]", package);
-  CHECK(package_timestamp.valid,
-        "package modification timestamp uses the package file");
+  CHECK(package_timestamp.valid &&
+            package_timestamp.nanoseconds < 1000000000ull,
+        "package timestamp uses the package file");
 
   ResolvedAsset package_without_fields;
   package_without_fields.is_package = true;
@@ -351,6 +367,16 @@ void TestAssetInfoAndTimestamp() {
   CHECK(!fallback_info.asset_name.empty() &&
             fallback_info.asset_name == "entry.usda",
         "package asset info parses the identifier when fields are omitted");
+
+  ResolvedAsset forced_package;
+  forced_package.is_package = true;
+  forced_package.exists = true;
+  forced_package.resolved_path = "dir/forced.usda";
+  const AssetInfo forced_info =
+      resolver.GetAssetInfo("dir/forced.usda", forced_package);
+  CHECK(forced_info.asset_name == "forced.usda" &&
+            forced_info.repository_path == "dir",
+        "forced package info falls back to a non-empty repository path");
 
   ResolvedAsset identifier_only;
   identifier_only.exists = true;

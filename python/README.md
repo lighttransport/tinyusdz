@@ -60,6 +60,24 @@ for mesh in scene.meshes:
     base_color = material.param("diffuse_color")      # tuple or RenderTexture
 ```
 
+## Asset resolution
+
+```python
+from lightusd import AssetResolver
+
+resolver = AssetResolver()
+path, exists, is_package = resolver.resolve_new("sub/new.usda", "/proj/look/layer.usda")
+
+with resolver.bind_context("/proj/assets"):
+    path, exists, is_package = resolver.resolve("tex.png")
+
+with resolver.cache_scope():
+    resolver.resolve("tex.png")                # memoized for the scope
+
+resolver.register_package(".pkg", lambda package, entry: f"virtual:{package}|{entry}")
+path, exists, is_package = resolver.resolve("bundle.pkg[dir/entry.usda]")
+```
+
 ## Notes
 
 - Arrays implement Python's read-only buffer protocol. Use `memoryview(array)`

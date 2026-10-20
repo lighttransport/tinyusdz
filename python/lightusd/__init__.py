@@ -27,6 +27,7 @@ from typing import Any, Optional, Sequence, Tuple, Union
 from . import _core
 from ._core import (  # noqa: F401  (re-exports)
     Array,
+    AssetResolver,
     Attribute,
     Prim,
     Relationship,
@@ -51,6 +52,7 @@ except ImportError:  # pragma: no cover - sdist/dev tree without scm stamp
 
 __all__ = [
     "Array",
+    "AssetResolver",
     "Attribute",
     "Prim",
     "Relationship",

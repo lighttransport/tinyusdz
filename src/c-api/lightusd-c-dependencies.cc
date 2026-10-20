@@ -2,12 +2,14 @@
 // Resolver inventory and validation behind the portable C boundary.
 #include "c-internal.hh"
 
+#include <cctype>
 #include <map>
 #include <limits>
 #include <mutex>
 #include <new>
 #include <cstring>
 #include <iterator>
+#include <string>
 #include <utility>
 
 #include "next/resolver/dependency-report.hh"
@@ -15,13 +17,35 @@
 namespace n = lightusd::next;
 using lightusd_internal::Fail;
 
+namespace {
+
+struct PackageCallbackEntry {
+  lightusd_package_resolver_callback callback = nullptr;
+  void* userdata = nullptr;
+};
+
+std::string NormalizeExtension(const char* extension) {
+  if (!extension) return {};
+  const char* start = extension;
+  if (*start == '.') ++start;
+  std::string out(start);
+  for (char& c : out) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return out;
+}
+
+}  // namespace
+
 struct lightusd_asset_resolver {
   n::AssetResolver resolver;
   std::map<std::string, std::string> aliases;
   std::map<std::string, size_t> memory_asset_sizes;
+  std::map<std::string, PackageCallbackEntry> package_callbacks;
   size_t memory_asset_bytes{0};
   size_t memory_asset_limit{0};
   mutable std::mutex memory_mutex;
+  mutable std::mutex package_mutex;
 
   lightusd_asset_resolver() {
     resolver.SetCustomResolver(
@@ -30,6 +54,15 @@ struct lightusd_asset_resolver {
           return found == aliases.end() ? std::string() : found->second;
         });
   }
+};
+
+struct lightusd_resolver_context {
+  n::ResolverContext context;
+};
+
+struct lightusd_resolver_cache_scope {
+  lightusd_asset_resolver* resolver = nullptr;
+  void* data = nullptr;
 };
 
 extern "C" {
@@ -165,6 +198,192 @@ lightusd_status lightusd_asset_resolver_read(
     result->s.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
   }
   *out = result;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_resolve(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
+    uint8_t* is_package) {
+  if (!resolver || !asset_path || !resolved_path) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid resolution arguments");
+  }
+  *resolved_path = nullptr;
+  const n::ResolvedAsset resolved =
+      resolver->resolver.Resolve(asset_path, anchor_path ? anchor_path : "");
+  lightusd_string* result = new (std::nothrow) lightusd_string();
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "resolution alloc failed");
+  result->s = resolved.resolved_path;
+  *resolved_path = result;
+  if (exists) *exists = resolved.exists ? 1 : 0;
+  if (is_package) *is_package = resolved.is_package ? 1 : 0;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_resolve_for_new_asset(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
+    uint8_t* is_package) {
+  if (!resolver || !asset_path || !resolved_path) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                "invalid new-asset resolution arguments");
+  }
+  *resolved_path = nullptr;
+  const n::ResolvedAsset resolved = resolver->resolver.ResolveForNewAsset(
+      asset_path, anchor_path ? anchor_path : "");
+  lightusd_string* result = new (std::nothrow) lightusd_string();
+  if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "resolution alloc failed");
+  result->s = resolved.resolved_path;
+  *resolved_path = result;
+  if (exists) *exists = resolved.exists ? 1 : 0;
+  if (is_package) *is_package = resolved.is_package ? 1 : 0;
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_create_context(
+    const lightusd_asset_resolver* resolver, const char* context_string,
+    lightusd_resolver_context** out) {
+  if (!resolver || !out) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid context arguments");
+  }
+  *out = nullptr;
+  auto* context = new (std::nothrow) lightusd_resolver_context();
+  if (!context) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "context alloc failed");
+  context->context =
+      resolver->resolver.CreateContextFromString(context_string
+                                                     ? context_string
+                                                     : "");
+  *out = context;
+  return LIGHTUSD_OK;
+}
+
+void lightusd_resolver_context_destroy(lightusd_resolver_context* context) {
+  delete context;
+}
+
+lightusd_sv lightusd_resolver_context_string(
+    const lightusd_resolver_context* context) {
+  if (!context) return lightusd_internal::EmptySV();
+  return lightusd_internal::SV(context->context.context_string);
+}
+
+lightusd_status lightusd_asset_resolver_bind_context(
+    lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
+    void** binding_data) {
+  if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
+  const n::ResolverContext default_context;
+  resolver->resolver.BindContext(context ? context->context : default_context,
+                                 binding_data);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_unbind_context(
+    lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
+    void** binding_data) {
+  if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
+  const n::ResolverContext default_context;
+  resolver->resolver.UnbindContext(context ? context->context : default_context,
+                                   binding_data);
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_get_context(
+    const lightusd_asset_resolver* resolver, lightusd_resolver_context** out) {
+  if (!resolver || !out) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid context arguments");
+  }
+  *out = nullptr;
+  auto* context = new (std::nothrow) lightusd_resolver_context();
+  if (!context) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "context alloc failed");
+  context->context = resolver->resolver.GetCurrentContext();
+  *out = context;
+  return LIGHTUSD_OK;
+}
+
+int lightusd_asset_resolver_is_context_dependent(
+    const lightusd_asset_resolver* resolver, const char* asset_path) {
+  if (!resolver || !asset_path) return 0;
+  return resolver->resolver.IsContextDependentPath(asset_path) ? 1 : 0;
+}
+
+lightusd_status lightusd_asset_resolver_create_cache_scope(
+    lightusd_asset_resolver* resolver, lightusd_resolver_cache_scope** out) {
+  if (!resolver || !out) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid cache scope arguments");
+  }
+  *out = nullptr;
+  auto* scope = new (std::nothrow) lightusd_resolver_cache_scope();
+  if (!scope) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "cache alloc failed");
+  scope->resolver = resolver;
+  resolver->resolver.BeginCacheScope(&scope->data);
+  *out = scope;
+  return LIGHTUSD_OK;
+}
+
+void lightusd_resolver_cache_scope_destroy(
+    lightusd_resolver_cache_scope* scope) {
+  if (!scope) return;
+  if (scope->resolver && scope->data) {
+    scope->resolver->resolver.EndCacheScope(&scope->data);
+  }
+  delete scope;
+}
+
+lightusd_status lightusd_asset_resolver_register_package(
+    lightusd_asset_resolver* resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata) {
+  if (!resolver || !callback) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package resolver");
+  }
+  const std::string normalized = NormalizeExtension(extension);
+  if (normalized.empty()) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package extension");
+  }
+  {
+    std::lock_guard<std::mutex> lock(resolver->package_mutex);
+    resolver->package_callbacks[normalized] = PackageCallbackEntry{callback,
+                                                                   userdata};
+  }
+  lightusd_asset_resolver* self = resolver;
+  resolver->resolver.RegisterPackageResolver(
+      normalized,
+      [self, normalized](const std::string& package_path,
+                         const std::string& asset_path,
+                         std::string* resolved) {
+        PackageCallbackEntry entry;
+        {
+          std::lock_guard<std::mutex> lock(self->package_mutex);
+          const auto found = self->package_callbacks.find(normalized);
+          if (found == self->package_callbacks.end()) return false;
+          entry = found->second;
+        }
+        if (!entry.callback) return false;
+        const char* text = nullptr;
+        if (!entry.callback(entry.userdata, package_path.c_str(),
+                            asset_path.c_str(), &text) ||
+            !text) {
+          return false;
+        }
+        *resolved = text;
+        return true;
+      });
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_unregister_package(
+    lightusd_asset_resolver* resolver, const char* extension) {
+  if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
+  const std::string normalized = NormalizeExtension(extension);
+  if (normalized.empty()) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package extension");
+  }
+  {
+    std::lock_guard<std::mutex> lock(resolver->package_mutex);
+    resolver->package_callbacks.erase(normalized);
+  }
+  if (!resolver->resolver.UnregisterPackageResolver(normalized)) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "package resolver was not registered");
+  }
   return LIGHTUSD_OK;
 }
 

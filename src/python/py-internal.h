@@ -58,6 +58,10 @@ typedef struct {
   PyObject* RenderNodeType;
   PyObject* RenderLightType;
   PyObject* RenderCameraType;
+  /* resolver types */
+  PyObject* ResolverType;
+  PyObject* ResolverBindingType;
+  PyObject* ResolverCacheScopeType;
   /* sentinel for authored value blocks (`= None`) */
   PyObject* ValueBlock;
   /* optional value normalizer registered by the pure-python facade:
@@ -214,5 +218,6 @@ PyObject* lightusd_to_render_scene(PyObject* module, PyObject* args,
                                PyObject* kwargs);
 int lightusd_register_prim_types(PyObject* module, lightusd_state* st);
 int lightusd_register_stage_type(PyObject* module, lightusd_state* st);
+int lightusd_register_resolver_types(PyObject* module, lightusd_state* st);
 
 #endif /* LIGHTUSD_PY_INTERNAL_H_ */

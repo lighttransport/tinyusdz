@@ -1137,9 +1137,30 @@ ResolvedAsset AssetResolver::ResolveForNewAsset(const std::string& asset_path,
     result.asset_in_package = NormalizePackageEntryPath(package_entry);
     if (result.asset_in_package.empty()) return result;
     const ResolvedAsset package = ResolveForNewAsset(package_file, anchor_path);
-    result.package_path = package.resolved_path.empty()
-                              ? NormalizePath(package_file)
-                              : package.resolved_path;
+    const std::string resolved_package =
+        package.resolved_path.empty() ? NormalizePath(package_file)
+                                      : package.resolved_path;
+    if (const PackageResolverCallback callback =
+            FindPackageResolver(package_file)) {
+      std::string custom;
+      if (callback(package_file, result.asset_in_package, &custom) &&
+          !custom.empty()) {
+        result.package_path = package_file;
+        result.resolved_path = std::move(custom);
+        result.exists = false;
+        return result;
+      }
+      custom.clear();
+      if (resolved_package != package_file &&
+          callback(resolved_package, result.asset_in_package, &custom) &&
+          !custom.empty()) {
+        result.package_path = resolved_package;
+        result.resolved_path = std::move(custom);
+        result.exists = false;
+        return result;
+      }
+    }
+    result.package_path = resolved_package;
     result.resolved_path =
         result.package_path + "[" + result.asset_in_package + "]";
     result.exists = false;
@@ -1174,9 +1195,29 @@ ResolvedAsset AssetResolver::ResolveForNewAsset(const std::string& asset_path,
             ResolveInternal(anchor_package, "", /*allow_suffix_fallback=*/false);
       }
       result.is_package = true;
-      result.package_path = package.exists ? package.resolved_path
-                                           : NormalizePath(anchor_package);
+      const std::string resolved_package =
+          package.exists ? package.resolved_path
+                         : NormalizePath(anchor_package);
+      result.package_path = resolved_package;
       result.asset_in_package = entry;
+      if (const PackageResolverCallback callback =
+              FindPackageResolver(anchor_package)) {
+        std::string custom;
+        if (callback(anchor_package, entry, &custom) && !custom.empty()) {
+          result.package_path = anchor_package;
+          result.resolved_path = std::move(custom);
+          result.exists = false;
+          return result;
+        }
+        custom.clear();
+        if (resolved_package != anchor_package &&
+            callback(resolved_package, entry, &custom) && !custom.empty()) {
+          result.package_path = resolved_package;
+          result.resolved_path = std::move(custom);
+          result.exists = false;
+          return result;
+        }
+      }
       result.resolved_path = result.package_path + "[" + entry + "]";
       result.exists = false;
       return result;
@@ -1285,6 +1326,9 @@ AssetInfo AssetResolver::GetAssetInfo(const std::string& asset_path,
     // A caller-supplied package flag may omit the package fields. Fall back to
     // the authored identifier so asset_name is never empty when one exists.
     name_source = asset_path;
+  }
+  if (repository_source.empty() && !name_source.empty()) {
+    repository_source = name_source;
   }
 
   const size_t slash = name_source.find_last_of("/\\");
