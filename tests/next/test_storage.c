@@ -99,6 +99,30 @@ static void dictionaries(void) {
   assert(*(const int32_t*)lu_value_data(lu_value_dict_find(&a, "a", 1)) == 0);
   assert(*(const int32_t*)lu_value_data(lu_value_dict_find(&b, "a", 1)) == 23);
   lu_value_destroy(&a); lu_value_destroy(&b);
+  /* Dictionaries are unordered: insertion order must not affect equality or
+   * hashing, including for nested dictionaries. */
+  {
+    lu_value x = {0}, y = {0}, cx = {0}, cy = {0}, v = {0};
+    int32_t one = 1, two = 2, three = 3;
+    assert(lu_value_make_dict(&x, NULL) && lu_value_make_dict(&y, NULL));
+    assert(lu_value_make_dict(&cx, NULL) && lu_value_make_dict(&cy, NULL));
+    assert(lu_value_set_pod(&v, LU_TYPE_INT, &one, sizeof(one), NULL));
+    assert(lu_value_dict_set(&cx, "a", 1, &v));
+    assert(lu_value_set_pod(&v, LU_TYPE_INT, &two, sizeof(two), NULL));
+    assert(lu_value_dict_set(&cx, "b", 1, &v));
+    assert(lu_value_dict_set(&cy, "b", 1, &v));
+    assert(lu_value_set_pod(&v, LU_TYPE_INT, &one, sizeof(one), NULL));
+    assert(lu_value_dict_set(&cy, "a", 1, &v));
+    assert(lu_value_dict_set(&x, "nested", 6, &cx));
+    assert(lu_value_set_pod(&v, LU_TYPE_INT, &three, sizeof(three), NULL));
+    assert(lu_value_dict_set(&x, "z", 1, &v));
+    assert(lu_value_dict_set(&y, "z", 1, &v));
+    assert(lu_value_dict_set(&y, "nested", 6, &cy));
+    assert(lu_value_equal(&x, &y));
+    assert(lu_value_hash(&x) == lu_value_hash(&y));
+    lu_value_destroy(&x); lu_value_destroy(&y);
+    lu_value_destroy(&cx); lu_value_destroy(&cy); lu_value_destroy(&v);
+  }
   /* Destruction, equality and hashing must handle depth beyond the C stack. */
   for (i = 0; i < 20000; ++i) {
     assert(lu_value_make_dict(&a, NULL));

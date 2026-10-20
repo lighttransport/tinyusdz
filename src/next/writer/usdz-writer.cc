@@ -73,6 +73,13 @@ static bool WriteLocalFileHeader(std::vector<uint8_t>& buf,
                                   CentralDirEntry* out_entry,
                                   std::string* err,
                                   uint64_t max_file_size_bytes) {
+  if (name.size() > UINT16_MAX) {
+    if (err) {
+      *err = "USDZ entry name '" + name +
+             "' exceeds the 16-bit ZIP filename limit";
+    }
+    return false;
+  }
   size_t header_size = kZipLocalHeaderSize + name.size();
   size_t padding = 0;
   size_t remainder = (buf.size() + header_size) % kUSDZAlignment;

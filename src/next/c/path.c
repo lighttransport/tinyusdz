@@ -60,8 +60,12 @@ int lu_path_parent(const char *p, size_t n, char *out, size_t cap,
   if (p == NULL || n == 0 || lu_path_is_root(p, n)) return 0;
 
   const size_t dot = first_dot(p, n);
-  const size_t prim_len = dot;
-  const size_t slash = last_slash(p, prim_len);
+  if (dot < n) {
+    /* Property paths descend from their owning prim: /A/B.prop -> /A/B. */
+    if (dot == 0) return 0;
+    return emit(p, dot, out, cap, out_len);
+  }
+  const size_t slash = last_slash(p, n);
   if (slash == (size_t)-1) return 0; /* no parent */
   if (slash == 0) return emit("/", 1, out, cap, out_len);
   return emit(p, slash, out, cap, out_len);
@@ -138,11 +142,17 @@ int lu_path_make_relative_to(const char *p, size_t n, const char *base,
                              size_t bn, char *out, size_t cap,
                              size_t *out_len) {
   if (out_len != NULL) *out_len = 0;
+  if ((p == NULL && n) || (base == NULL && bn)) return 0;
   const int p_abs = lu_path_is_absolute(p, n);
   const int base_abs = lu_path_is_absolute(base, bn);
   if (!p_abs || !base_abs) return emit(p, n, out, cap, out_len);
   if (bn > n || memcmp(p, base, bn) != 0) return emit(p, n, out, cap, out_len);
   if (n == bn) return emit(".", 1, out, cap, out_len);
+  /* The base must match on a path-component boundary: "/A" is not a prefix
+   * of "/AB". A base ending in '/' is already a boundary. */
+  if (base[bn - 1] != '/' && p[bn] != '/') {
+    return emit(p, n, out, cap, out_len);
+  }
   size_t offset = bn;
   if (p[offset] == '/') offset++;
   return emit(p + offset, n - offset, out, cap, out_len);

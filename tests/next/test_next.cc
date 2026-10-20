@@ -517,6 +517,18 @@ void test_path() {
   assert(p3.has_property());
   assert(p3.property_name() == "xformOp:translate");
   assert(p3.prim_path().str() == "/Cube");
+  assert(p3.parent().str() == "/Cube");
+
+  Path property_child("/A/B.prop");
+  assert(property_child.parent().str() == "/A/B");
+
+  assert(Path("/A").parent().str() == "/");
+  assert(Path("A/B").parent().str() == "A");
+  assert(Path("/A/B/C").make_relative_to(Path("/A")).str() == "B/C");
+  assert(Path("/A/B").make_relative_to(Path("/A")).str() == "B");
+  assert(Path("/AB/C").make_relative_to(Path("/A")).str() == "/AB/C");
+  assert(Path("/A/B").make_relative_to(Path("/")).str() == "A/B");
+  assert(Path("/A").make_relative_to(Path("/A")).str() == ".");
 
   Path root = Path::root();
   assert(root.is_root());

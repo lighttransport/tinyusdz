@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "next/c/lightusd-core-c.h"
 #include "next/crate/crate-data-source.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/lazy-array.hh"
@@ -74,6 +75,14 @@ static bool RejectsCompressedHugeBlob() {
   return !ok;
 }
 
+static bool RejectsOversizedInteger64Workspace() {
+  uint8_t src[8] = {0};
+  uint64_t dst[1] = {0};
+  const size_t count =
+      (std::numeric_limits<size_t>::max)() / sizeof(uint32_t) + 1;
+  return lu_crate_decode_integers64(src, sizeof(src), dst, count) == 0;
+}
+
 static void PutU64(std::string& buf, uint64_t v) {
   for (int i = 0; i < 8; ++i) {
     buf.push_back(static_cast<char>((v >> (i * 8)) & 0xffu));
@@ -95,6 +104,7 @@ int main() {
   assert(RejectsHugeArray(CrateTypeId::Token));     // 4 B index/elem
   assert(RejectsRaisedLimitOverflowCount());
   assert(RejectsCompressedHugeBlob());
+  assert(RejectsOversizedInteger64Workspace());
 
   // Sanity: a small, fully-present array still decodes. Layout (payload != 0,
   // since payload 0 is the empty-array marker):

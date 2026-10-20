@@ -692,12 +692,16 @@ int lu_value_equal(const lu_value* left, const lu_value* right) {
         stack = grown;
         capacity = n;
       }
-      for (i = x->count; i > 0; --i) {
-        lu_view k = lu_value_string(&centries(x)[i - 1].key);
-        lu_view l = lu_value_string(&centries(y)[i - 1].key);
-        if (k.len != l.len || (k.len && memcmp(k.data, l.data, k.len))) goto done;
-        stack[count].a = &centries(x)[i - 1].value;
-        stack[count++].b = &centries(y)[i - 1].value;
+      for (i = 0; i < x->count; ++i) {
+        const dict_entry* entry = &centries(x)[i];
+        const lu_view key = lu_value_string(&entry->key);
+        /* USD dictionaries are unordered maps: match by key, not by the
+         * insertion slot. This also makes equality independent of authored /
+         * read order. */
+        const size_t match = dict_find(y, key.data, key.len);
+        if (match == SIZE_MAX) goto done;
+        stack[count].a = &entry->value;
+        stack[count++].b = &centries(y)[match].value;
       }
     } else {
       size_t size = lu_value_bytes(a);
@@ -730,8 +734,28 @@ static uint64_t leaf_hash(const lu_value* v) {
   data = lu_value_data(v);
   return size ? h ^ bytes_hash(data, size) : h;
 }
+static uint64_t hash_mix64(uint64_t x) {
+  x ^= x >> 30;
+  x *= UINT64_C(0xbf58476d1ce4e5b9);
+  x ^= x >> 27;
+  x *= UINT64_C(0x94d049bb133111eb);
+  x ^= x >> 31;
+  return x;
+}
+static uint64_t hash_entry(uint64_t key_hash, uint64_t value_hash) {
+  return hash_mix64(key_hash ^ (value_hash + UINT64_C(0x9e3779b97f4a7c15) +
+                                (key_hash << 6) + (key_hash >> 2)));
+}
 uint64_t lu_value_hash(const lu_value* value) {
-  typedef struct frame { const dict* d; size_t next; uint64_t hash; } frame;
+  /* Dictionary hashing is order-independent: each entry contributes a mixed
+   * (key, value) hash to a commutative sum. Ordinary leaf/array values keep
+   * their order-sensitive hash. Cycles are memoized exactly like equality. */
+  typedef struct frame {
+    const dict* d;
+    size_t next;
+    uint64_t sum;
+    uint64_t key_hash;
+  } frame;
   frame local[32], *stack = local;
   size_t count = 0, capacity = 32;
   memo seen = {NULL, 0, 0};
@@ -741,7 +765,8 @@ uint64_t lu_value_hash(const lu_value* value) {
   if (value->kind != LU_VALUE_DICT) return leaf_hash(value);
   local[0].d = (const dict*)payload(value);
   local[0].next = 0;
-  local[0].hash = LU_TYPE_DICTIONARY;
+  local[0].sum = 0;
+  local[0].key_hash = 0;
   count = 1;
   record = memo_get(&seen, local[0].d, NULL);
   if (!record) goto done;
@@ -752,32 +777,30 @@ uint64_t lu_value_hash(const lu_value* value) {
     const lu_value* child;
     lu_view key;
     if (f->next == f->d->count) {
-      uint64_t h = f->hash;
+      const uint64_t completed_key = f->key_hash;
+      const uint64_t h = hash_mix64(LU_TYPE_DICTIONARY + f->sum);
       record = memo_slot(&seen, f->d, NULL);
       record->hash = h;
       record->state = 2;
       count--;
       if (!count) { result = h; break; }
-      stack[count - 1].hash ^= h;
-      stack[count - 1].hash *= UINT64_C(1099511628211);
+      stack[count - 1].sum += hash_entry(completed_key, h);
       continue;
     }
     e = &centries(f->d)[f->next++];
     child = &e->value;
     key = lu_value_string(&e->key);
-    f->hash ^= bytes_hash(key.data, key.len);
-    f->hash *= UINT64_C(1099511628211);
+    const uint64_t key_hash = bytes_hash(key.data, key.len);
     if (!lu_value_materialize((lu_value*)child)) goto done;
     if (child->kind != LU_VALUE_DICT) {
-      f->hash ^= leaf_hash(child);
-      f->hash *= UINT64_C(1099511628211);
+      f->sum += hash_entry(key_hash, leaf_hash(child));
       continue;
     }
     record = memo_get(&seen, payload(child), NULL);
     if (!record) goto done;
     if (record->state) {
-      f->hash ^= record->state == 2 ? record->hash : LU_TYPE_DICTIONARY;
-      f->hash *= UINT64_C(1099511628211);
+      f->sum += hash_entry(key_hash, record->state == 2 ? record->hash
+                                                        : LU_TYPE_DICTIONARY);
     } else {
       record->state = 1;
       if (count == capacity) {
@@ -792,7 +815,9 @@ uint64_t lu_value_hash(const lu_value* value) {
       }
       stack[count].d = (const dict*)payload(child);
       stack[count].next = 0;
-      stack[count++].hash = LU_TYPE_DICTIONARY;
+      stack[count].sum = 0;
+      stack[count].key_hash = key_hash;
+      count++;
     }
   }
 done:

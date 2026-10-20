@@ -268,6 +268,10 @@ bool CrateReader::Impl::ReadTokens() {
     AddError("Failed to decompress tokens: " + dr.error);
     return false;
   }
+  if (dr.data.size() != static_cast<size_t>(uncompressed_size)) {
+    AddError("Decompressed token table size mismatch");
+    return false;
+  }
 
   // TokenPool addresses tokens with uint32 (offset,len) spans; a token blob
   // beyond 4 GiB would silently truncate. Reject it (absurd for real USDC; this

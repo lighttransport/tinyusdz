@@ -379,6 +379,21 @@ void test_usdz_stream_sink() {
   PASS();
 }
 
+void test_usdz_rejects_long_entry_name() {
+  TEST("Reject ZIP32 filename overflow");
+  const std::string root = "root-usdc-payload";
+  std::map<std::string, std::vector<uint8_t>> assets;
+  assets[std::string(65536, 'a')] = {1, 2, 3};
+  std::vector<uint8_t> bytes;
+  const auto result = WriteUSDZFromUSDCAndAssetsToMemory(
+      bytes, reinterpret_cast<const uint8_t*>(root.data()), root.size(), assets);
+  if (result.success || result.error.find("16-bit ZIP filename") ==
+                             std::string::npos) {
+    FAIL("oversized ZIP filename was not rejected"); return;
+  }
+  PASS();
+}
+
 void test_write_from_usda_with_assets() {
   TEST("Write USDA root with packaged assets");
   const std::string usda = "#usda 1.0\n\ndef Xform \"World\" {}\n";
@@ -439,6 +454,7 @@ int main() {
   test_usdc_from_usdz();
   test_write_from_usdc();
   test_usdz_stream_sink();
+  test_usdz_rejects_long_entry_name();
   test_write_from_usda_with_assets();
   test_write_failure();
 

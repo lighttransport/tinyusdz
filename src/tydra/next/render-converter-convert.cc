@@ -767,6 +767,10 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
     // transform computation) is the expensive part and touches no shared
     // state, so it runs in the worker batch; the skel:animationSource
     // ancestor walk and id/scene bookkeeping stay serial in original order.
+    // The path->id map is populated only for skeletons that were actually
+    // appended: a failed conversion must not shift later ids.
+    std::unordered_map<std::string, int32_t> skeleton_id_by_path;
+    skeleton_id_by_path.reserve(extracted.skeletons.size());
     for (size_t batch_start = 0; batch_start < extracted.skeletons.size();
          batch_start += mesh_workers) {
       const size_t batch_end =
@@ -781,7 +785,11 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
                            &batch_skel[bi]) ? 1 : 0;
       });
       for (size_t bi = 0; bi < n; ++bi) {
-        if (!batch_ok[bi]) continue;
+        if (!batch_ok[bi]) {
+          AddWarning("Failed to convert skeleton: " +
+                     extracted.skeletons[batch_start + bi].path);
+          continue;
+        }
         const auto& rec = extracted.skeletons[batch_start + bi];
         Skeleton& skeleton = batch_skel[bi];
         // skel:animationSource may be authored on the SkelRoot (or another
@@ -802,17 +810,12 @@ ConvertResult RenderSceneConverter::Impl::Convert(const Stage& stage) {
         }
         int32_t skeleton_id = static_cast<int32_t>(result.scene.skeletons.size());
         result.scene.skeletons.push_back(std::move(skeleton));
+        skeleton_id_by_path[rec.path] = skeleton_id;
         AssignNodeDataId(&result.scene, rec.path, skeleton_id);
       }
     }
 
-    // Resolve mesh skin bindings to skeleton ids (skeletons converted above).
-    std::unordered_map<std::string, int32_t> skeleton_id_by_path;
-    skeleton_id_by_path.reserve(extracted.skeletons.size());
-    for (size_t si = 0; si < extracted.skeletons.size(); ++si) {
-      skeleton_id_by_path.emplace(extracted.skeletons[si].path,
-                                  static_cast<int32_t>(si));
-    }
+    // Resolve mesh skin bindings to skeleton ids (successfully converted ones).
     std::vector<std::unordered_map<std::string, int32_t>> skeleton_joint_lookup;
     if (!result.scene.skeletons.empty()) {
       skeleton_joint_lookup.resize(result.scene.skeletons.size());

@@ -82,6 +82,7 @@ int lu_crate_decode_integers64(const uint8_t *src, size_t src_size,
   if (src == NULL || dst == NULL || src_size == 0) return 0;
 
   /* For 64-bit, decode as pairs of 32-bit halves. */
+  if (count > ((size_t)-1) / sizeof(uint32_t)) return 0;
   uint32_t *lo = (uint32_t *)malloc(count * sizeof(uint32_t));
   uint32_t *hi = (uint32_t *)malloc(count * sizeof(uint32_t));
   if (lo == NULL || hi == NULL) {

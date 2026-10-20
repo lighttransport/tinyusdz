@@ -27,6 +27,7 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/render-converter-assembly.hh"
 #include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
@@ -1441,6 +1442,42 @@ def Xform "World"
   assert(compact_instancer.compact_instances[1].prototype_index == 1);
   assert(compact_instancer.compact_instances[2].flags == 0);
   assert(compact_instancer.memory_usage() < instancer.memory_usage());
+
+  // A compact-only instancer has no source arrays; draw expansion must not
+  // index proto_indices/instance_visible as if they were retained.
+  {
+    RenderPointInstancer compact_copy = compact_instancer;
+    RenderScene draw_scene;
+    AppendPointInstanceDraws(0, &compact_copy, &draw_scene);
+    assert(compact_copy.draw_count == 0);
+    assert(draw_scene.point_instance_draws.empty());
+  }
+
+  // INT32_MAX must not overflow `proto_index + 1` while bounds-checking.
+  {
+    RenderPointInstancer extreme;
+    extreme.valid = true;
+    extreme.proto_indices.push_back(std::numeric_limits<int32_t>::max());
+    extreme.prototype_mesh_offsets = {0, 0};
+    RenderScene draw_scene;
+    AppendPointInstanceDraws(0, &extreme, &draw_scene);
+    assert(draw_scene.point_instance_draws.empty());
+  }
+
+  // Cyclic node graphs must not recurse forever during prototype collection.
+  {
+    RenderScene cyclic;
+    cyclic.nodes.resize(2);
+    cyclic.nodes[0].local_transform = Matrix4::Identity();
+    cyclic.nodes[1].local_transform = Matrix4::Identity();
+    cyclic.nodes[0].children = {1};
+    cyclic.nodes[1].children = {0};
+    cyclic.node_by_path["/A"] = 0;
+    RenderPointInstancer cyclic_instancer;
+    cyclic_instancer.prototype_paths = {"/A"};
+    ResolvePointInstancerPrototypeBindings(&cyclic, &cyclic_instancer);
+    assert(cyclic_instancer.prototype_mesh_ids.empty());
+  }
 
   ConverterConfig duplicate_config = config;
   duplicate_config.point_instancer.duplicate_meshes = true;

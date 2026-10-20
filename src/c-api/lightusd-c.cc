@@ -269,10 +269,13 @@ lightusd_status MakeView(n::ValueView v, lightusd_value_view* out) {
   const size_t csize = CompSize(storage);
   size_t components = n::GetComponentCount(t);
   // Derive components from the actual byte size when the type table disagrees
-  // (e.g. Extent = float3[2] = 6 floats).
-  if (out->count > 0 && csize > 0) {
-    const size_t derived = nbytes / (out->count * csize);
-    if (derived > 0 && derived * out->count * csize == nbytes) {
+  // (e.g. Extent = float3[2] = 6 floats). Check the divisor for overflow so a
+  // 32-bit build cannot wrap it to zero.
+  if (out->count > 0 && csize > 0 &&
+      out->count <= (std::numeric_limits<size_t>::max)() / csize) {
+    const size_t divisor = out->count * csize;
+    const size_t derived = nbytes / divisor;
+    if (derived > 0 && derived * divisor == nbytes) {
       components = derived;
     }
   }
