@@ -315,6 +315,7 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   //
   std::vector<CurveTessPlan> plans(ncurves);
   size_t knot_cursor = 0;
+  bool knot_offsets_valid = true;
   for (size_t ci = 0; ci < ncurves; ++ci) {
     CurveTessPlan& plan = plans[ci];
     const uint32_t n = out->curve_vertex_counts[ci];
@@ -330,21 +331,32 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
     };
 
     if (out->is_nurbs) {
+      if (!knot_offsets_valid) {
+        fall_back_linear(
+            "knot offsets are ambiguous after an invalid NURBS order");
+        continue;
+      }
       int order = 4;
       if (nurbs_order.size() == ncurves) order = nurbs_order[ci];
       else if (nurbs_order.size() == 1) order = nurbs_order[0];
       const size_t knot_count = static_cast<size_t>(n) + static_cast<size_t>(
           order > 0 ? order : 0);
       const size_t knot_offset = knot_cursor;
-      if (order >= 2 && order <= kMaxNurbsDegree + 1) {
+      const bool valid_order =
+          order >= 2 && order <= kMaxNurbsDegree + 1;
+      if (valid_order) {
         knot_cursor += knot_count;  // advance even if this curve falls back
+      } else {
+        // Without a usable order the knot-vector length for this curve is
+        // unknown, so later offsets cannot be trusted.
+        knot_offsets_valid = false;
       }
       if (!nurbs_data_ok) {
         plan.linear = true;
         plan.varying_count = n;
         continue;
       }
-      if (order < 2 || order > kMaxNurbsDegree + 1) {
+      if (!valid_order) {
         fall_back_linear("unsupported NURBS order " + std::to_string(order));
         continue;
       }

@@ -366,11 +366,15 @@ std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count);
 /// Compress with CompressCrateBlob (adds prefix).
 /// Decompress with DecompressCrateBlob (strips prefix).
 CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size);
+/// Decompress a crate blob whose header declares an exact uncompressed size.
+/// A valid-but-short LZ4 stream is rejected.
 DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
                                      size_t uncompressed_size);
-/// Like DecompressCrateBlob(), but requires the decoded byte count to equal
-/// `expected_size`. Use for structural sections whose header declares an exact
-/// uncompressed size (TOKENS, FIELDS value reps).
+/// Decompress a crate blob into a capacity-bounded buffer. The decoded length
+/// may be shorter than `capacity`; use when the caller only has an upper bound.
+DecompressResult DecompressCrateBlobUpto(const uint8_t* src, size_t src_size,
+                                         size_t capacity);
+/// Compatibility wrapper for the exact-size policy.
 DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
                                           size_t expected_size);
 DecompressResult DecompressCrateBlobWithCapacityHint(

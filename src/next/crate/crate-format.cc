@@ -78,14 +78,14 @@ CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size) {
   return result;
 }
 
-DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
-                                     size_t uncompressed_size) {
+DecompressResult DecompressCrateBlobUpto(const uint8_t* src, size_t src_size,
+                                         size_t capacity) {
   DecompressResult result;
-  result.data.resize(uncompressed_size);
+  result.data.resize(capacity);
   const char* error = nullptr;
   size_t out_size = 0;
-  if (lu_crate_blob_decompress(src, src_size, result.data.data(),
-                               uncompressed_size, &out_size, &error)) {
+  if (lu_crate_blob_decompress(src, src_size, result.data.data(), capacity,
+                               &out_size, &error)) {
     result.data.resize(out_size);
     result.success = true;
   } else {
@@ -95,15 +95,21 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
   return result;
 }
 
-DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
-                                          size_t expected_size) {
-  DecompressResult result = DecompressCrateBlob(src, src_size, expected_size);
-  if (result.success && result.data.size() != expected_size) {
+DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
+                                     size_t uncompressed_size) {
+  DecompressResult result =
+      DecompressCrateBlobUpto(src, src_size, uncompressed_size);
+  if (result.success && result.data.size() != uncompressed_size) {
     result.success = false;
     result.data.clear();
     result.error = "LZ4 decompression size mismatch";
   }
   return result;
+}
+
+DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
+                                          size_t expected_size) {
+  return DecompressCrateBlob(src, src_size, expected_size);
 }
 
 DecompressResult DecompressCrateBlobWithCapacityHint(
@@ -132,7 +138,7 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 
   const uint8_t n_chunks = src[0];
   if (n_chunks != 0) {
-    return DecompressCrateBlob(src, src_size, uncompressed_size_limit);
+    return DecompressCrateBlobUpto(src, src_size, uncompressed_size_limit);
   }
 
   const uint8_t* data_start = src + 1;
@@ -441,7 +447,7 @@ DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
     return result;
   }
 
-  DecompressResult dr = DecompressCrateBlob(
+  DecompressResult dr = DecompressCrateBlobUpto(
       data + 8, static_cast<size_t>(comp_size), max_delta_size);
   if (!dr.success) {
     result.error = "Failed to decompress compressed integers: " + dr.error;

@@ -95,7 +95,17 @@ static bool ExactCrateBlobSize() {
   }
   const DecompressResult short_result = DecompressCrateBlobExact(
       compressed.data.data(), compressed.data.size(), sizeof(raw) + 1);
-  return !short_result.success;
+  if (short_result.success) return false;
+  // The default API is exact too; the explicit Upto variant is the one that
+  // accepts a decoded length below the capacity.
+  if (DecompressCrateBlob(compressed.data.data(), compressed.data.size(),
+                          sizeof(raw) + 1)
+          .success) {
+    return false;
+  }
+  const DecompressResult upto = DecompressCrateBlobUpto(
+      compressed.data.data(), compressed.data.size(), sizeof(raw) + 1);
+  return upto.success && upto.data.size() == sizeof(raw);
 }
 
 static bool RejectsTruncatedIntegerEncoding() {

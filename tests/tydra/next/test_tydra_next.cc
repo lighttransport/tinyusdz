@@ -4032,6 +4032,15 @@ def Xform "World"
         double[] knots = [0, 0]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
     }
+
+    def NurbsCurves "AmbiguousNurbs"
+    {
+        int[] curveVertexCounts = [2, 4]
+        int[] order = [1, 4]
+        double[] knots = [0, 0, 0, 0, 1, 1, 1, 1]
+        point3f[] points = [(0, 0, 0), (1, 0, 0),
+                            (2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+    }
 }
 )";
 
@@ -4152,9 +4161,9 @@ def Xform "World"
   RenderSceneConverter converter(cfg);
   ConvertResult result = converter.Convert(lr.stage);
   assert(result.success);
-  assert(result.scene.curves.size() == 6);
-  assert(result.scene.get_stats().curves_count == 6);
-  assert(result.scene.get_stats().curve_count == 7);
+  assert(result.scene.curves.size() == 7);
+  assert(result.scene.get_stats().curves_count == 7);
+  assert(result.scene.get_stats().curve_count == 9);
 
   auto curve = [&](const char* path) -> const RenderCurves& {
     auto it = result.scene.curves_by_path.find(path);
@@ -4230,6 +4239,12 @@ def Xform "World"
     }
   }
   assert(saw_fallback);
+
+  // An invalid order makes later knot offsets unknowable. Every later curve
+  // must fall back rather than consume the wrong knot vector.
+  const RenderCurves& ambiguous = curve("/World/AmbiguousNurbs");
+  assert(ambiguous.tessellated_vertex_counts ==
+         std::vector<uint32_t>({2, 4}));
 
   auto node_it = result.scene.node_by_path.find("/World/Bezier");
   assert(node_it != result.scene.node_by_path.end());
@@ -7279,6 +7294,167 @@ void TestRenderSessionResidentCap() {
   assert(session.GetSnapshot().scene->meshes[0].points.size() == 9);
 }
 
+void TestIncrementalRenderSessionDependencies() {
+  std::cout << "Testing incremental RenderSession dependencies...\n";
+
+  // A primvar update can newly satisfy a material's UV reader. The mesh patch
+  // path must rerun the material-driven UV promotion pass.
+  auto uv_source = [](bool with_uv) {
+    std::string text = R"(#usda 1.0
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Mat>
+)";
+    if (with_uv) {
+      text += R"(        texCoord2f[] primvars:uv = [(0, 0), (0.25, 0), (0.25, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
+)";
+    }
+    text += R"(    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @wood.png@
+            float2 inputs:st.connect = </World/Mat/Reader.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uv"
+            float2 outputs:result
+        }
+    }
+}
+)";
+    return text;
+  };
+
+  LoadResult uv_initial = LoadUSDAFromString(uv_source(false));
+  assert(uv_initial.success);
+  StageSnapshot uv_initial_snapshot;
+  uv_initial_snapshot.revision = 1;
+  uv_initial_snapshot.stage.reset(new Stage(std::move(uv_initial.stage)));
+  RecordingSceneUpdateSink uv_sink;
+  RenderSession uv_session;
+  assert(uv_session.Initialize(uv_initial_snapshot, &uv_sink));
+  {
+    const RenderSceneSnapshot snap = uv_session.GetSnapshot();
+    assert(snap->meshes.size() == 1);
+    assert(snap->meshes[0].texcoords_0.empty());
+  }
+
+  LoadResult uv_updated = LoadUSDAFromString(uv_source(true));
+  assert(uv_updated.success);
+  StageSnapshot uv_updated_snapshot;
+  uv_updated_snapshot.revision = 2;
+  uv_updated_snapshot.stage.reset(new Stage(std::move(uv_updated.stage)));
+  StageChangeSet uv_changes;
+  uv_changes.base_revision = 1;
+  uv_changes.new_revision = 2;
+  PrimChange uv_change;
+  uv_change.path = Path("/World/Quad");
+  uv_change.flags = StageChangeFlag::Primvar;
+  uv_change.properties.push_back("primvars:uv");
+  uv_changes.prims.push_back(std::move(uv_change));
+  const RenderUpdateResult uv_update =
+      uv_session.Apply(uv_updated_snapshot, uv_changes, &uv_sink);
+  assert(uv_update);
+  assert(!uv_update.full_resync);
+  {
+    const RenderSceneSnapshot snap = uv_session.GetSnapshot();
+    assert(snap->meshes.size() == 1);
+    assert(snap->meshes[0].texcoords_0.size() == 8);
+    assert(snap->meshes[0].texcoords_0_name == "uv");
+  }
+
+  // A mesh that feeds a duplicated PointInstancer draw owns derived clone
+  // meshes. Updating only the source must not leave those clones stale.
+  auto instancer_source = [](float x) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
+    text += "    int[] faceVertexCounts = [3]\n";
+    text += "    int[] faceVertexIndices = [0, 1, 2]\n";
+    text += "    point3f[] points = [(" + std::to_string(x);
+    text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    text += R"(def PointInstancer "Inst" {
+    rel prototypes = </M>
+    point3f[] positions = [(0, 0, 0)]
+    int[] protoIndices = [0]
+    quatf[] orientations = [(1, 0, 0, 0)]
+    float3[] scales = [(1, 1, 1)]
+}
+)";
+    return text;
+  };
+
+  LoadResult inst_initial = LoadUSDAFromString(instancer_source(0.0f));
+  assert(inst_initial.success);
+  StageSnapshot inst_initial_snapshot;
+  inst_initial_snapshot.revision = 1;
+  inst_initial_snapshot.stage.reset(new Stage(std::move(inst_initial.stage)));
+  ConverterConfig inst_config;
+  inst_config.point_instancer.duplicate_meshes = true;
+  RecordingSceneUpdateSink inst_sink;
+  RenderSession inst_session(inst_config);
+  assert(inst_session.Initialize(inst_initial_snapshot, &inst_sink));
+  {
+    const RenderSceneSnapshot snap = inst_session.GetSnapshot();
+    assert(snap->point_instance_draws.size() == 1);
+    const RenderPointInstanceDraw& draw = snap->point_instance_draws[0];
+    assert(draw.expanded_mesh_id >= 0);
+    const RenderMesh* expanded = snap->get_mesh(draw.expanded_mesh_id);
+    assert(expanded && expanded->points.size() == 9);
+    assert(std::fabs(expanded->points[0]) < 1.0e-6f);
+  }
+
+  LoadResult inst_updated = LoadUSDAFromString(instancer_source(2.0f));
+  assert(inst_updated.success);
+  StageSnapshot inst_updated_snapshot;
+  inst_updated_snapshot.revision = 2;
+  inst_updated_snapshot.stage.reset(new Stage(std::move(inst_updated.stage)));
+  StageChangeSet inst_changes;
+  inst_changes.base_revision = 1;
+  inst_changes.new_revision = 2;
+  PrimChange inst_mesh_change;
+  inst_mesh_change.path = Path("/M");
+  inst_mesh_change.flags = StageChangeFlag::Topology;
+  inst_mesh_change.properties.push_back("points");
+  inst_changes.prims.push_back(std::move(inst_mesh_change));
+  const RenderUpdateResult inst_update =
+      inst_session.Apply(inst_updated_snapshot, inst_changes, &inst_sink);
+  assert(inst_update);
+  assert(inst_update.full_resync);
+  {
+    const RenderSceneSnapshot snap = inst_session.GetSnapshot();
+    assert(snap->point_instance_draws.size() == 1);
+    const RenderPointInstanceDraw& draw = snap->point_instance_draws[0];
+    const RenderMesh* expanded = snap->get_mesh(draw.expanded_mesh_id);
+    assert(expanded && expanded->points.size() == 9);
+    assert(std::fabs(expanded->points[0] - 2.0f) < 1.0e-6f);
+  }
+
+  std::cout << "  incremental RenderSession dependencies: PASSED\n";
+}
+
 void TestIncrementalRenderSession() {
   std::cout << "Testing incremental RenderSession...\n";
   auto source = [](float x) {
@@ -7886,6 +8062,7 @@ int main() {
   TestP2AuditFixes();
   TestLegacyParityExtraction();
   TestRenderColorManagement();
+  TestIncrementalRenderSessionDependencies();
   TestIncrementalRenderSession();
   TestRenderSessionResidentCap();
   TestPtexMaterialInterfaceAsset();
