@@ -924,8 +924,24 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
             texture.source_color_space = "raw";
             if (texture.image_id >= 0 &&
                 static_cast<size_t>(texture.image_id) < scene->images.size()) {
-              scene->images[static_cast<size_t>(texture.image_id)].color_space =
-                  ColorSpace::Raw;
+              // The image may also be referenced by a non-displacement texture
+              // (same path/colorspace dedup). Do not rewrite its colorspace in
+              // place; detach a Raw-colored copy for the displacement lane.
+              const TextureImage& image =
+                  scene->images[static_cast<size_t>(texture.image_id)];
+              if (image.color_space != ColorSpace::Raw) {
+                const std::string resolved = image.resolved_path;
+                int32_t raw_id =
+                    FindCachedImageId(scene, resolved, ColorSpace::Raw);
+                if (raw_id < 0) {
+                  TextureImage copy = image;
+                  copy.color_space = ColorSpace::Raw;
+                  raw_id = static_cast<int32_t>(scene->images.size());
+                  scene->images.push_back(std::move(copy));
+                  RememberImageId(scene, resolved, ColorSpace::Raw, raw_id);
+                }
+                texture.image_id = raw_id;
+              }
             }
           } else {
             scalar.value.x = (scalar.value.x - center) * amount;

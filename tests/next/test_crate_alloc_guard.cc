@@ -83,6 +83,20 @@ static bool RejectsOversizedInteger64Workspace() {
   return lu_crate_decode_integers64(src, sizeof(src), dst, count) == 0;
 }
 
+static bool RejectsTruncatedIntegerEncoding() {
+  uint32_t dst[2] = {0, 0};
+  // Declares a four-byte common prefix but carries only one byte.
+  const uint8_t truncated_prefix[2] = {4, 1};
+  if (lu_crate_decode_integers(truncated_prefix, sizeof(truncated_prefix),
+                               dst, 1)) {
+    return false;
+  }
+  // Declares a three-byte suffix but carries no suffix bytes.
+  const uint8_t truncated_suffix[2] = {0, 3};
+  return lu_crate_decode_integers(truncated_suffix, sizeof(truncated_suffix),
+                                  dst, 1) == 0;
+}
+
 static void PutU64(std::string& buf, uint64_t v) {
   for (int i = 0; i < 8; ++i) {
     buf.push_back(static_cast<char>((v >> (i * 8)) & 0xffu));
@@ -105,6 +119,7 @@ int main() {
   assert(RejectsRaisedLimitOverflowCount());
   assert(RejectsCompressedHugeBlob());
   assert(RejectsOversizedInteger64Workspace());
+  assert(RejectsTruncatedIntegerEncoding());
 
   // Sanity: a small, fully-present array still decodes. Layout (payload != 0,
   // since payload 0 is the empty-array marker):

@@ -49,8 +49,8 @@ int lu_crate_decode_integers(const uint8_t *src, size_t src_size, uint32_t *dst,
   uint8_t common_bytes = src[src_idx++];
   /* The prefix is a uint32: more than 4 bytes is malformed (and i*8 would be an
    * out-of-range shift -> UB). */
-  if (common_bytes > 4) return 0;
-  for (int i = 0; i < common_bytes && src_idx < src_size; i++) {
+  if (common_bytes > 4 || src_size - src_idx < common_bytes) return 0;
+  for (int i = 0; i < common_bytes; i++) {
     common |= (uint32_t)src[src_idx++] << (i * 8);
   }
 
@@ -61,7 +61,8 @@ int lu_crate_decode_integers(const uint8_t *src, size_t src_size, uint32_t *dst,
 
     if (num_bytes > 0) {
       uint32_t suffix = 0;
-      for (int i = 0; i < num_bytes && src_idx < src_size; i++) {
+      if (src_size - src_idx < num_bytes) return 0;
+      for (int i = 0; i < num_bytes; i++) {
         suffix |= (uint32_t)src[src_idx++] << (i * 8);
       }
       value = (common << (num_bytes * 8)) | suffix;
