@@ -17,6 +17,18 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 
+namespace lightusd {
+namespace next {
+class AssetResolver;
+}
+}  // namespace lightusd
+
+namespace lightusd_internal {
+// Borrowed native resolver behind a public C handle (null-safe).
+lightusd::next::AssetResolver* AssetResolverForLoad(
+    struct lightusd_asset_resolver* resolver);
+}  // namespace lightusd_internal
+
 // ============================================================
 // Handle definitions (opaque in the public header)
 // ============================================================

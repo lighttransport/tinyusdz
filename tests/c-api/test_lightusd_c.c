@@ -524,6 +524,39 @@ static int test_core_transforms_and_ownership(void) {
   return 0;
 }
 
+typedef struct {
+  int resolve_calls;
+  int read_calls;
+  char context[64];
+} TestSchemeState;
+
+static int test_scheme_resolver(void* userdata, const char* identifier,
+                                const char* anchor_path,
+                                const char* scheme_context,
+                                const char** resolved) {
+  TestSchemeState* state = (TestSchemeState*)userdata;
+  (void)anchor_path;
+  if (state) {
+    ++state->resolve_calls;
+    snprintf(state->context, sizeof(state->context), "%s", scheme_context);
+  }
+  *resolved = identifier;
+  return 1;
+}
+
+static int test_scheme_reader(void* userdata, const char* identifier,
+                              uint8_t** data, size_t* size) {
+  static const char payload[] = "#usda 1.0\n";
+  TestSchemeState* state = (TestSchemeState*)userdata;
+  (void)identifier;
+  if (state) ++state->read_calls;
+  *size = sizeof(payload) - 1;
+  *data = (uint8_t*)malloc(*size);
+  if (!*data) return 0;
+  memcpy(*data, payload, *size);
+  return 1;
+}
+
 static int test_package_resolver_callback(void* userdata,
                                           const char* package_path,
                                           const char* asset_path,
@@ -552,6 +585,9 @@ static int test_dependency_boundary(void) {
   CHECK_OK(lightusd_asset_resolver_create_context(resolver, "/tmp", &context));
   lightusd_sv context_text = lightusd_resolver_context_string(context);
   CHECK(context_text.len == 4 && memcmp(context_text.data, "/tmp", 4) == 0);
+  CHECK_OK(lightusd_resolver_context_set_scheme(context, "StUdIo", "ctx"));
+  context_text = lightusd_resolver_context_get_scheme(context, "studio");
+  CHECK(context_text.len == 3 && memcmp(context_text.data, "ctx", 3) == 0);
   CHECK(lightusd_asset_resolver_is_context_dependent(resolver, "rel.usda") == 1);
   CHECK(lightusd_asset_resolver_is_context_dependent(resolver, "/abs.usda") == 0);
   CHECK_OK(lightusd_asset_resolver_bind_context(resolver, context,
@@ -565,7 +601,43 @@ static int test_dependency_boundary(void) {
                                                   &context_binding));
   lightusd_resolver_context_destroy(context);
 
+  TestSchemeState scheme_state;
+  memset(&scheme_state, 0, sizeof(scheme_state));
+  CHECK_OK(lightusd_asset_resolver_register_scheme(
+      resolver, "studio", test_scheme_resolver, test_scheme_reader,
+      &scheme_state));
+  lightusd_resolver_context* scheme_context = NULL;
+  void* scheme_binding = NULL;
+  CHECK_OK(lightusd_asset_resolver_create_context(resolver, "", &scheme_context));
+  CHECK_OK(lightusd_resolver_context_set_scheme(scheme_context, "studio",
+                                                 "scheme-ctx"));
+  CHECK_OK(lightusd_asset_resolver_bind_context(resolver, scheme_context,
+                                                 &scheme_binding));
   lightusd_string* resolved = NULL;
+  uint8_t scheme_exists = 0, scheme_is_package = 0;
+  CHECK_OK(lightusd_asset_resolver_resolve(
+      resolver, "studio:note.usda", NULL, &resolved, &scheme_exists,
+      &scheme_is_package));
+  CHECK(scheme_exists && !scheme_is_package);
+  CHECK(scheme_state.resolve_calls == 1 &&
+        strcmp(scheme_state.context, "scheme-ctx") == 0);
+  lightusd_string_destroy(resolved);
+  resolved = NULL;
+  CHECK_OK(lightusd_asset_resolver_read(resolver, "studio:note.usda", &resolved));
+  {
+    const lightusd_sv text = lightusd_string_view(resolved);
+    CHECK(scheme_state.read_calls == 1 && text.len == 10 &&
+          memcmp(text.data, "#usda 1.0\n", 10) == 0);
+  }
+  lightusd_string_destroy(resolved);
+  CHECK_OK(lightusd_asset_resolver_unbind_context(resolver, scheme_context,
+                                                   &scheme_binding));
+  lightusd_resolver_context_destroy(scheme_context);
+  CHECK_OK(lightusd_asset_resolver_unregister_scheme(resolver, "studio"));
+  CHECK(lightusd_asset_resolver_unregister_scheme(resolver, "studio") ==
+        LIGHTUSD_ERR_NOT_FOUND);
+
+  resolved = NULL;
   uint8_t exists = 0, is_package = 0;
   CHECK_OK(lightusd_asset_resolver_resolve_for_new_asset(
       resolver, "sub/new.usda", "/tmp/look/layer.usda", &resolved, &exists,
@@ -603,6 +675,37 @@ static int test_dependency_boundary(void) {
   CHECK_OK(lightusd_asset_resolver_unregister_package(resolver, "pkg"));
   CHECK(lightusd_asset_resolver_unregister_package(resolver, "pkg") ==
         LIGHTUSD_ERR_NOT_FOUND);
+
+  /* Composed loading must use the caller's resolver, not the default one. */
+  {
+    static const char dep_source[] =
+        "#usda 1.0\n(defaultPrim = \"Base\")\n"
+        "def Xform \"Base\" { def Xform \"Child\" {} }\n";
+    static const char root_source[] =
+        "#usda 1.0\ndef Xform \"Root\" (references = @dep.usda@) {}\n";
+    const char* root_path = "resolver-load-root.usda";
+    CHECK_OK(lightusd_asset_resolver_register_memory(
+        resolver, "demo:dep.usda", (const uint8_t*)dep_source,
+        sizeof(dep_source) - 1));
+    CHECK_OK(lightusd_asset_resolver_set_alias(resolver, "dep.usda",
+                                                "demo:dep.usda"));
+    FILE* f = fopen(root_path, "wb");
+    CHECK(f != NULL);
+    CHECK(fwrite(root_source, 1, sizeof(root_source) - 1, f) ==
+          sizeof(root_source) - 1);
+    fclose(f);
+
+    lightusd_load_options options;
+    lightusd_load_options_init(&options);
+    options.resolver = resolver;
+    lightusd_stage* loaded = NULL;
+    CHECK_OK(lightusd_stage_load(root_path, &options, &loaded));
+    const lightusd_prim child =
+        lightusd_stage_prim_at_path(loaded, "/Root/Child");
+    CHECK(lightusd_prim_is_valid(child));
+    lightusd_stage_destroy(loaded);
+    remove(root_path);
+  }
 
   CHECK_OK(lightusd_asset_resolver_register_memory(
       resolver, "demo:root.usda", (const uint8_t*)source, sizeof(source) - 1));

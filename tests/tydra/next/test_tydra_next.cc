@@ -7442,7 +7442,7 @@ def Xform "World"
   const RenderUpdateResult inst_update =
       inst_session.Apply(inst_updated_snapshot, inst_changes, &inst_sink);
   assert(inst_update);
-  assert(inst_update.full_resync);
+  assert(!inst_update.full_resync);
   {
     const RenderSceneSnapshot snap = inst_session.GetSnapshot();
     assert(snap->point_instance_draws.size() == 1);

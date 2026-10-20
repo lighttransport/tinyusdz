@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -45,6 +46,11 @@ struct ResolvedAsset {
   bool is_package = false;      // Whether this is inside a package (USDZ)
   std::string package_path;     // If in package, the package file path
   std::string asset_in_package; // If in package, path within package
+  // File identity captured during resolution; ReadAsset(ResolvedAsset) uses it
+  // to reject a check/use replacement of the path.
+  bool has_file_identity = false;
+  uint64_t file_device = 0;
+  uint64_t file_inode = 0;
 };
 
 /// Resolver context (static, API-driven; no DLL plugins).
@@ -58,7 +64,14 @@ struct ResolvedAsset {
 struct ResolverContext {
   std::string context_string;
   std::vector<std::string> search_paths;
+  /// Optional per-scheme context strings passed to context-aware scheme
+  /// resolvers (lowercase scheme key).
+  std::map<std::string, std::string> scheme_contexts;
   bool is_default = true;
+
+  void SetSchemeContext(const std::string& scheme,
+                        const std::string& context);
+  std::string GetSchemeContext(const std::string& scheme) const;
 };
 
 /// Asset metadata.
@@ -113,6 +126,12 @@ struct ResolverConfig {
 /// Returns resolved path, or empty string if not resolved
 using ResolverCallback = std::function<std::string(const std::string& asset_path,
                                                     const std::string& anchor_path)>;
+
+/// Context-aware scheme resolver. `context` is the active scheme context
+/// string (empty when none is bound).
+using ContextResolverCallback = std::function<std::string(
+    const std::string& asset_path, const std::string& anchor_path,
+    const std::string& context)>;
 
 /// Byte-read callback: fill `out` with the contents of `resolved_path` (a path
 /// previously produced by resolution — possibly a non-filesystem key such as a
@@ -170,6 +189,9 @@ public:
   /// stored lowercase. The resolver callback receives the complete identifier.
   void RegisterScheme(const std::string& scheme, ResolverCallback resolver,
                       AssetReadCallback reader = {});
+  void RegisterScheme(const std::string& scheme,
+                      ContextResolverCallback resolver,
+                      AssetReadCallback reader = {});
   bool UnregisterScheme(const std::string& scheme);
   bool HasScheme(const std::string& scheme) const;
 
@@ -217,10 +239,19 @@ public:
   bool Exists(const std::string& asset_path,
               const std::string& anchor_path = "") const;
 
+  /// True when the resolved file still has the device/inode captured by
+  /// Resolve(). Non-file resolutions (scheme/memory/package) are always true.
+  bool FileIdentityUnchanged(const ResolvedAsset& resolved) const;
+
   /// Read the bytes of an already-resolved asset path: the custom reader is
   /// consulted first, then a direct filesystem read (unavailable in wasm
   /// builds with -sFILESYSTEM=0). Returns false with `err` set on failure.
   bool ReadAsset(const std::string& resolved_path, std::vector<uint8_t>* out,
+                 std::string* err = nullptr) const;
+  /// Read a resolved file, verifying that the opened descriptor still matches
+  /// the identity captured by Resolve().
+  bool ReadAsset(const ResolvedAsset& resolved_path,
+                 std::vector<uint8_t>* out,
                  std::string* err = nullptr) const;
 
   /// Create an identifier for an asset (for caching/comparison)
@@ -335,6 +366,7 @@ private:
   AssetReadCallback asset_reader_;
   struct SchemeHandler {
     ResolverCallback resolver;
+    ContextResolverCallback context_resolver;
     AssetReadCallback reader;
   };
   mutable std::mutex registry_mutex_;

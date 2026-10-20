@@ -45,6 +45,11 @@ struct LoadUSDOptions {
 
   /// Format-specific USDZ options.
   USDZReadOptions usdz_options;
+
+  /// Optional borrowed resolver used for composition (references, payloads,
+  /// sublayers). The resolver's active context is snapshotted into its config
+  /// for composition workers. Null selects the default filesystem resolver.
+  AssetResolver* resolver = nullptr;
 };
 
 enum class DiagnosticSeverity : uint8_t { Info, Warning, Error };

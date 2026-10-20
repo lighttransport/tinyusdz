@@ -321,20 +321,12 @@ LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
           std::min(lopts.max_array_elements, read_opts.max_array_elements);
     }
 
-    // A package path reads the package file's bytes; entry selection happens
-    // inside the content-sniffing parser.
-    std::string read_path = resolved_path;
-    if (AssetResolver::IsPackagePath(resolved_path)) {
-      std::string package_file;
-      std::string entry_name;
-      if (AssetResolver::ParsePackagePath(resolved_path, &package_file,
-                                          &entry_name)) {
-        read_path = package_file;
-      }
-    }
-
+    // Re-resolve so the read can validate the file identity captured for this
+    // path; package entry selection still happens in the parser below.
+    ResolvedAsset asset = resolver->Resolve(resolved_path, "", false);
+    if (asset.resolved_path.empty()) asset.resolved_path = resolved_path;
     std::vector<uint8_t> bytes;
-    if (!resolver->ReadAsset(read_path, &bytes, error)) {
+    if (!resolver->ReadAsset(asset, &bytes, error)) {
       return nullptr;
     }
 

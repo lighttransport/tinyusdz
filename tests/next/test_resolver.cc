@@ -163,6 +163,30 @@ void TestContexts() {
             Normalized(root / "b" / "tex.usda"),
         "persistent ResolverConfig context applies without binding");
 
+  // Scheme-specific contexts reach context-aware scheme handlers.
+  {
+    AssetResolver scheme_resolver;
+    scheme_resolver.RegisterScheme(
+        "studio", ContextResolverCallback(
+                      [](const std::string& identifier,
+                         const std::string&, const std::string& context) {
+                        return (context.empty() ? std::string("base")
+                                                : context) +
+                               ":" + identifier;
+                      }));
+    ResolverContext scheme_ctx = scheme_resolver.CreateDefaultContext();
+    scheme_ctx.SetSchemeContext("StUdIo", "scheme-ctx");
+    void* scheme_binding = nullptr;
+    scheme_resolver.BindContext(scheme_ctx, &scheme_binding);
+    CHECK(scheme_resolver.Resolve("studio:asset.usda").resolved_path ==
+              "scheme-ctx:studio:asset.usda",
+          "scheme resolver receives its bound scheme context");
+    scheme_resolver.UnbindContext(scheme_ctx, &scheme_binding);
+    CHECK(scheme_resolver.Resolve("studio:asset.usda").resolved_path ==
+              "base:studio:asset.usda",
+          "scheme resolver falls back when no scheme context is bound");
+  }
+
   const ResolverContext default_ctx = resolver.CreateDefaultContext();
   resolver.BindContext(default_ctx);
   CHECK(resolver.Resolve("tex.usda").resolved_path ==
@@ -318,6 +342,7 @@ void TestAssetInfoAndTimestamp() {
   const fs::path root = MakeTempRoot("info");
   WriteText(root / "tex.usda", "#usda 1.0\n");
   WriteText(root / "bundle.usdz", "package");
+  WriteText(root / "payload.bin", "hello");
 
   ResolverConfig cfg;
   cfg.working_directory = root.string();
@@ -330,6 +355,32 @@ void TestAssetInfoAndTimestamp() {
         "asset info reports the containing directory");
   CHECK(info.exists && info.resolved_path == Normalized(root / "tex.usda"),
         "asset info carries resolution state");
+
+  std::vector<uint8_t> bytes;
+  std::string read_error;
+  CHECK(resolver.ReadAsset(Normalized(root / "payload.bin"), &bytes,
+                           &read_error) &&
+            bytes == std::vector<uint8_t>({'h', 'e', 'l', 'l', 'o'}),
+        "ReadAsset opens and reads a regular file from its descriptor");
+  CHECK(!resolver.ReadAsset(Normalized(root), &bytes, &read_error),
+        "ReadAsset rejects a directory descriptor");
+
+  const ResolvedAsset payload = resolver.Resolve("payload.bin");
+  CHECK(payload.has_file_identity,
+        "resolution captures the file device/inode identity");
+  CHECK(resolver.ReadAsset(payload, &bytes, &read_error) &&
+            bytes == std::vector<uint8_t>({'h', 'e', 'l', 'l', 'o'}),
+        "identity-checked ReadAsset reads the resolved file");
+  CHECK(resolver.FileIdentityUnchanged(payload),
+        "resolved file identity is stable while untouched");
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+  fs::rename(root / "payload.bin", root / "payload.old");
+  WriteText(root / "payload.bin", "replaced");
+  CHECK(!resolver.FileIdentityUnchanged(payload),
+        "replacing a resolved path is detected by device/inode");
+  CHECK(!resolver.ReadAsset(payload, &bytes, &read_error),
+        "identity-checked ReadAsset rejects a replaced path");
+#endif
 
   const AssetTimestamp timestamp =
       resolver.GetModificationTimestamp("tex.usda", resolved);
@@ -376,7 +427,16 @@ void TestAssetInfoAndTimestamp() {
       resolver.GetAssetInfo("dir/forced.usda", forced_package);
   CHECK(forced_info.asset_name == "forced.usda" &&
             forced_info.repository_path == "dir",
-        "forced package info falls back to a non-empty repository path");
+        "forced package info falls back to a real repository directory");
+
+  ResolvedAsset bare_package;
+  bare_package.is_package = true;
+  bare_package.exists = true;
+  bare_package.resolved_path = "forced.usda";
+  const AssetInfo bare_info =
+      resolver.GetAssetInfo("forced.usda", bare_package);
+  CHECK(bare_info.repository_path.empty(),
+        "forced package without a package file does not invent '.' as a repo");
 
   ResolvedAsset identifier_only;
   identifier_only.exists = true;

@@ -13,6 +13,7 @@
 
 #include "next/stage/stage.hh"
 #include "render-converter.hh"
+#include "render-converter-instance-meshes.hh"
 #include "render-converter-material-finalize.hh"
 
 namespace lightusd {
@@ -178,10 +179,8 @@ struct RenderSession::Impl {
   }
 
   bool CanPatchMeshes(const ::lightusd::next::StageChangeSet& changes,
-                      std::vector<size_t>* affected,
-                      bool* point_instance_dependent) const {
+                      std::vector<size_t>* affected) const {
     using Flag = ::lightusd::next::StageChangeFlag;
-    if (point_instance_dependent) *point_instance_dependent = false;
     if (!scene || revision == 0 || changes.full_resync ||
         changes.stage_metadata_changed || changes.prims.empty() || !affected) {
       return false;
@@ -196,19 +195,6 @@ struct RenderSession::Impl {
       bool found = false;
       for (size_t i = 0; i < scene->meshes.size(); ++i) {
         if (scene->meshes[i].prim_path == path) {
-          // A point-instancer draw may own an expanded clone of this mesh.
-          // Patching only the source would leave those clones stale, so take
-          // the full resync path for any mesh that draws reference.
-          for (const RenderPointInstanceDraw& draw :
-               scene->point_instance_draws) {
-            if ((draw.mesh_id >= 0 &&
-                 static_cast<size_t>(draw.mesh_id) == i) ||
-                (draw.expanded_mesh_id >= 0 &&
-                 static_cast<size_t>(draw.expanded_mesh_id) == i)) {
-              if (point_instance_dependent) *point_instance_dependent = true;
-              return false;
-            }
-          }
           // GeomSubset ranges live in topology space and require the full
           // material-binding finalization pass after a topology edit. Skinned
           // and morphed meshes likewise require skeleton/channel finalization.
@@ -343,15 +329,7 @@ struct RenderSession::Impl {
     }
 
     std::vector<size_t> patched_meshes;
-    bool point_instance_dependent = false;
-    const bool mesh_patch = CanPatchMeshes(changes, &patched_meshes,
-                                           &point_instance_dependent);
-    if (point_instance_dependent) {
-      // Expanded point-instance clones are derived resources. Rebuild the whole
-      // catalog so they are re-emitted alongside their source mesh.
-      changes.full_resync = true;
-      out.full_resync = true;
-    }
+    bool mesh_patch = CanPatchMeshes(changes, &patched_meshes);
     std::shared_ptr<RenderScene> committed;
     if (mesh_patch) {
       committed.reset(new (std::nothrow) RenderScene(*scene));
@@ -380,7 +358,20 @@ struct RenderSession::Impl {
         PromoteMaterialUVPrimvars(committed.get(), &promotion_warnings);
         out.warnings.insert(out.warnings.end(), promotion_warnings.begin(),
                             promotion_warnings.end());
-        out.converted_resource_count = patched_meshes.size();
+        std::vector<std::string> refreshed_clones;
+        if (!RefreshPointInstanceExpandedMeshes(committed.get(), patched_meshes,
+                                                &refreshed_clones)) {
+          out.warnings.push_back(
+              "RenderSession: could not refresh a point-instancer clone");
+        }
+        for (const std::string& path : refreshed_clones) {
+          ::lightusd::next::PrimChange clone_change;
+          clone_change.path = ::lightusd::next::Path(path);
+          clone_change.flags = ::lightusd::next::StageChangeFlag::Topology;
+          changes.prims.push_back(std::move(clone_change));
+        }
+        out.converted_resource_count =
+            patched_meshes.size() + refreshed_clones.size();
       }
     } else {
       ConvertResult converted = converter.Convert(*snapshot.stage);

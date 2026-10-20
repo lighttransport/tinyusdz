@@ -7,6 +7,7 @@
 #include <limits>
 #include <mutex>
 #include <new>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <string>
@@ -64,6 +65,12 @@ struct lightusd_resolver_cache_scope {
   lightusd_asset_resolver* resolver = nullptr;
   void* data = nullptr;
 };
+
+namespace lightusd_internal {
+n::AssetResolver* AssetResolverForLoad(lightusd_asset_resolver* resolver) {
+  return resolver ? &resolver->resolver : nullptr;
+}
+}  // namespace lightusd_internal
 
 extern "C" {
 
@@ -169,6 +176,78 @@ lightusd_status lightusd_asset_resolver_memory_identifier(
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_asset_resolver_register_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata) {
+  if (!resolver || !scheme || !scheme[0] ||
+      (!resolver_callback && !reader_callback)) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme handler");
+  }
+  std::string normalized(scheme);
+  if (!normalized.empty() && normalized.back() == ':') normalized.pop_back();
+  for (char& c : normalized) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (normalized.empty() ||
+      n::AssetResolver::GetIdentifierScheme(normalized + ":asset") !=
+          normalized) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme");
+  }
+  n::ContextResolverCallback context_resolver;
+  if (resolver_callback) {
+    context_resolver = [resolver_callback, userdata](
+                           const std::string& identifier,
+                           const std::string& anchor_path,
+                           const std::string& scheme_context) {
+      const char* resolved = nullptr;
+      if (!resolver_callback(userdata, identifier.c_str(),
+                             anchor_path.c_str(), scheme_context.c_str(),
+                             &resolved) ||
+          !resolved) {
+        return std::string();
+      }
+      return std::string(resolved);
+    };
+  }
+  n::AssetReadCallback reader;
+  if (reader_callback) {
+    reader = [reader_callback, userdata](
+                 const std::string& identifier, std::vector<uint8_t>* out,
+                 std::string* err) {
+      uint8_t* data = nullptr;
+      size_t size = 0;
+      if (!reader_callback(userdata, identifier.c_str(), &data, &size) ||
+          (!data && size)) {
+        if (err) *err += "scheme reader failed: " + identifier + "\n";
+        std::free(data);
+        return false;
+      }
+      if (size) {
+        out->assign(data, data + size);
+      } else {
+        out->clear();
+      }
+      std::free(data);
+      return true;
+    };
+  }
+  resolver->resolver.RegisterScheme(scheme, std::move(context_resolver),
+                                    std::move(reader));
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_unregister_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme) {
+  if (!resolver || !scheme || !scheme[0]) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme");
+  }
+  if (!resolver->resolver.UnregisterScheme(scheme)) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "scheme is not registered");
+  }
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_asset_resolver_set_alias(
     lightusd_asset_resolver* resolver, const char* authored_path,
     const char* resolved_identifier) {
@@ -265,6 +344,25 @@ lightusd_sv lightusd_resolver_context_string(
     const lightusd_resolver_context* context) {
   if (!context) return lightusd_internal::EmptySV();
   return lightusd_internal::SV(context->context.context_string);
+}
+
+lightusd_status lightusd_resolver_context_set_scheme(
+    lightusd_resolver_context* context, const char* scheme,
+    const char* scheme_context) {
+  if (!context || !scheme || !scheme[0]) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme context");
+  }
+  context->context.SetSchemeContext(scheme,
+                                    scheme_context ? scheme_context : "");
+  return LIGHTUSD_OK;
+}
+
+lightusd_sv lightusd_resolver_context_get_scheme(
+    const lightusd_resolver_context* context, const char* scheme) {
+  if (!context || !scheme) return lightusd_internal::EmptySV();
+  const std::string value = context->context.GetSchemeContext(scheme);
+  if (value.empty()) return lightusd_internal::EmptySV();
+  return lightusd_internal::SV(value);
 }
 
 lightusd_status lightusd_asset_resolver_bind_context(

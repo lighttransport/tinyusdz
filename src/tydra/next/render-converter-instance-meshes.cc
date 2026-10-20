@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "render-converter-internal.hh"
+#include "render-converter-instance-meshes.hh"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -166,6 +167,36 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
 
 
 }  // namespace
+
+bool RefreshPointInstanceExpandedMeshes(
+    RenderScene* scene, const std::vector<size_t>& changed_meshes,
+    std::vector<std::string>* refreshed_paths) {
+  if (!scene) return false;
+  bool ok = true;
+  for (RenderPointInstanceDraw& draw : scene->point_instance_draws) {
+    if (draw.mesh_id < 0 || draw.expanded_mesh_id < 0) continue;
+    const size_t source = static_cast<size_t>(draw.mesh_id);
+    const size_t expanded = static_cast<size_t>(draw.expanded_mesh_id);
+    if (source >= scene->meshes.size() || expanded >= scene->meshes.size())
+      continue;
+    bool affected = false;
+    for (size_t index : changed_meshes) {
+      if (index == source) {
+        affected = true;
+        break;
+      }
+    }
+    if (!affected) continue;
+    RenderMesh replacement;
+    if (!CloneMeshForPointInstance(scene->meshes[source], draw, &replacement)) {
+      ok = false;
+      continue;
+    }
+    scene->meshes[expanded] = std::move(replacement);
+    if (refreshed_paths) refreshed_paths->push_back(scene->meshes[expanded].prim_path);
+  }
+  return ok;
+}
 
 void RenderSceneConverter::Impl::DuplicatePointInstanceMeshes(RenderScene* scene) {
   if (!scene) return;

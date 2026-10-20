@@ -363,8 +363,22 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   if (!LoadUSD(filename, stage, load_options, warn, err)) {
     return false;
   }
-  AssetResolver resolver;
-  resolver.SetWorkingDirectory(DirOfPath(filename));
+  AssetResolver default_resolver;
+  std::unique_ptr<AssetResolver> resolver_copy;
+  AssetResolver* resolver = load_options.resolver;
+  if (resolver) {
+    // Composition may run on worker threads, which cannot see the caller's
+    // thread-local context binding. Snapshot the effective context into a
+    // private copy's config so every worker resolves identically.
+    resolver_copy = std::make_unique<AssetResolver>(*resolver);
+    ResolverConfig config = resolver_copy->GetConfig();
+    config.context = resolver->GetCurrentContext();
+    resolver_copy->SetConfig(config);
+    resolver = resolver_copy.get();
+  } else {
+    default_resolver.SetWorkingDirectory(DirOfPath(filename));
+    resolver = &default_resolver;
+  }
   std::string anchor = filename;
   if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
     USDZReader package;
@@ -375,7 +389,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
       }
     }
   }
-  return ComposeLoadedStage(stage, resolver, anchor, load_options, warn, err,
+  return ComposeLoadedStage(stage, *resolver, anchor, load_options, warn, err,
                             comp_opts);
 }
 

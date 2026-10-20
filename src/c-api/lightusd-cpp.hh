@@ -219,6 +219,18 @@ inline lightusd_status CreateResolverContext(const AssetResolver& resolver,
                                                 out->put());
 }
 
+inline lightusd_status SetResolverSchemeContext(ResolverContext& context,
+                                                const char* scheme,
+                                                const char* scheme_context) {
+  return lightusd_resolver_context_set_scheme(context.get(), scheme,
+                                              scheme_context);
+}
+
+inline lightusd_sv ResolverSchemeContext(const ResolverContext& context,
+                                         const char* scheme) {
+  return lightusd_resolver_context_get_scheme(context.get(), scheme);
+}
+
 inline lightusd_status BindResolverContext(AssetResolver& resolver,
                                            const ResolverContext& context,
                                            void** binding_data = nullptr) {
@@ -249,6 +261,19 @@ inline lightusd_status CreateResolverCacheScope(AssetResolver& resolver,
                                                 ResolverCacheScope* out) {
   if (!out) return LIGHTUSD_ERR_INVALID_ARG;
   return lightusd_asset_resolver_create_cache_scope(resolver.get(), out->put());
+}
+
+inline lightusd_status RegisterSchemeResolver(
+    AssetResolver& resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata) {
+  return lightusd_asset_resolver_register_scheme(
+      resolver.get(), scheme, resolver_callback, reader_callback, userdata);
+}
+
+inline lightusd_status UnregisterSchemeResolver(AssetResolver& resolver,
+                                                const char* scheme) {
+  return lightusd_asset_resolver_unregister_scheme(resolver.get(), scheme);
 }
 
 inline lightusd_status RegisterPackageResolver(

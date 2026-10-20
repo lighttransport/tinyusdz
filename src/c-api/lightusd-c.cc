@@ -498,6 +498,12 @@ bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
   lo->usdz_options.max_archive_size = lo->limits.max_input_bytes;
   lo->usdz_options.max_entry_size = lo->limits.max_asset_bytes;
   lo->usdz_options.max_entries = lo->limits.max_archive_entries;
+  constexpr uint32_t kResolverOptionsSize = static_cast<uint32_t>(
+      offsetof(lightusd_load_options, resolver) +
+      sizeof(((lightusd_load_options*)nullptr)->resolver));
+  if (opts->struct_size >= kResolverOptionsSize && opts->resolver) {
+    lo->resolver = lightusd_internal::AssetResolverForLoad(opts->resolver);
+  }
   if (co) {
     if (opts->preserve_native_instances) {
       co->flatten_instances = false;

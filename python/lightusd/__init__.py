@@ -89,6 +89,7 @@ def load(
     variants: Optional[dict] = None,
     load_payloads: bool = True,
     max_memory: int = 0,
+    resolver: Optional[AssetResolver] = None,
 ) -> Stage:
     """Load a USD file (USDA / USDC / USDZ, auto-detected).
 
@@ -97,6 +98,8 @@ def load(
     ``variants`` maps variant-set names to selections, overriding authored
     selections. A positive ``max_memory`` caps input, asset, and aggregate
     resident estimates in bytes. Zero keeps the library's finite safe defaults.
+    ``resolver`` supplies asset resolution for composition arcs; its active
+    context is snapshotted for composition workers.
     """
     return _core.load(
         _os.fspath(path),
@@ -105,6 +108,7 @@ def load(
         variants=variants,
         load_payloads=load_payloads,
         max_memory=max_memory,
+        resolver=resolver,
     )
 
 

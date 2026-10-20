@@ -177,16 +177,19 @@ static int parse_format(const char* format, uint32_t* out) {
 
 static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
   static char* kwlist[] = {"path",     "format",       "composed",
-                           "variants", "load_payloads", "max_memory", NULL};
+                           "variants", "load_payloads", "max_memory",
+                           "resolver", NULL};
   const char* path;
   const char* format = NULL;
   int composed = 1;
   PyObject* variants = Py_None;
   int load_payloads = 1;
   unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zpOpK:load", kwlist,
+  PyObject* resolver_obj = Py_None;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zpOpKO:load", kwlist,
                                    &path, &format, &composed, &variants,
-                                   &load_payloads, &max_memory)) {
+                                   &load_payloads, &max_memory,
+                                   &resolver_obj)) {
     return NULL;
   }
   lightusd_state* st = lightusd_state_from_module(module);
@@ -197,6 +200,10 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
   if (parse_format(format, &opts.format) != 0) return NULL;
   opts.composed = composed ? 1 : 0;
   opts.load_payloads = load_payloads ? 1 : 0;
+  lightusd_asset_resolver* resolver =
+      lightusd_resolver_handle(st, resolver_obj);
+  if (resolver_obj != Py_None && !resolver) return NULL;
+  opts.resolver = resolver;
   if (max_memory) {
     opts.max_input_bytes = max_memory;
     opts.max_asset_bytes = max_memory;

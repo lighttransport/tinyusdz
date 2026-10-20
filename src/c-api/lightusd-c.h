@@ -286,6 +286,7 @@ LIGHTUSD_API lightusd_status lightusd_dict_get_token_array(
  * ============================================================ */
 
 typedef struct lightusd_stage lightusd_stage;
+struct lightusd_asset_resolver;
 /* Retain the supplied value's C11 storage in the authored property. */
 LIGHTUSD_API lightusd_status lightusd_attr_set_value(lightusd_stage*, const char* prim_path,
     const char* name, const lightusd_value*, uint16_t flags);
@@ -339,6 +340,10 @@ typedef struct lightusd_load_options {
   size_t variant_override_count;
   lightusd_load_progress_fn progress_callback;
   void* progress_userdata;
+  /* Optional borrowed resolver for composed loads. Its active context is
+   * snapshotted into a private resolver copy, so composition workers inherit
+   * the context. Requires struct_size to cover this field. */
+  struct lightusd_asset_resolver* resolver;
 } lightusd_load_options;
 
 LIGHTUSD_API void lightusd_load_options_init(lightusd_load_options* opts);
@@ -449,6 +454,23 @@ LIGHTUSD_API lightusd_status lightusd_asset_resolver_resolve_for_new_asset(
     const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
     uint8_t* is_package);
 
+/* Explicit URI scheme handlers. The resolver callback returns a borrowed
+ * NUL-terminated resolved identifier (or NULL/0 to fall through). The optional
+ * reader callback receives the resolved identifier and must return a buffer
+ * allocated with malloc() (or NULL for zero bytes); the resolver frees it. */
+typedef int (*lightusd_scheme_resolver_callback)(
+    void* userdata, const char* identifier, const char* anchor_path,
+    const char* scheme_context, const char** resolved);
+typedef int (*lightusd_scheme_reader_callback)(
+    void* userdata, const char* resolved_identifier, uint8_t** data,
+    size_t* size);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata);
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme);
+
 /* Resolver contexts. The context object owns a copy of its context string and
  * may be bound to any number of resolvers (bindings are per-thread). */
 typedef struct lightusd_resolver_context lightusd_resolver_context;
@@ -459,6 +481,13 @@ LIGHTUSD_API void lightusd_resolver_context_destroy(
     lightusd_resolver_context* context);
 LIGHTUSD_API lightusd_sv lightusd_resolver_context_string(
     const lightusd_resolver_context* context);
+/* Set/read a per-scheme context string passed to context-aware scheme
+ * resolvers. An empty context removes the entry. */
+LIGHTUSD_API lightusd_status lightusd_resolver_context_set_scheme(
+    lightusd_resolver_context* context, const char* scheme,
+    const char* scheme_context);
+LIGHTUSD_API lightusd_sv lightusd_resolver_context_get_scheme(
+    const lightusd_resolver_context* context, const char* scheme);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_bind_context(
     lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
     void** binding_data);

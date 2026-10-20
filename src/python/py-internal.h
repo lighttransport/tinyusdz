@@ -219,5 +219,10 @@ PyObject* lightusd_to_render_scene(PyObject* module, PyObject* args,
 int lightusd_register_prim_types(PyObject* module, lightusd_state* st);
 int lightusd_register_stage_type(PyObject* module, lightusd_state* st);
 int lightusd_register_resolver_types(PyObject* module, lightusd_state* st);
+/* Return the C resolver behind a Python AssetResolver, or NULL with a
+ * TypeError set for a non-None/non-resolver object. None yields NULL without
+ * an error. */
+lightusd_asset_resolver* lightusd_resolver_handle(lightusd_state* st,
+                                                  PyObject* obj);
 
 #endif /* LIGHTUSD_PY_INTERNAL_H_ */

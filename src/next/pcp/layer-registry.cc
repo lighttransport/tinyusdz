@@ -41,11 +41,19 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
         resolver.HasAssetReader()) {
       std::vector<uint8_t> bytes;
-      if (!resolver.ReadAsset(resolved, &bytes, load_err)) return nullptr;
+      if (!resolver.ReadAsset(resolved_asset, &bytes, load_err)) return nullptr;
       return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),
                                  load_warn, load_err, options);
     }
-    return LoadLayerFromFile(resolved, load_warn, load_err, options);
+    std::shared_ptr<Layer> loaded =
+        LoadLayerFromFile(resolved, load_warn, load_err, options);
+    if (loaded && !resolver.FileIdentityUnchanged(resolved_asset)) {
+      if (load_err) {
+        *load_err += "asset changed while loading: " + resolved + "\n";
+      }
+      return nullptr;
+    }
+    return loaded;
   };
 
 #if defined(LIGHTUSD_ENABLE_THREAD)

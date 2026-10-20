@@ -117,7 +117,7 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 | Foundational data types (§6) | Partial, improved | Broad scalar/vector/matrix/array support; `frame4d`, `pathExpression`, typed splines, and `opaque`/`group` value blocks round-trip. The expanded matrix is still hand-maintained rather than generated from the normative table. |
 | Document and layer data model (§7) | Partial | Strong spec containers and metadata coverage, but generic extension fields and empty-but-authored elective metadata/list-op states cannot be represented uniformly. |
 | Paths and identifiers (§8) | Partial/strict-conformant subset | Unicode XID and authored ordering are implemented; strict mode now covers the normative valid/invalid example table, including repeated parent traversal and the absolute-path single-property restriction, while compatibility mode remains permissive. |
-| Asset resolution (§9) | Partial, improved | Filesystem/package/search-path resolution, explicit URI-style scheme handlers, callbacks, context-stable identifiers, OpenUSD-style persistent/scoped resolver contexts, scoped resolution caches, package resolver extensions, package-aware asset info/timestamps, `usd-anon:` memory assets, and policy-controlled asset-path expression substitution are implemented. Full general expression functions and scheme-specific context objects remain. |
+| Asset resolution (§9) | Partial, improved | Filesystem/package/search-path resolution, explicit URI-style scheme handlers, callbacks, context-stable identifiers, OpenUSD-style persistent/scoped resolver contexts, scoped resolution caches, package resolver extensions, package-aware asset info/timestamps, `usd-anon:` memory assets, and policy-controlled asset-path expression substitution are implemented. Full general expression functions remain; scheme-specific contexts and context-aware handler registration are exposed through the C ABI and Python. |
 | Composition (§10) | Partial | Sublayers, references, payloads, variants, inherits, specializes, relocates, cycles, and prototypes have meaningful coverage; exact field composition still differs. |
 | Composed stage population (§11) | Partial, improved | Authored ordering, recursive dictionaries, custom OR, and relationship list-op results are now represented; remaining work is schema/specifier breadth. |
 | Value resolution (§12) | Partial, improved | List ops, AOUSD Core schema fallbacks, blocks, bounded nested clips, typed spline evaluation, DefaultTime, and ordinary/instance relationship forwarding are implemented; all supplemental entry layers load, while direct sampled-value oracle comparison remains. |
@@ -397,9 +397,13 @@ formats. Context strings are parsed as platform-separated search paths. These
 APIs are exposed through the portable C ABI and the Python `AssetResolver`
 type, including context managers for bindings and scoped caches.
 
-**Remaining fix needed:** add scheme-specific context objects for custom URI
-handlers as demanded. Address the documented `lstat`-then-open TOCTOU window
-where security policy depends on the checked path.
+Scheme-specific context objects are supported through
+`ResolverContext::SetSchemeContext` and the context-aware `RegisterScheme`
+overload. The filesystem resolver captures device/inode identity during
+resolution, `ReadAsset(ResolvedAsset)` opens once and verifies the descriptor
+with `fstat`, and file-backed layer loads re-check identity after parsing.
+Residual risk: the first path selection is still string-based, so a race before
+resolution cannot be attributed to the resolved file.
 
 ### AOUSD-USDC-001 — Declared 0.12 support is incomplete (P0)
 
@@ -635,7 +639,7 @@ Security is a genuine comparative strength:
 
 Correctness gaps can still become security-relevant. Compatibility mode's acceptance of invalid paths can bypass namespace assumptions; unsupported USDC values and resolver suffix fallback can change scene intent. Strict AOUSD parsing/Crate reading now fails closed for the reviewed cases; security-sensitive applications should additionally disable suffix fallback and report every external asset actually opened.
 
-The resolver contains a documented check/use window around filesystem inspection and open. Where the threat model includes hostile filesystem mutation, open the file first with appropriate flags and validate the opened descriptor rather than relying on a prior `lstat`.
+The filesystem resolver now captures device/inode identity at resolution and validates the opened descriptor before reading; layer loads re-check identity after parsing. Path-policy decisions remain string-based, so hostile filesystem mutation before the first resolution is outside this check/use protection.
 
 ## Prioritized fix plan
 
@@ -674,7 +678,7 @@ The first remediation pass completed the loss policy, Unicode/path handling, rec
 
 ### Phase 4 — Broaden OpenUSD/Tydra parity by demand
 
-1. Instance/prototype-aware relationship/property forwarding and explicit URI/anonymous resolver dispatch are complete for the reviewed paths. Add scheme-specific context objects and substitution only when required.
+1. Instance/prototype-aware relationship/property forwarding and explicit URI/anonymous resolver dispatch are complete for the reviewed paths. Scheme-handler registration and scheme-specific contexts are complete for the reviewed paths.
 2. Expand schema wrappers from the generated registry rather than by hand duplication.
 3. Add Tydra strict conversion and structured approximation reporting.
 4. PRODUCT PARITY (partially done): the schema registry and validator now cover volume/field (UsdVol registry entries + `vol.volume.fieldRel`/`vol.fieldAsset.*` structural checks), Hermite/TetMesh/NURBS-patch property definitions, and render-settings (UsdRender registry entries + `render.*` token/relationship checks). Remaining product work is RENDERING support (Tydra converters for volumes/tet meshes/NURBS — a resource + shader design, not schema breadth) and further shader-node coverage beyond UsdPreviewSurface/UsdUVTexture/UsdPrimvarReader/MaterialX.

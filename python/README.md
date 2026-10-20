@@ -76,6 +76,23 @@ with resolver.cache_scope():
 
 resolver.register_package(".pkg", lambda package, entry: f"virtual:{package}|{entry}")
 path, exists, is_package = resolver.resolve("bundle.pkg[dir/entry.usda]")
+
+resolver.register_scheme(
+    "studio",
+    lambda identifier, anchor, scheme_context: identifier,
+    lambda identifier: b"#usda 1.0\n",
+)
+assert resolver.read("studio:layer.usda").startswith(b"#usda")
+
+resolver.register_memory("usd-anon:generated.usda", b"#usda 1.0\n")
+data = resolver.read("usd-anon:generated.usda")
+report, ok = resolver.dependency_report("usd-anon:generated.usda")
+count, bytes_used, peak = resolver.memory_stats
+
+with resolver.bind_context("/proj/assets", scheme_contexts={"https": "/cache"}):
+    path, exists, is_package = resolver.resolve("https://example.com/tex.png")
+
+stage = lightusd.load("root.usda", resolver=resolver)
 ```
 
 ## Notes
