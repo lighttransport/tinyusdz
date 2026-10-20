@@ -368,6 +368,11 @@ std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count);
 CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size);
 DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
                                      size_t uncompressed_size);
+/// Like DecompressCrateBlob(), but requires the decoded byte count to equal
+/// `expected_size`. Use for structural sections whose header declares an exact
+/// uncompressed size (TOKENS, FIELDS value reps).
+DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
+                                          size_t expected_size);
 DecompressResult DecompressCrateBlobWithCapacityHint(
     const uint8_t* src, size_t src_size, size_t uncompressed_size_limit,
     size_t initial_capacity);

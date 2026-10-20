@@ -1281,6 +1281,10 @@ AssetInfo AssetResolver::GetAssetInfo(const std::string& asset_path,
                         : resolved_path.resolved_path;
     }
     if (repository_source.empty()) repository_source = name_source;
+  } else if (name_source.empty()) {
+    // A caller-supplied package flag may omit the package fields. Fall back to
+    // the authored identifier so asset_name is never empty when one exists.
+    name_source = asset_path;
   }
 
   const size_t slash = name_source.find_last_of("/\\");
@@ -1305,6 +1309,15 @@ AssetTimestamp AssetResolver::GetModificationTimestamp(
   } else {
     path = resolved_path.resolved_path.empty() ? asset_path
                                                : resolved_path.resolved_path;
+  }
+  if (path.empty()) return ts;
+  // Callers may pass only a package identifier (or a package ResolvedAsset
+  // without package_path); timestamp the containing package file.
+  std::string package_file;
+  std::string package_entry;
+  if (IsPackagePath(path) &&
+      ParsePackagePath(path, &package_file, &package_entry)) {
+    path = package_file;
   }
   if (path.empty()) return ts;
 

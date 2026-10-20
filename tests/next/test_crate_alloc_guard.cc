@@ -83,6 +83,21 @@ static bool RejectsOversizedInteger64Workspace() {
   return lu_crate_decode_integers64(src, sizeof(src), dst, count) == 0;
 }
 
+static bool ExactCrateBlobSize() {
+  const uint8_t raw[5] = {'a', 'b', 'c', 'd', 'e'};
+  const CompressResult compressed = CompressCrateBlob(raw, sizeof(raw));
+  if (!compressed.success) return false;
+  const DecompressResult exact = DecompressCrateBlobExact(
+      compressed.data.data(), compressed.data.size(), sizeof(raw));
+  if (!exact.success || exact.data.size() != sizeof(raw) ||
+      std::memcmp(exact.data.data(), raw, sizeof(raw)) != 0) {
+    return false;
+  }
+  const DecompressResult short_result = DecompressCrateBlobExact(
+      compressed.data.data(), compressed.data.size(), sizeof(raw) + 1);
+  return !short_result.success;
+}
+
 static bool RejectsTruncatedIntegerEncoding() {
   uint32_t dst[2] = {0, 0};
   // Declares a four-byte common prefix but carries only one byte.
@@ -120,6 +135,7 @@ int main() {
   assert(RejectsCompressedHugeBlob());
   assert(RejectsOversizedInteger64Workspace());
   assert(RejectsTruncatedIntegerEncoding());
+  assert(ExactCrateBlobSize());
 
   // Sanity: a small, fully-present array still decodes. Layout (payload != 0,
   // since payload 0 is the empty-array marker):

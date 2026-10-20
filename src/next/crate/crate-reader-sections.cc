@@ -262,14 +262,11 @@ bool CrateReader::Impl::ReadTokens() {
     return false;
   }
 
-  DecompressResult dr = DecompressCrateBlob(compressed.data(), compressed.size(),
-                                            static_cast<size_t>(uncompressed_size));
+  DecompressResult dr = DecompressCrateBlobExact(
+      compressed.data(), compressed.size(),
+      static_cast<size_t>(uncompressed_size));
   if (!dr.success) {
     AddError("Failed to decompress tokens: " + dr.error);
-    return false;
-  }
-  if (dr.data.size() != static_cast<size_t>(uncompressed_size)) {
-    AddError("Decompressed token table size mismatch");
     return false;
   }
 
@@ -474,9 +471,9 @@ bool CrateReader::Impl::ReadFields() {
   // ValueRep[] is normally TfFastCompression/LZ4-compressed bytes. Do not
   // classify by byte count alone: small OpenUSD files can have compressed size
   // equal to the uncompressed `num_fields * 8` length.
-  DecompressResult rdr = DecompressCrateBlob(
+  DecompressResult rdr = DecompressCrateBlobExact(
       reps_data.data(), reps_data.size(), field_value_rep_bytes);
-  if (rdr.success && rdr.data.size() >= field_value_rep_bytes) {
+  if (rdr.success) {
     if (field_value_rep_bytes > 0) {
       std::memcpy(value_reps.data(), rdr.data.data(), field_value_rep_bytes);
     }

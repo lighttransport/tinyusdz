@@ -529,6 +529,7 @@ void test_path() {
   assert(Path("/AB/C").make_relative_to(Path("/A")).str() == "/AB/C");
   assert(Path("/A/B").make_relative_to(Path("/")).str() == "A/B");
   assert(Path("/A").make_relative_to(Path("/A")).str() == ".");
+  assert(Path("/A/").make_relative_to(Path("/A")).str() == ".");
 
   Path root = Path::root();
   assert(root.is_root());

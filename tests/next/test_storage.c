@@ -4,6 +4,7 @@
 #include "next/c/descriptor.h"
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -122,6 +123,29 @@ static void dictionaries(void) {
     assert(lu_value_hash(&x) == lu_value_hash(&y));
     lu_value_destroy(&x); lu_value_destroy(&y);
     lu_value_destroy(&cx); lu_value_destroy(&cy); lu_value_destroy(&v);
+  }
+  /* Large dictionaries must remain order-independent without relying on the
+   * insertion order used to build either index. */
+  {
+    lu_value x = {0}, y = {0}, v = {0};
+    int32_t n;
+    char key[16];
+    assert(lu_value_make_dict(&x, NULL) && lu_value_make_dict(&y, NULL));
+    for (i = 0; i < 512; ++i) {
+      n = (int32_t)i;
+      snprintf(key, sizeof(key), "key_%zu", i);
+      assert(lu_value_set_pod(&v, LU_TYPE_INT, &n, sizeof(n), NULL));
+      assert(lu_value_dict_set(&x, key, strlen(key), &v));
+    }
+    for (i = 512; i > 0; --i) {
+      n = (int32_t)(i - 1);
+      snprintf(key, sizeof(key), "key_%zu", i - 1);
+      assert(lu_value_set_pod(&v, LU_TYPE_INT, &n, sizeof(n), NULL));
+      assert(lu_value_dict_set(&y, key, strlen(key), &v));
+    }
+    assert(lu_value_equal(&x, &y));
+    assert(lu_value_hash(&x) == lu_value_hash(&y));
+    lu_value_destroy(&x); lu_value_destroy(&y); lu_value_destroy(&v);
   }
   /* Destruction, equality and hashing must handle depth beyond the C stack. */
   for (i = 0; i < 20000; ++i) {

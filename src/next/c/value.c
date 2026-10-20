@@ -419,6 +419,44 @@ static size_t dict_find(const dict* d, const char* key, size_t size) {
   }
   return SIZE_MAX;
 }
+/* Equality may compare a dictionary that has no cached index (for example when
+ * an index allocation failed under the payload budget). Build a temporary one
+ * per comparison instead of degrading to O(n^2) key scans. Returns NULL on
+ * allocation failure; callers then retain the linear fallback. */
+static size_t* dict_build_slots(const dict* d, size_t* out_capacity) {
+  size_t capacity = 16, i;
+  size_t* slots;
+  if (!d || !out_capacity || d->count == 0) return NULL;
+  while (capacity / 2 < d->count) {
+    if (capacity > SIZE_MAX / 2) return NULL;
+    capacity *= 2;
+  }
+  if (capacity > SIZE_MAX / sizeof(size_t)) return NULL;
+  slots = (size_t*)calloc(capacity, sizeof(size_t));
+  if (!slots) return NULL;
+  for (i = 0; i < d->count; ++i) {
+    const lu_view key = lu_value_string(&centries(d)[i].key);
+    size_t slot = (size_t)bytes_hash(key.data, key.len) & (capacity - 1);
+    while (slots[slot]) slot = (slot + 1) & (capacity - 1);
+    slots[slot] = i + 1;
+  }
+  *out_capacity = capacity;
+  return slots;
+}
+static size_t dict_find_slots(const dict* d, const size_t* slots,
+                              size_t capacity, const char* key, size_t size) {
+  const size_t mask = capacity - 1;
+  size_t i;
+  for (i = (size_t)bytes_hash(key, size) & mask; slots[i];
+       i = (i + 1) & mask) {
+    const size_t n = slots[i] - 1;
+    const lu_view text = lu_value_string(&centries(d)[n].key);
+    if (text.len == size && (!size || memcmp(text.data, key, size) == 0)) {
+      return n;
+    }
+  }
+  return SIZE_MAX;
+}
 const lu_value* lu_value_dict_find(const lu_value* v, const char* key, size_t size) {
   size_t i;
   const dict* d;
@@ -692,17 +730,29 @@ int lu_value_equal(const lu_value* left, const lu_value* right) {
         stack = grown;
         capacity = n;
       }
+      size_t* local_slots = NULL;
+      size_t local_capacity = 0;
+      if (y->index == NULL && y->count > 32) {
+        local_slots = dict_build_slots(y, &local_capacity);
+      }
       for (i = 0; i < x->count; ++i) {
         const dict_entry* entry = &centries(x)[i];
         const lu_view key = lu_value_string(&entry->key);
         /* USD dictionaries are unordered maps: match by key, not by the
          * insertion slot. This also makes equality independent of authored /
          * read order. */
-        const size_t match = dict_find(y, key.data, key.len);
-        if (match == SIZE_MAX) goto done;
+        const size_t match =
+            local_slots ? dict_find_slots(y, local_slots, local_capacity,
+                                          key.data, key.len)
+                        : dict_find(y, key.data, key.len);
+        if (match == SIZE_MAX) {
+          free(local_slots);
+          goto done;
+        }
         stack[count].a = &entry->value;
         stack[count++].b = &centries(y)[match].value;
       }
+      free(local_slots);
     } else {
       size_t size = lu_value_bytes(a);
       if (size != lu_value_bytes(b) || (size && memcmp(lu_value_data(a), lu_value_data(b), size))) goto done;

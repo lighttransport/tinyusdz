@@ -95,6 +95,17 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
   return result;
 }
 
+DecompressResult DecompressCrateBlobExact(const uint8_t* src, size_t src_size,
+                                          size_t expected_size) {
+  DecompressResult result = DecompressCrateBlob(src, src_size, expected_size);
+  if (result.success && result.data.size() != expected_size) {
+    result.success = false;
+    result.data.clear();
+    result.error = "LZ4 decompression size mismatch";
+  }
+  return result;
+}
+
 DecompressResult DecompressCrateBlobWithCapacityHint(
     const uint8_t* src, size_t src_size, size_t uncompressed_size_limit,
     size_t initial_capacity) {

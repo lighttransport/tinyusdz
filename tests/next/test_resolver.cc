@@ -341,6 +341,26 @@ void TestAssetInfoAndTimestamp() {
   CHECK(package_timestamp.valid,
         "package modification timestamp uses the package file");
 
+  ResolvedAsset package_without_fields;
+  package_without_fields.is_package = true;
+  package_without_fields.exists = true;
+  package_without_fields.resolved_path = Normalized(root / "bundle.usdz") +
+                                         "[dir/entry.usda]";
+  const AssetInfo fallback_info = resolver.GetAssetInfo(
+      package_without_fields.resolved_path, package_without_fields);
+  CHECK(!fallback_info.asset_name.empty() &&
+            fallback_info.asset_name == "entry.usda",
+        "package asset info parses the identifier when fields are omitted");
+
+  ResolvedAsset identifier_only;
+  identifier_only.exists = true;
+  identifier_only.resolved_path = Normalized(root / "bundle.usdz") +
+                                  "[dir/entry.usda]";
+  const AssetTimestamp identifier_timestamp = resolver.GetModificationTimestamp(
+      identifier_only.resolved_path, identifier_only);
+  CHECK(identifier_timestamp.valid,
+        "timestamp parses a package identifier without package fields");
+
   fs::remove_all(root);
 }
 

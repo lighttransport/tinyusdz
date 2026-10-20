@@ -155,5 +155,6 @@ int lu_path_make_relative_to(const char *p, size_t n, const char *base,
   }
   size_t offset = bn;
   if (p[offset] == '/') offset++;
+  if (offset >= n) return emit(".", 1, out, cap, out_len);
   return emit(p + offset, n - offset, out, cap, out_len);
 }
