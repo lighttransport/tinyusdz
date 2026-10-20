@@ -1,0 +1,367 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+//
+// AssetResolver context, scoped-cache, package-resolver and new-asset tests.
+
+#include "next/resolver/asset-resolver.hh"
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
+
+using namespace lightusd::next;
+
+static int g_fail = 0;
+#define CHECK(cond, msg)                                                    \
+  do {                                                                      \
+    if (!(cond)) {                                                          \
+      std::cerr << "  FAIL: " << msg << "\n";                               \
+      ++g_fail;                                                             \
+    } else {                                                                \
+      std::cout << "  ok: " << msg << "\n";                                 \
+    }                                                                       \
+  } while (0)
+
+namespace {
+
+std::filesystem::path MakeTempRoot(const char* tag) {
+  namespace fs = std::filesystem;
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const fs::path root = fs::temp_directory_path() /
+                        ("lightusd-next-resolver-" + std::string(tag) + "-" +
+                         std::to_string(stamp));
+  fs::remove_all(root);
+  fs::create_directories(root);
+  return root;
+}
+
+std::string Normalized(const std::filesystem::path& path) {
+  return path.lexically_normal().string();
+}
+
+void WriteText(const std::filesystem::path& path, const std::string& text) {
+  std::ofstream out(path.string(), std::ios::binary);
+  out << text;
+}
+
+void TestResolveForNewAsset() {
+  namespace fs = std::filesystem;
+  const fs::path root = MakeTempRoot("new-asset");
+  fs::create_directories(root / "look");
+
+  ResolverConfig cfg;
+  cfg.working_directory = root.string();
+  AssetResolver resolver(cfg);
+
+  const ResolvedAsset anchored = resolver.ResolveForNewAsset(
+      "sub/new.usda", (root / "look" / "layer.usda").string());
+  CHECK(anchored.resolved_path == Normalized(root / "look" / "sub" / "new.usda"),
+        "new relative asset anchors to the referring layer directory");
+  CHECK(!anchored.exists, "new asset is reported as non-existent");
+
+  const ResolvedAsset working = resolver.ResolveForNewAsset("sub/new.usda");
+  CHECK(working.resolved_path == Normalized(root / "sub" / "new.usda"),
+        "new relative asset without an anchor uses the working directory");
+
+  const ResolvedAsset absolute =
+      resolver.ResolveForNewAsset((root / "abs" / "x.usda").string());
+  CHECK(absolute.resolved_path == Normalized(root / "abs" / "x.usda") &&
+            !absolute.exists,
+        "new absolute asset is normalized without requiring existence");
+
+  const ResolvedAsset scheme = resolver.ResolveForNewAsset("studio:new.usda");
+  CHECK(scheme.resolved_path == "studio:new.usda" && !scheme.exists,
+        "new scheme identifier retains scheme resolution semantics");
+
+  const ResolvedAsset package = resolver.ResolveForNewAsset(
+      "new.usda", "pkg.usdz[dir/root.usda]");
+  CHECK(package.is_package &&
+            package.asset_in_package == "dir/new.usda" &&
+            package.resolved_path == "pkg.usdz[dir/new.usda]",
+        "new asset inside a package anchor stays in the same package");
+
+  const ResolvedAsset new_package = resolver.ResolveForNewAsset(
+      "pkg.usdz[dir/new.usda]", (root / "look" / "layer.usda").string());
+  CHECK(new_package.is_package &&
+            new_package.resolved_path ==
+                Normalized(root / "look" / "pkg.usdz") + "[dir/new.usda]",
+        "new package container anchors to the referring layer directory");
+
+  cfg.allow_parent_paths = false;
+  ResolverConfig restricted = cfg;
+  AssetResolver restricted_resolver(restricted);
+  CHECK(restricted_resolver.ResolveForNewAsset("../escape.usda").resolved_path
+            .empty(),
+        "new asset parent escape is rejected when parent paths are disabled");
+
+  fs::remove_all(root);
+}
+
+void TestContexts() {
+  namespace fs = std::filesystem;
+  const fs::path root = MakeTempRoot("context");
+  fs::create_directories(root / "a");
+  fs::create_directories(root / "b");
+  WriteText(root / "a" / "tex.usda", "#usda 1.0\n");
+  WriteText(root / "b" / "tex.usda", "#usda 1.0\n");
+
+  ResolverConfig cfg;
+  cfg.working_directory = root.string();
+  cfg.search_paths = {(root / "a").string()};
+  AssetResolver resolver(cfg);
+
+  CHECK(resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "a" / "tex.usda"),
+        "configured search path resolves before contexts are bound");
+
+  const ResolverContext ctx_b =
+      resolver.CreateContextFromString((root / "b").string());
+  CHECK(ctx_b.search_paths.size() == 1 && !ctx_b.is_default,
+        "context string parses into search paths");
+
+  void* b_binding = nullptr;
+  resolver.BindContext(ctx_b, &b_binding);
+  CHECK(resolver.GetCurrentContext().context_string == (root / "b").string(),
+        "bound context is returned by GetCurrentContext");
+  CHECK(resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "b" / "tex.usda"),
+        "bound context search path overrides configured search paths");
+
+  const ResolverContext ctx_a =
+      resolver.CreateContextFromString((root / "a").string());
+  resolver.BindContext(ctx_a);
+  CHECK(resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "a" / "tex.usda"),
+        "nested context binding overrides the outer binding");
+  resolver.UnbindContext(ctx_a);
+  CHECK(resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "b" / "tex.usda"),
+        "unbinding a nested context restores the outer binding");
+  resolver.UnbindContext(ctx_b, &b_binding);
+  CHECK(resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "a" / "tex.usda"),
+        "unbinding restores the configured search paths");
+
+  void* first = nullptr;
+  void* second = nullptr;
+  resolver.BindContext(ctx_a, &first);
+  resolver.BindContext(ctx_b, &second);
+  resolver.UnbindContext(ctx_a, &first);
+  CHECK(resolver.GetCurrentContext().context_string == (root / "b").string(),
+        "out-of-order unbind removes only the requested binding");
+  resolver.UnbindContext(ctx_b, &second);
+  CHECK(resolver.GetCurrentContext().is_default,
+        "unbinding the last context returns to the default context");
+
+  ResolverConfig persistent = cfg;
+  persistent.context = ctx_b;
+  AssetResolver persistent_resolver(persistent);
+  CHECK(persistent_resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "b" / "tex.usda"),
+        "persistent ResolverConfig context applies without binding");
+
+  const ResolverContext default_ctx = resolver.CreateDefaultContext();
+  resolver.BindContext(default_ctx);
+  CHECK(resolver.Resolve("tex.usda").resolved_path ==
+            Normalized(root / "a" / "tex.usda"),
+        "binding a default context falls back to configured search paths");
+  resolver.UnbindContext(default_ctx);
+
+  fs::remove_all(root);
+}
+
+void TestScopedCache() {
+  int calls = 0;
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [&calls](const std::string& asset_path, const std::string&) {
+        ++calls;
+        return std::string("virtual:") + asset_path;
+      });
+
+  resolver.Resolve("x.usda");
+  resolver.Resolve("x.usda");
+  CHECK(calls == 2, "resolution is not cached without a scope");
+
+  {
+    ResolverScopedCache cache(&resolver);
+    CHECK(resolver.Resolve("x.usda").resolved_path == "virtual:x.usda",
+          "scoped resolution returns the custom-resolver result");
+    resolver.Resolve("x.usda");
+    CHECK(calls == 3, "scoped cache reuses the first result");
+  }
+
+  resolver.Resolve("x.usda");
+  CHECK(calls == 4, "cache is discarded when the scope ends");
+
+  {
+    ResolverScopedCache cache(&resolver);
+    resolver.Resolve("y.usda");
+    const ResolverContext ctx = resolver.CreateContextFromString("ctx");
+    void* binding = nullptr;
+    resolver.BindContext(ctx, &binding);
+    resolver.Resolve("y.usda");
+    resolver.UnbindContext(ctx, &binding);
+    resolver.Resolve("y.usda");
+    CHECK(calls == 6,
+          "context changes participate in the scoped-cache key");
+  }
+
+  resolver.Resolve("x.usda");
+  CHECK(calls == 7, "scoped cache does not leak across scopes");
+}
+
+void TestPackageResolvers() {
+  namespace fs = std::filesystem;
+  const fs::path root = MakeTempRoot("package");
+
+  AssetResolver resolver;
+  int calls = 0;
+  std::string last_package;
+  resolver.RegisterPackageResolver(
+      ".PKG", [&](const std::string& package_path, const std::string& asset_path,
+                  std::string* resolved) {
+        ++calls;
+        last_package = package_path;
+        *resolved = "virtual:" + package_path + "|" + asset_path;
+        return true;
+      });
+  CHECK(resolver.HasUserCallbacks(),
+        "registered package resolver counts as a user callback");
+
+  const ResolvedAsset virtual_package =
+      resolver.Resolve("bundle.pkg[dir/entry.usda]");
+  CHECK(virtual_package.is_package && virtual_package.exists,
+        "virtual package resolver resolves a missing package file");
+  CHECK(virtual_package.resolved_path ==
+            "virtual:bundle.pkg|dir/entry.usda",
+        "package callback receives authored package path and normalized entry");
+  CHECK(virtual_package.package_path == "bundle.pkg" &&
+            virtual_package.asset_in_package == "dir/entry.usda",
+        "package fields retain the authored container and entry");
+  CHECK(calls == 1 && last_package == "bundle.pkg",
+        "package callback is invoked once");
+
+  resolver.SetAssetReader(
+      [&virtual_package](const std::string& identifier,
+                         std::vector<uint8_t>* out, std::string*) {
+        if (identifier != virtual_package.resolved_path) return false;
+        out->assign({'u', 's', 'd'});
+        return true;
+      });
+  std::vector<uint8_t> bytes;
+  std::string err;
+  CHECK(resolver.ReadAsset(virtual_package.resolved_path, &bytes, &err) &&
+            bytes == std::vector<uint8_t>({'u', 's', 'd'}),
+        "asset reader reads a package-resolver key");
+
+  CHECK(resolver.UnregisterPackageResolver(".pkg") &&
+            !resolver.UnregisterPackageResolver("pkg"),
+        "package resolver unregister is case-insensitive and reports presence");
+  CHECK(!resolver.Resolve("bundle.pkg[dir/entry.usda]").exists,
+        "package resolution falls back after unregister");
+
+  // Existing package files are resolved first; the callback then sees the
+  // resolved container path.
+  WriteText(root / "bundle2.pkg", "container");
+  ResolverConfig cfg;
+  cfg.working_directory = root.string();
+  AssetResolver file_resolver(cfg);
+  int file_calls = 0;
+  file_resolver.RegisterPackageResolver(
+      "pkg", [&file_calls](const std::string& package_path,
+                           const std::string& asset_path, std::string* resolved) {
+        ++file_calls;
+        if (!std::filesystem::path(package_path).is_absolute()) return false;
+        *resolved = "resolved-container:" + asset_path;
+        return true;
+      });
+  const ResolvedAsset file_package =
+      file_resolver.Resolve("bundle2.pkg[entry.usda]");
+  CHECK(file_package.exists &&
+            file_package.resolved_path == "resolved-container:entry.usda" &&
+            file_package.package_path == Normalized(root / "bundle2.pkg"),
+        "package callback receives the resolved container path");
+  CHECK(file_calls == 2,
+        "package callback is retried with the resolved container path");
+
+  AssetResolver copied = file_resolver;
+  CHECK(copied.Resolve("bundle2.pkg[entry.usda]").resolved_path ==
+            "resolved-container:entry.usda",
+        "copy preserves registered package resolvers");
+  AssetResolver moved = std::move(copied);
+  CHECK(moved.Resolve("bundle2.pkg[entry.usda]").resolved_path ==
+            "resolved-container:entry.usda",
+        "move preserves registered package resolvers");
+
+  fs::remove_all(root);
+}
+
+void TestAssetInfoAndTimestamp() {
+  namespace fs = std::filesystem;
+  const fs::path root = MakeTempRoot("info");
+  WriteText(root / "tex.usda", "#usda 1.0\n");
+  WriteText(root / "bundle.usdz", "package");
+
+  ResolverConfig cfg;
+  cfg.working_directory = root.string();
+  AssetResolver resolver(cfg);
+
+  const ResolvedAsset resolved = resolver.Resolve("tex.usda");
+  const AssetInfo info = resolver.GetAssetInfo("tex.usda", resolved);
+  CHECK(info.asset_name == "tex.usda", "asset info reports the basename");
+  CHECK(info.repository_path == Normalized(root),
+        "asset info reports the containing directory");
+  CHECK(info.exists && info.resolved_path == Normalized(root / "tex.usda"),
+        "asset info carries resolution state");
+
+  const AssetTimestamp timestamp =
+      resolver.GetModificationTimestamp("tex.usda", resolved);
+  CHECK(timestamp.valid && timestamp.seconds > 0,
+        "file modification timestamp is reported");
+
+  ResolvedAsset package;
+  package.is_package = true;
+  package.exists = true;
+  package.package_path = Normalized(root / "bundle.usdz");
+  package.asset_in_package = "dir/entry.usda";
+  package.resolved_path = package.package_path + "[dir/entry.usda]";
+  const AssetInfo package_info = resolver.GetAssetInfo(
+      "bundle.usdz[dir/entry.usda]", package);
+  CHECK(package_info.asset_name == "entry.usda",
+        "package asset info reports the entry basename");
+  CHECK(package_info.repository_path == Normalized(root),
+        "package asset info reports the package directory");
+
+  const AssetTimestamp package_timestamp =
+      resolver.GetModificationTimestamp("bundle.usdz[dir/entry.usda]", package);
+  CHECK(package_timestamp.valid,
+        "package modification timestamp uses the package file");
+
+  fs::remove_all(root);
+}
+
+}  // namespace
+
+int main() {
+  std::cout << "[AssetResolver new-asset resolution]\n";
+  TestResolveForNewAsset();
+  std::cout << "[AssetResolver contexts]\n";
+  TestContexts();
+  std::cout << "[AssetResolver scoped cache]\n";
+  TestScopedCache();
+  std::cout << "[AssetResolver package resolvers]\n";
+  TestPackageResolvers();
+  std::cout << "[AssetResolver asset info and timestamps]\n";
+  TestAssetInfoAndTimestamp();
+
+  if (g_fail) {
+    std::cerr << "\n" << g_fail << " resolver check(s) FAILED\n";
+    return 1;
+  }
+  std::cout << "\nAll resolver checks passed.\n";
+  return 0;
+}

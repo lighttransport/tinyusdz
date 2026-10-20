@@ -117,7 +117,7 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 | Foundational data types (§6) | Partial, improved | Broad scalar/vector/matrix/array support; `frame4d`, `pathExpression`, typed splines, and `opaque`/`group` value blocks round-trip. The expanded matrix is still hand-maintained rather than generated from the normative table. |
 | Document and layer data model (§7) | Partial | Strong spec containers and metadata coverage, but generic extension fields and empty-but-authored elective metadata/list-op states cannot be represented uniformly. |
 | Paths and identifiers (§8) | Partial/strict-conformant subset | Unicode XID and authored ordering are implemented; strict mode now covers the normative valid/invalid example table, including repeated parent traversal and the absolute-path single-property restriction, while compatibility mode remains permissive. |
-| Asset resolution (§9) | Partial, improved | Filesystem/package/search-path resolution, explicit URI-style scheme handlers, callbacks, context-stable identifiers, `usd-anon:` memory assets, and policy-controlled asset-path expression substitution are implemented. Full general expression functions and richer scheme contexts remain. |
+| Asset resolution (§9) | Partial, improved | Filesystem/package/search-path resolution, explicit URI-style scheme handlers, callbacks, context-stable identifiers, OpenUSD-style persistent/scoped resolver contexts, scoped resolution caches, package resolver extensions, package-aware asset info/timestamps, `usd-anon:` memory assets, and policy-controlled asset-path expression substitution are implemented. Full general expression functions and scheme-specific context objects remain. |
 | Composition (§10) | Partial | Sublayers, references, payloads, variants, inherits, specializes, relocates, cycles, and prototypes have meaningful coverage; exact field composition still differs. |
 | Composed stage population (§11) | Partial, improved | Authored ordering, recursive dictionaries, custom OR, and relationship list-op results are now represented; remaining work is schema/specifier breadth. |
 | Value resolution (§12) | Partial, improved | List ops, AOUSD Core schema fallbacks, blocks, bounded nested clips, typed spline evaluation, DefaultTime, and ordinary/instance relationship forwarding are implemented; all supplemental entry layers load, while direct sampled-value oracle comparison remains. |
@@ -389,9 +389,15 @@ inherited variables composed over them (root-most opinion wins). The same
 asset referenced under two different variable contexts composes as two
 distinct stacks (`test_layer_stack_identity_expression_vars`).
 
-**Remaining fix needed:** broaden scheme-specific context objects as demanded.
-Address the documented `lstat`-then-open TOCTOU window where security policy
-depends on the checked path.
+Deterministic default-resolver contexts are now supported: `ResolverConfig::context`
+is inherited by composition/worker threads, `BindContext`/`UnbindContext`
+provide nested thread-local overrides, `ResolverScopedCache` memoizes
+resolution for a scope, and `RegisterPackageResolver` handles custom package
+formats. Context strings are parsed as platform-separated search paths.
+
+**Remaining fix needed:** add scheme-specific context objects for custom URI
+handlers as demanded. Address the documented `lstat`-then-open TOCTOU window
+where security policy depends on the checked path.
 
 ### AOUSD-USDC-001 — Declared 0.12 support is incomplete (P0)
 

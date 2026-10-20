@@ -708,6 +708,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_memory_flatten PRIVATE lightusd_next)
 
+    add_executable(test_resolver
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_resolver.cc
+    )
+    target_link_libraries(test_resolver PRIVATE lightusd_next)
+
     add_executable(test_validation_registry
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation_registry.cc)
     target_link_libraries(test_validation_registry PRIVATE lightusd_validation)
@@ -1302,6 +1307,8 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_memory_flatten COMMAND test_memory_flatten
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_resolver COMMAND test_resolver
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_validation COMMAND test_validation
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_aousd_conformance COMMAND test_aousd_conformance
@@ -1352,6 +1359,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
          next_test_path_expression_c_core
          next_test_layer_diff
         next_test_memory_flatten
+        next_test_resolver
         next_test_validation
         next_test_aousd_conformance)
     if(LIGHTUSD_WITH_TYDRA)

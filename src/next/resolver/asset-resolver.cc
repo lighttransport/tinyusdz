@@ -6,15 +6,20 @@
 #include "asset-resolver.hh"
 #include "../safe-file-size.hh"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cstddef>
 #include <fstream>
 #include <cstring>
+#include <new>
+#include <utility>
 #if !defined(__EMSCRIPTEN__)
 #include <filesystem>
 #endif
 
 #ifdef _WIN32
 #include <direct.h>
+#include <sys/stat.h>
 #define PATH_SEPARATOR '\\'
 #define ALT_PATH_SEPARATOR '/'
 #else
@@ -191,11 +196,152 @@ std::string GetCurrentWorkingDirectory() {
   return ".";
 }
 
+char ContextSearchPathSeparator() {
+#ifdef _WIN32
+  return ';';
+#else
+  return ':';
+#endif
+}
+
+std::string LowerAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) {
+                   return static_cast<char>(std::tolower(c));
+                 });
+  return value;
+}
+
+std::vector<std::string> ParseContextSearchPaths(const std::string& text) {
+  std::vector<std::string> paths;
+  if (text.empty()) return paths;
+  const char separator = ContextSearchPathSeparator();
+  size_t start = 0;
+  while (start <= text.size()) {
+    const size_t end = text.find(separator, start);
+    const size_t stop = end == std::string::npos ? text.size() : end;
+    if (stop > start) paths.push_back(text.substr(start, stop - start));
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return paths;
+}
+
+ResolverContext NormalizeContext(ResolverContext context) {
+  if (context.search_paths.empty() && !context.context_string.empty()) {
+    context.search_paths = ParseContextSearchPaths(context.context_string);
+  }
+  context.is_default =
+      context.context_string.empty() && context.search_paths.empty();
+  return context;
+}
+
+std::string PackageFileExtension(const std::string& path) {
+  const size_t slash = path.find_last_of("/\\");
+  const size_t dot = path.find_last_of('.');
+  if (dot == std::string::npos ||
+      (slash != std::string::npos && dot < slash) ||
+      dot + 1 >= path.size()) {
+    return {};
+  }
+  return LowerAscii(path.substr(dot + 1));
+}
+
+std::string NormalizePackageExtension(const std::string& extension) {
+  const size_t start =
+      (!extension.empty() && extension.front() == '.') ? 1 : 0;
+  if (start >= extension.size()) return {};
+  return LowerAscii(extension.substr(start));
+}
+
+void AppendCacheKeyPart(std::string* key, const std::string& part) {
+  key->append(std::to_string(part.size()));
+  key->push_back('|');
+  key->append(part);
+}
+
+std::string MakeResolveCacheKey(const std::string& asset_path,
+                                const std::string& anchor_path,
+                                bool allow_suffix_fallback,
+                                const ResolverContext& context) {
+  std::string key;
+  AppendCacheKeyPart(&key, asset_path);
+  AppendCacheKeyPart(&key, anchor_path);
+  key.push_back(allow_suffix_fallback ? '1' : '0');
+  AppendCacheKeyPart(&key, context.context_string);
+  for (const std::string& path : context.search_paths) {
+    AppendCacheKeyPart(&key, path);
+  }
+  return key;
+}
+
+// Per-thread context bindings. The node pointer is also handed to callers
+// through BindContext(binding_data) so nested/out-of-order unbinds are exact.
+struct ContextBindingNode {
+  uint64_t identity = 0;
+  ResolverContext context;
+};
+thread_local std::vector<std::unique_ptr<ContextBindingNode>>
+    g_context_bindings;
+
+ContextBindingNode* FindActiveContextBinding(uint64_t identity) {
+  for (auto it = g_context_bindings.rbegin(); it != g_context_bindings.rend();
+       ++it) {
+    if (*it && (*it)->identity == identity) return it->get();
+  }
+  return nullptr;
+}
+
+void EraseContextBinding(const void* node) {
+  if (!node) return;
+  for (auto it = g_context_bindings.begin(); it != g_context_bindings.end();
+       ++it) {
+    if (it->get() == node) {
+      g_context_bindings.erase(it);
+      return;
+    }
+  }
+}
+
+// Per-thread scoped resolution caches. shared_ptr keeps a node alive if a
+// nested Resolve() still holds it while EndCacheScope() removes it.
+struct CacheScopeNode {
+  uint64_t identity = 0;
+  std::unordered_map<std::string, ResolvedAsset> entries;
+};
+thread_local std::vector<std::shared_ptr<CacheScopeNode>> g_cache_scopes;
+
+std::shared_ptr<CacheScopeNode> FindActiveCacheScope(uint64_t identity) {
+  for (auto it = g_cache_scopes.rbegin(); it != g_cache_scopes.rend(); ++it) {
+    if (*it && (*it)->identity == identity) return *it;
+  }
+  return {};
+}
+
+void EraseCacheScope(const void* node) {
+  if (!node) return;
+  for (auto it = g_cache_scopes.begin(); it != g_cache_scopes.end(); ++it) {
+    if (it->get() == node) {
+      g_cache_scopes.erase(it);
+      return;
+    }
+  }
+}
+
 }  // namespace
 
 // ============================================================
 // AssetResolver
 // ============================================================
+
+uint64_t AssetResolver::NextIdentity() {
+  static std::atomic<uint64_t> next{1};
+  return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AssetResolver::NormalizeConfigContext() {
+  config_.context = NormalizeContext(std::move(config_.context));
+}
 
 AssetResolver::AssetResolver() {
   config_.working_directory = GetCurrentWorkingDirectory();
@@ -205,14 +351,17 @@ AssetResolver::AssetResolver(const ResolverConfig& config) : config_(config) {
   if (config_.working_directory.empty()) {
     config_.working_directory = GetCurrentWorkingDirectory();
   }
+  NormalizeConfigContext();
 }
 
 AssetResolver::AssetResolver(const AssetResolver& other) {
   std::lock_guard<std::mutex> lock(other.registry_mutex_);
+  identity_ = NextIdentity();
   config_ = other.config_;
   custom_resolver_ = other.custom_resolver_;
   asset_reader_ = other.asset_reader_;
   scheme_handlers_ = other.scheme_handlers_;
+  package_resolvers_ = other.package_resolvers_;
   memory_assets_ = other.memory_assets_;
   next_anonymous_id_ = other.next_anonymous_id_;
 }
@@ -220,10 +369,12 @@ AssetResolver::AssetResolver(const AssetResolver& other) {
 AssetResolver& AssetResolver::operator=(const AssetResolver& other) {
   if (this == &other) return *this;
   std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
+  identity_ = NextIdentity();
   config_ = other.config_;
   custom_resolver_ = other.custom_resolver_;
   asset_reader_ = other.asset_reader_;
   scheme_handlers_ = other.scheme_handlers_;
+  package_resolvers_ = other.package_resolvers_;
   memory_assets_ = other.memory_assets_;
   next_anonymous_id_ = other.next_anonymous_id_;
   return *this;
@@ -231,10 +382,13 @@ AssetResolver& AssetResolver::operator=(const AssetResolver& other) {
 
 AssetResolver::AssetResolver(AssetResolver&& other) noexcept {
   std::lock_guard<std::mutex> lock(other.registry_mutex_);
+  identity_ = other.identity_;
+  other.identity_ = NextIdentity();
   config_ = std::move(other.config_);
   custom_resolver_ = std::move(other.custom_resolver_);
   asset_reader_ = std::move(other.asset_reader_);
   scheme_handlers_ = std::move(other.scheme_handlers_);
+  package_resolvers_ = std::move(other.package_resolvers_);
   memory_assets_ = std::move(other.memory_assets_);
   next_anonymous_id_ = other.next_anonymous_id_;
 }
@@ -242,10 +396,13 @@ AssetResolver::AssetResolver(AssetResolver&& other) noexcept {
 AssetResolver& AssetResolver::operator=(AssetResolver&& other) noexcept {
   if (this == &other) return *this;
   std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
+  identity_ = other.identity_;
+  other.identity_ = NextIdentity();
   config_ = std::move(other.config_);
   custom_resolver_ = std::move(other.custom_resolver_);
   asset_reader_ = std::move(other.asset_reader_);
   scheme_handlers_ = std::move(other.scheme_handlers_);
+  package_resolvers_ = std::move(other.package_resolvers_);
   memory_assets_ = std::move(other.memory_assets_);
   next_anonymous_id_ = other.next_anonymous_id_;
   return *this;
@@ -280,6 +437,7 @@ void AssetResolver::SetAssetReader(AssetReadCallback reader) {
 bool AssetResolver::HasUserCallbacks() const {
   if (custom_resolver_ || asset_reader_) return true;
   std::lock_guard<std::mutex> lock(registry_mutex_);
+  if (!package_resolvers_.empty()) return true;
   for (const auto& entry : scheme_handlers_) {
     if (entry.second.resolver || entry.second.reader) return true;
   }
@@ -421,10 +579,45 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
 #endif
 }
 
+const std::vector<std::string>& AssetResolver::EffectiveSearchPaths() const {
+  if (const ContextBindingNode* active = FindActiveContextBinding(identity_)) {
+    // A scoped binding replaces the persistent context. Binding a default
+    // context explicitly falls back to the configured search paths.
+    return active->context.is_default ? config_.search_paths
+                                      : active->context.search_paths;
+  }
+  return config_.context.is_default ? config_.search_paths
+                                    : config_.context.search_paths;
+}
+
+AssetResolver::PackageResolverCallback AssetResolver::FindPackageResolver(
+    const std::string& package_file) const {
+  const std::string extension = PackageFileExtension(package_file);
+  if (extension.empty()) return {};
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  const auto it = package_resolvers_.find(extension);
+  return it == package_resolvers_.end() ? PackageResolverCallback{} : it->second;
+}
+
 ResolvedAsset AssetResolver::Resolve(const std::string& asset_path,
                                       const std::string& anchor_path,
                                       bool allow_suffix_fallback) const {
-  return ResolveInternal(asset_path, anchor_path, allow_suffix_fallback);
+  const std::shared_ptr<CacheScopeNode> cache =
+      FindActiveCacheScope(identity_);
+  std::string cache_key;
+  if (cache && !asset_path.empty()) {
+    cache_key = MakeResolveCacheKey(asset_path, anchor_path,
+                                    allow_suffix_fallback,
+                                    GetCurrentContext());
+    const auto it = cache->entries.find(cache_key);
+    if (it != cache->entries.end()) return it->second;
+  }
+  ResolvedAsset result =
+      ResolveInternal(asset_path, anchor_path, allow_suffix_fallback);
+  if (cache && !cache_key.empty()) {
+    cache->entries.emplace(std::move(cache_key), result);
+  }
+  return result;
 }
 
 std::string AssetResolver::ResolvePath(const std::string& asset_path,
@@ -488,21 +681,51 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     return result;
   }
 
-  // Check for package path (USDZ)
+  // Check for package path (USDZ or a custom package registered by extension).
   if (IsPackagePath(asset_path)) {
     result.is_package = true;
-    if (ParsePackagePath(asset_path, &result.package_path, &result.asset_in_package)) {
-      result.asset_in_package =
-          NormalizePackageEntryPath(result.asset_in_package);
-      if (result.asset_in_package.empty()) return result;
-      // Resolve the package file itself
-      ResolvedAsset pkg = ResolveInternal(result.package_path, anchor_path,
-                                          allow_suffix_fallback);
-      if (pkg.exists) {
-        result.resolved_path = pkg.resolved_path + "[" + result.asset_in_package + "]";
-        result.package_path = pkg.resolved_path;
-        result.exists = true;  // Assume asset exists in package if package exists
+    std::string package_file;
+    std::string package_entry;
+    if (!ParsePackagePath(asset_path, &package_file, &package_entry)) {
+      return result;
+    }
+    result.package_path = package_file;
+    result.asset_in_package = NormalizePackageEntryPath(package_entry);
+    if (result.asset_in_package.empty()) return result;
+
+    const PackageResolverCallback package_resolver =
+        FindPackageResolver(package_file);
+    std::string custom_resolved;
+    if (package_resolver &&
+        package_resolver(package_file, result.asset_in_package,
+                         &custom_resolved) &&
+        !custom_resolved.empty()) {
+      result.resolved_path = std::move(custom_resolved);
+      result.exists = true;
+      return result;
+    }
+
+    // Resolve the package file itself.
+    ResolvedAsset pkg = ResolveInternal(package_file, anchor_path,
+                                        allow_suffix_fallback);
+    if (pkg.exists) {
+      // Give a registered package resolver a second chance with the resolved
+      // path so virtual package formats can still observe the real container.
+      if (package_resolver && pkg.resolved_path != package_file) {
+        custom_resolved.clear();
+        if (package_resolver(pkg.resolved_path, result.asset_in_package,
+                             &custom_resolved) &&
+            !custom_resolved.empty()) {
+          result.resolved_path = std::move(custom_resolved);
+          result.package_path = pkg.resolved_path;
+          result.exists = true;
+          return result;
+        }
       }
+      result.resolved_path =
+          pkg.resolved_path + "[" + result.asset_in_package + "]";
+      result.package_path = pkg.resolved_path;
+      result.exists = true;  // Assume asset exists in package if package exists
     }
     return result;
   }
@@ -612,8 +835,10 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     }
   }
 
-  // Search in search paths
-  for (const auto& search_path : config_.search_paths) {
+  // Search in the effective search paths (scoped context, persistent context,
+  // or configured paths).
+  const std::vector<std::string>& search_paths = EffectiveSearchPaths();
+  for (const auto& search_path : search_paths) {
     std::string candidate = JoinPath(search_path, asset_path);
     candidate = NormalizePath(candidate);
     if (FileExists(candidate)) {
@@ -624,7 +849,7 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
   }
 
   if (config_.search_recursively) {
-    for (const auto& search_path : config_.search_paths) {
+    for (const auto& search_path : search_paths) {
       const std::string candidate = FindRecursively(search_path, asset_path);
       if (!candidate.empty()) {
         result.resolved_path = NormalizePath(candidate);
@@ -883,48 +1108,138 @@ std::string AssetResolver::MakeRelative(const std::string& path, const std::stri
 // OpenUSD-parity additions
 // ============================================================
 
-thread_local ResolverContext g_current_context;
-
 ResolvedAsset AssetResolver::ResolveForNewAsset(const std::string& asset_path,
                                               const std::string& anchor_path) const {
-  // For new assets, resolve parent directory and append filename.
-  ResolvedAsset r = Resolve(asset_path, anchor_path, /*allow_suffix_fallback=*/false);
-  if (!r.resolved_path.empty()) return r;
-  // Fallback: ensure parent exists
-  std::string dir = GetDirectory(asset_path.empty() ? anchor_path : asset_path);
-  if (!dir.empty() && FileExists(dir)) {
-    r.resolved_path = NormalizePath(JoinPath(dir, asset_path));
-    r.exists = false;
+  ResolvedAsset result;
+  result.original_path = asset_path;
+  if (asset_path.empty()) return result;
+
+  if (!config_.allow_parent_paths && HasParentComponent(asset_path)) {
+    return result;
   }
-  return r;
+
+  const std::string identifier_scheme = GetIdentifierScheme(asset_path);
+  if (!identifier_scheme.empty()) {
+    // Preserve scheme/custom resolver semantics, without requiring existence.
+    return Resolve(asset_path, anchor_path, /*allow_suffix_fallback=*/false);
+  }
+
+  if (IsPackagePath(asset_path)) {
+    std::string package_file;
+    std::string package_entry;
+    if (!ParsePackagePath(asset_path, &package_file, &package_entry)) {
+      return result;
+    }
+    if (!config_.allow_absolute_paths && IsAbsolutePath(package_file)) {
+      return result;
+    }
+    result.is_package = true;
+    result.asset_in_package = NormalizePackageEntryPath(package_entry);
+    if (result.asset_in_package.empty()) return result;
+    const ResolvedAsset package = ResolveForNewAsset(package_file, anchor_path);
+    result.package_path = package.resolved_path.empty()
+                              ? NormalizePath(package_file)
+                              : package.resolved_path;
+    result.resolved_path =
+        result.package_path + "[" + result.asset_in_package + "]";
+    result.exists = false;
+    return result;
+  }
+
+  if (IsAbsolutePath(asset_path)) {
+    if (!config_.allow_absolute_paths) return result;
+    result.resolved_path = NormalizePath(asset_path);
+    result.exists = FileExists(result.resolved_path);
+    return result;
+  }
+
+  if (!anchor_path.empty() && IsPackagePath(anchor_path)) {
+    std::string anchor_package;
+    std::string anchor_entry;
+    if (ParsePackagePath(anchor_path, &anchor_package, &anchor_entry)) {
+      const std::string entry_dir = GetDirectory(anchor_entry);
+      std::string entry = (entry_dir == "." || entry_dir.empty())
+                              ? asset_path
+                              : JoinPath(entry_dir, asset_path);
+      entry = NormalizePackageEntryPath(entry);
+      if (entry.empty()) return result;
+      ResolvedAsset package;
+      if (!config_.allow_absolute_paths && IsAbsolutePath(anchor_package)) {
+        // The package portion of the anchor is already resolved input, not a
+        // newly-authored absolute path.
+        package.resolved_path = NormalizePath(anchor_package);
+        package.exists = FileExists(package.resolved_path);
+      } else {
+        package =
+            ResolveInternal(anchor_package, "", /*allow_suffix_fallback=*/false);
+      }
+      result.is_package = true;
+      result.package_path = package.exists ? package.resolved_path
+                                           : NormalizePath(anchor_package);
+      result.asset_in_package = entry;
+      result.resolved_path = result.package_path + "[" + entry + "]";
+      result.exists = false;
+      return result;
+    }
+  }
+
+  const std::string base = anchor_path.empty()
+                               ? config_.working_directory
+                               : GetDirectory(anchor_path);
+  result.resolved_path =
+      base.empty() ? NormalizePath(asset_path)
+                   : NormalizePath(JoinPath(base, asset_path));
+  result.exists = FileExists(result.resolved_path);
+  return result;
 }
 
 ResolverContext AssetResolver::CreateDefaultContext() const {
-  ResolverContext ctx;
-  ctx.context_string.clear();
-  ctx.is_default = true;
-  return ctx;
+  return ResolverContext{};
 }
 
-ResolverContext AssetResolver::CreateContextFromString(const std::string& context_str) const {
+ResolverContext AssetResolver::CreateContextFromString(
+    const std::string& context_str) const {
   ResolverContext ctx;
   ctx.context_string = context_str;
-  ctx.is_default = context_str.empty();
-  return ctx;
+  return NormalizeContext(std::move(ctx));
 }
 
-void AssetResolver::BindContext(const ResolverContext& context, void** binding_data) {
-  g_current_context = context;
+void AssetResolver::BindContext(const ResolverContext& context,
+                                void** binding_data) {
   if (binding_data) *binding_data = nullptr;
+  std::unique_ptr<ContextBindingNode> node(
+      new (std::nothrow) ContextBindingNode());
+  if (!node) return;
+  node->identity = identity_;
+  node->context = NormalizeContext(context);
+  ContextBindingNode* raw = node.get();
+  g_context_bindings.push_back(std::move(node));
+  if (binding_data) *binding_data = raw;
 }
 
-void AssetResolver::UnbindContext(const ResolverContext& context, void** binding_data) {
-  g_current_context = CreateDefaultContext();
-  if (binding_data) *binding_data = nullptr;
+void AssetResolver::UnbindContext(const ResolverContext& context,
+                                  void** binding_data) {
+  (void)context;
+  if (binding_data && *binding_data) {
+    EraseContextBinding(*binding_data);
+    *binding_data = nullptr;
+    return;
+  }
+  for (size_t i = g_context_bindings.size(); i > 0; --i) {
+    if (g_context_bindings[i - 1] &&
+        g_context_bindings[i - 1]->identity == identity_) {
+      g_context_bindings.erase(g_context_bindings.begin() +
+                               static_cast<std::ptrdiff_t>(i - 1));
+      return;
+    }
+  }
 }
 
 ResolverContext AssetResolver::GetCurrentContext() const {
-  return g_current_context;
+  if (const ContextBindingNode* active = FindActiveContextBinding(identity_)) {
+    return active->context;
+  }
+  return config_.context;
 }
 
 bool AssetResolver::IsContextDependentPath(const std::string& asset_path) const {
@@ -938,26 +1253,73 @@ AssetInfo AssetResolver::GetAssetInfo(const std::string& asset_path,
   AssetInfo info;
   info.resolved_path = resolved_path.resolved_path;
   info.exists = resolved_path.exists;
-  // asset name = basename
-  std::string p = resolved_path.resolved_path.empty() ? asset_path : resolved_path.resolved_path;
-  size_t slash = p.find_last_of("/\\");
-  info.asset_name = (slash == std::string::npos) ? p : p.substr(slash + 1);
-  info.repository_path = GetDirectory(p);
+
+  std::string name_source;
+  std::string repository_source;
+  if (resolved_path.is_package) {
+    name_source = resolved_path.asset_in_package;
+    repository_source = resolved_path.package_path;
+  }
+
+  // Fall back to parsing the resolved/asset identifier when the caller did not
+  // populate the package fields (or the asset is unresolved).
+  const std::string& identifier = !resolved_path.resolved_path.empty()
+                                      ? resolved_path.resolved_path
+                                      : asset_path;
+  if (IsPackagePath(identifier)) {
+    std::string package_file;
+    std::string package_entry;
+    if (ParsePackagePath(identifier, &package_file, &package_entry)) {
+      if (name_source.empty()) name_source = package_entry;
+      if (repository_source.empty()) repository_source = package_file;
+    }
+  }
+  if (!resolved_path.is_package) {
+    if (name_source.empty()) {
+      name_source = resolved_path.resolved_path.empty()
+                        ? asset_path
+                        : resolved_path.resolved_path;
+    }
+    if (repository_source.empty()) repository_source = name_source;
+  }
+
+  const size_t slash = name_source.find_last_of("/\\");
+  info.asset_name =
+      (slash == std::string::npos) ? name_source : name_source.substr(slash + 1);
+  info.repository_path =
+      repository_source.empty() ? std::string() : GetDirectory(repository_source);
   return info;
 }
 
-AssetTimestamp AssetResolver::GetModificationTimestamp(const std::string& asset_path,
-                                                     const ResolvedAsset& resolved_path) const {
+AssetTimestamp AssetResolver::GetModificationTimestamp(
+    const std::string& asset_path, const ResolvedAsset& resolved_path) const {
   AssetTimestamp ts;
-  // Use filesystem modification time if available.
-  struct stat st;
-  std::string path = resolved_path.resolved_path.empty() ? asset_path : resolved_path.resolved_path;
-  if (!path.empty() && stat(path.c_str(), &st) == 0) {
-    ts.valid = true;
-    ts.seconds = static_cast<uint64_t>(st.st_mtime);
-    ts.nanoseconds = 0;
-  }
+#if defined(__EMSCRIPTEN__)
+  (void)asset_path;
+  (void)resolved_path;
   return ts;
+#else
+  std::string path;
+  if (resolved_path.is_package && !resolved_path.package_path.empty()) {
+    path = resolved_path.package_path;
+  } else {
+    path = resolved_path.resolved_path.empty() ? asset_path
+                                               : resolved_path.resolved_path;
+  }
+  if (path.empty()) return ts;
+
+  struct stat st;
+  if (stat(path.c_str(), &st) != 0 || st.st_mtime < 0) return ts;
+  ts.seconds = static_cast<uint64_t>(st.st_mtime);
+#if defined(__APPLE__)
+  ts.nanoseconds = static_cast<uint64_t>(st.st_mtimespec.tv_nsec);
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || \
+    defined(__OpenBSD__)
+  ts.nanoseconds = static_cast<uint64_t>(st.st_mtim.tv_nsec);
+#endif
+  ts.valid = true;
+  return ts;
+#endif
 }
 
 std::shared_ptr<std::vector<uint8_t>> AssetResolver::OpenAsset(
@@ -972,10 +1334,29 @@ std::shared_ptr<std::vector<uint8_t>> AssetResolver::OpenAsset(
 
 void AssetResolver::BeginCacheScope(void** cache_scope_data) {
   if (cache_scope_data) *cache_scope_data = nullptr;
+  std::shared_ptr<CacheScopeNode> node(
+      new (std::nothrow) CacheScopeNode());
+  if (!node) return;
+  node->identity = identity_;
+  CacheScopeNode* raw = node.get();
+  g_cache_scopes.push_back(std::move(node));
+  if (cache_scope_data) *cache_scope_data = raw;
 }
 
 void AssetResolver::EndCacheScope(void** cache_scope_data) {
-  if (cache_scope_data) *cache_scope_data = nullptr;
+  if (cache_scope_data && *cache_scope_data) {
+    EraseCacheScope(*cache_scope_data);
+    *cache_scope_data = nullptr;
+    return;
+  }
+  for (size_t i = g_cache_scopes.size(); i > 0; --i) {
+    if (g_cache_scopes[i - 1] &&
+        g_cache_scopes[i - 1]->identity == identity_) {
+      g_cache_scopes.erase(g_cache_scopes.begin() +
+                           static_cast<std::ptrdiff_t>(i - 1));
+      return;
+    }
+  }
 }
 
 ResolverScopedCache::ResolverScopedCache(AssetResolver* resolver) : resolver_(resolver) {
@@ -983,23 +1364,24 @@ ResolverScopedCache::ResolverScopedCache(AssetResolver* resolver) : resolver_(re
 }
 
 ResolverScopedCache::~ResolverScopedCache() {
-  if (resolver_) resolver_->EndCacheScope(&data_);
-}
-
-// Package resolver registry (static, no DLL)
-static std::unordered_map<std::string, AssetResolver::PackageResolverCallback>&
-PackageResolvers() {
-  static std::unordered_map<std::string, AssetResolver::PackageResolverCallback> m;
-  return m;
+  // data_ stays null when the scope could not be allocated; do not let a
+  // failed Begin pop an unrelated outer scope.
+  if (resolver_ && data_) resolver_->EndCacheScope(&data_);
 }
 
 void AssetResolver::RegisterPackageResolver(const std::string& extension,
                                           PackageResolverCallback callback) {
-  PackageResolvers()[extension] = std::move(callback);
+  const std::string normalized = NormalizePackageExtension(extension);
+  if (normalized.empty() || !callback) return;
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  package_resolvers_[normalized] = std::move(callback);
 }
 
 bool AssetResolver::UnregisterPackageResolver(const std::string& extension) {
-  return PackageResolvers().erase(extension) > 0;
+  const std::string normalized = NormalizePackageExtension(extension);
+  if (normalized.empty()) return false;
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  return package_resolvers_.erase(normalized) > 0;
 }
 
 

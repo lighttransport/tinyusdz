@@ -48,8 +48,16 @@ struct ResolvedAsset {
 };
 
 /// Resolver context (static, API-driven; no DLL plugins).
+///
+/// For the built-in filesystem resolver, `context_string` is a platform-
+/// separated list of search paths (`;` on Windows, `:` elsewhere), matching
+/// OpenUSD's ArDefaultResolver context. Programmatic callers may fill
+/// `search_paths` directly. A non-default context replaces the resolver's
+/// configured search paths for the duration of the binding; anchor-relative
+/// and working-directory resolution still run first.
 struct ResolverContext {
   std::string context_string;
+  std::vector<std::string> search_paths;
   bool is_default = true;
 };
 
@@ -82,6 +90,9 @@ class ResolverScopedCache {
 };
 struct ResolverConfig {
   std::vector<std::string> search_paths;  // Directories to search
+  /// Persistent resolver context. Scoped BindContext() bindings override it on
+  /// the binding thread; composition/worker threads see this value.
+  ResolverContext context;
   std::string working_directory;           // Base directory for relative paths
   bool allow_absolute_paths = true;        // Allow absolute path resolution
   // USD asset paths are anchored to the layer that authored them, and valid
@@ -180,7 +191,10 @@ public:
 
   /// Get configuration
   const ResolverConfig& GetConfig() const { return config_; }
-  void SetConfig(const ResolverConfig& config) { config_ = config; }
+  void SetConfig(const ResolverConfig& config) {
+    config_ = config;
+    NormalizeConfigContext();
+  }
 
   // ============================================================
   // Resolution
@@ -213,11 +227,22 @@ public:
   std::string CreateIdentifier(const std::string& asset_path,
                                const std::string& anchor_path = "") const;
 
-  /// Resolve a path for creating a new asset
+  /// Resolve a path for creating a new asset.
+  ///
+  /// Unlike Resolve(), the file need not exist. Relative paths are anchored to
+  /// the referring layer directory (or the working directory when there is no
+  /// anchor), and suffix/search-path fallback is not applied. Package anchors
+  /// are supported: a new entry resolves inside the same package.
   ResolvedAsset ResolveForNewAsset(const std::string& asset_path,
                                   const std::string& anchor_path = "") const;
 
-  /// Context operations
+  /// Context operations.
+  ///
+  /// Contexts are per-thread bindings. BindContext() installs an override and
+  /// returns an opaque binding token through `binding_data`; UnbindContext()
+  /// restores the previous binding. `binding_data` is owned by the caller and
+  /// is only valid on the thread that created it. GetCurrentContext() returns
+  /// the active binding, else ResolverConfig::context.
   ResolverContext CreateDefaultContext() const;
   ResolverContext CreateContextFromString(const std::string& context_str) const;
   void BindContext(const ResolverContext& context, void** binding_data = nullptr);
@@ -225,7 +250,8 @@ public:
   ResolverContext GetCurrentContext() const;
   bool IsContextDependentPath(const std::string& asset_path) const;
 
-  /// Asset info / timestamp
+  /// Asset info / timestamp. Both are package-aware: package entries report
+  /// the entry basename/repository and timestamp the containing package file.
   AssetInfo GetAssetInfo(const std::string& asset_path,
                          const ResolvedAsset& resolved_path) const;
   AssetTimestamp GetModificationTimestamp(const std::string& asset_path,
@@ -235,11 +261,24 @@ public:
   std::shared_ptr<std::vector<uint8_t>> OpenAsset(
       const ResolvedAsset& resolved_path) const;
 
-  /// Scoped cache
+  /// Scoped resolution cache.
+  ///
+  /// BeginCacheScope() installs a thread-local memo for this resolver;
+  /// EndCacheScope() removes it. Entries are keyed by
+  /// (asset path, anchor, suffix-fallback flag, effective context), so a
+  /// context change inside a scope cannot reuse a stale result. The caller
+  /// opts into stable resolution for the scope's lifetime.
   void BeginCacheScope(void** cache_scope_data);
   void EndCacheScope(void** cache_scope_data);
 
-  /// Package resolver registration (static, no DLL)
+  /// Package resolver registration.
+  ///
+  /// The callback is consulted for package identifiers `pkg.ext[entry]` whose
+  /// package file uses `extension` (case-insensitive; a leading dot is
+  /// optional). It receives the package file path (authored first, then the
+  /// resolved path when it differs) and the normalized in-package entry. On
+  /// true with a non-empty `resolved`, the identifier resolves to that value;
+  /// on false, normal package resolution runs. Registrations are per-resolver.
   using PackageResolverCallback = std::function<bool(const std::string& package_path,
                                                      const std::string& asset_path,
                                                      std::string* resolved)>;
@@ -289,6 +328,8 @@ public:
   static std::vector<std::string> SuffixCandidates(const std::string& asset_path);
 
 private:
+  static uint64_t NextIdentity();
+  uint64_t identity_ = NextIdentity();
   ResolverConfig config_;
   ResolverCallback custom_resolver_;
   AssetReadCallback asset_reader_;
@@ -298,9 +339,15 @@ private:
   };
   mutable std::mutex registry_mutex_;
   std::unordered_map<std::string, SchemeHandler> scheme_handlers_;
+  std::unordered_map<std::string, PackageResolverCallback> package_resolvers_;
   std::unordered_map<std::string, std::shared_ptr<const std::vector<uint8_t>>>
       memory_assets_;
   uint64_t next_anonymous_id_ = 1;
+
+  void NormalizeConfigContext();
+  const std::vector<std::string>& EffectiveSearchPaths() const;
+  PackageResolverCallback FindPackageResolver(
+      const std::string& package_file) const;
 
   // Internal resolution
   ResolvedAsset ResolveInternal(const std::string& asset_path,
