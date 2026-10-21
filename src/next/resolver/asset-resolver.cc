@@ -111,6 +111,71 @@ bool StatRegularFile(const std::string& path, uint64_t* device,
 #endif
 }
 
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+bool ReadRegularFileFd(const std::string& path, bool verify_identity,
+                       uint64_t expected_device, uint64_t expected_inode,
+                       std::vector<uint8_t>* out, std::string* err) {
+  if (!out) {
+    if (err) *err += "ReadAsset: null output buffer\n";
+    return false;
+  }
+  out->clear();
+  int open_flags = O_RDONLY;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+  const int fd = ::open(path.c_str(), open_flags);
+  if (fd < 0) {
+    if (err) *err += "ReadAsset: failed to open: " + path + "\n";
+    return false;
+  }
+  struct stat st;
+  const bool plausible =
+      ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0 &&
+      static_cast<uint64_t>(st.st_size) <=
+          static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) &&
+      static_cast<uint64_t>(st.st_size) <=
+          static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)());
+  if (!plausible) {
+    if (err) *err += "ReadAsset: implausible file: " + path + "\n";
+    ::close(fd);
+    return false;
+  }
+  if (verify_identity &&
+      (static_cast<uint64_t>(st.st_dev) != expected_device ||
+       static_cast<uint64_t>(st.st_ino) != expected_inode)) {
+    if (err) {
+      *err += "ReadAsset: file identity changed since resolution: " + path +
+              "\n";
+    }
+    ::close(fd);
+    return false;
+  }
+  const size_t size = static_cast<size_t>(st.st_size);
+  out->resize(size);
+  size_t read_total = 0;
+  while (read_total < size) {
+    const ssize_t n = ::read(fd, out->data() + read_total, size - read_total);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      if (err) *err += "ReadAsset: read failed: " + path + "\n";
+      out->clear();
+      ::close(fd);
+      return false;
+    }
+    if (n == 0) break;
+    read_total += static_cast<size_t>(n);
+  }
+  ::close(fd);
+  if (read_total != size) {
+    if (err) *err += "ReadAsset: short read: " + path + "\n";
+    out->clear();
+    return false;
+  }
+  return true;
+}
+#endif
+
 bool HasParentComponent(const std::string& path) {
   size_t begin = 0;
   while (begin <= path.size()) {
@@ -374,10 +439,16 @@ void ResolverContext::SetSchemeContext(const std::string& scheme,
   }
 }
 
-std::string ResolverContext::GetSchemeContext(
+const std::string* ResolverContext::FindSchemeContext(
     const std::string& scheme) const {
   const auto it = scheme_contexts.find(NormalizeSchemeKey(scheme));
-  return it == scheme_contexts.end() ? std::string() : it->second;
+  return it == scheme_contexts.end() ? nullptr : &it->second;
+}
+
+std::string ResolverContext::GetSchemeContext(
+    const std::string& scheme) const {
+  const std::string* context = FindSchemeContext(scheme);
+  return context ? *context : std::string();
 }
 
 // ============================================================
@@ -418,15 +489,29 @@ AssetResolver::AssetResolver(const AssetResolver& other) {
 
 AssetResolver& AssetResolver::operator=(const AssetResolver& other) {
   if (this == &other) return *this;
-  std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
-  identity_ = NextIdentity();
-  config_ = other.config_;
-  custom_resolver_ = other.custom_resolver_;
-  asset_reader_ = other.asset_reader_;
-  scheme_handlers_ = other.scheme_handlers_;
-  package_resolvers_ = other.package_resolvers_;
-  memory_assets_ = other.memory_assets_;
-  next_anonymous_id_ = other.next_anonymous_id_;
+  std::unordered_map<std::string, SchemeHandler> retired_schemes;
+  std::unordered_map<std::string, PackageResolverCallback> retired_packages;
+  ResolverCallback retired_resolver;
+  AssetReadCallback retired_reader;
+  {
+    std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
+    identity_ = NextIdentity();
+    config_ = other.config_;
+    retired_resolver = std::move(custom_resolver_);
+    retired_reader = std::move(asset_reader_);
+    custom_resolver_ = other.custom_resolver_;
+    asset_reader_ = other.asset_reader_;
+    retired_schemes = std::move(scheme_handlers_);
+    retired_packages = std::move(package_resolvers_);
+    scheme_handlers_ = other.scheme_handlers_;
+    package_resolvers_ = other.package_resolvers_;
+    memory_assets_ = other.memory_assets_;
+    next_anonymous_id_ = other.next_anonymous_id_;
+  }
+  (void)retired_schemes;
+  (void)retired_packages;
+  (void)retired_resolver;
+  (void)retired_reader;
   return *this;
 }
 
@@ -445,16 +530,30 @@ AssetResolver::AssetResolver(AssetResolver&& other) noexcept {
 
 AssetResolver& AssetResolver::operator=(AssetResolver&& other) noexcept {
   if (this == &other) return *this;
-  std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
-  identity_ = other.identity_;
-  other.identity_ = NextIdentity();
-  config_ = std::move(other.config_);
-  custom_resolver_ = std::move(other.custom_resolver_);
-  asset_reader_ = std::move(other.asset_reader_);
-  scheme_handlers_ = std::move(other.scheme_handlers_);
-  package_resolvers_ = std::move(other.package_resolvers_);
-  memory_assets_ = std::move(other.memory_assets_);
-  next_anonymous_id_ = other.next_anonymous_id_;
+  std::unordered_map<std::string, SchemeHandler> retired_schemes;
+  std::unordered_map<std::string, PackageResolverCallback> retired_packages;
+  ResolverCallback retired_resolver;
+  AssetReadCallback retired_reader;
+  {
+    std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
+    identity_ = other.identity_;
+    other.identity_ = NextIdentity();
+    config_ = std::move(other.config_);
+    retired_resolver = std::move(custom_resolver_);
+    retired_reader = std::move(asset_reader_);
+    custom_resolver_ = std::move(other.custom_resolver_);
+    asset_reader_ = std::move(other.asset_reader_);
+    retired_schemes = std::move(scheme_handlers_);
+    retired_packages = std::move(package_resolvers_);
+    scheme_handlers_ = std::move(other.scheme_handlers_);
+    package_resolvers_ = std::move(other.package_resolvers_);
+    memory_assets_ = std::move(other.memory_assets_);
+    next_anonymous_id_ = other.next_anonymous_id_;
+  }
+  (void)retired_schemes;
+  (void)retired_packages;
+  (void)retired_resolver;
+  (void)retired_reader;
   return *this;
 }
 
@@ -508,9 +607,15 @@ void AssetResolver::RegisterScheme(const std::string& scheme,
       GetIdentifierScheme(normalized + ":asset") != normalized) {
     return;
   }
-  std::lock_guard<std::mutex> lock(registry_mutex_);
-  scheme_handlers_[normalized] =
-      SchemeHandler{std::move(resolver), {}, std::move(reader)};
+  SchemeHandler next{std::move(resolver), {}, std::move(reader)};
+  SchemeHandler retired;
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    auto& slot = scheme_handlers_[normalized];
+    retired = std::move(slot);
+    slot = std::move(next);
+  }
+  (void)retired;
 }
 
 void AssetResolver::RegisterScheme(const std::string& scheme,
@@ -526,9 +631,15 @@ void AssetResolver::RegisterScheme(const std::string& scheme,
       GetIdentifierScheme(normalized + ":asset") != normalized) {
     return;
   }
-  std::lock_guard<std::mutex> lock(registry_mutex_);
-  scheme_handlers_[normalized] =
-      SchemeHandler{{}, std::move(resolver), std::move(reader)};
+  SchemeHandler next{{}, std::move(resolver), std::move(reader)};
+  SchemeHandler retired;
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    auto& slot = scheme_handlers_[normalized];
+    retired = std::move(slot);
+    slot = std::move(next);
+  }
+  (void)retired;
 }
 
 bool AssetResolver::UnregisterScheme(const std::string& scheme) {
@@ -536,8 +647,16 @@ bool AssetResolver::UnregisterScheme(const std::string& scheme) {
   if (!normalized.empty() && normalized.back() == ':') normalized.pop_back();
   std::transform(normalized.begin(), normalized.end(), normalized.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  std::lock_guard<std::mutex> lock(registry_mutex_);
-  return scheme_handlers_.erase(normalized) != 0;
+  SchemeHandler retired;
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    const auto it = scheme_handlers_.find(normalized);
+    if (it == scheme_handlers_.end()) return false;
+    retired = std::move(it->second);
+    scheme_handlers_.erase(it);
+  }
+  (void)retired;
+  return true;
 }
 
 bool AssetResolver::HasScheme(const std::string& scheme) const {
@@ -648,120 +767,56 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
   }
   return true;
 #else
-  // Open once and validate the resulting descriptor. This removes the
-  // inspection-then-open window inside ReadAsset: the bytes and the size come
-  // from the same opened object, even if the path is replaced concurrently.
-  int open_flags = O_RDONLY;
-#ifdef O_CLOEXEC
-  open_flags |= O_CLOEXEC;
-#endif
-  const int fd = ::open(resolved_path.c_str(), open_flags);
-  if (fd < 0) {
-    if (err) *err += "ReadAsset: failed to open: " + resolved_path + "\n";
-    return false;
-  }
-  struct stat st;
-  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 ||
-      static_cast<uint64_t>(st.st_size) >
-          static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
-      static_cast<uint64_t>(st.st_size) >
-          static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)())) {
-    if (err) *err += "ReadAsset: implausible file: " + resolved_path + "\n";
-    ::close(fd);
-    return false;
-  }
-  const size_t size = static_cast<size_t>(st.st_size);
-  out->resize(size);
-  size_t read_total = 0;
-  while (read_total < size) {
-    const ssize_t n = ::read(fd, out->data() + read_total, size - read_total);
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      if (err) *err += "ReadAsset: read failed: " + resolved_path + "\n";
-      out->clear();
-      ::close(fd);
-      return false;
-    }
-    if (n == 0) break;
-    read_total += static_cast<size_t>(n);
-  }
-  ::close(fd);
-  if (read_total != size) {
-    if (err) *err += "ReadAsset: short read: " + resolved_path + "\n";
-    out->clear();
-    return false;
-  }
-  return true;
+  // Open once, then validate the descriptor and read those exact bytes.
+  return ReadRegularFileFd(resolved_path, false, 0, 0, out, err);
 #endif
 }
 
 bool AssetResolver::ReadAsset(const ResolvedAsset& resolved,
                               std::vector<uint8_t>* out,
                               std::string* err) const {
-  if (!resolved.has_file_identity || resolved.is_package ||
-      !GetIdentifierScheme(resolved.resolved_path).empty() || asset_reader_) {
+  if (!resolved.has_file_identity) {
+    return ReadAsset(resolved.resolved_path, out, err);
+  }
+  if (resolved.is_package) {
+    const std::string& package_path = resolved.package_path.empty()
+                                          ? resolved.resolved_path
+                                          : resolved.package_path;
+#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+    if (!FileIdentityUnchanged(resolved)) {
+      if (err) {
+        *err += "ReadAsset: package changed since resolution: " + package_path +
+                "\n";
+      }
+      return false;
+    }
+    return ReadAsset(package_path, out, err);
+#else
+    return ReadRegularFileFd(package_path, true, resolved.file_device,
+                             resolved.file_inode, out, err);
+#endif
+  }
+  if (!GetIdentifierScheme(resolved.resolved_path).empty() || asset_reader_) {
     return ReadAsset(resolved.resolved_path, out, err);
   }
 #if defined(__EMSCRIPTEN__) || defined(_WIN32)
   return ReadAsset(resolved.resolved_path, out, err);
 #else
-  if (!out) {
-    if (err) *err += "ReadAsset: null output buffer\n";
-    return false;
-  }
-  out->clear();
-  int open_flags = O_RDONLY;
-#ifdef O_CLOEXEC
-  open_flags |= O_CLOEXEC;
+  return ReadRegularFileFd(resolved.resolved_path, true, resolved.file_device,
+                           resolved.file_inode, out, err);
 #endif
-  const int fd = ::open(resolved.resolved_path.c_str(), open_flags);
-  if (fd < 0) {
-    if (err) *err += "ReadAsset: failed to open: " + resolved.resolved_path + "\n";
-    return false;
+}
+
+std::string AssetResolver::CurrentSchemeContext(
+    const std::string& scheme) const {
+  // Copy: a callback is allowed to unbind its context re-entrantly.
+  const std::string* context = nullptr;
+  if (const ContextBindingNode* active = FindActiveContextBinding(identity_)) {
+    context = active->context.FindSchemeContext(scheme);
+  } else {
+    context = config_.context.FindSchemeContext(scheme);
   }
-  struct stat st;
-  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
-      static_cast<uint64_t>(st.st_dev) != resolved.file_device ||
-      static_cast<uint64_t>(st.st_ino) != resolved.file_inode) {
-    if (err) {
-      *err += "ReadAsset: file identity changed since resolution: " +
-              resolved.resolved_path + "\n";
-    }
-    ::close(fd);
-    return false;
-  }
-  if (st.st_size < 0 ||
-      static_cast<uint64_t>(st.st_size) >
-          static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
-      static_cast<uint64_t>(st.st_size) >
-          static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)())) {
-    if (err) *err += "ReadAsset: implausible file: " + resolved.resolved_path + "\n";
-    ::close(fd);
-    return false;
-  }
-  const size_t size = static_cast<size_t>(st.st_size);
-  out->resize(size);
-  size_t read_total = 0;
-  while (read_total < size) {
-    const ssize_t n = ::read(fd, out->data() + read_total, size - read_total);
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      if (err) *err += "ReadAsset: read failed: " + resolved.resolved_path + "\n";
-      out->clear();
-      ::close(fd);
-      return false;
-    }
-    if (n == 0) break;
-    read_total += static_cast<size_t>(n);
-  }
-  ::close(fd);
-  if (read_total != size) {
-    if (err) *err += "ReadAsset: short read: " + resolved.resolved_path + "\n";
-    out->clear();
-    return false;
-  }
-  return true;
-#endif
+  return context ? *context : std::string();
 }
 
 const std::vector<std::string>& AssetResolver::EffectiveSearchPaths() const {
@@ -799,17 +854,20 @@ ResolvedAsset AssetResolver::Resolve(const std::string& asset_path,
   }
   ResolvedAsset result =
       ResolveInternal(asset_path, anchor_path, allow_suffix_fallback);
-  if (result.exists && !result.is_package &&
-      GetIdentifierScheme(result.resolved_path).empty()) {
+  if (result.exists) {
+    const std::string* identity_path = nullptr;
     bool is_memory_asset = false;
-    {
+    if (result.is_package) {
+      identity_path = &result.package_path;
+    } else if (GetIdentifierScheme(result.resolved_path).empty()) {
+      identity_path = &result.resolved_path;
       std::lock_guard<std::mutex> lock(registry_mutex_);
       is_memory_asset =
-          memory_assets_.find(result.resolved_path) != memory_assets_.end();
+          memory_assets_.find(*identity_path) != memory_assets_.end();
     }
     uint64_t device = 0, inode = 0;
-    if (!is_memory_asset &&
-        StatRegularFile(result.resolved_path, &device, &inode)) {
+    if (identity_path && !identity_path->empty() && !is_memory_asset &&
+        StatRegularFile(*identity_path, &device, &inode)) {
       result.has_file_identity = true;
       result.file_device = device;
       result.file_inode = inode;
@@ -941,7 +999,7 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     if (scheme_context_resolver) {
       scheme_result = scheme_context_resolver(
           asset_path, anchor_path,
-          GetCurrentContext().GetSchemeContext(identifier_scheme));
+          CurrentSchemeContext(identifier_scheme));
     } else if (scheme_resolver) {
       scheme_result = scheme_resolver(asset_path, anchor_path);
     } else if (custom_resolver_) {
@@ -1096,8 +1154,10 @@ bool AssetResolver::FileExists(const std::string& path) const {
 bool AssetResolver::FileIdentityUnchanged(
     const ResolvedAsset& resolved) const {
   if (!resolved.has_file_identity) return true;
+  const std::string& path =
+      resolved.is_package ? resolved.package_path : resolved.resolved_path;
   uint64_t device = 0, inode = 0;
-  if (!StatRegularFile(resolved.resolved_path, &device, &inode)) return false;
+  if (!StatRegularFile(path, &device, &inode)) return false;
   return device == resolved.file_device && inode == resolved.file_inode;
 }
 
@@ -1653,15 +1713,29 @@ void AssetResolver::RegisterPackageResolver(const std::string& extension,
                                           PackageResolverCallback callback) {
   const std::string normalized = NormalizePackageExtension(extension);
   if (normalized.empty() || !callback) return;
-  std::lock_guard<std::mutex> lock(registry_mutex_);
-  package_resolvers_[normalized] = std::move(callback);
+  PackageResolverCallback retired;
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    auto& slot = package_resolvers_[normalized];
+    retired = std::move(slot);
+    slot = std::move(callback);
+  }
+  (void)retired;
 }
 
 bool AssetResolver::UnregisterPackageResolver(const std::string& extension) {
   const std::string normalized = NormalizePackageExtension(extension);
   if (normalized.empty()) return false;
-  std::lock_guard<std::mutex> lock(registry_mutex_);
-  return package_resolvers_.erase(normalized) > 0;
+  PackageResolverCallback retired;
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    const auto it = package_resolvers_.find(normalized);
+    if (it == package_resolvers_.end()) return false;
+    retired = std::move(it->second);
+    package_resolvers_.erase(it);
+  }
+  (void)retired;
+  return true;
 }
 
 

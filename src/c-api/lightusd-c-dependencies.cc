@@ -2,6 +2,7 @@
 // Resolver inventory and validation behind the portable C boundary.
 #include "c-internal.hh"
 
+#include <atomic>
 #include <cctype>
 #include <map>
 #include <limits>
@@ -20,9 +21,94 @@ using lightusd_internal::Fail;
 
 namespace {
 
+struct CallbackUserdata {
+  std::atomic<size_t> refs{1};
+  void* data = nullptr;
+  lightusd_userdata_destroy_fn destroy = nullptr;
+};
+
+// Intrusive ownership for callback userdata. Borrowed refs carry no control
+// block; owned refs release userdata after the final in-flight callback copy.
+class UserdataRef {
+ public:
+  UserdataRef() = default;
+  UserdataRef(const UserdataRef& other) { CopyFrom(other); }
+  UserdataRef(UserdataRef&& other) noexcept : owned_(other.owned_),
+                                               raw_(other.raw_) {
+    other.owned_ = nullptr;
+    other.raw_ = nullptr;
+  }
+  UserdataRef& operator=(const UserdataRef& other) {
+    if (this != &other) {
+      UserdataRef copy(other);
+      Swap(copy);
+    }
+    return *this;
+  }
+  UserdataRef& operator=(UserdataRef&& other) noexcept {
+    if (this != &other) {
+      Release();
+      owned_ = other.owned_;
+      raw_ = other.raw_;
+      other.owned_ = nullptr;
+      other.raw_ = nullptr;
+    }
+    return *this;
+  }
+  ~UserdataRef() { Release(); }
+
+  static UserdataRef Borrowed(void* data) {
+    UserdataRef ref;
+    ref.raw_ = data;
+    return ref;
+  }
+
+  static bool MakeOwned(void* data, lightusd_userdata_destroy_fn destroy,
+                        UserdataRef* out) {
+    if (!out) return false;
+    if (!destroy) {
+      *out = Borrowed(data);
+      return true;
+    }
+    CallbackUserdata* holder = new (std::nothrow) CallbackUserdata();
+    if (!holder) return false;
+    holder->data = data;
+    holder->destroy = destroy;
+    out->Release();
+    out->owned_ = holder;
+    out->raw_ = nullptr;
+    return true;
+  }
+
+  void* get() const { return owned_ ? owned_->data : raw_; }
+
+ private:
+  void CopyFrom(const UserdataRef& other) {
+    owned_ = other.owned_;
+    raw_ = other.raw_;
+    if (owned_) owned_->refs.fetch_add(1, std::memory_order_relaxed);
+  }
+  void Release() {
+    if (owned_ &&
+        owned_->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+      if (owned_->destroy) owned_->destroy(owned_->data);
+      delete owned_;
+    }
+    owned_ = nullptr;
+    raw_ = nullptr;
+  }
+  void Swap(UserdataRef& other) noexcept {
+    std::swap(owned_, other.owned_);
+    std::swap(raw_, other.raw_);
+  }
+
+  CallbackUserdata* owned_ = nullptr;
+  void* raw_ = nullptr;
+};
+
 struct PackageCallbackEntry {
   lightusd_package_resolver_callback callback = nullptr;
-  void* userdata = nullptr;
+  UserdataRef userdata;
 };
 
 std::string NormalizeExtension(const char* extension) {
@@ -47,10 +133,12 @@ struct lightusd_asset_resolver {
   size_t memory_asset_limit{0};
   mutable std::mutex memory_mutex;
   mutable std::mutex package_mutex;
+  mutable std::mutex alias_mutex;
 
   lightusd_asset_resolver() {
     resolver.SetCustomResolver(
         [this](const std::string& authored, const std::string&) {
+          std::lock_guard<std::mutex> lock(alias_mutex);
           const auto found = aliases.find(authored);
           return found == aliases.end() ? std::string() : found->second;
         });
@@ -176,10 +264,11 @@ lightusd_status lightusd_asset_resolver_memory_identifier(
   return LIGHTUSD_OK;
 }
 
-lightusd_status lightusd_asset_resolver_register_scheme(
+lightusd_status lightusd_asset_resolver_register_scheme_owned(
     lightusd_asset_resolver* resolver, const char* scheme,
     lightusd_scheme_resolver_callback resolver_callback,
-    lightusd_scheme_reader_callback reader_callback, void* userdata) {
+    lightusd_scheme_reader_callback reader_callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy) {
   if (!resolver || !scheme || !scheme[0] ||
       (!resolver_callback && !reader_callback)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme handler");
@@ -194,14 +283,18 @@ lightusd_status lightusd_asset_resolver_register_scheme(
           normalized) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme");
   }
+  UserdataRef holder;
+  if (!UserdataRef::MakeOwned(userdata, destroy, &holder)) {
+    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "callback owner alloc failed");
+  }
   n::ContextResolverCallback context_resolver;
   if (resolver_callback) {
-    context_resolver = [resolver_callback, userdata](
+    context_resolver = [resolver_callback, holder](
                            const std::string& identifier,
                            const std::string& anchor_path,
                            const std::string& scheme_context) {
       const char* resolved = nullptr;
-      if (!resolver_callback(userdata, identifier.c_str(),
+      if (!resolver_callback(holder.get(), identifier.c_str(),
                              anchor_path.c_str(), scheme_context.c_str(),
                              &resolved) ||
           !resolved) {
@@ -212,12 +305,12 @@ lightusd_status lightusd_asset_resolver_register_scheme(
   }
   n::AssetReadCallback reader;
   if (reader_callback) {
-    reader = [reader_callback, userdata](
+    reader = [reader_callback, holder](
                  const std::string& identifier, std::vector<uint8_t>* out,
                  std::string* err) {
       uint8_t* data = nullptr;
       size_t size = 0;
-      if (!reader_callback(userdata, identifier.c_str(), &data, &size) ||
+      if (!reader_callback(holder.get(), identifier.c_str(), &data, &size) ||
           (!data && size)) {
         if (err) *err += "scheme reader failed: " + identifier + "\n";
         std::free(data);
@@ -235,6 +328,14 @@ lightusd_status lightusd_asset_resolver_register_scheme(
   resolver->resolver.RegisterScheme(scheme, std::move(context_resolver),
                                     std::move(reader));
   return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_register_scheme(
+    lightusd_asset_resolver* resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata) {
+  return lightusd_asset_resolver_register_scheme_owned(
+      resolver, scheme, resolver_callback, reader_callback, userdata, nullptr);
 }
 
 lightusd_status lightusd_asset_resolver_unregister_scheme(
@@ -255,7 +356,10 @@ lightusd_status lightusd_asset_resolver_set_alias(
       !resolved_identifier || !resolved_identifier[0]) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid asset alias");
   }
-  resolver->aliases[authored_path] = resolved_identifier;
+  {
+    std::lock_guard<std::mutex> lock(resolver->alias_mutex);
+    resolver->aliases[authored_path] = resolved_identifier;
+  }
   return LIGHTUSD_OK;
 }
 
@@ -360,9 +464,9 @@ lightusd_status lightusd_resolver_context_set_scheme(
 lightusd_sv lightusd_resolver_context_get_scheme(
     const lightusd_resolver_context* context, const char* scheme) {
   if (!context || !scheme) return lightusd_internal::EmptySV();
-  const std::string value = context->context.GetSchemeContext(scheme);
-  if (value.empty()) return lightusd_internal::EmptySV();
-  return lightusd_internal::SV(value);
+  const std::string* value = context->context.FindSchemeContext(scheme);
+  if (!value || value->empty()) return lightusd_internal::EmptySV();
+  return lightusd_internal::SV(*value);
 }
 
 lightusd_status lightusd_asset_resolver_bind_context(
@@ -427,9 +531,10 @@ void lightusd_resolver_cache_scope_destroy(
   delete scope;
 }
 
-lightusd_status lightusd_asset_resolver_register_package(
+lightusd_status lightusd_asset_resolver_register_package_owned(
     lightusd_asset_resolver* resolver, const char* extension,
-    lightusd_package_resolver_callback callback, void* userdata) {
+    lightusd_package_resolver_callback callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy) {
   if (!resolver || !callback) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package resolver");
   }
@@ -437,11 +542,21 @@ lightusd_status lightusd_asset_resolver_register_package(
   if (normalized.empty()) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package extension");
   }
+  UserdataRef holder;
+  if (!UserdataRef::MakeOwned(userdata, destroy, &holder)) {
+    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "callback owner alloc failed");
+  }
+  PackageCallbackEntry entry;
+  entry.callback = callback;
+  entry.userdata = std::move(holder);
+  PackageCallbackEntry retired;
   {
     std::lock_guard<std::mutex> lock(resolver->package_mutex);
-    resolver->package_callbacks[normalized] = PackageCallbackEntry{callback,
-                                                                   userdata};
+    auto& slot = resolver->package_callbacks[normalized];
+    retired = std::move(slot);
+    slot = std::move(entry);
   }
+  (void)retired;
   lightusd_asset_resolver* self = resolver;
   resolver->resolver.RegisterPackageResolver(
       normalized,
@@ -457,7 +572,7 @@ lightusd_status lightusd_asset_resolver_register_package(
         }
         if (!entry.callback) return false;
         const char* text = nullptr;
-        if (!entry.callback(entry.userdata, package_path.c_str(),
+        if (!entry.callback(entry.userdata.get(), package_path.c_str(),
                             asset_path.c_str(), &text) ||
             !text) {
           return false;
@@ -468,6 +583,13 @@ lightusd_status lightusd_asset_resolver_register_package(
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_asset_resolver_register_package(
+    lightusd_asset_resolver* resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata) {
+  return lightusd_asset_resolver_register_package_owned(
+      resolver, extension, callback, userdata, nullptr);
+}
+
 lightusd_status lightusd_asset_resolver_unregister_package(
     lightusd_asset_resolver* resolver, const char* extension) {
   if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
@@ -475,10 +597,16 @@ lightusd_status lightusd_asset_resolver_unregister_package(
   if (normalized.empty()) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package extension");
   }
+  PackageCallbackEntry retired;
   {
     std::lock_guard<std::mutex> lock(resolver->package_mutex);
-    resolver->package_callbacks.erase(normalized);
+    const auto it = resolver->package_callbacks.find(normalized);
+    if (it != resolver->package_callbacks.end()) {
+      retired = it->second;
+      resolver->package_callbacks.erase(it);
+    }
   }
+  (void)retired;
   if (!resolver->resolver.UnregisterPackageResolver(normalized)) {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "package resolver was not registered");
   }

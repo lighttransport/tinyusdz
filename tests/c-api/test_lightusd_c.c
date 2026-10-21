@@ -527,6 +527,7 @@ static int test_core_transforms_and_ownership(void) {
 typedef struct {
   int resolve_calls;
   int read_calls;
+  int destroy_calls;
   char context[64];
 } TestSchemeState;
 
@@ -544,6 +545,11 @@ static int test_scheme_resolver(void* userdata, const char* identifier,
   return 1;
 }
 
+static void test_scheme_destroy(void* userdata) {
+  TestSchemeState* state = (TestSchemeState*)userdata;
+  if (state) ++state->destroy_calls;
+}
+
 static int test_scheme_reader(void* userdata, const char* identifier,
                               uint8_t** data, size_t* size) {
   static const char payload[] = "#usda 1.0\n";
@@ -555,6 +561,21 @@ static int test_scheme_reader(void* userdata, const char* identifier,
   if (!*data) return 0;
   memcpy(*data, payload, *size);
   return 1;
+}
+
+static int test_owned_package_callback(void* userdata,
+                                       const char* package_path,
+                                       const char* asset_path,
+                                       const char** resolved) {
+  (void)userdata;
+  (void)package_path;
+  (void)asset_path;
+  (void)resolved;
+  return 0;
+}
+
+static void test_owned_package_destroy(void* userdata) {
+  if (userdata) ++*(int*)userdata;
 }
 
 static int test_package_resolver_callback(void* userdata,
@@ -585,7 +606,7 @@ static int test_dependency_boundary(void) {
   CHECK_OK(lightusd_asset_resolver_create_context(resolver, "/tmp", &context));
   lightusd_sv context_text = lightusd_resolver_context_string(context);
   CHECK(context_text.len == 4 && memcmp(context_text.data, "/tmp", 4) == 0);
-  CHECK_OK(lightusd_resolver_context_set_scheme(context, "StUdIo", "ctx"));
+  CHECK_OK(lightusd_resolver_context_set_scheme(context, "StUdIo:", "ctx"));
   context_text = lightusd_resolver_context_get_scheme(context, "studio");
   CHECK(context_text.len == 3 && memcmp(context_text.data, "ctx", 3) == 0);
   CHECK(lightusd_asset_resolver_is_context_dependent(resolver, "rel.usda") == 1);
@@ -637,6 +658,15 @@ static int test_dependency_boundary(void) {
   CHECK(lightusd_asset_resolver_unregister_scheme(resolver, "studio") ==
         LIGHTUSD_ERR_NOT_FOUND);
 
+  TestSchemeState owned_state;
+  memset(&owned_state, 0, sizeof(owned_state));
+  CHECK_OK(lightusd_asset_resolver_register_scheme_owned(
+      resolver, "owned", test_scheme_resolver, test_scheme_reader,
+      &owned_state, test_scheme_destroy));
+  CHECK(owned_state.destroy_calls == 0);
+  CHECK_OK(lightusd_asset_resolver_unregister_scheme(resolver, "owned"));
+  CHECK(owned_state.destroy_calls == 1);
+
   resolved = NULL;
   uint8_t exists = 0, is_package = 0;
   CHECK_OK(lightusd_asset_resolver_resolve_for_new_asset(
@@ -675,6 +705,14 @@ static int test_dependency_boundary(void) {
   CHECK_OK(lightusd_asset_resolver_unregister_package(resolver, "pkg"));
   CHECK(lightusd_asset_resolver_unregister_package(resolver, "pkg") ==
         LIGHTUSD_ERR_NOT_FOUND);
+
+  int owned_package_destroyed = 0;
+  CHECK_OK(lightusd_asset_resolver_register_package_owned(
+      resolver, "ownedpkg", test_owned_package_callback,
+      &owned_package_destroyed, test_owned_package_destroy));
+  CHECK(owned_package_destroyed == 0);
+  CHECK_OK(lightusd_asset_resolver_unregister_package(resolver, "ownedpkg"));
+  CHECK(owned_package_destroyed == 1);
 
   /* Composed loading must use the caller's resolver, not the default one. */
   {

@@ -402,6 +402,18 @@ Scheme-specific context objects are supported through
 overload. The filesystem resolver captures device/inode identity during
 resolution, `ReadAsset(ResolvedAsset)` opens once and verifies the descriptor
 with `fstat`, and file-backed layer loads re-check identity after parsing.
+Package entries carry the package file's identity, so a replaced `.usdz` is
+rejected as well.
+
+Callback userdata is owned explicitly: the C ABI gained
+`lightusd_asset_resolver_register_{scheme,package}_owned()`, which releases
+userdata only after the last in-flight callback copy finishes (intrusive
+refcount, no shared ownership). Handler replacement, unregistration, and
+resolver assignment release retired handlers outside the registry lock, so a
+callback that re-enters the resolver cannot deadlock or observe freed state.
+Python callbacks reacquire the GIL, are released as soon as they are
+unregistered, and their exceptions are captured per resolver so a failure on a
+composition worker is re-raised by `resolve`, `read`, or `load`.
 Residual risk: the first path selection is still string-based, so a race before
 resolution cannot be attributed to the resolved file.
 

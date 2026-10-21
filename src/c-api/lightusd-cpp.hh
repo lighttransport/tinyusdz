@@ -271,6 +271,16 @@ inline lightusd_status RegisterSchemeResolver(
       resolver.get(), scheme, resolver_callback, reader_callback, userdata);
 }
 
+inline lightusd_status RegisterSchemeResolverOwned(
+    AssetResolver& resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy) {
+  return lightusd_asset_resolver_register_scheme_owned(
+      resolver.get(), scheme, resolver_callback, reader_callback, userdata,
+      destroy);
+}
+
 inline lightusd_status UnregisterSchemeResolver(AssetResolver& resolver,
                                                 const char* scheme) {
   return lightusd_asset_resolver_unregister_scheme(resolver.get(), scheme);
@@ -281,6 +291,14 @@ inline lightusd_status RegisterPackageResolver(
     lightusd_package_resolver_callback callback, void* userdata) {
   return lightusd_asset_resolver_register_package(resolver.get(), extension,
                                                   callback, userdata);
+}
+
+inline lightusd_status RegisterPackageResolverOwned(
+    AssetResolver& resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy) {
+  return lightusd_asset_resolver_register_package_owned(
+      resolver.get(), extension, callback, userdata, destroy);
 }
 
 inline lightusd_status UnregisterPackageResolver(AssetResolver& resolver,

@@ -340,9 +340,10 @@ typedef struct lightusd_load_options {
   size_t variant_override_count;
   lightusd_load_progress_fn progress_callback;
   void* progress_userdata;
-  /* Optional borrowed resolver for composed loads. Its active context is
-   * snapshotted into a private resolver copy, so composition workers inherit
-   * the context. Requires struct_size to cover this field. */
+  /* Optional borrowed resolver for composed loads; it must outlive the load
+   * call. Its active context is snapshotted into a private resolver copy, so
+   * composition workers inherit the context. Requires struct_size to cover
+   * this field. */
   struct lightusd_asset_resolver* resolver;
 } lightusd_load_options;
 
@@ -464,10 +465,23 @@ typedef int (*lightusd_scheme_resolver_callback)(
 typedef int (*lightusd_scheme_reader_callback)(
     void* userdata, const char* resolved_identifier, uint8_t** data,
     size_t* size);
+/* Optional release hook for owned registrations. Called once after the last
+ * in-flight callback finishes and the handler is unregistered/destroyed. It
+ * may run on a worker thread, so it must be thread-safe. */
+typedef void (*lightusd_userdata_destroy_fn)(void* userdata);
+/* Borrowed registration: `userdata` must outlive the registration/resolver.
+ * The resolver invokes callbacks from worker threads, so userdata and callback
+ * state must be thread-safe. */
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_scheme(
     lightusd_asset_resolver* resolver, const char* scheme,
     lightusd_scheme_resolver_callback resolver_callback,
     lightusd_scheme_reader_callback reader_callback, void* userdata);
+/* Owned variant: `destroy` releases `userdata` once no callback can use it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_scheme_owned(
+    lightusd_asset_resolver* resolver, const char* scheme,
+    lightusd_scheme_resolver_callback resolver_callback,
+    lightusd_scheme_reader_callback reader_callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_scheme(
     lightusd_asset_resolver* resolver, const char* scheme);
 
@@ -486,6 +500,7 @@ LIGHTUSD_API lightusd_sv lightusd_resolver_context_string(
 LIGHTUSD_API lightusd_status lightusd_resolver_context_set_scheme(
     lightusd_resolver_context* context, const char* scheme,
     const char* scheme_context);
+/* The returned view remains valid until the context is modified or destroyed. */
 LIGHTUSD_API lightusd_sv lightusd_resolver_context_get_scheme(
     const lightusd_resolver_context* context, const char* scheme);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_bind_context(
@@ -512,9 +527,15 @@ LIGHTUSD_API void lightusd_resolver_cache_scope_destroy(
 typedef int (*lightusd_package_resolver_callback)(
     void* userdata, const char* package_path, const char* asset_path,
     const char** resolved);
+/* Borrowed registration: `userdata` must outlive the registration/resolver. */
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_package(
     lightusd_asset_resolver* resolver, const char* extension,
     lightusd_package_resolver_callback callback, void* userdata);
+/* Owned variant: `destroy` releases `userdata` once no callback can use it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_package_owned(
+    lightusd_asset_resolver* resolver, const char* extension,
+    lightusd_package_resolver_callback callback, void* userdata,
+    lightusd_userdata_destroy_fn destroy);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_package(
     lightusd_asset_resolver* resolver, const char* extension);
 

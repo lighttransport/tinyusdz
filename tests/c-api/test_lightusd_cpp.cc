@@ -4,9 +4,11 @@
 #if defined(LIGHTUSD_TEST_RENDER_API)
 #include "lightusd-render-cpp.hh"
 #endif
+#include <atomic>
 #include <cassert>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -153,6 +155,26 @@ int main() {
          LIGHTUSD_ERR_NOT_FOUND);
   assert(ReadResolvedAsset(resolver, "test:asset.bin", &resolved_asset) ==
          LIGHTUSD_ERR_IO);
+
+  // Alias reads happen from composition workers; concurrent updates must be
+  // synchronized even though the test does not assert a particular value.
+  assert(SetAssetAlias(resolver, "alias.usda", "test:asset.bin") ==
+         LIGHTUSD_OK);
+  std::atomic<bool> stop_alias{false};
+  std::thread alias_reader([&]() {
+    while (!stop_alias.load(std::memory_order_relaxed)) {
+      String ignored;
+      (void)ResolveAsset(resolver, "alias.usda", "", &ignored);
+    }
+  });
+  for (int i = 0; i < 1024; ++i) {
+    assert(SetAssetAlias(resolver, "alias.usda",
+                         (i & 1) ? "test:asset.bin" : "test:missing.bin") ==
+           LIGHTUSD_OK);
+  }
+  stop_alias.store(true, std::memory_order_relaxed);
+  alias_reader.join();
+
   Prim retained;
   {
     Stage memory_stage;

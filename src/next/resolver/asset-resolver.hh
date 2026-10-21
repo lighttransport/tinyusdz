@@ -72,6 +72,8 @@ struct ResolverContext {
   void SetSchemeContext(const std::string& scheme,
                         const std::string& context);
   std::string GetSchemeContext(const std::string& scheme) const;
+  /// Borrowed pointer into scheme_contexts, or null when absent.
+  const std::string* FindSchemeContext(const std::string& scheme) const;
 };
 
 /// Asset metadata.
@@ -378,6 +380,7 @@ private:
 
   void NormalizeConfigContext();
   const std::vector<std::string>& EffectiveSearchPaths() const;
+  std::string CurrentSchemeContext(const std::string& scheme) const;
   PackageResolverCallback FindPackageResolver(
       const std::string& package_file) const;
 

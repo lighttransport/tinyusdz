@@ -187,6 +187,31 @@ void TestContexts() {
           "scheme resolver falls back when no scheme context is bound");
   }
 
+  // A callback may unbind its own context; the context string passed to it
+  // must remain valid for the duration of the callback.
+  {
+    AssetResolver reentrant;
+    void* reentrant_binding = nullptr;
+    reentrant.RegisterScheme(
+        "reentrant",
+        ContextResolverCallback(
+            [&](const std::string& identifier, const std::string&,
+                const std::string& context) {
+              reentrant.UnbindContext(ResolverContext{}, &reentrant_binding);
+              return context + ":" + identifier;
+            }));
+    ResolverContext reentrant_ctx = reentrant.CreateDefaultContext();
+    reentrant_ctx.SetSchemeContext("reentrant", "live");
+    reentrant.BindContext(reentrant_ctx, &reentrant_binding);
+    CHECK(reentrant_binding != nullptr,
+          "reentrant scheme context is bound before resolution");
+    CHECK(reentrant.Resolve("reentrant:asset.usda").resolved_path ==
+              "live:reentrant:asset.usda",
+          "scheme context survives re-entrant unbind during the callback");
+    CHECK(reentrant_binding == nullptr,
+          "callback unbind clears its binding token");
+  }
+
   const ResolverContext default_ctx = resolver.CreateDefaultContext();
   resolver.BindContext(default_ctx);
   CHECK(resolver.Resolve("tex.usda").resolved_path ==
@@ -380,6 +405,22 @@ void TestAssetInfoAndTimestamp() {
         "replacing a resolved path is detected by device/inode");
   CHECK(!resolver.ReadAsset(payload, &bytes, &read_error),
         "identity-checked ReadAsset rejects a replaced path");
+#endif
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+  const ResolvedAsset package_resolved =
+      resolver.Resolve("bundle.usdz[dir/entry.usda]");
+  CHECK(package_resolved.is_package && package_resolved.has_file_identity,
+        "package resolution captures the package file identity");
+  CHECK(resolver.ReadAsset(package_resolved, &bytes, &read_error) &&
+            bytes == std::vector<uint8_t>({'p', 'a', 'c', 'k', 'a', 'g', 'e'}),
+        "ReadAsset on a package returns the package file bytes");
+  fs::rename(root / "bundle.usdz", root / "bundle.old");
+  WriteText(root / "bundle.usdz", "replaced package");
+  CHECK(!resolver.FileIdentityUnchanged(package_resolved),
+        "replacing a package file is detected by device/inode");
+  CHECK(!resolver.ReadAsset(package_resolved, &bytes, &read_error),
+        "identity-checked package read rejects a replaced package");
 #endif
 
   const AssetTimestamp timestamp =

@@ -322,11 +322,27 @@ LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
     }
 
     // Re-resolve so the read can validate the file identity captured for this
-    // path; package entry selection still happens in the parser below.
-    ResolvedAsset asset = resolver->Resolve(resolved_path, "", false);
-    if (asset.resolved_path.empty()) asset.resolved_path = resolved_path;
+    // path. Package identifiers are split first so the package resolver is not
+    // invoked twice; entry selection still happens in the parser below.
+    std::string read_path = resolved_path;
+    if (AssetResolver::IsPackagePath(resolved_path)) {
+      std::string package_file;
+      std::string entry_name;
+      if (AssetResolver::ParsePackagePath(resolved_path, &package_file,
+                                          &entry_name)) {
+        read_path = package_file;
+      }
+    }
+    ResolvedAsset asset = resolver->Resolve(read_path, "", false);
+    if (asset.resolved_path.empty()) asset.resolved_path = read_path;
     std::vector<uint8_t> bytes;
     if (!resolver->ReadAsset(asset, &bytes, error)) {
+      return nullptr;
+    }
+    if (!resolver->FileIdentityUnchanged(asset)) {
+      if (error) {
+        *error += "asset changed while reading: " + resolved_path + "\n";
+      }
       return nullptr;
     }
 

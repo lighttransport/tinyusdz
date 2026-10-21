@@ -15,6 +15,7 @@
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/usdz-writer.hh"
 
+#include <chrono>
 #include <cstring>
 #include <cmath>
 #include <filesystem>
@@ -341,6 +342,60 @@ static void test_resolver_layer_loader_usda_dep(int pcp_threads = 0) {
 }
 
 // Crate roots keep the lazy passthrough path.
+// The resolver-backed loader receives already-resolved paths. A package
+// identifier must be split before the read so the package resolver is not
+// invoked a second time, and the package file identity must still be checked.
+static void test_resolver_layer_loader_package_path() {
+  std::cout << "[MakeResolverLayerLoader + package path]\n";
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() /
+                        ("lightusd-next-usdz-loader-" +
+                         std::to_string(
+                             std::chrono::steady_clock::now()
+                                 .time_since_epoch()
+                                 .count()));
+  fs::create_directories(dir);
+
+  std::vector<uint8_t> crate = MakeCrateBytes(kBaseUSDA);
+  std::vector<uint8_t> zip;
+  const USDZWriteResult written =
+      WriteUSDZFromUSDCToMemory(zip, crate.data(), crate.size());
+  CHECK(written.success && !zip.empty(), "usdz fixture built");
+  const fs::path package_path = dir / "bundle.usdz";
+  {
+    std::ofstream out(package_path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(zip.data()),
+              static_cast<std::streamsize>(zip.size()));
+  }
+
+  int package_callback_calls = 0;
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(dir.string());
+  resolver.RegisterPackageResolver(
+      ".usdz",
+      [&package_callback_calls](const std::string&, const std::string&,
+                                std::string* resolved) {
+        ++package_callback_calls;
+        if (resolved) *resolved = "unused";
+        return true;
+      });
+  const auto loader = pipeline::MakeResolverLayerLoader(&resolver);
+  std::string err;
+  std::unique_ptr<Layer> layer =
+      loader(package_path.string() + "[root.usdc]", &err);
+  CHECK(layer != nullptr,
+        "resolver layer loader reads a package path without the package "
+        "resolver");
+  CHECK(package_callback_calls == 0,
+        "package resolver is not re-invoked for an already-resolved path");
+  if (layer) {
+    layer->build_path_index();
+    CHECK(layer->prim_at_path("/Base") != nullptr,
+          "package entry layer exposes the expected prim");
+  }
+  fs::remove_all(dir);
+}
+
 static void test_memory_flatten_crate_root() {
   std::cout << "[FlattenUSDMemoryToUSDCOwned crate root]\n";
   std::vector<uint8_t> crate = MakeCrateBytes(kBaseUSDA);
@@ -757,6 +812,7 @@ int main() {
   test_resolver_layer_loader_usda_dep(/*pcp_threads=*/1);
   test_resolver_layer_loader_usda_dep(/*pcp_threads=*/4);
   test_memory_flatten_crate_root();
+  test_resolver_layer_loader_package_path();
   test_missing_dep_fails();
 
   if (g_fail) {

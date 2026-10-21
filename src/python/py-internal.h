@@ -224,5 +224,8 @@ int lightusd_register_resolver_types(PyObject* module, lightusd_state* st);
  * an error. */
 lightusd_asset_resolver* lightusd_resolver_handle(lightusd_state* st,
                                                   PyObject* obj);
+/* Clear/restore a resolver's cross-thread callback exception. No-ops for None. */
+void lightusd_resolver_clear_error(PyObject* resolver_obj);
+int lightusd_resolver_restore_error(PyObject* resolver_obj);
 
 #endif /* LIGHTUSD_PY_INTERNAL_H_ */

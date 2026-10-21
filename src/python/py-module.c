@@ -218,10 +218,15 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
 
   lightusd_stage* stage = NULL;
   lightusd_status status;
+  lightusd_resolver_clear_error(resolver_obj);
   Py_BEGIN_ALLOW_THREADS
   status = lightusd_stage_load(path, &opts, &stage);
   Py_END_ALLOW_THREADS
   variants_clear(&vo);
+  if (lightusd_resolver_restore_error(resolver_obj)) {
+    if (stage) lightusd_stage_destroy(stage);
+    return NULL;
+  }
   if (status != LIGHTUSD_OK) return lightusd_raise(st, status, path);
   return lightusd_wrap_stage(st, stage);
 }

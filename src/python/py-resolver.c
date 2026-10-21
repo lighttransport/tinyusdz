@@ -16,46 +16,120 @@
 #define LIGHTUSD_PY_THREAD_LOCAL _Thread_local
 #endif
 
+typedef struct LightUSDResolver LightUSDResolver;
+
 typedef struct {
-  PyObject* type;
-  PyObject* value;
-  PyObject* tb;
-} PendingPythonError;
+  LightUSDResolver* owner;
+  PyObject* resolver;
+  PyObject* reader;
+} PyCallbackSet;
 
-static LIGHTUSD_PY_THREAD_LOCAL PendingPythonError g_package_error;
+struct LightUSDResolver {
+  PyObject_HEAD
+  lightusd_asset_resolver* resolver;
+  PyThread_type_lock error_lock;
+  PyObject* error_type;
+  PyObject* error_value;
+  PyObject* error_tb;
+};
 
-static void clear_package_error(void) {
-  Py_CLEAR(g_package_error.type);
-  Py_CLEAR(g_package_error.value);
-  Py_CLEAR(g_package_error.tb);
+static void clear_resolver_error(LightUSDResolver* owner) {
+  if (!owner || !owner->error_lock) return;
+  PyObject *type = NULL, *value = NULL, *tb = NULL;
+  PyThread_acquire_lock(owner->error_lock, WAIT_LOCK);
+  type = owner->error_type;
+  value = owner->error_value;
+  tb = owner->error_tb;
+  owner->error_type = NULL;
+  owner->error_value = NULL;
+  owner->error_tb = NULL;
+  PyThread_release_lock(owner->error_lock);
+  Py_XDECREF(type);
+  Py_XDECREF(value);
+  Py_XDECREF(tb);
 }
 
-static void capture_package_error(void) {
+static void capture_resolver_error(LightUSDResolver* owner) {
   PyObject *type = NULL, *value = NULL, *tb = NULL;
   PyErr_Fetch(&type, &value, &tb);
   PyErr_NormalizeException(&type, &value, &tb);
-  clear_package_error();
-  g_package_error.type = type;
-  g_package_error.value = value;
-  g_package_error.tb = tb;
+  if (!owner || !owner->error_lock) {
+    Py_XDECREF(type);
+    Py_XDECREF(value);
+    Py_XDECREF(tb);
+    return;
+  }
+  PyObject *old_type = NULL, *old_value = NULL, *old_tb = NULL;
+  PyThread_acquire_lock(owner->error_lock, WAIT_LOCK);
+  old_type = owner->error_type;
+  old_value = owner->error_value;
+  old_tb = owner->error_tb;
+  owner->error_type = type;
+  owner->error_value = value;
+  owner->error_tb = tb;
+  PyThread_release_lock(owner->error_lock);
+  Py_XDECREF(old_type);
+  Py_XDECREF(old_value);
+  Py_XDECREF(old_tb);
 }
 
-static int restore_package_error(void) {
-  if (!g_package_error.type) return 0;
-  PyErr_Restore(g_package_error.type, g_package_error.value,
-                g_package_error.tb);
-  g_package_error.type = NULL;
-  g_package_error.value = NULL;
-  g_package_error.tb = NULL;
+static int restore_resolver_error(LightUSDResolver* owner) {
+  if (!owner || !owner->error_lock) return 0;
+  PyObject *type = NULL, *value = NULL, *tb = NULL;
+  PyThread_acquire_lock(owner->error_lock, WAIT_LOCK);
+  type = owner->error_type;
+  value = owner->error_value;
+  tb = owner->error_tb;
+  owner->error_type = NULL;
+  owner->error_value = NULL;
+  owner->error_tb = NULL;
+  PyThread_release_lock(owner->error_lock);
+  if (!type) {
+    Py_XDECREF(value);
+    Py_XDECREF(tb);
+    return 0;
+  }
+  PyErr_Restore(type, value, tb);
   return 1;
 }
 
-typedef struct {
-  PyObject_HEAD
-  lightusd_asset_resolver* resolver;
-  PyObject* package_callbacks; /* dict[str, callable] */
-  PyObject* scheme_callbacks;  /* dict[str, (resolver, reader)] */
-} LightUSDResolver;
+static PyCallbackSet* make_callback_set(LightUSDResolver* owner,
+                                        PyObject* resolver,
+                                        PyObject* reader) {
+  PyCallbackSet* set = (PyCallbackSet*)calloc(1, sizeof(*set));
+  if (!set) {
+    PyErr_NoMemory();
+    return NULL;
+  }
+  set->owner = owner;
+  if (resolver && resolver != Py_None) {
+    Py_INCREF(resolver);
+    set->resolver = resolver;
+  }
+  if (reader && reader != Py_None) {
+    Py_INCREF(reader);
+    set->reader = reader;
+  }
+  return set;
+}
+
+static void release_callback_set(PyCallbackSet* set) {
+  if (!set) return;
+  Py_XDECREF(set->resolver);
+  Py_XDECREF(set->reader);
+  free(set);
+}
+
+/* Release an owned callback payload once the last in-flight C++ callback copy
+ * is gone. The destructor may run from a resolver/worker thread. */
+static void py_callback_set_destroy(void* userdata) {
+  if (!userdata) return;
+  PyGILState_STATE gil = PyGILState_Ensure();
+  release_callback_set((PyCallbackSet*)userdata);
+  PyGILState_Release(gil);
+}
+
+static PyTypeObject* g_resolver_type = NULL;
 
 typedef struct {
   PyObject_HEAD
@@ -77,6 +151,18 @@ typedef struct {
 
 static LightUSDResolver* resolver_self(PyObject* self) {
   return (LightUSDResolver*)self;
+}
+
+void lightusd_resolver_clear_error(PyObject* obj) {
+  if (!obj || obj == Py_None || !g_resolver_type) return;
+  if (!PyObject_TypeCheck(obj, g_resolver_type)) return;
+  clear_resolver_error((LightUSDResolver*)obj);
+}
+
+int lightusd_resolver_restore_error(PyObject* obj) {
+  if (!obj || obj == Py_None || !g_resolver_type) return 0;
+  if (!PyObject_TypeCheck(obj, g_resolver_type)) return 0;
+  return restore_resolver_error((LightUSDResolver*)obj);
 }
 
 lightusd_asset_resolver* lightusd_resolver_handle(lightusd_state* st,
@@ -114,8 +200,8 @@ static int normalize_extension(const char* extension, char* out, size_t cap) {
 
 /* C API copies the string immediately after the callback returns; keep the
  * Python result alive long enough by copying into thread-local storage. */
-static _Thread_local char g_package_result[4096];
-static _Thread_local char g_scheme_result[4096];
+static LIGHTUSD_PY_THREAD_LOCAL char g_package_result[4096];
+static LIGHTUSD_PY_THREAD_LOCAL char g_scheme_result[4096];
 
 static int normalize_scheme_name(const char* scheme, char* out, size_t cap) {
   if (!scheme || !out || cap == 0) return 0;
@@ -130,29 +216,24 @@ static int normalize_scheme_name(const char* scheme, char* out, size_t cap) {
   return 1;
 }
 
-static int py_scheme_resolver_callback(void* userdata, const char* identifier,
-                                       const char* anchor_path,
-                                       const char* scheme_context,
-                                       const char** resolved) {
-  PyObject* callbacks = (PyObject*)userdata;
-  if (!callbacks || !PyTuple_Check(callbacks) ||
-      PyTuple_Size(callbacks) < 2 || !resolved) {
-    return 0;
-  }
-  PyObject* callable = PyTuple_GetItem(callbacks, 0);
-  if (!callable || callable == Py_None) return 0;
+static int py_scheme_resolver_callback_impl(
+    void* userdata, const char* identifier, const char* anchor_path,
+    const char* scheme_context, const char** resolved) {
+  PyCallbackSet* set = (PyCallbackSet*)userdata;
+  if (!set || !set->resolver || !resolved) return 0;
+  PyObject* callable = set->resolver;
   PyObject* result = PyObject_CallFunction(
       callable, "sss", identifier, anchor_path ? anchor_path : "",
       scheme_context ? scheme_context : "");
   if (!result) {
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   if (!PyUnicode_Check(result)) {
     Py_DECREF(result);
     PyErr_SetString(PyExc_TypeError,
                     "scheme resolver callback must return str");
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   PyObject* utf8 = NULL;
@@ -160,7 +241,7 @@ static int py_scheme_resolver_callback(void* userdata, const char* identifier,
   if (!text) {
     Py_XDECREF(utf8);
     Py_DECREF(result);
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   const size_t n = strlen(text);
@@ -176,39 +257,47 @@ static int py_scheme_resolver_callback(void* userdata, const char* identifier,
   return 1;
 }
 
-static int py_scheme_reader_callback(void* userdata, const char* identifier,
-                                     uint8_t** data, size_t* size) {
-  PyObject* callbacks = (PyObject*)userdata;
-  if (!callbacks || !PyTuple_Check(callbacks) ||
-      PyTuple_Size(callbacks) < 2 || !data || !size) {
-    return 0;
-  }
-  PyObject* callable = PyTuple_GetItem(callbacks, 1);
-  if (!callable || callable == Py_None) return 0;
+static int py_scheme_resolver_callback(void* userdata, const char* identifier,
+                                       const char* anchor_path,
+                                       const char* scheme_context,
+                                       const char** resolved) {
+  PyGILState_STATE gil = PyGILState_Ensure();
+  const int result = py_scheme_resolver_callback_impl(
+      userdata, identifier, anchor_path, scheme_context, resolved);
+  PyGILState_Release(gil);
+  return result;
+}
+
+static int py_scheme_reader_callback_impl(void* userdata,
+                                          const char* identifier,
+                                          uint8_t** data, size_t* size) {
+  PyCallbackSet* set = (PyCallbackSet*)userdata;
+  if (!set || !set->reader || !data || !size) return 0;
+  PyObject* callable = set->reader;
   *data = NULL;
   *size = 0;
   PyObject* result = PyObject_CallFunction(callable, "s", identifier);
   if (!result) {
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   PyObject* bytes = PyBytes_FromObject(result);
   Py_DECREF(result);
   if (!bytes) {
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   char* raw = NULL;
   Py_ssize_t n = 0;
   if (PyBytes_AsStringAndSize(bytes, &raw, &n) != 0) {
     Py_DECREF(bytes);
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   if (n < 0) {
     Py_DECREF(bytes);
     PyErr_SetString(PyExc_ValueError, "invalid scheme reader payload");
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   if (n > 0) {
@@ -216,7 +305,7 @@ static int py_scheme_reader_callback(void* userdata, const char* identifier,
     if (!buffer) {
       Py_DECREF(bytes);
       PyErr_NoMemory();
-      capture_package_error();
+      capture_resolver_error(set->owner);
       return 0;
     }
     memcpy(buffer, raw, (size_t)n);
@@ -227,14 +316,25 @@ static int py_scheme_reader_callback(void* userdata, const char* identifier,
   return 1;
 }
 
-static int py_package_callback(void* userdata, const char* package_path,
-                               const char* asset_path, const char** resolved) {
-  PyObject* callable = (PyObject*)userdata;
-  if (!callable || !resolved) return 0;
+static int py_scheme_reader_callback(void* userdata, const char* identifier,
+                                     uint8_t** data, size_t* size) {
+  PyGILState_STATE gil = PyGILState_Ensure();
+  const int result =
+      py_scheme_reader_callback_impl(userdata, identifier, data, size);
+  PyGILState_Release(gil);
+  return result;
+}
+
+static int py_package_callback_impl(void* userdata, const char* package_path,
+                                    const char* asset_path,
+                                    const char** resolved) {
+  PyCallbackSet* set = (PyCallbackSet*)userdata;
+  if (!set || !set->resolver || !resolved) return 0;
+  PyObject* callable = set->resolver;
   PyObject* result =
       PyObject_CallFunction(callable, "ss", package_path, asset_path);
   if (!result) {
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   if (result == Py_None) {
@@ -245,7 +345,7 @@ static int py_package_callback(void* userdata, const char* package_path,
     Py_DECREF(result);
     PyErr_SetString(PyExc_TypeError,
                     "package resolver callback must return str or None");
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   PyObject* utf8 = NULL;
@@ -253,7 +353,7 @@ static int py_package_callback(void* userdata, const char* package_path,
   if (!text) {
     Py_XDECREF(utf8);
     Py_DECREF(result);
-    capture_package_error();
+    capture_resolver_error(set->owner);
     return 0;
   }
   const size_t n = strlen(text);
@@ -270,6 +370,15 @@ static int py_package_callback(void* userdata, const char* package_path,
   return 1;
 }
 
+static int py_package_callback(void* userdata, const char* package_path,
+                               const char* asset_path, const char** resolved) {
+  PyGILState_STATE gil = PyGILState_Ensure();
+  const int result = py_package_callback_impl(userdata, package_path,
+                                              asset_path, resolved);
+  PyGILState_Release(gil);
+  return result;
+}
+
 /* ============================================================
  * Resolver
  * ============================================================ */
@@ -277,8 +386,11 @@ static int py_package_callback(void* userdata, const char* package_path,
 static void Resolver_dealloc(PyObject* self) {
   LightUSDResolver* r = resolver_self(self);
   lightusd_asset_resolver_destroy(r->resolver);
-  Py_XDECREF(r->package_callbacks);
-  Py_XDECREF(r->scheme_callbacks);
+  clear_resolver_error(r);
+  if (r->error_lock) {
+    PyThread_free_lock(r->error_lock);
+    r->error_lock = NULL;
+  }
   resolver_type_free(self);
 }
 
@@ -292,17 +404,15 @@ static int Resolver_init(PyObject* self, PyObject* args, PyObject* kwds) {
   (void)kwds;
   if (!PyArg_ParseTuple(args, ":AssetResolver")) return -1;
   if (r->resolver) return 0;
-  r->package_callbacks = PyDict_New();
-  if (!r->package_callbacks) return -1;
-  r->scheme_callbacks = PyDict_New();
-  if (!r->scheme_callbacks) {
-    Py_CLEAR(r->package_callbacks);
+  r->error_lock = PyThread_allocate_lock();
+  if (!r->error_lock) {
+    PyErr_NoMemory();
     return -1;
   }
   const lightusd_status status = lightusd_asset_resolver_create(&r->resolver);
   if (status != LIGHTUSD_OK) {
-    Py_CLEAR(r->package_callbacks);
-    Py_CLEAR(r->scheme_callbacks);
+    PyThread_free_lock(r->error_lock);
+    r->error_lock = NULL;
     lightusd_raise(lightusd_state_from_obj(self), status, "create resolver");
     return -1;
   }
@@ -317,7 +427,7 @@ static PyObject* Resolver_resolve_impl(PyObject* self, PyObject* args,
   if (!PyArg_ParseTuple(args, "s|z", &asset_path, &anchor_path)) return NULL;
   lightusd_string* resolved = NULL;
   uint8_t exists = 0, is_package = 0;
-  clear_package_error();
+  clear_resolver_error(r);
   const lightusd_status status =
       for_new
           ? lightusd_asset_resolver_resolve_for_new_asset(
@@ -326,7 +436,7 @@ static PyObject* Resolver_resolve_impl(PyObject* self, PyObject* args,
           : lightusd_asset_resolver_resolve(r->resolver, asset_path,
                                             anchor_path, &resolved, &exists,
                                             &is_package);
-  if (restore_package_error()) {
+  if (restore_resolver_error(r)) {
     lightusd_string_destroy(resolved);
     return NULL;
   }
@@ -511,10 +621,10 @@ static PyObject* Resolver_read(PyObject* self, PyObject* args) {
   const char* identifier = NULL;
   if (!PyArg_ParseTuple(args, "s:read", &identifier)) return NULL;
   lightusd_string* text = NULL;
-  clear_package_error();
+  clear_resolver_error(r);
   const lightusd_status status =
       lightusd_asset_resolver_read(r->resolver, identifier, &text);
-  if (restore_package_error()) {
+  if (restore_resolver_error(r)) {
     lightusd_string_destroy(text);
     return NULL;
   }
@@ -535,8 +645,13 @@ static PyObject* Resolver_dependency_report(PyObject* self, PyObject* args) {
   if (!PyArg_ParseTuple(args, "s:dependency_report", &root)) return NULL;
   lightusd_string* text = NULL;
   uint8_t complete = 0;
+  clear_resolver_error(r);
   const lightusd_status status =
       lightusd_dependency_report_json(r->resolver, root, &text, &complete);
+  if (restore_resolver_error(r)) {
+    lightusd_string_destroy(text);
+    return NULL;
+  }
   if (status != LIGHTUSD_OK) {
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "dependency report");
@@ -592,24 +707,20 @@ static PyObject* Resolver_register_scheme(PyObject* self, PyObject* args,
     PyErr_SetString(PyExc_ValueError, "invalid scheme");
     return NULL;
   }
-  PyObject* callbacks = PyTuple_Pack(2, resolver_obj, reader_obj);
+  PyCallbackSet* callbacks =
+      make_callback_set(r, resolver_obj, reader_obj);
   if (!callbacks) return NULL;
-  const lightusd_status status = lightusd_asset_resolver_register_scheme(
-      r->resolver, scheme,
-      resolver_obj == Py_None ? NULL : py_scheme_resolver_callback,
-      reader_obj == Py_None ? NULL : py_scheme_reader_callback,
-      (void*)callbacks);
+  const lightusd_status status =
+      lightusd_asset_resolver_register_scheme_owned(
+          r->resolver, normalized,
+          resolver_obj == Py_None ? NULL : py_scheme_resolver_callback,
+          reader_obj == Py_None ? NULL : py_scheme_reader_callback,
+          (void*)callbacks, py_callback_set_destroy);
   if (status != LIGHTUSD_OK) {
-    Py_DECREF(callbacks);
+    py_callback_set_destroy(callbacks);
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "register scheme");
   }
-  if (PyDict_SetItemString(r->scheme_callbacks, normalized, callbacks) < 0) {
-    lightusd_asset_resolver_unregister_scheme(r->resolver, normalized);
-    Py_DECREF(callbacks);
-    return NULL;
-  }
-  Py_DECREF(callbacks);
   Py_RETURN_NONE;
 }
 
@@ -628,9 +739,6 @@ static PyObject* Resolver_unregister_scheme(PyObject* self, PyObject* args) {
   if (status != LIGHTUSD_OK) {
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "unregister scheme");
-  }
-  if (PyDict_DelItemString(r->scheme_callbacks, normalized) < 0) {
-    return NULL;
   }
   return PyBool_FromLong(1);
 }
@@ -651,14 +759,14 @@ static PyObject* Resolver_register_package(PyObject* self, PyObject* args) {
     PyErr_SetString(PyExc_ValueError, "invalid package extension");
     return NULL;
   }
-  if (PyDict_SetItemString(r->package_callbacks, normalized, callback) < 0) {
-    return NULL;
-  }
-  const lightusd_status status = lightusd_asset_resolver_register_package(
-      r->resolver, normalized, py_package_callback, (void*)callback);
+  PyCallbackSet* callbacks = make_callback_set(r, callback, NULL);
+  if (!callbacks) return NULL;
+  const lightusd_status status =
+      lightusd_asset_resolver_register_package_owned(
+          r->resolver, normalized, py_package_callback, (void*)callbacks,
+          py_callback_set_destroy);
   if (status != LIGHTUSD_OK) {
-    PyDict_DelItemString(r->package_callbacks, normalized);
-    PyErr_Clear();
+    py_callback_set_destroy(callbacks);
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "register package resolver");
   }
@@ -673,9 +781,6 @@ static PyObject* Resolver_unregister_package(PyObject* self, PyObject* args) {
   if (!normalize_extension(extension, normalized, sizeof(normalized))) {
     PyErr_SetString(PyExc_ValueError, "invalid package extension");
     return NULL;
-  }
-  if (PyDict_DelItemString(r->package_callbacks, normalized) < 0) {
-    PyErr_Clear();
   }
   const lightusd_status status =
       lightusd_asset_resolver_unregister_package(r->resolver, normalized);
@@ -899,6 +1004,7 @@ static PyType_Spec Cache_spec = {
 int lightusd_register_resolver_types(PyObject* module, lightusd_state* st) {
   st->ResolverType = PyType_FromModuleAndSpec(module, &Resolver_spec, NULL);
   if (!st->ResolverType) return -1;
+  g_resolver_type = (PyTypeObject*)st->ResolverType;
   if (PyModule_AddObjectRef(module, "AssetResolver", st->ResolverType) < 0) {
     return -1;
   }

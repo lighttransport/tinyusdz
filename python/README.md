@@ -95,6 +95,10 @@ with resolver.bind_context("/proj/assets", scheme_contexts={"https": "/cache"}):
 stage = lightusd.load("root.usda", resolver=resolver)
 ```
 
+Resolver and package callbacks are retained until replaced, unregistered, or
+the resolver is destroyed. Composition may invoke them from worker threads;
+exceptions raised by callbacks are re-raised by `resolve`, `read`, or `load`.
+
 ## Notes
 
 - Arrays implement Python's read-only buffer protocol. Use `memoryview(array)`
