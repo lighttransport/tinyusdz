@@ -451,6 +451,23 @@ void ValidateIntArrayLengthMatchesRelationship(
              array_prop + " requires relationship " + rel_prop);
     return;
   }
+  if (array_prop == "mjc:path:indices") {
+    // The path relationship is a unique table; indices describe the route,
+    // including repeated visits. Every target must participate in the route.
+    std::set<int32_t> used;
+    for (int32_t index : values) {
+      if (index < 0 || static_cast<size_t>(index) >= target_count) {
+        AddError(result, rule_id, location,
+                 array_prop + " contains an out-of-range target index");
+        return;
+      }
+      used.insert(index);
+    }
+    if (used.size() != target_count)
+      AddError(result, rule_id, location,
+               array_prop + " must cover every path target");
+    return;
+  }
   if (values.size() != target_count) {
     AddError(result, rule_id, location,
              array_prop + " has " + std::to_string(values.size()) +
@@ -479,6 +496,11 @@ void ValidateNumericArrayLengthMatchesRelationship(
     AddError(result, rule_id, location,
              array_prop + " requires relationship " + rel_prop);
     return;
+  }
+  if (array_prop == "mjc:path:coef") {
+    std::vector<int32_t> route;
+    if (GetIntArrayProperty(ps, "mjc:path:indices", &route))
+      target_count = route.size();
   }
   if (values.size() != target_count) {
     AddError(result, rule_id, location,
