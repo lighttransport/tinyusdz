@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <cstring>
 #include <system_error>
 
 #include "../c/lightusd-core-c.h"  // lu_decimal_to_*
@@ -31,7 +33,7 @@ inline bool FastFloatParse(const char* b, const char* e, T* out) {
 }
 
 template <class T>
-inline T FastFloatParseToken(const std::string& s) {
+inline T FastFloatParseToken(std::string_view s) {
   T v = T(0);
   FastFloatParse(s.data(), s.data() + s.size(), &v);
   return v;
@@ -42,7 +44,7 @@ inline T FastFloatParseToken(const std::string& s) {
 // -> 0. A value out of the target range AFTER truncation is a parse error
 // (`uint u = -1.5`, `int i = 1e20`), as are inf/nan. `hi_excl` is exclusive
 // so the bound is an exactly-representable power of two (2^31, 2^32, ...).
-inline bool CoerceFloatTokenToI64(const std::string& s, double lo,
+inline bool CoerceFloatTokenToI64(std::string_view s, double lo,
                                   double hi_excl, int64_t* out) {
   double v = 0.0;
   if (!FastFloatParse(s.data(), s.data() + s.size(), &v)) return false;
@@ -52,7 +54,7 @@ inline bool CoerceFloatTokenToI64(const std::string& s, double lo,
   return true;
 }
 
-inline bool CoerceFloatTokenToU64(const std::string& s, double hi_excl,
+inline bool CoerceFloatTokenToU64(std::string_view s, double hi_excl,
                                   uint64_t* out) {
   double v = 0.0;
   if (!FastFloatParse(s.data(), s.data() + s.size(), &v)) return false;
@@ -66,7 +68,7 @@ inline bool CoerceFloatTokenToU64(const std::string& s, double hi_excl,
 // non-matching Number tokens fall back to the float-coercion path above).
 // Also rejects hex and a sign that doesn't match the type — DecimalTo* would
 // silently stop at the first non-digit instead.
-inline bool IsDecimalIntToken(const std::string& s, bool allow_neg) {
+inline bool IsDecimalIntToken(std::string_view s, bool allow_neg) {
   return lu_is_decimal_int_token(s.data(), s.size(), allow_neg ? 1 : 0) != 0;
 }
 
@@ -89,6 +91,32 @@ inline bool DecimalToI64Checked(const char* s, int64_t* out) {
 
 inline bool DecimalToU64Checked(const char* s, uint64_t* out) {
   return lu_decimal_to_u64_checked(s, out) != 0;
+}
+
+// The C decimal routines require a terminator. Ordinary numeric tokens fit on
+// the stack; retain their exact saturation/overflow behavior for long tokens.
+template <class Fn>
+inline auto WithTerminatedNumber(std::string_view s, Fn fn) -> decltype(fn("")) {
+  char buffer[64];
+  if (s.size() < sizeof(buffer)) {
+    std::memcpy(buffer, s.data(), s.size());
+    buffer[s.size()] = '\0';
+    return fn(buffer);
+  }
+  const std::string owned(s);
+  return fn(owned.c_str());
+}
+inline bool DecimalToI64Checked(std::string_view s, int64_t* out) {
+  return WithTerminatedNumber(s, [out](const char* p) { return DecimalToI64Checked(p, out); });
+}
+inline bool DecimalToU64Checked(std::string_view s, uint64_t* out) {
+  return WithTerminatedNumber(s, [out](const char* p) { return DecimalToU64Checked(p, out); });
+}
+inline int32_t DecimalToI32(std::string_view s) {
+  return WithTerminatedNumber(s, [](const char* p) { return DecimalToI32(p); });
+}
+inline uint32_t DecimalToU32(std::string_view s) {
+  return WithTerminatedNumber(s, [](const char* p) { return DecimalToU32(p); });
 }
 
 }  // namespace value_parser_detail

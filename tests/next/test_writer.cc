@@ -311,12 +311,20 @@ void test_array_range_split_parity() {
   // Non-chunkable types report false.
   {
     PrintOptions opts;
-    assert(!IsChunkableArray(Value::MakeTokenArray({"a", "b"}), opts));
     assert(!IsChunkableArray(Value::MakeBoolArray({true, false}), opts));
     assert(!IsChunkableArray(Value(42), opts));  // scalar
     PrintOptions trunc;
     trunc.max_array_elements = 2;
     assert(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
+  }
+
+  // String-backed arrays use the same escaping and delimiters at every cut.
+  for (TypeId type : {TypeId::String, TypeId::Token, TypeId::AssetPath,
+                      TypeId::PathExpression}) {
+    std::vector<std::string> strings = {
+        "", "a", "quote\"here", "line\nfeed", "back\\slash", "a@b@@@c"};
+    check_range_reconstruction(Value::MakeStringLikeArray(strings, type),
+                               {1, 2, 4, 5});
   }
 
   // Invalid caller-supplied ranges must fail before indexing or emitting any
@@ -683,6 +691,16 @@ void test_parallel_writer_parity() {
     layer.begin_prim("mesh_" + std::to_string(g), "Mesh");
     layer.add_property("points", Value::MakeFloat3Array(std::move(pts)));
     layer.add_property("indices", Value::MakeIntArray(std::move(idx)));
+    if (g == 0) {
+      std::vector<std::string> strings(kPts);
+      for (size_t i = 0; i < strings.size(); ++i)
+        strings[i] = "quoted\"\\\n@" + std::to_string(i);
+      for (TypeId type : {TypeId::String, TypeId::Token, TypeId::AssetPath,
+                          TypeId::PathExpression}) {
+        layer.add_property("strings_" + std::to_string(static_cast<int>(type)),
+                           Value::MakeStringLikeArray(strings, type));
+      }
+    }
     layer.end_prim();
   }
   layer.finalize();

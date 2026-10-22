@@ -104,7 +104,7 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
     // Array elements never start with `[` (the element type is scalar or
     // tuple), so a `[` after the op keyword is always an index reference.
     auto next_is_index = [&]() {
-      return lexer.peek().type == TokenType::OpenBracket;
+      return lexer.peek_view().type == TokenType::OpenBracket;
     };
 
     std::string op;
@@ -168,7 +168,7 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
                                     : ArrayEditOpRec::MaxSize;
       op = kw + " " + n.value;
       lexer.next();
-      if (kw != "maxsize" && lexer.peek().type == TokenType::Identifier &&
+      if (kw != "maxsize" && lexer.peek_view().type == TokenType::Identifier &&
           lexer.peek().value == "fill") {
         lexer.next();
         std::string f;
@@ -342,7 +342,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Reorder) {
       lexer_->next();
-      if (lexer_->peek().type == TokenType::Rel) {
+      if (lexer_->peek_view().type == TokenType::Rel) {
         if (!ParseRelationship(PrimSpec::RelationshipListOp::Reorder,
                                /*explicit_list=*/false)) return false;
         continue;
@@ -366,7 +366,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
         tok.type == TokenType::Delete || tok.type == TokenType::Add) {
       TokenType op_tok = tok.type;
       lexer_->next();
-      if (lexer_->peek().type == TokenType::Rel) {
+      if (lexer_->peek_view().type == TokenType::Rel) {
         PrimSpec::RelationshipListOp op = PrimSpec::RelationshipListOp::Append;
         if (op_tok == TokenType::Prepend) {
           op = PrimSpec::RelationshipListOp::Prepend;
@@ -447,7 +447,7 @@ bool AsciiParser::Impl::ParseAttribute(
     }
   }
 
-  if (lexer_->peek().type == TokenType::Rel) {
+  if (lexer_->peek_view().type == TokenType::Rel) {
     uint16_t rflags = 0;
     if (is_custom) rflags |= PropSlot::kFlagCustom;
     if (is_uniform) rflags |= PropSlot::kFlagUniform;

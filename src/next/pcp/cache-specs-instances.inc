@@ -24,6 +24,17 @@
   // InvalidateLayer -> the cache is cleared there (Invalidate(prim) leaves
   // layer stacks intact, so it stays valid).
   mutable std::deque<StackSpecCache> spec_cache_by_stack_;
+  // Per-stack negative-lookup filter, index-aligned with spec_cache_by_stack_.
+  // Shares its invalidation (cleared wherever the spec cache is cleared) and is
+  // built lazily once the stack has seen enough misses to amortize its union
+  // scan (see Specs()).
+  mutable std::deque<PathHashFilter> path_filter_by_stack_;
+  mutable size_t path_filter_bits_ = 0;  // total filter budget in use
+  mutable size_t prof_path_filter_built_ = 0;
+  mutable size_t prof_path_filter_disabled_ = 0;
+  mutable size_t prof_path_filter_skips_ = 0;
+  mutable size_t prof_path_filter_paths_ = 0;
+  mutable size_t prof_path_filter_build_ns_ = 0;
   // Shared empty result for sites with no authored spec. Most composed prims
   // do not exist in most contributing layers, and caching a negative result
   // would store one key copy per (stack, site) for nothing.
@@ -31,6 +42,8 @@
 
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const ;
+  // Build (or disable) the per-stack path filter from `layer_stacks[stack_idx]`.
+  void BuildPathHashFilter(uint32_t stack_idx) const ;
 
   // Specs() with a per-Src memo: the 2-3 read-side spec lookups per composed prim
   // (ComposeChildNames, IsInstanceable, instance-key, ComposeOpinions) all key on

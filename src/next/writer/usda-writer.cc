@@ -12,6 +12,7 @@
 #include "dtoa.hh"
 #include "usda-format-utils.hh"
 #include "../crate/lazy-array.hh"
+#include "../crate/crate-timing.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
 #include <cstdio>
@@ -93,6 +94,16 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
                             const LayerMeta& meta, const USDAWriteOptions& opts,
                             int nthreads) {
   const PrintOptions po = MakeArrayPrintOpts(opts);
+  CratePhaseTimer timer(opts.enable_timing, "next_usda_write");
+  using Clock = std::chrono::steady_clock;
+  const auto now = [&]() {
+    return opts.enable_timing ? Clock::now() : Clock::time_point{};
+  };
+  const auto elapsed = [&](Clock::time_point start) {
+    return opts.enable_timing
+               ? std::chrono::duration<double, std::milli>(Clock::now() - start).count()
+               : 0.0;
+  };
 
   // Pre-warm the global interning table on the main thread (its lazy init is the
   // only non-reentrant spot on the write path; reads are thread-safe after).
@@ -154,6 +165,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   }
   std::vector<uint32_t>().swap(ev_cost);
   const size_t R = range_begin.size() - 1;
+  timer.lap("skeleton");
 
   // ---- Segment sizing ----
   // Estimated output bytes of a task (~8 chars per scalar component).
@@ -301,6 +313,10 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   // giant unsplittable value) is released instead of pooled.
   std::vector<std::string> buf_pool;
   constexpr size_t kMaxPooledCapacity = 4u * (4u << 20);
+  // Worker sums overlap in time. Update under the scheduler's existing lock.
+  double build_work_ms = 0.0, format_work_ms = 0.0;
+  double writer_wait_ms = 0.0, direct_ms = 0.0;
+  size_t buffered_bytes = 0, peak_buffered_bytes = 0;
 
   auto worker = [&]() {
     std::unique_lock<std::mutex> lk(mu);
@@ -320,12 +336,19 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
           buf_pool.pop_back();
         }
         lk.unlock();
+        const auto format_start = now();
         buf.clear();
         {
           StreamWriter sw(&buf);
           format_segment_to(ro, sg, sw);
         }
+        const double format_ms = elapsed(format_start);
         lk.lock();
+        if (opts.enable_timing) {
+          format_work_ms += format_ms;
+          buffered_bytes += buf.size();
+          peak_buffered_bytes = std::max(peak_buffered_bytes, buffered_bytes);
+        }
         slot.buf = std::move(buf);
         slot.state = 1;
         cv_writer.notify_one();
@@ -334,8 +357,11 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
       if (next_build < R && next_build < writing_range + kBuildAhead) {
         const size_t r = next_build++;
         lk.unlock();
+        const auto build_start = now();
         build_range(r);
+        const double build_ms = elapsed(build_start);
         lk.lock();
+        build_work_ms += build_ms;
         built[r] = 1;
         bool published = false;
         while (next_pub < R && built[next_pub]) {
@@ -369,22 +395,31 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   for (size_t r = 0; r < R; ++r) {
     RangeOut& ro = range_out[r];
     {
+      const auto wait_start = now();
       std::unique_lock<std::mutex> lk(mu);
       cv_writer.wait(lk, [&]() { return next_pub > r; });
+      writer_wait_ms += elapsed(wait_start);
     }
     const size_t nseg = ro.segs.size();
     for (size_t j = 0; j < nseg; ++j, ++g) {
       uint8_t state = 0;
       std::string buf;
       {
+        const auto wait_start = now();
         std::unique_lock<std::mutex> lk(mu);
         cv_writer.wait(lk, [&]() { return order[g].state != 0; });
+        writer_wait_ms += elapsed(wait_start);
         state = order[g].state;
-        if (state == 1) buf = std::move(order[g].buf);
+        if (state == 1) {
+          buf = std::move(order[g].buf);
+          if (opts.enable_timing) buffered_bytes -= buf.size();
+        }
       }
       const Segment& sg = ro.segs[j];
       if (state == 2) {
+        const auto direct_start = now();
         format_segment_to(ro, sg, os);
+        direct_ms += elapsed(direct_start);
       } else {
         os.write(buf.data(), buf.size());
       }
@@ -412,6 +447,15 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   }
 
   for (auto& th : pool) th.join();
+  timer.lap("pipeline");
+  if (opts.enable_timing) {
+    LIGHTUSD_LOG_I("[next_usda_write] build_work=" << build_work_ms
+                   << "ms format_work=" << format_work_ms
+                   << "ms writer_wait=" << writer_wait_ms
+                   << "ms direct=" << direct_ms << "ms ranges=" << R
+                   << " segments=" << g << " ready_buffer_peak_bytes="
+                   << peak_buffered_bytes);
+  }
 }
 
 #endif  // LIGHTUSD_ENABLE_THREAD

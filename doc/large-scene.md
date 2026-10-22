@@ -1356,8 +1356,14 @@ threads on, the source warm covers the whole namespace up front
 serial structure walk then consumes cache hits. On the proxy scene the compose
 is **4–5× faster** and the USDA write **9× faster**; on the full-LOD district
 the compose is **~1.8× faster**. The crate (USDC) write does not speed up
-much (9.1 s → 9.3 s on the proxy) because its serial token/string interning
-pre-pass dominates, while the parallel ASCII (USDA) writer does.
+much (9.1 s → 9.3 s on the proxy) because **its serial `BuildFieldsAndSpecs`
+pass dominates**, not the token/string interning pre-pass: on the proxy the
+pre-pass (`tables`) takes only 0.22–0.34 s of a 9.2–9.8 s write, while
+`fields_specs` takes 7.3–10.5 s (`PATHS` 0.8–1.0 s, `structural_payloads`
+0.3–0.4 s). `BuildFieldsAndSpecs` walks the composed specs serially
+(~15 µs/spec at the proxy's 499,915 specs, ~9 µs/spec for the district's
+4.46 M), so the crate write is the next target; the parallel ASCII (USDA)
+writer already hides its build behind workers.
 
 **The full-island case fits in RAM — and now completes.** With the whole
 island promoted to `districtLod = full` (all 45 districts) the next-core loader
@@ -1379,7 +1385,8 @@ not the worker count, dominates). **Re-measure the whole-island full-LOD case
 before using the threaded build for it** — single-threaded it peaks at ~59 GiB,
 and the threaded warm phase is expected to add a large multiple of that.
 
-**Where the compose time goes** (instrumented on the full-LOD district case):
+**Historical Debug measurements** (instrumented on the full-LOD district
+case; these are not Release optimization baselines):
 
 | Phase | Time | Note |
 |---|---:|---|
@@ -1393,6 +1400,11 @@ For the whole island the same phases scale to `sources` 20.5 min, `structure`
 `fields_specs` alone is 27 min for 61.8 M specs), so both the compose and the
 writer are linear in the composed prim count.
 
+The later Release handoff measured district `fields_specs` at **10.4–10.6 s**
+and total crate write at **17.7–18.2 s**, rather than the 41–42 s field pass
+above. Compare binaries from the same build configuration and paired runs;
+allocator, thread policy, and teardown materially affect these measurements.
+
 **What the per-prim cost actually is** (correcting an earlier reading of these
 numbers): `ExpandList` calls `ExpandArcs` 7,057,537 times for 735,484 nodes
 (≈9.6 per node). Those are **not** redundant re-expansions of the same arcs —
@@ -1403,17 +1415,52 @@ find no spec at that site** (the prim does not exist in that layer) and return
 after a single lookup; those negative lookups cost 10.7–14.1 s of the ~55 s
 spent in `ExpandArcs`.
 
-Two follow-ups follow from that (not done in this pass):
-1. *Cheap negative lookups (safe).* Answer "does any layer of this stack have a
-   spec at this site?" with one probe against a per-stack union of path hashes,
-   instead of one `unordered_map<string,uint32_t>` probe per layer. The filter is
-   exact (a hash collision only costs the old per-layer probes), so which specs
-   are found does not change.
+One follow-up remains after the filter below landed; the other is still open:
+
+1. *Cheap negative lookups (safe) — landed 2026-10-22.* Answer "does any layer
+   of this stack have a spec at this site?" with one probe against a per-stack
+   Bloom filter over the union of authored prim-path hashes, instead of one
+   `unordered_map<string,uint32_t>` probe per layer. The filter is exact (a
+   hash collision only costs the old per-layer probes), so which specs are
+   found does not change. See the A/B below.
 2. *Arc-free ancestor reuse (semantics-sensitive).* Reusing a parent's
    already-expanded result for a child that authors no arcs of its own would
    remove the O(n·depth) expansion term entirely, but it must preserve the
    exact strength ordering and the implied-class re-rooting rules, so it needs
    the pxr parity gate before it can land.
+
+**Landed: per-stack negative-lookup filter (2026-10-22).** `Cache::Impl::Specs()`
+now keeps one `PathHashFilter` per layer stack: a 2-probe Bloom filter over
+every prim path authored by any layer in the stack. It is built lazily after a
+stack has seen enough negative cache misses to amortize the union scan
+(`max(24, paths / (8 × layers))` misses), capped at 2 MiB per stack and 32 MiB
+in total, and is cleared wherever `spec_cache_by_stack_` is cleared
+(`InvalidateLayer`, layer reload, transient-cache trim). Below three layers a
+filter only builds if the stack is queried heavily enough to amortize it, so
+small reference stacks do not pay for one. A false positive falls through to
+the old probes; a negative is answered with two bit tests.
+
+Measured with the same Caldera fixtures (SHA-256 of every output unchanged):
+
+| Case | metric | before | after |
+|---|---|---:|---:|
+| proxy LOD, payloads loaded | load+compose | 3.62 s | 3.16 s |
+| | `structure` | 1.49 s | 0.90 s |
+| | `compose` | 1.31 s | 0.85 s |
+| one district, deferred (424,104 nodes) | load+compose | 44.7 s | 33.4–36.2 s |
+| | `structure` | 14.54 s | 10.7–12.0 s |
+| | `compose` | 11.73 s | 8.7–9.3 s |
+| one district, full LOD (735,484 nodes) | `structure` | 29.06 s | 26.74 s |
+| | `compose` | 22.10 s | 19.94 s |
+| | build_stage | 55.0 s | 51.9 s |
+
+Filters are cheap: on the deferred district 872 stacks built one, inserting
+**170,522** path entries in **35 ms** total and using **305 KiB**. The root
+stack alone answers ~3.3 M negative lookups on the deferred district (719 k on
+the full-LOD loaded case). The phase numbers are 8–10% faster on the full-LOD
+case; the 25% deferred `structure` gain is partly warm-cache variance between
+runs. Wall-clock totals on the full district (163.7 s → 161.4 s) stay dominated
+by the crate write.
 
 **Landed in this pass (measured, A/B):**
 
@@ -1427,6 +1474,7 @@ Two follow-ups follow from that (not done in this pass):
 | Composition: per-ancestor source keys are built once and reused | fewer string allocations per composed prim |
 | Composition: negative spec lookups are no longer cached (one shared empty result) | full-LOD district peak RSS 8.1 → 6.5 GiB; spec-lookup time 14.1 → 10.7 s for 7.4 M lookups |
 | Build: next-core threads default ON for native builds (WASM stays OFF) | proxy compose 4–5× faster, district compose ~1.8× faster, byte-identical output |
+| Composition: per-stack Bloom filter answers negative `Specs()` sites with one probe instead of one per layer | full-LOD district `structure`/`compose` 8–10% faster, deferred structure ~25% faster; output SHA-256 unchanged; 305 KiB of filters on 872 stacks |
 
 Reproduce with:
 
@@ -2275,3 +2323,209 @@ cd build && ./unit-test-lightusd ioutil_asset_path_suffix_candidates_test \
 cd web/js && xvfb-run -a node tests/bench-usdzconvert-browser.mjs --hw \
   --scene <scene-dir> --root <root.usd> --case browser:png:1024
 ```
+
+## 8. Next-core large-scene optimization, October 2026
+
+This pass builds on the existing per-stack negative-spec lookup filter. The
+comparison baseline includes that filter. Release builds use the same compiler,
+`-O3`, thread support, and jemalloc. The baseline library was also rebuilt with
+the current benchmark CLI so raw-layer writes and explicit large-file limits
+can be compared without changing its parsing/composition/writing algorithms;
+its proxy and district USDC hashes match the saved original executable.
+Full-file readback exposed an independent 1 GiB ceiling in the generic blob
+decoder: the full crate's value-representation table expands to 1,413,255,776
+bytes. For subsequent large-file comparisons, a qualification-only baseline
+lifts that codec ceiling after the reader's existing table/budget checks,
+retaining its original temporary-buffer allocation and copy. Its proxy and
+district hashes also match. Reports retain the distinct executable hashes.
+
+Implemented changes:
+
+- Crate writing reuses a consecutive property's parent-path lookup, interns
+  element views directly, reuses the empty hash-table slot found during lookup,
+  and caches inferred type-name token IDs lazily. Authored type names retain
+  their original path, token insertion order is unchanged, and cache state is
+  reset for every write. The optional incremental ancestor-prefix hash patch
+  was tested and dropped: three paired district runs showed no benefit
+  (write median 12.63 s without it, 13.00 s with it).
+- Composition releases each warm worker after its contributions are remapped
+  and merged. Cache teardown pins library-loaded file layers, destroys their
+  borrowers, then releases independent layers in a bounded pool (at most eight
+  workers), synchronously before returning. Caller/preloaded/custom-reader
+  layers retain serial destruction. Explicit serial composition stays serial.
+- One-shot composition reuses a resolved source site's string when it exactly
+  matches the source-cache key, before namespace construction allocates output
+  paths. Mutable cache access restores an owned key first. After the namespace
+  walk, the fill pass retains the address-stable source vectors while dropping
+  their lookup keys and hash index. Cancellation, invalidation and cache reuse
+  retain ordinary lookup semantics; long-lived caches keep their default
+  ownership policy.
+- Automatic parsers inside outer composition loading/warm pools stay serial;
+  explicit parser hints remain honored. Thread hints and crate table limits
+  are forwarded consistently through root, arc, prefetch, sublayer and reload
+  paths. This avoids multiplying automatic reader pools for every loaded file.
+- The crate reader reuses one lazily-created arena across PATHS and stage-build
+  phases, joining and releasing it on every return, including cancellation.
+  Value-representation tables decode directly into their final storage after
+  table-count and memory-budget validation, avoiding a full temporary/copy.
+  An explicit-budget decoder handles large validated tables; the ordinary
+  C decoder retains its 1 GiB default, and reader security defaults remain.
+  The USDA lexer exposes borrowed identifier/number/path tokens for transient
+  parser use; its existing owning-token interface, rewind state, diagnostics,
+  numeric conversions and persistent authored values retain their semantics.
+  Direct owning-token consumption keeps its original scan-and-return path;
+  materializing into cached lookahead first would add an unnecessary copy.
+- USDA range formatting now includes owned string, token, asset-path and
+  path-expression arrays, preserving escaping and document order. The existing
+  decode-once path remains in place. Optional diagnostics distinguish skeleton
+  and pipeline wall time from accumulated build/format worker time and record
+  writer wait, direct-stream time and ready-buffer bytes.
+
+The final small-scene paired run used one warmup and three alternating measured
+pairs, automatic parse/compose/write counts, normal teardown, warm inputs, and
+`/dev/null` output. Times below are medians; RSS is the median process peak.
+The acceptance check uses the largest measured peak for each binary, with a
+maximum 5% growth allowance; all three cases pass.
+
+| Case | Process, baseline → candidate | Load + compose | Write | Peak RSS, GiB |
+|---|---:|---:|---:|---:|
+| Caldera proxy → USDC | 3.27 → 2.98 s | 0.991 → 0.887 s | 1.821 → 1.680 s | 1.71 → 1.68 |
+| Caldera full district → USDC | 34.84 → 26.95 s | 18.22 → 9.73 s | 13.83 → 14.32 s | 18.86 → 15.88 |
+| Caldera full district → USDA | 25.59 → 15.81 s | 20.50 → 10.18 s | 2.385 → 2.381 s | 21.01 → 15.92 |
+
+These are 8.9%, 22.6% and 38.2% end-to-end improvements respectively. The
+district improvement comes from loading/composition/reclamation; this final
+sample does not show a district crate-write speedup. Maximum observed RSS
+ratios are 0.989, 0.799 and 0.800, respectively.
+
+The proxy USDC remains 286,484,306 bytes with SHA-256
+`162c9059a1cc01ff442c8a1fc9d18b0e726fa25d51bd2a4e79813a340035ea54`;
+the district remains 580,261,850 bytes with SHA-256
+`98619c408f717732b2ad7c2a90493303331f2d65f3e86c9656b62ccc877439bc`.
+Each of the three retained writer patches was checked against both hashes
+before the composition/parser work, and the current candidate matches them too.
+The district emits 4,458,013 specs/paths and 7,727,525,276 USDA bytes.
+
+The district USDA timing reports zero direct-stream work for giant compressed
+integer arrays. Its existing shared decode slots already avoid per-chunk
+re-decoding. A new compressed-block formatting scheduler is therefore not
+included without evidence of benefit and a bounded-memory implementation.
+
+The all-45-district full-LOD scale checks use eight composition/writer workers
+and automatic parsing, with normal teardown. Both produce 10,224,245 prims;
+USDC contains 61,833,354 specs/paths and 3,014,654,530 bytes, and direct USDA
+contains 48,719,017,497 bytes. The USDC process peak is 80.76 GiB against the
+matching saved warm baseline's 78.39 GiB (+3.02%); the fresh USDA pair peaks at
+82.89 GiB baseline and 80.60 GiB candidate (-2.76%). Both pass the 5% RSS gate.
+Earlier candidates exceeding that gate were rejected; property-slot reservation
+also increased RSS and was dropped.
+
+These single full-scale comparisons do **not** demonstrate a throughput win.
+USDC elapsed time was 485.03 s baseline and 694.28 s candidate, with 625,469
+versus 910,309 major faults; USDA was 259.14 s and 288.41 s. A separate candidate
+validation write took 131.48 s in `fields_specs`, against 326.55 s in the
+throughput run. Retain these paging-sensitive runs as scale/memory evidence;
+use repeated matching pairs before drawing full-scene speed conclusions. Full
+USDA text exceeds the 48 GB validation-file cap, so its hash is streamed rather
+than retaining the text in shared memory.
+
+The final reader-enabled binary also completed the full USDC scale run with
+the same counts/byte size and a 70.24 GiB process peak (RSS gate passes). This
+run incurred substantial swap and 1,322.50 s elapsed time; completed build
+artifact caches were advised out during the run. Its elapsed time is diagnostic
+only. Per-second RSS/swap/fault samples are retained; a smaller resident peak
+under paging must not be interpreted as the same-sized reduction in allocation.
+
+The full USDC checksum remains
+`a0175bc1292f189afdb4108261cf2b36d9db13129691fdea87e34f873ced9867`.
+OpenUSD and the final next reader both reopen it; next reports all 10,224,245
+prims after decoding the table above 1 GiB. Baseline/candidate raw USDA exports
+from that same crate both contain 48,723,062,524 bytes with SHA-256
+`583e382e228b9278069b8aadfad565c92a20c23b7e2b68c9ebd99c36cd041bca`.
+This raw-export byte comparison is separate from the direct-composition USDA
+throughput case above; crate reconstruction changes the text representation.
+
+Verification for this implementation:
+
+- Standalone Debug and thread-disabled suites: 66 checks each, with the two
+  optional AOUSD corpus checks skipped. ASan/UBSan: 16 focused checks passed
+  with LeakSanitizer disabled because the execution environment uses tracing.
+  TSan: five focused checks passed, including the sparse large-buffer guard.
+- Pinned OpenUSD flatten differential: 718 inputs, no unexpected differences
+  or next errors. The native compatibility script also passes with a local
+  shim for the environment's spurious Node synchronous-spawn `EPERM` on
+  successful zero-exit children; failed exits and signals still propagate.
+- Native Release build passes. Native regression passes 46/47 checks; the
+  generated supported-schema registry/ledger mismatch is present unchanged at
+  `HEAD`, independent of this pass.
+- Both fresh WASM32 products build. The combined serial module required the
+  crate reader's arena member/cleanup to be conditional on thread support.
+  The full web run passes 54 checks; the existing memory64 fidelity test passes
+  on locally available Node 24, and all 67 pinned Menagerie closure models
+  pass. Remaining web gaps are two URDF export parity differences in the
+  current workspace, three browser checks blocked by socket restrictions,
+  and two simulation checks lacking the separate MuJoCo WASM runtime.
+
+The 7.7 GB raw USDA rewrite was extended to seven alternating measured pairs
+after a noisy three-pair result. Parse medians are equal at 5.469 s; total
+process medians are 13.06 s baseline and 13.51 s candidate, with ranges
+12.39–14.07 s and 12.22–15.26 s. Write medians are 4.476 s and 4.568 s; cleanup
+accounts for most of the remaining spread. Maximum RSS differs by less than
+0.01%, and raw USDA bytes remain identical (SHA-256
+`765953e1a9e769ae92d7c0b208e42f31f1efa6a8dd38ecb4cfb018fea5d2e277`).
+This case demonstrates no parser/writer throughput win. The lexer copy fix is
+retained with identical token/rewind semantics, and large string-array range
+support is covered separately by owned-array and threaded escaping tests.
+
+Island follows Caldera in the qualification sequence. With all thread hints
+automatic, process medians are 15.29 → 15.58 s for USDC and 9.35 → 10.66 s for
+USDA. The USDC write itself improves from 10.027 to 9.117 s, but the conservative
+serial inner-parser policy increases load/composition from about 3.4 to 5.0 s.
+Maximum RSS ratios are 0.943 and 0.971. This default-policy result is a throughput
+regression, with a lower resident peak; do not describe it as a scene-load win.
+
+An explicit parser-hint sweep (eight composition workers) measures median
+load/composition of 5.760, 4.229, 3.895 and 3.622 s for auto, two, four and eight
+parser threads. A separate matched baseline/candidate run with
+`--parse-threads 8` (other hints automatic, one warmup, three alternating
+measured pairs) gives:
+
+| Island output | Process, baseline → candidate | Load + compose | Write | Peak RSS, GiB |
+|---|---:|---:|---:|---:|
+| USDC | 15.13 → 14.18 s | 3.361 → 3.350 s | 9.826 → 9.201 s | 4.74 → 4.73 |
+| USDA | 10.73 → 9.15 s | 3.731 → 3.184 s | 4.399 → 4.000 s | 5.37 → 5.28 |
+
+Maximum RSS ratios are 0.998 and 0.989. The tuned candidate matches the default
+scene's exact hashes: USDC is 2,512,205,846 bytes with SHA-256
+`a8f5092209cbcd30841c129354bda0aaae5ea21607f7bd70725ef933d7b2c478`;
+USDA is 10,375,532,893 bytes with SHA-256
+`8fb8b237c0d757f52946d6a3772284facf6521b3e399fb0f6b570f3ec9c87b2b`.
+Both baseline/candidate default exports match too, and the crate reopens with
+next and OpenUSD. The Island timing exposes 1.32 s of direct compressed-int
+streaming within a 3.55 s USDA write. No additional parallel compressed-int
+scheduler is included; this remains a measured follow-up hotspot rather than
+an unverified bounded-buffer implementation.
+
+ALab uses a per-file symlink union of the base package and techvar fragment,
+with all payloads loaded. Its empty baked placeholder stays in the merged
+scene; frame 1004 is tested independently as an authored layer, and the other
+baked frames remain deferred. The merged scene contains 24,466 prims and emits
+732,541,268 USDC bytes or 4,566,009,415 USDA bytes. Repeated process medians are
+1.39 → 1.37 s and 1.40 → 1.38 s respectively: effectively flat at this scale.
+Maximum RSS ratios are 1.002 and 0.993; the candidate's median peaks are 0.985
+and 1.916 GiB.
+
+Merged ALab hashes match baseline/candidate: USDC
+`2f7176c8008f0ae219c58159ef19f3179dab26b2d35073f5fc5aeac174dc7493`
+and USDA
+`f764d58c78cae61a597579fc228e778fe7acb9e749322583f386c0106bc266e7`.
+Both readers reopen the validation crate. Preserved custom Maya metadata
+warnings are retained; no missing-asset load is accepted as a partial scene.
+
+The separate baked frame contains ten prims. Parse, USDC rewrite and USDA
+rewrite medians are 0.15 → 0.15 s, 0.57 → 0.57 s and 3.18 → 3.17 s, with maximum
+RSS ratios 1.001, 1.000 and 1.005. Its matching rewrite hashes are USDC
+`a8d085175ee96b67a66a023b2e1ca1618956562824b27728521e322444731884`
+(3,537,903,797 bytes) and USDA
+`5ca18bdadea9d1f009ce54a01eed4bb967115b091faa1df31890e5b208880819`
+(10,039,453,727 bytes). The rewritten crate reopens with next and OpenUSD.

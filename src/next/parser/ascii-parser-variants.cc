@@ -312,7 +312,7 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
                tok.type == TokenType::Identifier) {
       uint16_t vflags = 0;
       while (true) {
-        TokenType tt = lexer_->peek().type;
+        TokenType tt = lexer_->peek_view().type;
         if (tt == TokenType::Custom) {
           vflags |= PropSlot::kFlagCustom;
           lexer_->next();

@@ -1417,6 +1417,11 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME next_usdcat_options
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-usdcat-options.py
+                    "$<TARGET_FILE:next_usdcat>")
+        set_tests_properties(next_usdcat_options PROPERTIES LABELS "next" TIMEOUT 60)
         add_test(
             NAME next_aousd_generated_tables
             COMMAND ${Python3_EXECUTABLE}

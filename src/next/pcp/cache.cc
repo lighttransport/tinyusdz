@@ -186,6 +186,8 @@ void Cache::TrimTransientCaches() {
   impl_->site_to_indices.clear();
   impl_->index_to_sites.clear();
   impl_->spec_cache_by_stack_.clear();
+  impl_->path_filter_by_stack_.clear();
+  impl_->path_filter_bits_ = 0;
   impl_->arc_target_memo_.clear();
   impl_->prototype_by_key.clear();
   impl_->prototype_of.clear();
@@ -433,9 +435,12 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
     report->issues = cache.GetCompositionIssues();
   }
   const auto t2 = Clock::now();
+  cache = Cache();  // synchronous reclamation belongs to load/compose latency
+  const auto t3 = Clock::now();
   if (timing) {
     LIGHTUSD_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
-                "ms build_stage=" + FormatMilliseconds(ms(t2 - t1)) + "ms");
+                "ms build_stage=" + FormatMilliseconds(ms(t2 - t1)) +
+                "ms reclaim=" + FormatMilliseconds(ms(t3 - t2)) + "ms");
   }
   return ok;
 }
@@ -452,6 +457,7 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
   lopts.usdc_use_mmap = options.usdc_use_mmap;
   lopts.strict_aousd_conformance = options.strict_aousd_conformance;
   lopts.usda_parse_options = options.usda_parse_options;
+  lopts.parse_num_threads = options.usda_parse_options.num_threads;
   if (options.strict_aousd_conformance) {
     lopts.usda_parse_options.strict_aousd_conformance = true;
   }
@@ -679,6 +685,13 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       ParallelWarmSources(root_names, warm_threads, warn, err);
 #endif
     const auto structure_t0 = std::chrono::steady_clock::now();
+    if (options.release_build_sources && sources_cache.size() >= 65536) {
+      // A source's root-space site commonly equals the cache key. Reuse that
+      // stable string before allocating the output's copies of those paths.
+      const size_t borrowed = sources_cache.borrow_site_keys();
+      if (options.enable_timing)
+        LIGHTUSD_LOG_I("[next_lookup] borrowed_keys=" + UIntToStr(borrowed));
+    }
     // Source warming has already discovered the namespace cardinality. Reserve
     // the flattened prim vector once before the structure pass; repeated
     // growth moves large PrimSpec objects and is especially expensive on the
@@ -717,14 +730,23 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       }
     }
     // Opinion-fill pass: compose every slot's opinions, in parallel when
-    // num_threads > 1 (each slot is independent; sources_cache is read-only here).
+    // num_threads > 1 (each slot is independent; resolved vectors stay stable).
     auto fill_t0 = std::chrono::steady_clock::now();
-    FillOpinions(out.get());
-    std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(fill_);
-    // FillOpinions emptied the Src vectors it composed; drop the whole cache
-    // (its path-string keys included) so a later SourcesForPath re-resolves
-    // instead of reading an emptied entry.
-    if (options.release_build_sources) sources_cache.clear();
+    if (options.enable_timing) LIGHTUSD_LOG_I("[next_fill] begin=1");
+    {
+      // Namespace resolution is complete. fill_ borrows the source vectors,
+      // not their lookup keys: keep those vectors address-stable while freeing
+      // the large path-key/hash index before it overlaps the finished stage.
+      std::deque<std::vector<Src>> fill_sources;
+      if (options.release_build_sources)
+        fill_sources = sources_cache.take_values();
+      if (options.enable_timing) LIGHTUSD_LOG_I("[next_fill] lookup_released=1");
+      FillOpinions(out.get());
+      std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(fill_);
+      // Drop any newly resolved entries as before. The transferred vectors
+      // (including shared ones that FillOpinions could not drain) die here.
+      if (options.release_build_sources) sources_cache.clear();
+    }
     const auto fill_t1 = std::chrono::steady_clock::now();
     if (options.enable_timing) {
       prof_compose_ns_ +=
@@ -760,6 +782,13 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
                   "ms source_hits=" + UIntToStr(prof_source_hits_) +
                   " source_misses=" + UIntToStr(prof_source_misses_) +
                   " nodes=" + UIntToStr(prof_structure_nodes_) +
+                  " spec_filter=" + UIntToStr(prof_path_filter_built_) +
+                  " skips=" + UIntToStr(prof_path_filter_skips_) +
+                  " disabled=" + UIntToStr(prof_path_filter_disabled_) +
+                  " filter_build=" +
+                  FormatMilliseconds(prof_path_filter_build_ns_ / 1e6) +
+                  "ms filter_mem=" + UIntToStr(path_filter_bits_ / 8 / 1024) +
+                  "KiB filter_paths=" + UIntToStr(prof_path_filter_paths_) +
                   " flatten=" +
                   FormatMilliseconds(elapsed_ms(flatten_t1 - fill_t1)) +
                   "ms finalize=" +
@@ -1017,10 +1046,12 @@ auto Cache::Impl::ArcLayerLoadOptions() const -> LayerLoadOptions {
     LayerLoadOptions load_opts;
     load_opts.max_memory = options.max_layer_memory;
     load_opts.max_array_elements = options.max_array_elements;
+    load_opts.usdc_limits = options.usdc_limits;
     load_opts.max_archive_entries = options.max_archive_entries;
     load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
     load_opts.usdc_use_mmap = options.usdc_use_mmap;
     load_opts.usda_parse_options = options.usda_parse_options;
+    load_opts.parse_num_threads = options.usda_parse_options.num_threads;
     load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
     return load_opts;
   }
@@ -1085,7 +1116,13 @@ auto Cache::Impl::StartArcLayerPrefetch(ArcLayerPrefetch *pf, int nt) -> void {
     const bool payloads = options.load_payloads && !options.payload_policy &&
                           !options.payload_policy_with_prim &&
                           load_rules_.empty();
-    const LayerLoadOptions load_opts = ArcLayerLoadOptions();
+    LayerLoadOptions load_opts = ArcLayerLoadOptions();
+    // These loads already run in an outer pool. Auto must not multiply that
+    // pool by a parser arena per file; explicit parser counts remain honored.
+    if (load_opts.parse_num_threads <= 0) {
+      load_opts.parse_num_threads = 1;
+      load_opts.usda_parse_options.num_threads = 1;
+    }
     std::vector<ArcLayerPrefetch::Item> seeds;
     const LayerStack &root_stack = layer_stacks[0];
     for (size_t i = 0; i < root_stack.layers.size(); ++i) {
@@ -1348,6 +1385,8 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
       std::unique_ptr<Impl> wp(new Impl());
       wp->resolver = resolver;
       wp->options = options;
+      if (wp->options.usda_parse_options.num_threads <= 0)
+        wp->options.usda_parse_options.num_threads = 1;
       wp->load_rules_ = load_rules_;
       wp->reg_ = reg_;  // borrow the shared, parse-once registry
       wp->root_layer = root_layer;
@@ -1395,6 +1434,9 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
                    seed_pool_count);
       if (warn) *warn += wwarn[static_cast<size_t>(t)];
       if (err) *err += werr[static_cast<size_t>(t)];
+      // All source/mapping references have been adopted or remapped above.
+      // Drop this worker before merging the next, reducing overlapping state.
+      workers[static_cast<size_t>(t)].reset();
     }
     if (prof) {
       auto ms = [](PWClock::time_point a, PWClock::time_point b) {
@@ -1462,10 +1504,16 @@ auto Cache::Impl::PrewarmPrimIndices(const std::vector<Path> &paths, std::string
             LayerLoadOptions load_opts;
             load_opts.max_memory = options.max_layer_memory;
             load_opts.max_array_elements = options.max_array_elements;
+            load_opts.usdc_limits = options.usdc_limits;
             load_opts.max_archive_entries = options.max_archive_entries;
             load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
             load_opts.usdc_use_mmap = options.usdc_use_mmap;
             load_opts.usda_parse_options = options.usda_parse_options;
+            load_opts.parse_num_threads = options.usda_parse_options.num_threads;
+            if (load_opts.parse_num_threads <= 0) {
+              load_opts.parse_num_threads = 1;
+              load_opts.usda_parse_options.num_threads = 1;
+            }
             load_opts.strict_aousd_conformance =
                 options.strict_aousd_conformance;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
@@ -1493,6 +1541,8 @@ auto Cache::Impl::PrewarmPrimIndices(const std::vector<Path> &paths, std::string
           std::unique_ptr<Impl> wp(new Impl());
           wp->resolver = resolver;
           wp->options = options;
+          if (wp->options.usda_parse_options.num_threads <= 0)
+            wp->options.usda_parse_options.num_threads = 1;
           wp->load_rules_ = load_rules_;
           wp->reg_ = reg_;  // borrow the shared, parse-once registry
           wp->root_layer = root_layer;
@@ -1651,6 +1701,8 @@ auto Cache::Impl::InvalidateLayer(const std::string &layer_id) -> void {
     // only in sources_cache entries, cleared just below.) The arc-target memo
     // caches resolved layers, so a dropped/re-parsed layer must re-resolve.
     spec_cache_by_stack_.clear();
+    path_filter_by_stack_.clear();
+    path_filter_bits_ = 0;
     arc_target_memo_.clear();
     // Sources and lazy composed specs can be populated without a PrimIndex, so
     // site_to_indices is not a complete dependency map for them. Be conservative
@@ -1684,10 +1736,12 @@ auto Cache::Impl::ReloadLayer(const std::string &layer_id, std::string *warn,
     LayerLoadOptions load_opts;
     load_opts.max_memory = options.max_layer_memory;
     load_opts.max_array_elements = options.max_array_elements;
+    load_opts.usdc_limits = options.usdc_limits;
     load_opts.max_archive_entries = options.max_archive_entries;
     load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
     load_opts.usdc_use_mmap = options.usdc_use_mmap;
     load_opts.usda_parse_options = options.usda_parse_options;
+    load_opts.parse_num_threads = options.usda_parse_options.num_threads;
     load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
 
     std::shared_ptr<Layer> replacement;
@@ -1724,6 +1778,8 @@ auto Cache::Impl::ReloadLayer(const std::string &layer_id, std::string *warn,
     composed_cache_.clear();
     composed_children_.clear();
     spec_cache_by_stack_.clear();
+    path_filter_by_stack_.clear();
+    path_filter_bits_ = 0;
     arc_target_memo_.clear();
     deferred_payload_prims.clear();
     prototype_by_key.clear();

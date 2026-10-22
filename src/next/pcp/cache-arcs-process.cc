@@ -193,6 +193,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
         load_opts.usdc_use_mmap = options.usdc_use_mmap;
         load_opts.usda_parse_options = options.usda_parse_options;
+        load_opts.parse_num_threads = options.usda_parse_options.num_threads;
         load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
         arc_layer =
             reg_->GetOrLoad(*resolver, evaluated_asset_path, anchor, warn, err,

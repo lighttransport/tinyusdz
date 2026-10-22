@@ -1426,7 +1426,7 @@ ParseResult ParseArrayValueMaybeDeferred(Lexer& lexer, TypeId element_type,
   if (scheduler && !scheduler->failed() && !context.enable_usda_lazy_arrays &&
       IsUsdaArrayLazyCandidate(element_type) &&
       GetDeferredArrayInfo(element_type, &kind, &comps) &&
-      lexer.peek().type == TokenType::OpenBracket) {
+      lexer.peek_view().type == TokenType::OpenBracket) {
     // Same capture ParseArrayValue performs for these element types.
     const char* data = nullptr;
     size_t len = 0;
@@ -1471,7 +1471,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
   // USD allows array-valued attributes to author `None` as a blocked value.
   // Preserve it as a block (not an empty placeholder) so the writer re-emits
   // `= None` rather than collapsing it to a declared-only attribute.
-  if (lexer.peek().type == TokenType::None) {
+  if (lexer.peek_view().type == TokenType::None) {
     lexer.next();
     return ParseResult::Ok(Value::MakeBlock());
   }
@@ -1538,7 +1538,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
   }
 
   // Handle empty array
-  if (lexer.peek().type == TokenType::CloseBracket) {
+  if (lexer.peek_view().type == TokenType::CloseBracket) {
     lexer.next();
     // Return appropriate empty array based on element type
     if (element_type == TypeId::Float || IsFloat3Like(element_type) ||
@@ -1618,9 +1618,9 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
     }
 
     // Check for comma or end
-    if (lexer.peek().type == TokenType::Comma) {
+    if (lexer.peek_view().type == TokenType::Comma) {
       lexer.next();
-    } else if (lexer.peek().type == TokenType::CloseBracket) {
+    } else if (lexer.peek_view().type == TokenType::CloseBracket) {
       lexer.next();
       break;
     } else {

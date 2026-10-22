@@ -61,6 +61,9 @@ struct ParseOptions {
   /// cancels before the parsed Stage is published.
   std::function<bool(const char* phase, size_t current, size_t total)>
       progress_callback;
+
+  /// Opt-in phase diagnostics through the library logger.
+  bool enable_timing = false;
 };
 
 

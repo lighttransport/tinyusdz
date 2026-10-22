@@ -34,6 +34,8 @@ private:
   uint32_t specifier_token_ = 0;
   uint32_t default_token_ = 0;
   uint32_t variability_token_ = 0;
+  // Inferred type tokens are interned lazily to preserve first-use ordering.
+  std::vector<uint32_t> type_name_token_cache_;
 
   // STRINGS: each entry is a token index
   std::vector<uint32_t> string_indices_;

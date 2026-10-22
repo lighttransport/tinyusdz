@@ -147,14 +147,14 @@ ValueWorkerPool* GetValueWorkerPool(int requested_threads) {
 ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
   // Handle None: an authored value block, not "no value". Preserve it as a block
   // so the writer re-emits `= None` (round-trips USDC ValueBlock + USDA `= None`).
-  if (lexer.peek().type == TokenType::None) {
+  if (lexer.peek_view().type == TokenType::None) {
     lexer.next();
     return ParseResult::Ok(Value::MakeBlock());
   }
 
   // Dictionaries have a dedicated recursive parser (no flat ParseFn entry).
   if (expected_type == TypeId::Dictionary ||
-      lexer.peek().type == TokenType::OpenBrace) {
+      lexer.peek_view().type == TokenType::OpenBrace) {
     return ParseDict(lexer);
   }
 

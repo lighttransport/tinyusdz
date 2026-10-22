@@ -83,13 +83,18 @@
     return HashPathText(name, (stem_hash ^ '.') * 1099511628211ull);
   }
 
+  static constexpr size_t kNoPathSlot = static_cast<size_t>(-1);
+
   uint32_t FindPathKey(std::string_view stem, std::string_view name,
-                       uint64_t h) const {
+                       uint64_t h, size_t* empty_slot = nullptr) const {
     if (path_slots_.empty()) return UINT32_MAX;
     const size_t mask = path_slots_.size() - 1;
     for (size_t i = static_cast<size_t>(h) & mask;; i = (i + 1) & mask) {
       const uint32_t slot = path_slots_[i];
-      if (slot == 0) return UINT32_MAX;
+      if (slot == 0) {
+        if (empty_slot) *empty_slot = i;
+        return UINT32_MAX;
+      }
       const uint32_t idx = slot - 1;
       if (path_hashes_[idx] == h && paths_[idx].stem == stem &&
           paths_[idx].name == name) {
@@ -115,14 +120,16 @@
   }
   // Append a new record (views must outlive the write).
   uint32_t AddPathRec(std::string_view stem, std::string_view name,
-                      uint64_t h) {
+                      uint64_t h, size_t slot = kNoPathSlot) {
     if ((paths_.size() + 1) * 2 > path_slots_.size()) {
       ReservePaths(std::max<size_t>(64, (paths_.size() + 1) * 2));
+      slot = kNoPathSlot;  // rehash invalidates the failed lookup's slot
     }
     const uint32_t idx = static_cast<uint32_t>(paths_.size());
     paths_.push_back(PathRec{stem, name});
     path_hashes_.push_back(h);
-    PlacePathSlot(idx);
+    if (slot == kNoPathSlot) PlacePathSlot(idx);
+    else path_slots_[slot] = idx + 1;
     return idx;
   }
 
@@ -130,19 +137,21 @@
   uint32_t InternPath(const std::string& path) {
     const PathRec key = SplitPath(path);
     const uint64_t h = HashPathKey(HashStem(key.stem), key.name);
-    const uint32_t hit = FindPathKey(key.stem, key.name, h);
+    size_t slot = kNoPathSlot;
+    const uint32_t hit = FindPathKey(key.stem, key.name, h, &slot);
     if (hit != UINT32_MAX) return hit;
     path_owned_.push_back(path);
     const PathRec owned = SplitPath(path_owned_.back());
-    return AddPathRec(owned.stem, owned.name, h);
+    return AddPathRec(owned.stem, owned.name, h, slot);
   }
   // Intern a path whose text outlives the write (e.g. a Layer prim path).
   uint32_t InternPathStable(std::string_view path) {
     const PathRec key = SplitPath(path);
     const uint64_t h = HashPathKey(HashStem(key.stem), key.name);
-    const uint32_t hit = FindPathKey(key.stem, key.name, h);
+    size_t slot = kNoPathSlot;
+    const uint32_t hit = FindPathKey(key.stem, key.name, h, &slot);
     if (hit != UINT32_MAX) return hit;
-    return AddPathRec(key.stem, key.name, h);
+    return AddPathRec(key.stem, key.name, h, slot);
   }
   // Intern "<prim_path>.<name>" for stable views, given HashStem(prim_path).
   // Only valid when that concatenation splits back into exactly
@@ -150,9 +159,10 @@
   uint32_t InternPropPath(std::string_view prim_path, uint64_t prim_hash,
                           std::string_view name) {
     const uint64_t h = HashPathKey(prim_hash, name);
-    const uint32_t hit = FindPathKey(prim_path, name, h);
+    size_t slot = kNoPathSlot;
+    const uint32_t hit = FindPathKey(prim_path, name, h, &slot);
     if (hit != UINT32_MAX) return hit;
-    return AddPathRec(prim_path, name, h);
+    return AddPathRec(prim_path, name, h, slot);
   }
   // True when every "<prim_path>.<name>" (name without '/') canonically
   // splits back into (prim_path, name).
@@ -183,8 +193,9 @@
     auto add = [&](std::string_view v) -> bool {
       const PathRec key = SplitPath(v);
       const uint64_t h = HashPathKey(HashStem(key.stem), key.name);
-      if (FindPathKey(key.stem, key.name, h) != UINT32_MAX) return false;
-      AddPathRec(key.stem, key.name, h);
+      size_t slot = kNoPathSlot;
+      if (FindPathKey(key.stem, key.name, h, &slot) != UINT32_MAX) return false;
+      AddPathRec(key.stem, key.name, h, slot);
       return true;
     };
     const size_t orig = paths_.size();

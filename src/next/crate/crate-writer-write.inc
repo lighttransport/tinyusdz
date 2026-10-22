@@ -62,6 +62,7 @@
     // Clear all accumulated table state from previous writes
     tokens_.clear();
     token_to_index_.clear();
+    type_name_token_cache_.clear();
     string_indices_.clear();
     string_to_index_.clear();
     paths_.clear();

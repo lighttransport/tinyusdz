@@ -2450,6 +2450,26 @@ void test_parallel_stage_build_matches_serial() {
   assert(!serial_usda.empty());
   assert(serial_usda == parallel_usda);
   assert(serial_warn == parallel_warn);
+  // Reusing a reader after a late cancellation must retire its arena before
+  // returning, and must not leave stale worker/decode state on the next read.
+  bool cancel = true;
+  CrateReadOptions reuse_opts;
+  reuse_opts.num_threads = 4;
+  reuse_opts.progress_callback = [&](const char* phase, size_t, size_t) {
+    return !(cancel && std::strcmp(phase, "stage") == 0);
+  };
+  CrateReader reused(reuse_opts);
+  assert(!reused.Read(buf.data(), buf.size()).success);
+  cancel = false;
+  auto again = reused.Read(buf.data(), buf.size());
+  assert(again.success);
+  assert(WriteLayerToString(*again.stage.GetRootLayer()) == serial_usda);
+  const uint8_t bad[] = {0, 1, 2};
+  assert(!reused.Read(bad, sizeof(bad)).success);
+  auto final = reused.Read(buf.data(), buf.size());
+  assert(final.success);
+  assert(WriteLayerToString(*final.stage.GetRootLayer()) == serial_usda);
+  assert(WriteLayerToString(*again.stage.GetRootLayer()) == serial_usda);
   std::cout << "  parallel stage build matches serial!\n\n";
 }
 

@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -59,6 +60,12 @@ int main(int argc, char **argv) {
   // WriteLayer. Measures RAW parse and RAW write throughput in isolation, and is
   // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
   bool rewrite_layer = false;
+  bool compose_only = false;
+  enum class OutputFormat { Auto, USDA, USDC };
+  OutputFormat output_format = OutputFormat::Auto;
+  int parse_threads = -1;  // explicit CLI hint overrides the environment
+  size_t max_crate_elements = 0;  // explicit trusted-dataset override only
+  size_t max_memory_bytes = 0;    // zero leaves each mode's existing defaults
   // USDA parse fast paths (default on; byte-identical, serial fallback).
   bool async_arrays = true;
   bool parallel_prims = true;
@@ -78,7 +85,7 @@ int main(int argc, char **argv) {
   // LIGHTUSD_NEXT_NUM_THREADS.) A build without LIGHTUSD_NEXT_ENABLE_THREAD
   // composes serially regardless.
   int compose_threads = -1;
-  // USDA writer threads: 0 = auto (default), 1 = serial, N = fixed. Overrides
+  // Writer threads: 0 = auto (default), 1 = serial, N = fixed. Overrides
   // LIGHTUSD_NEXT_NUM_THREADS for the writer only (output is byte-identical
   // for any count). -1 = not given (fall back to the env / auto).
   int write_threads = -1;
@@ -103,6 +110,45 @@ int main(int argc, char **argv) {
       flatten = true;
     } else if (std::strcmp(argv[i], "--rewrite-layer") == 0) {
       rewrite_layer = true;
+    } else if (std::strcmp(argv[i], "--compose-only") == 0) {
+      compose_only = true;
+      flatten = true;
+    } else if (std::strcmp(argv[i], "--output-format") == 0 && i + 1 < argc) {
+      const char* format = argv[++i];
+      if (std::strcmp(format, "usda") == 0) output_format = OutputFormat::USDA;
+      else if (std::strcmp(format, "usdc") == 0) output_format = OutputFormat::USDC;
+      else {
+        std::fprintf(stderr, "ERR : --output-format must be usda or usdc\n");
+        return 2;
+      }
+    } else if (std::strcmp(argv[i], "--max-memory-mib") == 0 && i + 1 < argc) {
+      char* end = nullptr;
+      const char* arg = argv[++i];
+      const unsigned long long count = std::strtoull(arg, &end, 10);
+      if (*arg < '0' || *arg > '9' || *end || count == 0 || count > SIZE_MAX / 1048576) {
+        std::fprintf(stderr, "ERR : invalid --max-memory-mib\n");
+        return 2;
+      }
+      max_memory_bytes = static_cast<size_t>(count) * 1048576;
+    } else if (std::strcmp(argv[i], "--max-crate-elements") == 0 && i + 1 < argc) {
+      char* end = nullptr;
+      const char* arg = argv[++i];
+      const unsigned long long count = std::strtoull(arg, &end, 10);
+      if (*arg < '0' || *arg > '9' || *end || count == 0 || count > UINT32_MAX) {
+        std::fprintf(stderr, "ERR : --max-crate-elements must be between 1 and 4294967295\n");
+        return 2;
+      }
+      max_crate_elements = static_cast<size_t>(count);
+    } else if (std::strcmp(argv[i], "--parse-threads") == 0 && i + 1 < argc) {
+      char* end = nullptr;
+      const char* arg = argv[++i];
+      const long count = std::strtol(arg, &end, 10);
+      if (end == arg || *end || count < 0 || count > kMaxExecutionThreads) {
+        std::fprintf(stderr, "ERR : --parse-threads must be between 0 and %d\n",
+                     kMaxExecutionThreads);
+        return 2;
+      }
+      parse_threads = static_cast<int>(count);
     } else if (std::strcmp(argv[i], "--no-async-arrays") == 0) {
       async_arrays = false;
     } else if (std::strcmp(argv[i], "--no-parallel-prims") == 0) {
@@ -197,11 +243,14 @@ int main(int argc, char **argv) {
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] [--compose-threads-auto] "
-                         "[--write-threads N] "
+                         "[--parse-threads N] [--write-threads N] "
+                         "[--output-format usda|usdc] [--compose-only] "
                          "[--load-payloads|--defer-payloads] "
                          "[--no-consume-values] "
                          "[--fast-exit] "
                          "[--aousd-strict] "
+                         "[--max-crate-elements N] "
+                         "[--max-memory-mib N] "
                          "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
                          "file.usd[acz]\n");
@@ -213,11 +262,36 @@ int main(int argc, char **argv) {
                          "(rewrite-layer is a compose-free parse->write).\n");
     return 2;
   }
+  if (compose_only && (!flatten || out_path ||
+                       output_format != OutputFormat::Auto)) {
+    std::fprintf(stderr, "ERR : --compose-only cannot be combined with -l or output options\n");
+    return 2;
+  }
+  const bool output_usdc = output_format == OutputFormat::USDC ||
+      (output_format == OutputFormat::Auto && out_path && IsUSDCPath(out_path));
+  if (output_usdc && (!out_path || (!flatten && !rewrite_layer))) {
+    std::fprintf(stderr, "ERR : USDC output requires -o and -f or --rewrite-layer\n");
+    return 2;
+  }
+  if (parse_threads < 0) {
+    const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS");
+    parse_threads = nt ? std::atoi(nt) : 0;
+  }
 
   // Opt-in wall-clock attribution (load+compose vs write). Printed to stderr with
   // a non-"WARN/ERR : " prefix so the corpus categorizer ignores it; off unless
   // LIGHTUSD_NEXT_TIMING is set. Used to prioritize/measure perf work.
   const bool timing = std::getenv("LIGHTUSD_NEXT_TIMING") != nullptr;
+  const auto set_crate_limits = [&](CrateLimits& limits, size_t& array_limit) {
+    if (!max_crate_elements) return;
+    limits.max_tokens = max_crate_elements;
+    limits.max_strings = max_crate_elements;
+    limits.max_fields = max_crate_elements;
+    limits.max_fieldset_indices = max_crate_elements;
+    limits.max_specs = max_crate_elements;
+    limits.max_paths = max_crate_elements;
+    array_limit = max_crate_elements;
+  };
   if (timing) {
     // The next library emits its [next_build]/[next_warm]/[next_compose] timing
     // through lightusd::logging now (not a hardcoded stderr fprintf). Point the
@@ -237,19 +311,18 @@ int main(int argc, char **argv) {
     std::string warn, err;
     // Parse-thread hint (large-array parallel parse): explicit arg to the library
     // (which no longer reads the environment itself). 0 = auto, 1 = serial.
-    int parse_threads = 0;
-    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
-      parse_threads = std::atoi(nt);
-    }
     pcp::LayerLoadOptions load_opts;
+    set_crate_limits(load_opts.usdc_limits, load_opts.max_array_elements);
     load_opts.parse_num_threads = parse_threads;
+    load_opts.enable_timing = timing;
+    load_opts.usda_parse_options.enable_timing = timing;
     load_opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
     load_opts.usda_parse_options.async_arrays = async_arrays;
     load_opts.usda_parse_options.parallel_prims = parallel_prims;
     load_opts.strict_aousd_conformance = aousd_strict;
     // Benchmark path: flattened scenes exceed the default input cap. 0 keeps
     // only the unconditional 16 GiB readable-file ceiling.
-    load_opts.max_memory = 0;
+    load_opts.max_memory = max_memory_bytes;
     auto layer = pcp::LoadLayerFromFile(filename, &warn, &err,
                                         load_opts);  // PARSE only
     const auto t_parsed = Clock::now();
@@ -260,7 +333,34 @@ int main(int argc, char **argv) {
     }
     if (!err.empty()) emit_lines(err, "WARN : ");
 
+    if (output_usdc) {
+      USDCWriteOptions options;
+      const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS");
+      options.crate_options.num_threads = write_threads >= 0 ? write_threads
+                                                           : (nt ? std::atoi(nt) : 0);
+      options.crate_options.enable_timing = timing;
+      auto res = WriteLayerToUSDCFile(out_path, *layer, options);
+      const auto t_written = Clock::now();
+      if (!res.success) {
+        std::fprintf(stderr, "ERR : %s\n", res.error.c_str());
+        return 1;
+      }
+      if (timing) {
+        std::fprintf(stderr, "[next_usdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
+                     ms(t_parsed - t_start), ms(t_written - t_parsed),
+                     ms(t_written - t_start));
+        std::fprintf(stderr, "[next_usdcat] wrote %zu bytes (tokens=%zu paths=%zu specs=%zu)\n",
+                     res.bytes_written, res.token_count, res.path_count, res.spec_count);
+      }
+      if (fast_exit) ExitAfterSuccessfulWrite();
+      layer.reset();
+      if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+                               ms(Clock::now() - t_written));
+      return 0;
+    }
+
     USDAWriteOptions wopts;
+    wopts.enable_timing = timing;
     wopts.emit_custom = openusd_compat;
     wopts.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides (1 = serial)
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
@@ -313,6 +413,10 @@ int main(int argc, char **argv) {
                      out_path ? " -> " : "", out_path ? out_path : "");
       }
     }
+    if (fast_exit) ExitAfterSuccessfulWrite();
+    layer.reset();
+    if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+                             ms(Clock::now() - t_written));
     return 0;
   }
 
@@ -331,6 +435,8 @@ int main(int argc, char **argv) {
       }
     }
     pcp::CompositionOptions opts;
+    set_crate_limits(opts.usdc_limits, opts.max_array_elements);
+    if (max_memory_bytes) opts.max_layer_memory = max_memory_bytes;
     opts.strict_aousd_conformance = aousd_strict;
     if (!variant_fallbacks.empty()) opts.variant_fallbacks = variant_fallbacks;
     opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
@@ -338,9 +444,7 @@ int main(int argc, char **argv) {
     opts.usda_parse_options.parallel_prims = parallel_prims;
     // USDA parse-thread hint for every layer composition loads (0 = auto,
     // 1 = serial parse); same env knob as the --rewrite-layer path.
-    if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
-      opts.usda_parse_options.num_threads = std::atoi(nt);
-    }
+    opts.usda_parse_options.num_threads = parse_threads;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
     // Parallel compose is byte-identical to serial. Default -1 = auto
@@ -353,8 +457,24 @@ int main(int argc, char **argv) {
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
     LoadUSDOptions load_opts;
+    set_crate_limits(load_opts.usdc_options.crate_options,
+                     load_opts.usdc_options.crate_options.max_array_elements);
+    if (max_crate_elements) load_opts.limits.max_array_elements = max_crate_elements;
+    if (max_memory_bytes) {
+      load_opts.limits.max_input_bytes = max_memory_bytes;
+      load_opts.limits.max_asset_bytes = max_memory_bytes;
+      load_opts.limits.max_resident_bytes = max_memory_bytes;
+      load_opts.usdc_options.crate_options.max_memory = max_memory_bytes;
+      load_opts.usda_options.parse_options.max_file_size = max_memory_bytes;
+    }
     load_opts.input_policy = aousd_strict ? InputPolicy::Untrusted
                                           : InputPolicy::Trusted;
+    load_opts.usda_options.parse_options.num_threads = parse_threads;
+    load_opts.usda_options.parse_options.enable_timing = timing;
+    load_opts.usda_options.parse_options.async_arrays = async_arrays;
+    load_opts.usda_options.parse_options.parallel_prims = parallel_prims;
+    load_opts.usdc_options.crate_options.num_threads = parse_threads;
+    load_opts.usdc_options.crate_options.enable_timing = timing;
     ok = LoadUSD(filename, &stage, load_opts, &warn, &err);
   }
   const auto t_loaded = Clock::now();
@@ -375,9 +495,19 @@ int main(int argc, char **argv) {
   // in flatten mode (the file still loaded).
   if (!err.empty()) emit_lines(err, "WARN : ");
 
+  if (compose_only) {
+    std::printf("composed: %zu prims\n", stage.GetStats().prim_count);
+    if (timing) std::fprintf(stderr, "[next_usdcat] load+compose=%.1fms\n",
+                             ms(t_loaded - t_start));
+    stage = Stage();
+    if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+                             ms(Clock::now() - t_loaded));
+    return 0;
+  }
+
   // USDC output: when -o targets a .usdc/.usdz path, write the composed stage as
   // a binary crate (benchmark vehicle for the next crate writer).
-  if (flatten && out_path && IsUSDCPath(out_path)) {
+  if (flatten && output_usdc) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NEXT_NUM_THREADS overrides
     copts.crate_options.enable_timing = timing;  // [next_crate_write] phases
@@ -387,6 +517,7 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("LIGHTUSD_NEXT_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }
+    if (write_threads >= 0) copts.crate_options.num_threads = write_threads;
     const auto t_w0 = Clock::now();
     USDCWriteResult res = WriteUSDCToFile(out_path, stage, copts);
     const auto t_written = Clock::now();
@@ -410,11 +541,15 @@ int main(int argc, char **argv) {
       }
     }
     if (fast_exit) ExitAfterSuccessfulWrite();
+    stage = Stage();
+    if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+                             ms(Clock::now() - t_written));
     return 0;
   }
 
   if (flatten) {
     USDAWriteOptions wopts;
+    wopts.enable_timing = timing;
     // A composed stage carries `custom` on user attributes exactly like pxr's
     // `usdcat --flatten` (which always emits it). `--openusd-compat` additionally
     // forces it on the non-flatten/layer path.
@@ -477,5 +612,9 @@ int main(int argc, char **argv) {
     }
   }
   if (flatten && fast_exit) ExitAfterSuccessfulWrite();
+  const auto t_teardown = Clock::now();
+  stage = Stage();
+  if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+                           ms(Clock::now() - t_teardown));
   return 0;
 }

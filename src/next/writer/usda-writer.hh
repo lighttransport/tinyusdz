@@ -67,6 +67,9 @@ struct USDAWriteOptions {
   /// there the directives are not consumed and authored list-op fidelity
   /// must round-trip.
   bool composed_stage_output = false;
+
+  /// Opt-in skeleton/build/format/output timing through the library logger.
+  bool enable_timing = false;
 };
 
 /// Result of write operation

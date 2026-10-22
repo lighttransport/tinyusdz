@@ -600,6 +600,32 @@ void test_lexer() {
   }
   assert(tok.value == "hello world");
 
+  // Mixing borrowed peeks with the existing owning API must preserve token
+  // values, positions, and ownership across subsequent scans/input release.
+  Token saved;
+  {
+    std::string text = "\nlong_identifier_123456789012345 18446744073709551615 </Root.x> \"a\\nb\"";
+    Lexer mixed(text.data(), text.size());
+    const auto view = mixed.peek_view();
+    assert(view.value.data() == text.data() + 1);
+    assert(view.line == 2 && view.column == 1);
+    const auto state = mixed.save_state();
+    mixed.consume();
+    assert(mixed.next().value == "18446744073709551615");
+    mixed.restore_state(state);
+    assert(mixed.peek_view().value == view.value);
+    assert(mixed.peek().value == view.value);
+    saved = mixed.next();
+    assert(mixed.peek_view().value == "18446744073709551615");
+    mixed.consume();
+    assert(mixed.peek_view().value == "/Root.x");
+    assert(mixed.next().value == "/Root.x");
+    assert(mixed.peek_view().value == "a\nb");
+    assert(mixed.next().value == "a\nb");
+    assert(mixed.peek_view().type == TokenType::Eof);
+  }
+  assert(saved.value == "long_identifier_123456789012345");
+
   std::cout << "  Lexer tests passed!" << std::endl;
 }
 

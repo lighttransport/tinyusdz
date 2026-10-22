@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <cstdint>
 
 namespace lightusd {
@@ -74,6 +75,15 @@ struct Token {
   }
 };
 
+// Parser-only borrowed token. Text is valid until the next token is scanned;
+// persistent authored values must be copied. The owning Token API is unchanged.
+struct TokenView {
+  TokenType type;
+  std::string_view value;
+  size_t line;
+  size_t column;
+};
+
 /// Lexer - tokenizes USDA input
 class Lexer {
 public:
@@ -103,6 +113,7 @@ public:
 
   /// Peek at current token without consuming
   const Token& peek();
+  TokenView peek_view();
 
   /// Get current token and advance
   Token next();
@@ -178,6 +189,8 @@ public:
     size_t line = 1;
     size_t column = 1;
     Token current;
+    std::string_view borrowed_text;
+    bool has_borrowed_text = false;
     bool has_current = false;
     std::string error;
     bool fatal = false;
@@ -189,6 +202,8 @@ public:
     s.line = line_;
     s.column = column_;
     s.current = current_;
+    s.borrowed_text = borrowed_text_;
+    s.has_borrowed_text = has_borrowed_text_;
     s.has_current = has_current_;
     s.error = error_;
     s.fatal = fatal_;
@@ -200,6 +215,8 @@ public:
     line_ = s.line;
     column_ = s.column;
     current_ = s.current;
+    borrowed_text_ = s.borrowed_text;
+    has_borrowed_text_ = s.has_borrowed_text;
     has_current_ = s.has_current;
     error_ = s.error;
     fatal_ = s.fatal;
@@ -258,6 +275,8 @@ private:
 
   Token current_;
   bool has_current_ = false;
+  std::string_view borrowed_text_;
+  bool has_borrowed_text_ = false;
   std::string error_;
   bool fatal_ = false;
   bool position_reset_ = false;
@@ -300,6 +319,8 @@ private:
 
   Token make_token(TokenType type, size_t start_line, size_t start_col);
   Token make_token(TokenType type, std::string value, size_t start_line, size_t start_col);
+  Token make_borrowed_token(TokenType type, std::string_view value,
+                            size_t start_line, size_t start_col);
 };
 
 /// Get string name for token type (for debugging)

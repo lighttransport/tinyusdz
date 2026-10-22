@@ -4,6 +4,7 @@
 // LightUSD Next - USDA ASCII Parser implementation
 
 #include "ascii-parser-internal.hh"
+#include "../crate/crate-timing.hh"
 #include "../safe-file-size.hh"
 #include "../strfmt.hh"
 #include "usda-lazy-source.hh"
@@ -128,7 +129,7 @@ void AsciiParser::Impl::RunSubtreeParse(
   // whitespace/comments; parse them exactly as the enclosing prim-contents
   // (or root) loop would.
   bool ok = true;
-  while (ok && sub.lexer_->peek().type != TokenType::Eof) {
+  while (ok && sub.lexer_->peek_view().type != TokenType::Eof) {
     ok = sub.ParsePrim();
   }
   // The fragment is only usable when the sub-parse is indistinguishable from
@@ -250,7 +251,7 @@ bool AsciiParser::Impl::ParsePrimMaybeParallel() {
       ++nblocks;
       len = static_cast<size_t>((b + l) - block);
       if (len >= kSubtreeMinBytes) break;
-      const TokenType next = lexer_->peek().type;
+      const TokenType next = lexer_->peek_view().type;
       if (lexer_->has_error() ||
           (next != TokenType::Def && next != TokenType::Over &&
            next != TokenType::Class)) {
@@ -349,6 +350,7 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
 
 bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
                                      bool fast) {
+  CratePhaseTimer timer(options_.enable_timing, "next_usda_parse");
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
@@ -460,7 +462,7 @@ bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
   while (!AtEnd()) {
     // Pseudo-root namespace ordering is an authored field and must survive a
     // layer rewrite even when it mentions currently absent prim names.
-    if (lexer_->peek().type == TokenType::Reorder) {
+    if (lexer_->peek_view().type == TokenType::Reorder) {
       lexer_->next();
       std::string what;
       if (!lexer_->expect(TokenType::Identifier, what)) return false;
@@ -481,6 +483,7 @@ bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
     }
   }
 
+  timer.lap("scan_dispatch");
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // Join barrier: splice the parallel prim subtrees (authored order and exact
   // serial prim order restored), then wait for every deferred array payload,
@@ -506,14 +509,17 @@ bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
     return false;
   }
 
+  timer.lap("join_stitch");
   // Finalize the layer
   builder_->finalize();
+  timer.lap("finalize");
 
   if (!ReportProgress("complete", length, length)) return false;
 
   // Create stage from layer
   stage_ = Stage();
   stage_.SetRootLayer(std::move(*layer_));
+  timer.lap("publish");
 
   lexer_.reset();
   builder_.reset();

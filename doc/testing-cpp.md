@@ -2125,6 +2125,89 @@ and runs Vulkan raster/RT plus renderer CPU/Vulkan. Keep `no_renderable` and
 warning statuses visible in the report. See [the viewer corpus procedure](lusdview.md#external-usd-assets-smoke-rendering)
 and [the WASM corpus parser](../web/js/docs/regression.md#usd-wg-corpus-parsing).
 
+### Large-scene next-core performance gates
+
+Use `tests/next/bench-large-scene.py` with two saved Release `lusdcat` binaries
+built with the same compiler, flags, allocator, and thread support. Its JSON
+manifest is a list of local cases, for example:
+
+```json
+[
+  {"name":"scene-usdc", "input":"/assets/scene.usda", "format":"usdc", "payloads":true},
+  {"name":"scene-usda", "input":"/assets/scene.usda", "format":"usda", "payloads":true},
+  {"name":"crate-parse", "input":"/dev/shm/validation.usdc", "mode":"parse"},
+  {"name":"layer-rewrite", "input":"/assets/layer.usda", "mode":"rewrite", "format":"usda"}
+]
+```
+
+```sh
+python3 tests/next/bench-large-scene.py \
+  --baseline /tmp/lusdcat.baseline --candidate /tmp/lusdcat.candidate \
+  --manifest /tmp/scenes.json --output /tmp/scene-results
+```
+
+The default is one warmup per binary and three alternating measured pairs.
+Increase to seven pairs when the spread obscures the result. Do not compile or
+run unrelated workloads concurrently. `--legacy-baseline` supports the CLI
+before `--output-format`; USDC output uses a `.usdc` symlink to `/dev/null`.
+That legacy CLI cannot perform an uncomposed USDC rewrite. Its compose-only
+fallback also writes USDA, so compare the composition phase, not process time,
+for that specific comparison.
+
+All throughput output goes to `/dev/null`. The harness records binary hashes,
+commands, phase timings, process wall/user/system time, faults, and peak RSS.
+Per-second samples retain RSS, swap, thread count, CPU ticks and page faults;
+the metadata records the clock-tick frequency for interpreting CPU samples.
+Sampled peak swap and RSS-plus-swap are diagnostic metrics; sampling can miss
+short peaks. The RSS gate uses the process high-water mark from `/usr/bin/time`.
+It checks a 16 GiB host reserve and a 48 GB aggregate `/dev/shm` cap, terminates
+its own process group on timeout/resource exhaustion, and rejects measured
+maximum peak RSS growth above 5%. Reader and worker phase sums can overlap;
+they are work attribution, not additive end-to-end wall time. Normal process
+teardown is included; `--fast-exit` is diagnostic only.
+
+The CLI accepts independent `--parse-threads`, `--compose-threads`, and
+`--write-threads` hints, `--compose-only`, and `--output-format usda|usdc`.
+`--rewrite-layer` preserves authored composition arcs for either format;
+`-f` composes them. Automatic parsing stays serial inside an outer composition
+loading pool to avoid multiplying worker pools. Explicit parser hints remain
+honored. Timing is opt-in through options in the library and
+`LIGHTUSD_NEXT_TIMING=1` in the CLI.
+
+Qualify Caldera proxy, one full district, then all 45 full districts before
+Island and the merged ALab techvar scene. Treat baked procedural frame 1004 as
+a separate ALab case, leaving the other baked frames deferred. Record variant,
+payload and thread policies with every result. Use matching baseline/candidate
+SHA-256 hashes of both formats and prim/spec counts; a faster partial scene is
+not a pass. Keep validation files only in task-owned `/dev/shm` directories,
+remove them promptly, and use a streaming hash for text larger than the cap.
+Reopen retained validation files with next and OpenUSD. Validation writes and
+hashing are separate from throughput measurements.
+
+Focused correctness coverage includes owning/borrowed lexer lookahead and
+rewind, parallel crate reader cancellation/reuse, writer reuse with target-path
+table growth, string-array range escaping and threaded byte parity, and file
+layer reclamation while the returned Stage retains lazy arrays. Run these in
+the standalone Debug suite, a thread-disabled build, ASan/UBSan without PCH,
+and TSan when supported by the host.
+
+Large flattened files may exceed the conservative default crate table counts
+or input budgets. For known local data, pass explicit `--max-crate-elements N`
+and `--max-memory-mib N` in the manifest's `args` list. These override the CLI's
+array/table counts and per-input/read memory budget respectively; library
+security defaults and path-depth checks remain unchanged. Record the same
+limits for both binaries. If the old CLI lacks those controls, rebuild the
+unchanged baseline library with the benchmark driver and verify its output
+hash against the saved original executable before measuring it.
+
+The reader decodes validated field value-representation tables directly into
+their final buffer, using an explicit decompression budget. The generic C
+blob decoder keeps its 1 GiB default cap. `next_test_crate_alloc_guard` checks
+explicit-budget rejection, truncated multi-chunk frames, and (on 64-bit native
+Unix) sparse mappings above 2 GiB without committing gigabytes of test RAM.
+Large-file readback must also exercise a real table above 1 GiB; the all-full
+Caldera crate expands its value-representation table to 1,413,255,776 bytes.
+
 ## Native OBJ/robot imports and Python physics
 
 The native CLI and Python bindings share the C11 OBJ reader and native

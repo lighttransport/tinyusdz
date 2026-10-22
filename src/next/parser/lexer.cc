@@ -543,19 +543,33 @@ bool Lexer::capture_prim_block(size_t min_bytes, size_t max_bytes,
 }
 
 const Token& Lexer::peek() {
-  if (!has_current_) {
-    current_ = scan_token();
-    has_current_ = true;
+  (void)peek_view();
+  if (has_borrowed_text_) {
+    current_.value.assign(borrowed_text_.data(), borrowed_text_.size());
+    has_borrowed_text_ = false;
   }
   return current_;
 }
 
-Token Lexer::next() {
-  if (has_current_) {
-    has_current_ = false;
-    return current_;
+TokenView Lexer::peek_view() {
+  if (!has_current_) {
+    current_ = scan_token();
+    has_current_ = true;
   }
-  return scan_token();
+  return {current_.type,
+          has_borrowed_text_ ? borrowed_text_ : std::string_view(current_.value),
+          current_.line, current_.column};
+}
+
+Token Lexer::next() {
+  // Direct consumption keeps the original scan-and-return fast path. Only
+  // materialize borrowed text in the returned token; populating current_ first
+  // would copy every owning token again even without cached lookahead.
+  Token token = has_current_ ? current_ : scan_token();
+  has_current_ = false;
+  if (has_borrowed_text_)
+    token.value.assign(borrowed_text_.data(), borrowed_text_.size());
+  return token;
 }
 
 void Lexer::consume() {
@@ -617,7 +631,16 @@ Token Lexer::make_token(TokenType type, std::string value, size_t start_line, si
   return tok;
 }
 
+Token Lexer::make_borrowed_token(TokenType type, std::string_view value,
+                                size_t start_line, size_t start_col) {
+  borrowed_text_ = value;
+  has_borrowed_text_ = true;
+  return make_token(type, start_line, start_col);
+}
+
 Token Lexer::scan_token() {
+  has_borrowed_text_ = false;
+  borrowed_text_ = {};
   skip_whitespace();
   token_start_ = pos_;
 
@@ -726,7 +749,7 @@ Token Lexer::scan_identifier() {
   }
 
   const TokenType type = LookupKeyword(data_ + start, pos_ - start);
-  return make_token(type, std::string(data_ + start, pos_ - start), start_line,
+  return make_borrowed_token(type, std::string_view(data_ + start, pos_ - start), start_line,
                     start_col);
 }
 
@@ -747,8 +770,9 @@ Token Lexer::scan_number() {
     return make_token(TokenType::Invalid, start_line, start_col);
   }
 
-  std::string value(data_ + start, pos_ - start);
-  return make_token(TokenType::Number, std::move(value), start_line, start_col);
+  return make_borrowed_token(TokenType::Number,
+                             std::string_view(data_ + start, pos_ - start),
+                             start_line, start_col);
 }
 
 Token Lexer::scan_string() {
@@ -869,15 +893,15 @@ Token Lexer::scan_path_ref() {
 
   advance();  // '<'
 
-  std::string value;
+  const size_t start = pos_;
   while (!at_end() && current_char() != '>') {
-    if (value.size() > kMaxTokenLength) {
+    if (pos_ - start > kMaxTokenLength) {
       set_fatal_error("Path reference token too large");
       return make_token(TokenType::Invalid, start_line, start_col);
     }
-    value += current_char();
     advance();
   }
+  const std::string_view value(data_ + start, pos_ - start);
 
   if (current_char() == '>') {
     advance();
@@ -888,11 +912,12 @@ Token Lexer::scan_path_ref() {
 
   // `<>` is the empty path, which AOUSD authors for relocate-to-none and to
   // clear reference/payload targets; only non-empty text must be a path.
-  if (strict_aousd_conformance && !value.empty() && !IsValidPathString(value)) {
-    set_fatal_error("Invalid AOUSD path reference: <" + value + ">");
+  if (strict_aousd_conformance && !value.empty() &&
+      !lu_is_valid_path_string(value.data(), value.size())) {
+    set_fatal_error("Invalid AOUSD path reference: <" + std::string(value) + ">");
     return make_token(TokenType::Invalid, start_line, start_col);
   }
-  return make_token(TokenType::PathRef, std::move(value), start_line, start_col);
+  return make_borrowed_token(TokenType::PathRef, value, start_line, start_col);
 }
 
 Token Lexer::scan_asset_ref() {

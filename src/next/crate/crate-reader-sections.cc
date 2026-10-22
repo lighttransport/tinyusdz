@@ -9,6 +9,7 @@
 #include "../strfmt.hh"
 #include "../execution.hh"
 #include "crate-timing.hh"
+#include "../c/lightusd-core-c.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -471,19 +472,25 @@ bool CrateReader::Impl::ReadFields() {
   // ValueRep[] is normally TfFastCompression/LZ4-compressed bytes. Do not
   // classify by byte count alone: small OpenUSD files can have compressed size
   // equal to the uncompressed `num_fields * 8` length.
-  DecompressResult rdr = DecompressCrateBlobExact(
-      reps_data.data(), reps_data.size(), field_value_rep_bytes);
-  if (rdr.success) {
-    if (field_value_rep_bytes > 0) {
-      std::memcpy(value_reps.data(), rdr.data.data(), field_value_rep_bytes);
+  // The table sizes were checked against CrateLimits and the allocation
+  // budget above. Decode into the final storage, avoiding an equally large
+  // temporary/copy and the generic blob API's independent 1 GiB ceiling.
+  size_t decoded_size = 0;
+  const char* decode_error = nullptr;
+  const bool decoded = lu_crate_blob_decompress_bounded(
+      reps_data.data(), reps_data.size(),
+      reinterpret_cast<uint8_t*>(value_reps.data()), field_value_rep_bytes,
+      field_value_rep_bytes, &decoded_size, &decode_error) != 0;
+  if (!decoded || decoded_size != field_value_rep_bytes) {
+    if (reps_size == field_value_rep_bytes) {
+      if (field_value_rep_bytes > 0) {
+        std::memcpy(value_reps.data(), reps_data.data(), field_value_rep_bytes);
+      }
+    } else {
+      AddError(std::string("Failed to decompress value reps: ") +
+               (decode_error ? decode_error : "decompressed size mismatch"));
+      return false;
     }
-  } else if (reps_size == field_value_rep_bytes) {
-    if (field_value_rep_bytes > 0) {
-      std::memcpy(value_reps.data(), reps_data.data(), field_value_rep_bytes);
-    }
-  } else {
-    AddError("Failed to decompress value reps");
-    return false;
   }
 
   fields_.resize(static_cast<size_t>(num_fields));
@@ -1184,7 +1191,7 @@ bool CrateReader::Impl::ReadPaths() {
   bool decoded = false;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   if (num_read > 1 && n >= 65536 && ResolveBuildThreads() > 1) {
-    TaskArena arena(num_read);
+    TaskArena& arena = BuildArena();
     arena.Run(num_read, [&](size_t k) { decode_comp_blob(arrays[k], n); });
     decoded = true;
   }
@@ -1400,7 +1407,7 @@ bool CrateReader::Impl::ReadPaths() {
     const size_t task_size = std::max<size_t>(
         16384, order.size() / (static_cast<size_t>(nthreads) * 4));
     const size_t ntasks = (order.size() + task_size - 1) / task_size;
-    TaskArena arena(static_cast<size_t>(nthreads));
+    TaskArena& arena = BuildArena();
     arena.Run(ntasks, [&](size_t t) {
       fill_range(t * task_size, std::min(order.size(), (t + 1) * task_size));
     });

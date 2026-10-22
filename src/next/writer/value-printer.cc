@@ -1131,6 +1131,10 @@ bool IsChunkableType(const Value& value, const PrintOptions& opts) {
   if (opts.max_array_elements > 0 && n > opts.max_array_elements) return false;
   const TypeId type_id = value.type_id();
   switch (type_id) {
+    case TypeId::String:
+    case TypeId::Token:
+    case TypeId::PathExpression:
+    case TypeId::AssetPath:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::UChar:
@@ -1164,6 +1168,10 @@ bool IsChunkableArray(const Value& value, const PrintOptions& opts) {
   if (opts.max_array_elements > 0 && n > opts.max_array_elements) return false;
   const TypeId type_id = value.type_id();
   switch (type_id) {
+    case TypeId::String:
+    case TypeId::Token:
+    case TypeId::PathExpression:
+    case TypeId::AssetPath:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::UChar:
@@ -1198,6 +1206,26 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
   };
   const TypeId type_id = value.type_id();
   switch (type_id) {
+    case TypeId::String:
+    case TypeId::Token:
+    case TypeId::PathExpression:
+    case TypeId::AssetPath: {
+      // Non-POD lazy arrays share a DecodeSlot before entering this path.
+      // Never materialize an entire string array separately for each chunk.
+      if (value.is_lazy()) return false;
+      auto strings = value.as_token_array();
+      if (!strings) return false;
+      if (open) out.append('[');
+      for (size_t i = elem_lo; i < elem_hi; ++i) {
+        if (i) out.append(", ");
+        if (type_id == TypeId::AssetPath)
+          out.append(FormatAssetPathForUsda(strings[i]));
+        else
+          out.append(EscapeUSDAString(strings[i]));
+      }
+      if (close) out.append(']');
+      return true;
+    }
     case TypeId::Int: {
       ArrayScratch<int32_t> scratch;
       ArrayView<int32_t> view;

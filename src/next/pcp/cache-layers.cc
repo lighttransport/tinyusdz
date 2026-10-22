@@ -327,6 +327,7 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
       load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
       load_opts.usdc_use_mmap = options.usdc_use_mmap;
       load_opts.usda_parse_options = options.usda_parse_options;
+      load_opts.parse_num_threads = options.usda_parse_options.num_threads;
       load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
       std::shared_ptr<Layer> sl =
           reg_->GetOrLoad(*resolver, sub, anchor, warn, err, load_opts);

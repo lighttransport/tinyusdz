@@ -213,6 +213,14 @@ int lu_crate_blob_compress(const uint8_t *src, size_t src_size, uint8_t *dst,
 int lu_crate_blob_decompress(const uint8_t *src, size_t src_size, uint8_t *dst,
                              size_t dst_size, size_t *out_size,
                              const char **out_error) {
+  return lu_crate_blob_decompress_bounded(
+      src, src_size, dst, dst_size, (size_t)1024 * 1024 * 1024, out_size,
+      out_error);
+}
+
+int lu_crate_blob_decompress_bounded(
+    const uint8_t *src, size_t src_size, uint8_t *dst, size_t dst_size,
+    size_t max_output_size, size_t *out_size, const char **out_error) {
   if (out_error != NULL) *out_error = NULL;
   if (out_size != NULL) *out_size = 0;
   if (src == NULL || src_size == 0) return 1; /* nothing to do */
@@ -221,7 +229,7 @@ int lu_crate_blob_decompress(const uint8_t *src, size_t src_size, uint8_t *dst,
     return 0;
   }
   if (dst_size == 0) return 1;
-  if (dst_size > (size_t)1024 * 1024 * 1024) {
+  if (dst_size > max_output_size) {
     set_error(out_error, "Uncompressed size too large");
     return 0;
   }
@@ -234,8 +242,8 @@ int lu_crate_blob_decompress(const uint8_t *src, size_t src_size, uint8_t *dst,
   const uint8_t *data_start = src + 1;
   const size_t data_size = src_size - 1;
 
-  /* LZ4 takes srcSize as int; a larger blob would read out of bounds. */
-  if (data_size > LU_MAX_LZ4_CHUNK_SIZE) {
+  /* LZ4 takes each block's size as int. A multi-block frame may be larger. */
+  if (n_chunks == 0 && data_size > LU_MAX_LZ4_CHUNK_SIZE) {
     set_error(out_error, "Compressed crate blob too large");
     return 0;
   }
@@ -244,7 +252,9 @@ int lu_crate_blob_decompress(const uint8_t *src, size_t src_size, uint8_t *dst,
   if (n_chunks == 0) {
     const int decoded = LZ4_decompress_safe((const char *)data_start,
                                             (char *)dst, (int)data_size,
-                                            (int)dst_size);
+                                            (int)(dst_size > (size_t)0x7FFFFFFF
+                                                      ? (size_t)0x7FFFFFFF
+                                                      : dst_size));
     if (decoded < 0) {
       set_error(out_error, "LZ4 decompression failed");
       return 0;

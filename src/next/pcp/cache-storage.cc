@@ -7,7 +7,38 @@ namespace next {
 namespace pcp {
 
 Cache::Impl::Impl() = default;
-Cache::Impl::~Impl() = default;
+Cache::Impl::~Impl() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Workers borrow the main registry. Only its owner may retire source layers,
+  // and explicit single-threaded composition keeps single-threaded destruction.
+  if (reg_ != &registry || options.num_threads == 1) return;
+  auto layers = registry.TakeFileLayersForRelease();
+  size_t prims = 0;
+  for (const auto& layer : layers) prims = safe::saturating_add(prims, layer->prim_count());
+  if (layers.size() < 2 || prims < 65536) return;
+
+  // Every source remains pinned until cache objects that borrow it are gone.
+  // Returned Stage Values retain their own atomic/shared source ownership.
+  index_cache.clear();
+  composed_cache_.clear();
+  sources_cache.clear();
+  spec_cache_by_stack_.clear();
+  arc_target_memo_.clear();
+  layer_stacks.clear();
+  root_layer.reset();
+  registry.Clear();  // preloaded/custom-reader layers retain serial teardown
+
+  // Large layers first: a few district layers dominate the work. Bound the
+  // allocator contention and worker stacks rather than using all SMT threads.
+  std::sort(layers.begin(), layers.end(), [](const auto& a, const auto& b) {
+    return a->prim_count() > b->prim_count();
+  });
+  int nt = options.num_threads;
+  if (nt <= 0) nt = static_cast<int>(std::thread::hardware_concurrency());
+  TaskArena arena(static_cast<size_t>(std::max(1, std::min(nt, 8))));
+  arena.Run(layers.size(), [&](size_t i) { layers[i].reset(); });
+#endif
+}
 
 }  // namespace pcp
 }  // namespace next
@@ -22,6 +53,40 @@ auto Cache::Impl::Specs(uint32_t stack_idx,
     auto &m = spec_cache_by_stack_[stack_idx];
     const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
     if (std::vector<SpecRef> *v = m.find(site, h)) return *v;
+    // Not memoized. Before walking every layer, let the per-stack path filter
+    // answer the common "this stack authors nothing at this site" case with one
+    // bit probe. FindSpecs() alone accounts for 10.7-14.1 s of ExpandArcs on a
+    // full-LOD Caldera district, 85.6% of it negative.
+    if (stack_idx >= path_filter_by_stack_.size())
+      path_filter_by_stack_.resize(stack_idx + 1);
+    PathHashFilter &filter = path_filter_by_stack_[stack_idx];
+    if (!filter.ready) {
+      if (filter.misses != UINT32_MAX) ++filter.misses;
+      if (filter.misses == 1) {
+        // Amortize the one-time union scan: inserting `paths` entries costs
+        // about `paths` path hashes, and each skipped negative lookup saves one
+        // path hash per layer. Delay the build until roughly `paths / (8 *
+        // layers)` misses, so a large layer probed only a few times never pays
+        // for a filter it will not amortize.
+        size_t paths = 0;
+        const LayerStack &st = layer_stacks[stack_idx];
+        for (const auto &lp : st.layers) paths += lp->prim_count();
+        const size_t layers = st.layers.size();
+        if (layers != 0) {
+          const size_t denom = layers * 8;
+          size_t need = (paths + denom - 1) / denom;
+          if (need > 0x3fffffffu) need = 0x3fffffffu;
+          if (need > filter.build_after)
+            filter.build_after = static_cast<uint32_t>(need);
+        }
+      }
+      if (filter.misses >= filter.build_after)
+        BuildPathHashFilter(stack_idx);
+    }
+    if (!filter.MightContain(h)) {
+      ++prof_path_filter_skips_;
+      return empty_specs_;
+    }
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
     if (refs.empty()) {
       // Negative result: share one empty vector instead of caching a key copy
@@ -30,6 +95,42 @@ auto Cache::Impl::Specs(uint32_t stack_idx,
       return empty_specs_;
     }
     return m.insert(site, h, std::move(refs));
+  }
+
+auto Cache::Impl::BuildPathHashFilter(uint32_t stack_idx) const -> void {
+    PathHashFilter &filter = path_filter_by_stack_[stack_idx];
+    if (filter.ready) return;
+    const LayerStack &st = layer_stacks[stack_idx];
+    size_t paths = 0;
+    for (const auto &lp : st.layers) paths += lp->prim_count();
+    if (st.layers.empty() || paths == 0) {
+      filter.Disable();
+      ++prof_path_filter_disabled_;
+      return;
+    }
+    const size_t bits = PathHashFilter::BitsFor(paths);
+    if (path_filter_bits_ + bits > PathHashFilter::kMaxTotalBits) {
+      // Budget exhausted (many distinct hot stacks): keep exact lookups for
+      // this one rather than growing the cache without bound.
+      filter.Disable();
+      ++prof_path_filter_disabled_;
+      return;
+    }
+    const auto build_t0 = std::chrono::steady_clock::now();
+    path_filter_bits_ += bits;
+    filter.Reset(bits);
+    for (const auto &lp : st.layers) {
+      for (const PrimSpec &p : lp->prims()) {
+        const std::string &s = p.path().str();
+        filter.Add(StackSpecCache::HashSite(s.data(), s.size()));
+      }
+    }
+    prof_path_filter_build_ns_ +=
+        static_cast<size_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - build_t0)
+                                .count());
+    prof_path_filter_paths_ += paths;
+    ++prof_path_filter_built_;
   }
 
 auto Cache::Impl::SpecsFor(const Src &s) const -> const std::vector<SpecRef> & {
@@ -592,6 +693,36 @@ auto cache_detail::SrcCache::clear() -> void {  // full free (drops the path-str
     occupied_ = 0;
   }
 
+auto cache_detail::SrcCache::take_values() -> std::deque<std::vector<Src>> {
+    std::deque<std::vector<Src>> values;
+    values.swap(vals_);
+    clear();
+    return values;
+  }
+
+auto cache_detail::SrcCache::key_at(size_t index) const -> const std::string & {
+    return (live_[index] & kSiteKey) ? vals_[index].front().site : keys_[index];
+  }
+
+auto cache_detail::SrcCache::own_key(size_t index) -> void {
+    if (live_[index] & kSiteKey) {
+      keys_[index] = vals_[index].front().site;
+      live_[index] = kLive;
+    }
+  }
+
+auto cache_detail::SrcCache::borrow_site_keys() -> size_t {
+    size_t borrowed = 0;
+    for (size_t i = 0; i < live_.size(); ++i) {
+      if (live_[i] != kLive || vals_[i].empty() ||
+          keys_[i] != vals_[i].front().site) continue;
+      std::string().swap(keys_[i]);
+      live_[i] = kLive | kSiteKey;
+      ++borrowed;
+    }
+    return borrowed;
+  }
+
 auto cache_detail::SrcCache::find(const std::string &k) -> std::vector<Src> * {
     if (slots_.empty()) return nullptr;
     const uint64_t h = Hash(k);
@@ -601,9 +732,10 @@ auto cache_detail::SrcCache::find(const std::string &k) -> std::vector<Src> * {
       const Slot &s = slots_[i];
       if (s.state == 0) return nullptr;
       if (s.state == 1 && s.hash == h) {
-        const std::string &key = keys_[s.idx];
+        const std::string &key = key_at(s.idx);
         if (key.size() == k.size() &&
             std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          own_key(s.idx);
           return &vals_[s.idx];
         }
       }
@@ -620,7 +752,7 @@ auto cache_detail::SrcCache::find(const std::string &k) const -> const std::vect
       const Slot &s = slots_[i];
       if (s.state == 0) return nullptr;
       if (s.state == 1 && s.hash == h) {
-        const std::string &key = keys_[s.idx];
+        const std::string &key = key_at(s.idx);
         if (key.size() == k.size() &&
             std::memcmp(key.data(), k.data(), k.size()) == 0) {
           return &vals_[s.idx];
@@ -645,9 +777,10 @@ auto cache_detail::SrcCache::get_or_create(const std::string &k) -> std::vector<
       if (s.state == 2) {
         if (first_tomb == SIZE_MAX) first_tomb = i;
       } else if (s.hash == h) {
-        const std::string &key = keys_[s.idx];
+        const std::string &key = key_at(s.idx);
         if (key.size() == k.size() &&
             std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          own_key(s.idx);
           return vals_[s.idx];
         }
       }
@@ -669,7 +802,7 @@ auto cache_detail::SrcCache::erase(const std::string &k) -> void {
       Slot &s = slots_[i];
       if (s.state == 0) return;
       if (s.state == 1 && s.hash == h) {
-        const std::string &key = keys_[s.idx];
+        const std::string &key = key_at(s.idx);
         if (key.size() == k.size() &&
             std::memcmp(key.data(), k.data(), k.size()) == 0) {
           live_[s.idx] = 0;
@@ -722,7 +855,7 @@ auto cache_detail::SrcCache::rehash() -> void {
     const size_t mask = new_cap - 1;
     for (uint32_t vi = 0; vi < live_.size(); ++vi) {
       if (!live_[vi]) continue;
-      const uint64_t h = Hash(keys_[vi]);
+      const uint64_t h = Hash(key_at(vi));
       size_t i = static_cast<size_t>(h) & mask;
       while (slots_[i].state != 0) i = (i + 1) & mask;
       slots_[i].hash = h;

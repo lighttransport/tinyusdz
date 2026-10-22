@@ -116,6 +116,87 @@ struct StackSpecCache {
   void rehash() ;
 };
 
+// Exact-safe negative lookup filter for Specs().
+//
+// Most ExpandArcs calls ask for a site that NO layer in the stack authors
+// (measured 85.6% on a full-LOD Caldera district). FindSpecs() answers each of
+// those with one `std::unordered_map` probe per layer, hashing the (long) path
+// string every time. This Bloom filter over the union of the stack's authored
+// prim paths answers "definitely absent" with ONE cheap probe.
+//
+// A false positive falls through to the existing per-layer probes, so the set
+// of specs found is unchanged: the filter can only add a probe, never remove a
+// spec. Built lazily after enough cache misses (at least kBuildAfterMisses),
+// capped per stack and in total, and cleared with StackSpecCache on layer
+// invalidation. Layers are read-only during composition; a layer mutated
+// through an authoring API without Cache::InvalidateLayer would already defeat
+// StackSpecCache too.
+struct PathHashFilter {
+  static constexpr size_t kBitsPerPath = 10;
+  static constexpr size_t kMaxStackBits = size_t(1) << 24;  // 2 MiB
+  static constexpr size_t kMaxTotalBits = size_t(1) << 28;  // 32 MiB
+  // Minimum negative cache misses before building; raised per stack when the
+  // union scan would not amortize (see Cache::Impl::Specs).
+  static constexpr uint32_t kBuildAfterMisses = 24;
+
+  std::vector<uint64_t> words;
+  uint64_t bit_mask = 0;
+  uint32_t misses = 0;
+  // Negative cache misses required before building. Starts at
+  // kBuildAfterMisses and is raised for stacks whose path-union scan would
+  // cost more than the lookups it saves (see Specs()).
+  uint32_t build_after = kBuildAfterMisses;
+  bool ready = false;
+  bool disabled = false;
+
+  size_t BitCount() const { return words.size() * 64; }
+
+  // Bit budget for `paths` entries, clamped to kMaxStackBits.
+  static size_t BitsFor(size_t paths) {
+    size_t bits = 64;
+    const size_t want =
+        paths > kMaxStackBits / kBitsPerPath ? kMaxStackBits
+                                             : paths * kBitsPerPath;
+    while (bits < want) bits <<= 1;
+    return bits;
+  }
+
+  void Reset(size_t bits) {
+    bit_mask = static_cast<uint64_t>(bits - 1);
+    words.assign(bits / 64, 0);
+    misses = 0;
+    ready = true;
+    disabled = false;
+  }
+
+  void Disable() {
+    words.clear();
+    words.shrink_to_fit();
+    bit_mask = 0;
+    ready = true;
+    disabled = true;
+  }
+
+  static uint64_t SecondHash(uint64_t h) { return (h >> 33) | 1; }
+
+  void Add(uint64_t h) {
+    const size_t i0 = static_cast<size_t>(h) & static_cast<size_t>(bit_mask);
+    const size_t i1 = static_cast<size_t>(h + SecondHash(h)) &
+                      static_cast<size_t>(bit_mask);
+    words[i0 >> 6] |= uint64_t(1) << (i0 & 63);
+    words[i1 >> 6] |= uint64_t(1) << (i1 & 63);
+  }
+
+  bool MightContain(uint64_t h) const {
+    if (!ready || disabled) return true;
+    const size_t i0 = static_cast<size_t>(h) & static_cast<size_t>(bit_mask);
+    if (!(words[i0 >> 6] & (uint64_t(1) << (i0 & 63)))) return false;
+    const size_t i1 = static_cast<size_t>(h + SecondHash(h)) &
+                      static_cast<size_t>(bit_mask);
+    return (words[i1 >> 6] & (uint64_t(1) << (i1 & 63))) != 0;
+  }
+};
+
 // Memoized Specs() pointer that RESETS on copy/move. A Src copied on
 // child-build gets a different site, a Src seeded into (or merged back from) a
 // parallel-warm worker crosses Impls, and an Impl's spec cache is dropped on
@@ -220,13 +301,24 @@ struct SrcCache {
   std::vector<Slot> slots_;
   std::deque<std::string> keys_;           // keys_[i] backs vals_[i]
   std::deque<std::vector<Src>> vals_;      // STABLE value storage
-  std::vector<uint8_t> live_;              // parallel to vals_ (1 = live)
+  static constexpr uint8_t kLive = 1;
+  static constexpr uint8_t kSiteKey = 2;
+  std::vector<uint8_t> live_;              // live and optional first-Src key bits
   size_t count_ = 0;                       // live entries
   size_t occupied_ = 0;                    // used + tombstone slots
 
   size_t size() const { return count_; }
 
   void clear() ;
+
+  // Transfer the address-stable vectors to the fill pass, dropping lookup
+  // keys/indexes immediately. References into the vectors remain valid until
+  // the returned owner is destroyed; this cache becomes empty and reusable.
+  std::deque<std::vector<Src>> take_values();
+
+  // A resolved entry can reuse its first Src's identical site string during
+  // the read-only namespace walk. Mutable access restores an owned key first.
+  size_t borrow_site_keys();
 
   std::vector<Src> *find(const std::string &k) ;
   const std::vector<Src> *find(const std::string &k) const ;
@@ -243,18 +335,23 @@ struct SrcCache {
   template <typename Pred>
   void erase_if(Pred pred) {
     for (uint32_t vi = 0; vi < live_.size(); ++vi) {
-      if (live_[vi] && pred(keys_[vi])) erase(keys_[vi]);
+      if (live_[vi] && pred(key_at(vi))) erase(key_at(vi));
     }
   }
 
   template <typename Fn>
   void for_each(Fn fn) {
     for (uint32_t vi = 0; vi < live_.size(); ++vi) {
-      if (live_[vi]) fn(const_cast<const std::string &>(keys_[vi]), vals_[vi]);
+      if (live_[vi]) {
+        own_key(vi);
+        fn(const_cast<const std::string &>(keys_[vi]), vals_[vi]);
+      }
     }
   }
 
  private:
+  const std::string &key_at(size_t index) const;
+  void own_key(size_t index);
   std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
                                bool was_tomb) ;
   void rehash() ;

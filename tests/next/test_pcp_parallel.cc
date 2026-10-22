@@ -19,6 +19,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -33,6 +34,8 @@
 #include "next/layer/layer.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
+#include "next/writer/usda-writer.hh"
+#include "next/writer/usdc-writer.hh"
 
 using namespace lightusd::next;
 
@@ -453,6 +456,107 @@ static void test_parallel_same_asset_parse_once() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_file_layer_reclamation() {
+  std::cout << "test_file_layer_reclamation..." << std::endl;
+  // Two independent file layers cross the parallel teardown threshold. The
+  // composed output must retain lazy crate arrays after the cache is gone.
+  std::string directory = "/tmp";
+#if defined(__unix__) || defined(__APPLE__)
+  char pattern[] = "/tmp/next-reclaim-XXXXXX";
+  char* created = ::mkdtemp(pattern);
+  assert(created);
+  directory = created;
+#endif
+  const std::string paths[] = {directory + "/next_reclaim_a.usdc",
+                               directory + "/next_reclaim_b.usdc"};
+  for (const auto& path : paths) {
+    Layer layer;
+    LayerBuilder b(layer);
+    b.begin_prim("A", "Xform");
+    for (size_t i = 0; i < 32768; ++i) {
+      b.begin_prim("C" + std::to_string(i), "Mesh");
+      if (i == 32767)
+        b.add_property("points", Value::MakeFloat3Array({1, 2, 3, 4, 5, 6}));
+      b.end_prim();
+    }
+    b.end_prim();
+    b.finalize();
+    auto written = WriteLayerToUSDCFile(path, layer);
+    assert(written.success);
+  }
+  auto root = std::make_shared<Layer>();
+  LayerBuilder b(*root);
+  for (int i = 0; i < 2; ++i) {
+    b.begin_prim("R" + std::to_string(i), "");
+    b.current()->meta().references.push_back("@" + paths[i] + "@</A>");
+    b.end_prim();
+  }
+  b.finalize();
+  AssetResolver resolver;
+  std::string expected;
+  for (int threads : {1, 8}) {
+    pcp::CompositionOptions opts;
+    opts.num_threads = threads;
+    Stage stage;
+    std::string warn, err;
+    assert(pcp::ComposeStageFromLayer(root, resolver, &stage, "", opts, &warn, &err));
+    assert(err.empty());
+    const std::string text = WriteUSDAToString(stage);
+    assert(text.find("(4, 5, 6)") != std::string::npos);
+    if (expected.empty()) expected = text;
+    else assert(text == expected);
+  }
+  bool caller_layer_destroyed = false;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const auto caller_thread = std::this_thread::get_id();
+#endif
+  {
+    pcp::CompositionOptions opts;
+    opts.num_threads = 8;
+    opts.release_build_sources = true;
+    auto opened = pcp::Cache::Open(resolver, root, "", opts);
+    assert(opened);
+    std::shared_ptr<Layer> caller_layer(new Layer, [&](Layer* layer) {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      assert(std::this_thread::get_id() == caller_thread);
+#endif
+      caller_layer_destroyed = true;
+      delete layer;
+    });
+    opened->PreloadLayer("caller-owned", std::move(caller_layer));
+    Stage stage;
+    std::string warn, err;
+    // Cancellation after namespace discovery leaves cache entries available
+    // for invalidation and another build, including entries with reused keys.
+    assert(!opened->BuildStage(&stage, &warn, &err,
+                              [](Stage&&) { return false; }));
+    assert(err.find("preview callback cancelled") != std::string::npos);
+    opened->Invalidate(Path("/R0/C32767"));
+    warn.clear();
+    err.clear();
+    assert(opened->BuildStage(&stage, &warn, &err));
+    assert(WriteUSDAToString(stage) == expected);
+    // Draining the fill vectors must leave an ordinary empty, reusable cache.
+    // Re-resolve a single path, then build the complete namespace again.
+    assert(opened->ComputePrimIndex(Path("/R0/C32767"), &warn, &err));
+    Stage rebuilt;
+    assert(opened->BuildStage(&rebuilt, &warn, &err));
+    assert(WriteUSDAToString(rebuilt) == expected);
+    assert(!caller_layer_destroyed);
+  }
+  assert(caller_layer_destroyed);
+  // Preloaded layers retain caller ownership and are never retired as files.
+  pcp::LayerRegistry registry;
+  registry.Preload("memory", root);
+  assert(registry.TakeFileLayersForRelease().empty());
+  assert(registry.size() == 1);
+  for (const auto& path : paths) std::remove(path.c_str());
+#if defined(__unix__) || defined(__APPLE__)
+  std::remove(directory.c_str());
+#endif
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_layer_registry_inflight_failure_diagnostics() {
   std::cout << "test_layer_registry_inflight_failure_diagnostics..." << std::endl;
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -509,6 +613,7 @@ int main() {
   test_parallel_load_rules_match_serial();
   test_stress_parallel();
   test_parallel_same_asset_parse_once();
+  test_file_layer_reclamation();
   test_layer_registry_inflight_failure_diagnostics();
   std::cout << "All next/pcp parallel tests passed." << std::endl;
   return 0;

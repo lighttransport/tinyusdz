@@ -118,6 +118,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     if (outcome.layer) {
       ++parse_count_;
       by_resolved_.emplace(resolved, outcome.layer);
+      if (native_file) file_layers_.insert(outcome.layer.get());
     }
     in_flight_.erase(resolved);  // a failed load is retried by the next caller
   }
@@ -138,6 +139,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   ++parse_count_;
   by_resolved_.emplace(resolved, layer);
+  if (native_file) file_layers_.insert(layer.get());
   return layer;
 #endif
 }
@@ -146,7 +148,30 @@ void LayerRegistry::Drop(const std::string &resolved_path) {
 #if defined(LIGHTUSD_ENABLE_THREAD)
   std::lock_guard<std::mutex> lk(*mu_);
 #endif
-  by_resolved_.erase(resolved_path);
+  auto it = by_resolved_.find(resolved_path);
+  if (it != by_resolved_.end()) {
+    file_layers_.erase(it->second.get());
+    by_resolved_.erase(it);
+  }
+}
+
+std::vector<std::shared_ptr<Layer>> LayerRegistry::TakeFileLayersForRelease() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lk(*mu_);
+  if (!in_flight_.empty()) return {};
+#endif
+  std::vector<std::shared_ptr<Layer>> layers;
+  layers.reserve(file_layers_.size());
+  for (auto it = by_resolved_.begin(); it != by_resolved_.end();) {
+    if (file_layers_.count(it->second.get())) {
+      layers.push_back(std::move(it->second));
+      it = by_resolved_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  file_layers_.clear();
+  return layers;
 }
 
 }  // namespace pcp

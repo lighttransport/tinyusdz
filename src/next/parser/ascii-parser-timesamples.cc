@@ -21,7 +21,7 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
     // Numeric keys use the same conversion as ParseDouble, without building
     // a temporary Value for every sample. Special spellings take that path.
     double time = 0.0;
-    const Token& time_tok = lexer_->peek();
+    const auto time_tok = lexer_->peek_view();
     if (time_tok.type == TokenType::Number) {
       time = value_parser_detail::FastFloatParseToken<double>(time_tok.value);
       lexer_->consume();

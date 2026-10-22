@@ -31,7 +31,7 @@ constexpr size_t kParallelBuildMinSpecs = 4096;
 constexpr size_t kParallelBuildMinPrims = 512;
 #endif
 
-static void ReorderPrimsByPath(std::vector<PrimEntry>& prim_entries,
+void CrateReader::Impl::ReorderPrimsByPath(std::vector<PrimEntry>& prim_entries,
                       [[maybe_unused]] int build_threads) {
     std::vector<uint32_t> perm(prim_entries.size());
     for (size_t i = 0; i < perm.size(); ++i) perm[i] = static_cast<uint32_t>(i);
@@ -46,7 +46,7 @@ static void ReorderPrimsByPath(std::vector<PrimEntry>& prim_entries,
       while (runs * 2 <= static_cast<size_t>(build_threads)) runs *= 2;
       std::vector<size_t> bound(runs + 1);
       for (size_t r = 0; r <= runs; ++r) bound[r] = perm.size() * r / runs;
-      TaskArena arena(static_cast<size_t>(build_threads));
+      TaskArena& arena = BuildArena();
       arena.Run(runs, [&](size_t r) {
         std::sort(perm.begin() + bound[r], perm.begin() + bound[r + 1],
                   entry_less);
@@ -113,7 +113,7 @@ static void BuildPrimHierarchy(const std::vector<PrimEntry>& prim_entries,
     }
 }
 
-static void ApplyChildrenOrder(
+void CrateReader::Impl::ApplyChildrenOrder(
     Layer& layer, const std::vector<PrimEntry>& prim_entries,
     std::vector<uint32_t>& entry_prim,
     std::vector<std::vector<std::string>>& children_order,
@@ -191,7 +191,7 @@ static void ApplyChildrenOrder(
       const size_t task_size = std::max<size_t>(
           1024, prim_entries.size() / (static_cast<size_t>(build_threads) * 4));
       const size_t ntasks = (prim_entries.size() + task_size - 1) / task_size;
-      TaskArena arena(static_cast<size_t>(build_threads));
+      TaskArena& arena = BuildArena();
       arena.Run(ntasks, [&](size_t t) {
         reorder_range(t * task_size,
                       std::min(prim_entries.size(), (t + 1) * task_size));
@@ -373,7 +373,7 @@ bool CrateReader::Impl::BuildStage() {
       const size_t ntasks = (specs_.size() + task_size - 1) / task_size;
       prim_records.resize(ntasks);
       std::vector<std::unique_ptr<ThreadDecodeCtx>> ctxs(ntasks);
-      TaskArena arena(static_cast<size_t>(build_threads));
+      TaskArena& arena = BuildArena();
       arena.Run(ntasks, [&](size_t t) {
         ctxs[t].reset(new ThreadDecodeCtx(this, *reader_));
         ScopedThreadDecodeCtx scoped(ctxs[t].get());
@@ -499,7 +499,7 @@ bool CrateReader::Impl::BuildStage() {
       tasks[t].begin = t * task_size;
       tasks[t].end = std::min(specs_.size(), tasks[t].begin + task_size);
     }
-    TaskArena arena(static_cast<size_t>(build_threads));
+    TaskArena& arena = BuildArena();
     arena.Run(tasks.size(), [&](size_t t) {
       CollectTask& task = tasks[t];
       task.ctx.reset(new ThreadDecodeCtx(this, *reader_));
@@ -606,7 +606,7 @@ bool CrateReader::Impl::BuildStage() {
       tasks[t].begin = t * task_size;
       tasks[t].end = std::min(prim_entries.size(), tasks[t].begin + task_size);
     }
-    TaskArena arena(static_cast<size_t>(build_threads));
+    TaskArena& arena = BuildArena();
     arena.Run(tasks.size(), [&](size_t t) {
       EmitTask& task = tasks[t];
       task.ctx.reset(new ThreadDecodeCtx(this, *reader_));

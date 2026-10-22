@@ -423,6 +423,25 @@
     return name;
   }
 
+  uint32_t TypeNameToken(const PrimSpec& prim, PropNameId prop_id,
+                         const Value* val, uint16_t slot_flags) {
+    if (const std::string* tn = prim.property_type_name(prop_id)) {
+      if (!tn->empty()) return InternToken(*tn);
+    }
+    const TypeId tid = val ? val->type_id() : TypeId::Invalid;
+    const size_t type = static_cast<size_t>(tid);
+    // Keep the existing fallback for an unrecognized API-authored type.
+    if (type >= static_cast<size_t>(TypeId::Count))
+      return InternToken(AttrTypeName(prim, prop_id, val, slot_flags));
+    if (type_name_token_cache_.empty())
+      type_name_token_cache_.assign(2 * static_cast<size_t>(TypeId::Count), UINT32_MAX);
+    const bool array = (slot_flags & PropSlot::kFlagArray) || (val && val->is_array());
+    uint32_t& token = type_name_token_cache_[type * 2 + (array ? 1u : 0u)];
+    if (token == UINT32_MAX)
+      token = InternToken(AttrTypeName(prim, prop_id, val, slot_flags));
+    return token;
+  }
+
   // Typed spline (Crate type 59, >= 0.12.0): the raw USDA text parses to the
   // ts-binary blob. Payload framing: uint64 blobSize + blob + uint64
   // followed by an unordered_map<double, VtDictionary> for per-knot
@@ -766,9 +785,9 @@
 
       CrateField tf;
       tf.token_index.value = type_name_token_;
-      std::string tn = AttrTypeName(prim, slot.name_id, val, slot.flags);
       tf.value_rep =
-          ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
+          ValueRep::Make(CrateTypeId::Token,
+                        TypeNameToken(prim, slot.name_id, val, slot.flags), false, true);
       flds.push_back(tf);
 
       if (slot.flags & PropSlot::kFlagUniform) {
@@ -830,6 +849,7 @@
       if (has_ts) flds.push_back(BuildTimeSamplesField(prim, slot.name_id));
 
       if (const std::string* spline_text = prim.spline_source(slot.name_id)) {
+        const std::string tn = AttrTypeName(prim, slot.name_id, val, slot.flags);
         CrateField sf;
         if (BuildSplineField(base + "." + std::string(prop_name), tn,
                              *spline_text, &sf)) {
@@ -857,9 +877,9 @@
         if (!s->empty()) sv = prim.time_sample_value((*s)[0].second);
       CrateField tf;
       tf.token_index.value = type_name_token_;
-      std::string tn = AttrTypeName(prim, prop_id, sv, 0);
       tf.value_rep =
-          ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
+          ValueRep::Make(CrateTypeId::Token,
+                        TypeNameToken(prim, prop_id, sv, 0), false, true);
       flds.push_back(tf);
       flds.push_back(BuildTimeSamplesField(prim, prop_id));
       if (const PropMeta* pm = prim.property_meta(prop_id)) {

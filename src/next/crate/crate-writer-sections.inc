@@ -195,6 +195,8 @@
     std::vector<uint8_t> is_prop(N, uint8_t{0});
     std::vector<uint8_t> is_root(N, uint8_t{0});
     size_t num_paths = 0;
+    std::string_view cached_prop_stem;
+    uint32_t cached_prop_parent = kNoNode;
     for (size_t i = 0; i < N; ++i) {
       const PathRec& r = paths_[i];
       if (r.stem.empty() && r.name.empty()) {
@@ -205,7 +207,13 @@
       if (!r.name.empty()) {
         is_prop[i] = 1;
         elem[i] = r.name;
-        if (!r.stem.empty()) parent[i] = FindPath(r.stem);
+        if (!r.stem.empty()) {
+          if (r.stem != cached_prop_stem) {
+            cached_prop_parent = FindPath(r.stem);
+            cached_prop_stem = r.stem;
+          }
+          parent[i] = cached_prop_parent;
+        }
         continue;
       }
       if (r.stem == "/") {
@@ -333,13 +341,11 @@
     std::vector<uint32_t> path_indices(order.size());
     std::vector<uint32_t> element_tokens(order.size());
     std::vector<uint32_t> jump_indices(order.size());
-    std::string elem_scratch;
     for (size_t k = 0; k < order.size(); ++k) {
       const uint32_t node = order[k];
       path_indices[k] = node;
-      elem_scratch.assign(elem[node].data(), elem[node].size());
       int32_t tok = static_cast<int32_t>(
-          InternToken(is_root[node] ? std::string() : elem_scratch));
+          InternToken(is_root[node] ? std::string_view() : elem[node]));
       // Property element tokens are negated (pxr's is_property marker).
       if (!is_root[node] && is_prop[node]) tok = -tok;
       element_tokens[k] = static_cast<uint32_t>(tok);

@@ -12,6 +12,7 @@
 #include "stream-reader.hh"
 #include "../layer/prim-spec.hh"  // PropMeta (property metadata decode)
 #include "../layer/prim-spec-variant-data.hh"
+#include "../execution.hh"
 #include "../layer/layer.hh"
 
 #include <limits>
@@ -305,6 +306,14 @@ class CrateReader::Impl {
   void MergeDecodeCtx(ThreadDecodeCtx& ctx);
   // Worker count for the parallel stage build (1 = serial).
   int ResolveBuildThreads() const;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::unique_ptr<TaskArena> build_arena_;
+  TaskArena& BuildArena() {
+    if (!build_arena_)
+      build_arena_.reset(new TaskArena(static_cast<size_t>(ResolveBuildThreads())));
+    return *build_arena_;
+  }
+#endif
   std::shared_ptr<CrateDataSource> source_;
   CrateReadResult result_;
 
@@ -335,6 +344,13 @@ class CrateReader::Impl {
   bool DecodePropMetaField(const std::string& name, ValueRep rep,
                            PropMeta& pm);
   bool BuildStage();
+  void ReorderPrimsByPath(std::vector<PrimEntry>& entries, int threads);
+  void ApplyChildrenOrder(
+      Layer& layer, const std::vector<PrimEntry>& entries,
+      std::vector<uint32_t>& entry_prim,
+      std::vector<std::vector<std::string>>& children_order,
+      const std::unordered_map<std::string, std::vector<std::string>>& prim_order,
+      bool irregular, int threads);
   void DecodeStageMetadata(
       Layer& layer,
       std::unordered_map<std::string, std::vector<std::string>>& children_order);

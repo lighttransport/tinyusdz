@@ -4730,6 +4730,97 @@ static void test_local_opinions_require_composition() {
             "ordinary layer retains its original prim storage");
 }
 
+// The per-stack negative-lookup path filter must be transparent: after it is
+// built (many sites absent from every layer of a multi-layer stack), a spec
+// authored ONLY by a weaker layer must still be found, and a referenced
+// sub-asset's children must all compose. A false negative in the filter would
+// silently drop those prims.
+static void test_spec_lookup_filter_exactness() {
+  std::cout << "test_spec_lookup_filter_exactness..." << std::endl;
+  const std::string dir = "/tmp/next_spec_filter";
+  assert(::system(("mkdir -p " + dir).c_str()) == 0);
+  constexpr int kRefChildren = 128;
+  {
+    std::ofstream f(dir + "/lib.usda");
+    f << "#usda 1.0\ndef Xform \"Model\"\n{\n";
+    for (int i = 0; i < kRefChildren; ++i) {
+      f << "    def Sphere \"S" << i << "\"\n    {\n"
+        << "        custom int idx = " << i << "\n    }\n";
+    }
+    f << "}\n";
+  }
+  {
+    // Weakest layer: an opinion on /World plus prims authored NOWHERE else.
+    std::ofstream f(dir + "/weak.usda");
+    f << "#usda 1.0\n"
+         "over \"World\"\n{\n"
+         "    def Sphere \"WeakOnly\"\n    {\n"
+         "        custom int weak = 7\n    }\n"
+         "    over \"Ref\"\n    {\n"
+         "        def Sphere \"ZZZWeakSibling\"\n        {\n"
+         "            custom int weak = 9\n        }\n"
+         "    }\n"
+         "}\n";
+  }
+  { std::ofstream f(dir + "/mid.usda");
+    f << "#usda 1.0\nover \"World\"\n{\n    custom int mid = 5\n}\n"; }
+  {
+    std::ofstream f(dir + "/root.usda");
+    f << "#usda 1.0\n(\n    subLayers = [@mid.usda@, @weak.usda@]\n)\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"Ref\" (\n"
+         "        references = @lib.usda@</Model>\n"
+         "    )\n    {\n    }\n"
+         "    def Sphere \"StrongOnly\"\n    {\n"
+         "        custom int strong = 3\n    }\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  std::string warn, err;
+  std::shared_ptr<Layer> root = pcp::LoadLayerFromFile(dir + "/root.usda",
+                                                       &warn, &err);
+  assert(root && "spec-filter root layer load failed");
+  auto opened = pcp::Cache::Open(resolver, std::move(root), dir + "/root.usda");
+  assert(opened && "spec-filter Cache::Open failed");
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  bool ok = cache.BuildStage(&stage, &warn, &err);
+  if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+  assert(ok && "spec-filter BuildStage failed");
+
+  // Every child of the external reference composed.
+  for (int i = 0; i < kRefChildren; ++i) {
+    UsdPrim p = stage.GetPrimAtPath("/World/Ref/S" + std::to_string(i));
+    assert(p.IsValid() && "referenced child dropped");
+    const Value *v = p.GetPropertyValue("idx");
+    assert(v && v->as_int() && *v->as_int() == i &&
+           "referenced child opinion wrong");
+  }
+  // Prims authored only by the weakest sublayer survived the active filter.
+  UsdPrim weak_only = stage.GetPrimAtPath("/World/WeakOnly");
+  assert(weak_only.IsValid() && "weakest-layer child dropped");
+  const Value *wv = weak_only.GetPropertyValue("weak");
+  assert(wv && wv->as_int() && *wv->as_int() == 7);
+  UsdPrim weak_sibling = stage.GetPrimAtPath("/World/Ref/ZZZWeakSibling");
+  assert(weak_sibling.IsValid() && "weakest-layer sibling dropped");
+  const Value *sv = weak_sibling.GetPropertyValue("weak");
+  assert(sv && sv->as_int() && *sv->as_int() == 9);
+  assert(stage.GetPrimAtPath("/World/StrongOnly").IsValid());
+
+  // Direct lazy compose of a weak-layer path on the SAME cache: the filter is
+  // already built here, so this exercises the positive fast path directly.
+  const PrimSpec *weak_spec =
+      cache.ComposePrim(Path("/World/Ref/ZZZWeakSibling"), &warn, &err);
+  assert(weak_spec && "filtered ComposePrim dropped a weak-layer spec");
+  const PrimSpec *absent =
+      cache.ComposePrim(Path("/World/Ref/DoesNotExist123"), &warn, &err);
+  assert(!absent && "filter must not invent a negative-lookup spec");
+
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_local_opinions_require_composition();
   test_compute_prim_index();
@@ -4801,6 +4892,7 @@ int main() {
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
   test_payload_policy_owner_anchor();
+  test_spec_lookup_filter_exactness();
   test_sublayer_stack_composition();
   test_usdz_package_layers();
   test_sublayer_cycle_and_depth();

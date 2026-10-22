@@ -45,8 +45,8 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
     }
   };
 
-  while (lexer.peek().type != TokenType::CloseBrace &&
-         lexer.peek().type != TokenType::Eof) {
+  while (lexer.peek_view().type != TokenType::CloseBrace &&
+         lexer.peek_view().type != TokenType::Eof) {
     std::string type_name, key;
     bool have_type = false;
 
@@ -63,7 +63,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
         // `first` was the type name; the key (after an optional []) follows.
         type_name = first;
         have_type = true;
-        if (lexer.peek().type == TokenType::OpenBracket) {
+        if (lexer.peek_view().type == TokenType::OpenBracket) {
           lexer.next();
           lexer.expect(TokenType::CloseBracket);
           type_name += "[]";
@@ -88,7 +88,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
     }
 
     ParseResult val;
-    if (lexer.peek().type == TokenType::OpenBrace) {
+    if (lexer.peek_view().type == TokenType::OpenBrace) {
       val = ParseDictDepth(lexer, depth + 1);
     } else if (have_type) {
       bool is_array = false;
@@ -108,7 +108,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
     if (!val.success) return val;
     d->set(std::move(key), std::move(val.value));
 
-    if (lexer.peek().type == TokenType::Comma) lexer.next();
+    if (lexer.peek_view().type == TokenType::Comma) lexer.next();
   }
 
   if (!lexer.expect(TokenType::CloseBrace)) {

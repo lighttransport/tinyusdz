@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <future>
@@ -54,9 +55,11 @@ struct LayerLoadOptions {
   /// Optional parser progress callback, also forwarded to crate loads.
   std::function<bool(const char*, size_t, size_t)> progress_callback;
 
-  /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
+  /// USDA/USDC parser worker hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
 
+  /// Opt-in parser phase diagnostics through the library logger.
+  bool enable_timing = false;
   /// Dependency reader for foreign layers (OBJ MTL/textures). No filesystem
   /// fallback is used when a resolver supplies this callback.
   std::function<bool(const std::string&, const std::string&,
@@ -93,6 +96,9 @@ class LayerRegistry {
 #if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
+    auto old = by_resolved_.find(resolved_id);
+    if (old != by_resolved_.end()) file_layers_.erase(old->second.get());
+    file_layers_.erase(layer.get());  // caller-provided layers may own callbacks
     by_resolved_[resolved_id] = std::move(layer);
   }
 
@@ -107,7 +113,12 @@ class LayerRegistry {
     std::lock_guard<std::mutex> lk(*mu_);
 #endif
     by_resolved_.clear();
+    file_layers_.clear();
   }
+  /// Internal cache teardown support. Call only after all loads/queries join.
+  /// Pin file-reader-created layers while dropping cache borrowers, then
+  /// release the pins concurrently. Preloaded/custom-reader layers stay here.
+  std::vector<std::shared_ptr<Layer>> TakeFileLayersForRelease();
   size_t size() const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
     std::lock_guard<std::mutex> lk(*mu_);
@@ -137,6 +148,7 @@ class LayerRegistry {
 
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
+  std::unordered_set<const Layer*> file_layers_;
   size_t parse_count_ = 0;
 #if defined(LIGHTUSD_ENABLE_THREAD)
   // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_

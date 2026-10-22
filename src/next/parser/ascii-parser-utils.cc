@@ -298,11 +298,11 @@ bool AsciiParser::Impl::Match(TokenType type) {
 }
 
 bool AsciiParser::Impl::Check(TokenType type) {
-  return lexer_ && lexer_->peek().type == type;
+  return lexer_ && lexer_->peek_view().type == type;
 }
 
 bool AsciiParser::Impl::AtEnd() {
-  return !lexer_ || lexer_->peek().type == TokenType::Eof;
+  return !lexer_ || lexer_->peek_view().type == TokenType::Eof;
 }
 
 }  // namespace next

@@ -826,6 +826,12 @@ LU_CORE_API int lu_crate_blob_decompress(const uint8_t *src, size_t src_size,
                                          uint8_t *dst, size_t dst_size,
                                          size_t *out_size,
                                          const char **out_error);
+/* Explicit-budget variant for validated large structural tables. No memory is
+ * allocated here. dst must back dst_size bytes, which must not exceed the
+ * caller's max_output_size. The ordinary entry point keeps its 1 GiB cap. */
+LU_CORE_API int lu_crate_blob_decompress_bounded(
+    const uint8_t *src, size_t src_size, uint8_t *dst, size_t dst_size,
+    size_t max_output_size, size_t *out_size, const char **out_error);
 
 /* Packed 2-bit code-table bytes for `count` values. */
 LU_CORE_API int lu_crate_delta_code_bytes(size_t count, size_t *out);

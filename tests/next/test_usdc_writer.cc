@@ -615,6 +615,46 @@ void test_usdc_encode_value_fallback_roundtrip() {
   std::cout << "  USDC EncodeValue fallback roundtrip test passed!\n\n";
 }
 
+// More target paths than spec paths force path-table growth. Targets without
+// authored ancestor specs also exercise the deep ancestor hash fallback.
+void test_writer_reuse_and_target_growth() {
+  StageBuilder sb;
+  auto& layer = sb.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.add_property("inferred", Value(1.25f));
+  layer.add_property("array", Value::MakeFloatArray({1.0f, 2.0f}));
+  layer.add_property("alias", Value::MakeFloat3(1, 2, 3));
+  layer.current()->set_property_type_name("alias", "color3f");
+  std::string deep;
+  for (int i = 0; i < 48; ++i) deep += "/deep" + std::to_string(i);
+  for (int i = 0; i < 200; ++i) {
+    layer.add_relationship("targets", Path(deep + "/target" +
+                                           std::to_string(i) + ".outputs:surface"));
+  }
+  layer.end_prim();
+  layer.finalize();
+  Stage large = sb.Build();
+  StageBuilder other;
+  auto& small_layer = other.GetLayerBuilder();
+  small_layer.begin_prim("Different", "Scope");
+  small_layer.add_property("token", Value::MakeToken("different_token_order"));
+  small_layer.add_property("float", Value(2.5f));
+  small_layer.end_prim();
+  small_layer.finalize();
+  Stage small = other.Build();
+  CrateWriter reused;
+  for (const Stage* stage : {&large, &small, &large}) {
+    std::vector<uint8_t> actual, expected;
+    CrateWriter fresh;
+    assert(reused.WriteToMemory(actual, *stage).success);
+    assert(fresh.WriteToMemory(expected, *stage).success);
+    assert(actual == expected);
+    auto read = LoadUSDCFromMemory(actual.data(), actual.size());
+    assert(read.success);
+    assert(WriteUSDAToString(read.stage) == WriteUSDAToString(*stage));
+  }
+}
+
 int main() {
   std::cout << "=== LightUSD Next USDC Writer Tests ===\n\n";
 
@@ -630,6 +670,7 @@ int main() {
     test_usdc_bool_array_roundtrip();
     test_usdc_relationship_connection_roundtrip();
     test_usdc_encode_value_fallback_roundtrip();
+    test_writer_reuse_and_target_growth();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;

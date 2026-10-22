@@ -28,6 +28,14 @@ CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
 }
 
 CrateReadResult CrateReader::Impl::ParseFromSource() {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Reuse workers across PATHS decode/fill and all stage-building phases,
+  // joining on every exit (including malformed input and cancellation).
+  struct ReleaseArena {
+    std::unique_ptr<TaskArena>& arena;
+    ~ReleaseArena() { arena.reset(); }
+  } release_arena{build_arena_};
+#endif
   result_ = CrateReadResult();
   result_.source_was_mmap = source_ && source_->is_mmapped();
   tokens_.clear();
