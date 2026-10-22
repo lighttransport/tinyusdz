@@ -559,23 +559,33 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
 
     // Collect the uncached ancestor chain (leaf -> topmost uncached), then
     // expand top-down, so a pathologically deep query path walks a loop instead
-    // of the C++ stack.
+    // of the C++ stack. Each ancestor's cache key is built once and reused by
+    // the expansion below: a deep path otherwise allocates the same key
+    // strings three times per level.
     std::vector<Path> pending;
+    std::vector<std::string> pending_keys;
+    std::string top_parent_key;
     {
       Path cur = path;
       for (;;) {
         pending.push_back(cur);
+        pending_keys.push_back(SourcesKey(stack, cur.str()));
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (HasCachedSources(SourcesKey(stack, parent.str()))) break;
+        const std::string parent_key = SourcesKey(stack, parent.str());
+        if (HasCachedSources(parent_key)) {
+          top_parent_key = parent_key;
+          break;
+        }
         cur = parent;
       }
     }
 
     const std::vector<Src> *result = nullptr;
+    const std::vector<Src> *parent_slot = nullptr;
     for (size_t i = pending.size(); i-- > 0;) {
       const Path &p = pending[i];
-      const std::string key_i = SourcesKey(stack, p.str());
+      const std::string &key_i = pending_keys[i];
 
       std::vector<Src> base;
       Path parent = p.parent();
@@ -599,8 +609,11 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
           base.push_back(std::move(s));
         }
       } else {
+        // The parent's sources were produced by the previous iteration; only
+        // the topmost ancestor needs the cached parent looked up.
         const std::vector<Src> &psrc =
-            GetOrCreateCachedSources(SourcesKey(stack, parent.str()));
+            parent_slot ? *parent_slot
+                        : GetOrCreateCachedSources(top_parent_key);
         base = DeriveChildSources(psrc, p.name(), p.str(), warn, err);
       }
 
@@ -608,6 +621,7 @@ const std::vector<Src> &Cache::Impl::SourcesForSite(uint32_t stack, const Path &
       // and pending[0] (the queried leaf) is filled last, so this captures it.
       std::vector<Src> &slot = GetOrCreateCachedSources(key_i);
       slot = ExpandList(base, p.str(), warn, err);
+      parent_slot = &slot;
       result = &slot;
     }
     sources_in_progress.erase(key);

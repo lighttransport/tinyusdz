@@ -111,14 +111,10 @@ struct PackageCallbackEntry {
   UserdataRef userdata;
 };
 
-std::string NormalizeExtension(const char* extension) {
-  if (!extension) return {};
-  const char* start = extension;
-  if (*start == '.') ++start;
-  std::string out(start);
-  for (char& c : out) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
+lightusd_string* MakeOwnedString(const std::string& value) {
+  lightusd_string* out = new (std::nothrow) lightusd_string();
+  if (!out) return nullptr;
+  out->s = value;
   return out;
 }
 
@@ -273,11 +269,7 @@ lightusd_status lightusd_asset_resolver_register_scheme_owned(
       (!resolver_callback && !reader_callback)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid scheme handler");
   }
-  std::string normalized(scheme);
-  if (!normalized.empty() && normalized.back() == ':') normalized.pop_back();
-  for (char& c : normalized) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
+  const std::string normalized = n::AssetResolver::NormalizeSchemeName(scheme);
   if (normalized.empty() ||
       n::AssetResolver::GetIdentifierScheme(normalized + ":asset") !=
           normalized) {
@@ -349,6 +341,30 @@ lightusd_status lightusd_asset_resolver_unregister_scheme(
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_asset_resolver_create_identifier(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** out) {
+  if (!resolver || !asset_path || !asset_path[0] || !out) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid identifier arguments");
+  }
+  *out = nullptr;
+  const std::string identifier = resolver->resolver.CreateIdentifier(
+      asset_path, anchor_path ? anchor_path : "");
+  lightusd_string* result = new (std::nothrow) lightusd_string();
+  if (!result) {
+    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "identifier alloc failed");
+  }
+  result->s = identifier;
+  *out = result;
+  return LIGHTUSD_OK;
+}
+
+int lightusd_asset_resolver_has_scheme(
+    const lightusd_asset_resolver* resolver, const char* scheme) {
+  if (!resolver || !scheme || !scheme[0]) return 0;
+  return resolver->resolver.HasScheme(scheme) ? 1 : 0;
+}
+
 lightusd_status lightusd_asset_resolver_set_alias(
     lightusd_asset_resolver* resolver, const char* authored_path,
     const char* resolved_identifier) {
@@ -363,6 +379,79 @@ lightusd_status lightusd_asset_resolver_set_alias(
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_asset_resolver_unset_alias(
+    lightusd_asset_resolver* resolver, const char* authored_path) {
+  if (!resolver || !authored_path || !authored_path[0]) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid asset alias");
+  }
+  bool removed = false;
+  {
+    std::lock_guard<std::mutex> lock(resolver->alias_mutex);
+    removed = resolver->aliases.erase(authored_path) != 0;
+  }
+  if (!removed) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND, "alias was not registered");
+  }
+  return LIGHTUSD_OK;
+}
+
+lightusd_status lightusd_asset_resolver_get_asset_info(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_asset_info* out) {
+  if (!resolver || !asset_path || !asset_path[0] || !out) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid asset info arguments");
+  }
+  out->resolved_path = nullptr;
+  out->asset_name = nullptr;
+  out->repository_path = nullptr;
+  out->exists = 0;
+  const n::ResolvedAsset resolved =
+      resolver->resolver.Resolve(asset_path, anchor_path ? anchor_path : "");
+  const n::AssetInfo info =
+      resolver->resolver.GetAssetInfo(asset_path, resolved);
+  out->resolved_path = MakeOwnedString(info.resolved_path);
+  out->asset_name = MakeOwnedString(info.asset_name);
+  out->repository_path = MakeOwnedString(info.repository_path);
+  if (!out->resolved_path || !out->asset_name || !out->repository_path) {
+    lightusd_asset_info_destroy(out);
+    return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "asset info alloc failed");
+  }
+  out->exists = info.exists ? 1 : 0;
+  return LIGHTUSD_OK;
+}
+
+void lightusd_asset_info_destroy(lightusd_asset_info* info) {
+  if (!info) return;
+  lightusd_string_destroy(info->resolved_path);
+  lightusd_string_destroy(info->asset_name);
+  lightusd_string_destroy(info->repository_path);
+  info->resolved_path = nullptr;
+  info->asset_name = nullptr;
+  info->repository_path = nullptr;
+  info->exists = 0;
+}
+
+lightusd_status lightusd_asset_resolver_get_modification_timestamp(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, uint64_t* seconds, uint32_t* nanoseconds,
+    uint8_t* valid) {
+  if (!resolver || !asset_path || !asset_path[0] || !seconds || !nanoseconds ||
+      !valid) {
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid timestamp arguments");
+  }
+  *seconds = 0;
+  *nanoseconds = 0;
+  *valid = 0;
+  const n::ResolvedAsset resolved =
+      resolver->resolver.Resolve(asset_path, anchor_path ? anchor_path : "");
+  const n::AssetTimestamp timestamp =
+      resolver->resolver.GetModificationTimestamp(asset_path, resolved);
+  *seconds = timestamp.seconds;
+  *nanoseconds = static_cast<uint32_t>(timestamp.nanoseconds);
+  *valid = timestamp.valid ? 1 : 0;
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_asset_resolver_read(
     const lightusd_asset_resolver* resolver, const char* resolved_identifier,
     lightusd_string** out) {
@@ -370,16 +459,25 @@ lightusd_status lightusd_asset_resolver_read(
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid asset read arguments");
   }
   *out = nullptr;
-  std::vector<uint8_t> bytes;
   std::string error;
-  if (!resolver->resolver.ReadAsset(resolved_identifier, &bytes, &error)) {
+  // The identifier is already resolved; only a package entry still needs to be
+  // split so the package file's bytes are returned.
+  std::string read_path = resolved_identifier;
+  std::string package_file;
+  std::string package_entry;
+  if (n::AssetResolver::IsPackagePath(read_path) &&
+      n::AssetResolver::ParsePackagePath(read_path, &package_file,
+                                          &package_entry)) {
+    read_path = package_file;
+  }
+  // Read straight into the string: a large asset is not copied twice.
+  std::string bytes;
+  if (!resolver->resolver.ReadAssetToString(read_path, &bytes, &error)) {
     return Fail(LIGHTUSD_ERR_IO, error);
   }
   lightusd_string* result = new (std::nothrow) lightusd_string();
   if (!result) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "asset alloc failed");
-  if (!bytes.empty()) {
-    result->s.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-  }
+  result->s = std::move(bytes);
   *out = result;
   return LIGHTUSD_OK;
 }
@@ -484,8 +582,11 @@ lightusd_status lightusd_asset_resolver_unbind_context(
     void** binding_data) {
   if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
   const n::ResolverContext default_context;
-  resolver->resolver.UnbindContext(context ? context->context : default_context,
-                                   binding_data);
+  if (!resolver->resolver.UnbindContext(
+          context ? context->context : default_context, binding_data)) {
+    return Fail(LIGHTUSD_ERR_NOT_FOUND,
+                "no matching context binding on this thread");
+  }
   return LIGHTUSD_OK;
 }
 
@@ -538,7 +639,8 @@ lightusd_status lightusd_asset_resolver_register_package_owned(
   if (!resolver || !callback) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package resolver");
   }
-  const std::string normalized = NormalizeExtension(extension);
+  const std::string normalized =
+      n::AssetResolver::NormalizePackageExtension(extension ? extension : "");
   if (normalized.empty()) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package extension");
   }
@@ -593,7 +695,8 @@ lightusd_status lightusd_asset_resolver_register_package(
 lightusd_status lightusd_asset_resolver_unregister_package(
     lightusd_asset_resolver* resolver, const char* extension) {
   if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");
-  const std::string normalized = NormalizeExtension(extension);
+  const std::string normalized =
+      n::AssetResolver::NormalizePackageExtension(extension ? extension : "");
   if (normalized.empty()) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid package extension");
   }

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -46,8 +47,9 @@ struct ResolvedAsset {
   bool is_package = false;      // Whether this is inside a package (USDZ)
   std::string package_path;     // If in package, the package file path
   std::string asset_in_package; // If in package, path within package
-  // File identity captured during resolution; ReadAsset(ResolvedAsset) uses it
-  // to reject a check/use replacement of the path.
+  // File identity captured during resolution (by the same existence probe
+  // that resolved the path); ReadAsset(ResolvedAsset) uses it to reject a
+  // check/use replacement of the path.
   bool has_file_identity = false;
   uint64_t file_device = 0;
   uint64_t file_inode = 0;
@@ -152,6 +154,12 @@ public:
   AssetResolver& operator=(const AssetResolver& other);
   AssetResolver(AssetResolver&& other) noexcept;
   AssetResolver& operator=(AssetResolver&& other) noexcept;
+
+  /// Normalize a URI scheme name ("Studio:" -> "studio"). Scheme registries
+  /// and context keys use the same normalized form.
+  static std::string NormalizeSchemeName(const std::string& scheme);
+  /// Normalize a package file extension (".PKG" -> "pkg").
+  static std::string NormalizePackageExtension(const std::string& extension);
   ~AssetResolver();
 
   // ============================================================
@@ -279,7 +287,10 @@ public:
   ResolverContext CreateDefaultContext() const;
   ResolverContext CreateContextFromString(const std::string& context_str) const;
   void BindContext(const ResolverContext& context, void** binding_data = nullptr);
-  void UnbindContext(const ResolverContext& context, void** binding_data = nullptr);
+  /// Unbind a context. Returns false when no binding was removed (already
+  /// unbound, or the binding lives on another thread).
+  bool UnbindContext(const ResolverContext& context,
+                     void** binding_data = nullptr);
   ResolverContext GetCurrentContext() const;
   bool IsContextDependentPath(const std::string& asset_path) const;
 
@@ -289,6 +300,11 @@ public:
                          const ResolvedAsset& resolved_path) const;
   AssetTimestamp GetModificationTimestamp(const std::string& asset_path,
                                           const ResolvedAsset& resolved_path) const;
+
+  /// Read asset bytes into a string. Equivalent to ReadAsset() but avoids the
+  /// intermediate byte buffer, so a large asset is copied once.
+  bool ReadAssetToString(const std::string& resolved_path, std::string* out,
+                          std::string* err = nullptr) const;
 
   /// Open asset bytes
   std::shared_ptr<std::vector<uint8_t>> OpenAsset(
@@ -376,6 +392,11 @@ private:
   std::unordered_map<std::string, PackageResolverCallback> package_resolvers_;
   std::unordered_map<std::string, std::shared_ptr<const std::vector<uint8_t>>>
       memory_assets_;
+  // Mirror the registry sizes so hot resolution paths can skip the registry
+  // lock entirely when no callback or memory asset is registered.
+  std::atomic<size_t> memory_asset_count_{0};
+  std::atomic<size_t> scheme_handler_count_{0};
+  std::atomic<size_t> package_handler_count_{0};
   uint64_t next_anonymous_id_ = 1;
 
   void NormalizeConfigContext();
@@ -383,12 +404,23 @@ private:
   std::string CurrentSchemeContext(const std::string& scheme) const;
   PackageResolverCallback FindPackageResolver(
       const std::string& package_file) const;
+  /// Give a registered package resolver a second chance with the resolved
+  /// container path so virtual package formats can observe the real container.
+  /// Returns true when the callback answered with an identifier.
+  static bool ApplyPackageResolverToResolved(
+      const PackageResolverCallback& callback,
+      const std::string& resolved_package, const std::string& package_file,
+      const std::string& entry, bool exists, ResolvedAsset* result);
 
   // Internal resolution
   ResolvedAsset ResolveInternal(const std::string& asset_path,
                                 const std::string& anchor_path,
                                 bool allow_suffix_fallback = true) const;
-  bool FileExists(const std::string& path) const;
+  /// Existence probe that also reports the file's device/inode identity when
+  /// the platform provides it, so resolution can capture the identity without
+  /// a second stat.
+  bool FileExists(const std::string& path, uint64_t* device = nullptr,
+                  uint64_t* inode = nullptr) const;
 };
 
 /// Global default resolver

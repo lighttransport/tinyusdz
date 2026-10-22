@@ -86,6 +86,9 @@ assert resolver.read("studio:layer.usda").startswith(b"#usda")
 
 resolver.register_memory("usd-anon:generated.usda", b"#usda 1.0\n")
 data = resolver.read("usd-anon:generated.usda")
+info = resolver.asset_info("usd-anon:generated.usda")   # name/repository/exists
+stamp = resolver.modification_timestamp("tex.png")      # (seconds, ns) or None
+key = resolver.create_identifier("future.usda", "/proj/look/layer.usda")
 report, ok = resolver.dependency_report("usd-anon:generated.usda")
 count, bytes_used, peak = resolver.memory_stats
 

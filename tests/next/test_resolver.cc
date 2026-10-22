@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace lightusd::next;
@@ -152,7 +153,26 @@ void TestContexts() {
   resolver.UnbindContext(ctx_a, &first);
   CHECK(resolver.GetCurrentContext().context_string == (root / "b").string(),
         "out-of-order unbind removes only the requested binding");
-  resolver.UnbindContext(ctx_b, &second);
+  CHECK(resolver.UnbindContext(ctx_b, &second),
+        "unbinding removes the requested binding");
+  CHECK(!resolver.UnbindContext(ctx_b, &second),
+        "unbinding an already-removed binding reports no removal");
+
+  // Bindings are thread-local: another thread cannot unbind them.
+  {
+    void* third = nullptr;
+    resolver.BindContext(ctx_a, &third);
+    void* binding_handle = third;
+    std::thread worker([&resolver, &ctx_a, binding_handle]() {
+      void* local = binding_handle;
+      CHECK(!resolver.UnbindContext(ctx_a, &local),
+            "a foreign thread cannot unbind another thread's binding");
+    });
+    worker.join();
+    CHECK(resolver.GetCurrentContext().context_string == ctx_a.context_string,
+          "a failed cross-thread unbind leaves the binding intact");
+    resolver.UnbindContext(ctx_a, &third);
+  }
   CHECK(resolver.GetCurrentContext().is_default,
         "unbinding the last context returns to the default context");
 
@@ -220,6 +240,32 @@ void TestContexts() {
   resolver.UnbindContext(default_ctx);
 
   fs::remove_all(root);
+}
+
+void TestPathNormalization() {
+  // The fast path must agree with the full normalization for every shape.
+  struct Case {
+    const char* input;
+    const char* expected;
+  };
+  const Case cases[] = {
+      {"a/b", "a/b"},
+      {"/a/b", "/a/b"},
+      {"a//b", "a/b"},
+      {"a/./b", "a/b"},
+      {"a/../b", "b"},
+      {"./a", "a"},
+      {"a/", "a"},
+      {".", "."},
+      {"..", ".."},
+      {"/a/../b", "/b"},
+      {"/a/b/../../c", "/c"},
+      {"a/b/..", "a"},
+  };
+  for (const Case& c : cases) {
+    CHECK(AssetResolver::NormalizePath(c.input) == c.expected,
+          "normalized path keeps its meaning");
+  }
 }
 
 void TestScopedCache() {
@@ -423,6 +469,41 @@ void TestAssetInfoAndTimestamp() {
         "identity-checked package read rejects a replaced package");
 #endif
 
+  // A memory asset registered under a path that also exists on disk must win:
+  // the resolved identity check must not capture the file behind it.
+  {
+    const std::string dual_path = Normalized(root / "dual.usda");
+    WriteText(root / "dual.usda", "#usda 1.0\n# file bytes\n");
+    const std::string memory_bytes = "#usda 1.0\n# memory bytes\n";
+    resolver.RegisterMemoryAsset(
+        dual_path,
+        std::vector<uint8_t>(memory_bytes.begin(), memory_bytes.end()));
+    const ResolvedAsset dual = resolver.Resolve(dual_path);
+    CHECK(dual.exists, "memory asset shadows a same-named file");
+    std::vector<uint8_t> dual_bytes;
+    CHECK(resolver.ReadAsset(dual, &dual_bytes, &read_error) &&
+              std::string(dual_bytes.begin(), dual_bytes.end()) == memory_bytes,
+          "identity-checked read returns the memory bytes, not the file");
+  }
+
+  {
+    // An unresolved bare name has no known repository.
+    const ResolvedAsset missing = resolver.Resolve("missing.usda");
+    const AssetInfo missing_info =
+        resolver.GetAssetInfo("missing.usda", missing);
+    CHECK(missing_info.asset_name == "missing.usda" && !missing_info.exists,
+          "unresolved asset info reports the authored name");
+    CHECK(missing_info.repository_path.empty(),
+          "unresolved asset info does not claim the current directory");
+    // An existing relative asset reports its resolved directory.
+    const ResolvedAsset relative = resolver.Resolve("tex.usda");
+    const AssetInfo relative_info =
+        resolver.GetAssetInfo("tex.usda", relative);
+    CHECK(relative_info.exists &&
+              relative_info.repository_path == Normalized(root),
+          "existing relative asset reports its resolved directory");
+  }
+
   const AssetTimestamp timestamp =
       resolver.GetModificationTimestamp("tex.usda", resolved);
   CHECK(timestamp.valid && timestamp.seconds > 0,
@@ -499,6 +580,7 @@ int main() {
   std::cout << "[AssetResolver contexts]\n";
   TestContexts();
   std::cout << "[AssetResolver scoped cache]\n";
+  TestPathNormalization();
   TestScopedCache();
   std::cout << "[AssetResolver package resolvers]\n";
   TestPackageResolvers();

@@ -542,7 +542,8 @@ For comparisons between commits/branches:
 
 ### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
 
-**Whole-island full LOD does not fit, and the wall is host RAM, not VRAM.**
+**Whole-island full LOD does not fit on a 62 GiB host, and the wall is host
+RAM, not VRAM** (a 125 GiB host does complete it — see §2.6.8).
 Both viewers (and every lusdrender backend, including `-vk`/`-vkr`) *eagerly
 compose all 45 districts' full payloads into host-RAM arrays and build a single
 in-memory triangle soup before anything is uploaded to the GPU.* On a 62 GiB
@@ -1324,6 +1325,77 @@ balance differs. `LUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
 line, so the trade can be re-measured rather than re-argued.
 
 ---
+
+### 2.6.8 Next-core load/compose profile on a 32-core, 125 GiB host (2026-10)
+
+Measured on the workstation that hosts the Caldera checkout
+(`/path/to/caldera`, 10.5 GB, 63,684 files; 32 cores, 125 GiB RAM,
+NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, i.e. `next_usdcat`),
+`--compose-threads-auto`, `LIGHTUSD_NEXT_TIMING=1`.
+
+| Case | load+compose | write | total | peak RSS | output |
+|---|---:|---:|---:|---:|---|
+| proxy LOD, geometry deferred (`--defer-payloads`) | 8.1 s | 5.8 s | 13.9 s | 1.03 GiB | 190 MB USDA |
+| proxy LOD, payloads loaded (`--load-payloads`) | 14.2 s | 9.3 s | 23.8 s | 1.44 GiB | 286 MB USDC |
+| one district at full LOD (`map_phosphate_mine = full`) | 130–135 s | 67–85 s | ~3.5 min | 8.1 GiB | 580 MB USDC (4,458,013 paths/specs) |
+| whole island at full LOD (all 45 districts `full`) | **79.1 min** (sources 20.5 min, structure 24.6 min, compose 34.8 min, flatten 8.8 min, finalize 7.1 min) | 35.3 min | **114.4 min (1.9 h)** | ~59 GiB | **3.01 GB USDC** (61,833,354 paths/specs) |
+
+**The full-island case fits in RAM — and now completes.** With the whole
+island promoted to `districtLod = full` (all 45 districts) the next-core loader
+composes **10,224,245 prims** (10,217,261 source misses) and writes a
+**3.01 GB** USDC in **114 min** on this 32-core / 125 GiB host, peaking around
+**59 GiB RSS** (measured by sampling `/proc/<pid>/status`). The memory budget
+therefore fits with room to spare; the wall is compose time, not RAM.
+
+That is the *whole island* in one process. The per-district full LOD
+(§2.6.2) remains the production-correct approach — one district at full LOD is
+~3.5 min and ~8 GiB — but the full-island load is now demonstrated to
+complete rather than exhausting the host.
+
+**Where the compose time goes** (instrumented on the full-LOD district case):
+
+| Phase | Time | Note |
+|---|---:|---|
+| `sources` (per-prim source resolution) | 74–92 s | 733,439 source misses for 735,484 nodes |
+| `structure` (tree/instance pass) | 89–110 s | includes `sources` |
+| `compose` (opinion composition) | 40–57 s | |
+| crate write `fields_specs` | 41–42 s | 4.46 M specs |
+
+For the whole island the same phases scale to `sources` 20.5 min, `structure`
+24.6 min, `compose` 34.8 min, and a crate write of 35.3 min (of which
+`fields_specs` alone is 27 min for 61.8 M specs), so both the compose and the
+writer are linear in the composed prim count.
+
+The single dominant cost is **re-expanding every ancestor source per prim**:
+`ExpandList` calls `ExpandArcs` 7,057,537 times for 735,484 nodes (≈9.6
+expansions per node, i.e. the whole ancestor chain is re-expanded at every
+descendant). Each expansion re-resolves the site's spec list and re-walks its
+arcs, so a tree of depth *d* costs O(n·d) arc expansions even when the deeper
+prims author no arcs of their own. **The next algorithmic lever is to stop
+re-expanding arc-free ancestor sources** (reuse the parent's already-expanded
+result when the child contributes no arcs), which needs the exact strength
+ordering and implied-class re-rooting semantics preserved.
+
+**Landed in this pass (measured, A/B):**
+
+| Change | Effect |
+|---|---|
+| Resolver captures the file device/inode during the existence probe that resolves the path (no second `stat`) | ~22% faster resolution; ~44% faster with 8 resolving threads (the registry mutex was a contention point) |
+| Path normalization fast path (already-normalized paths are returned unchanged) | ~17% faster resolution; cumulative 7.1 µs → 4.45 µs per resolve |
+| Registry lookups skip the mutex when a resolver has no callbacks or memory assets | removes the shared lock from the hot path |
+| Asset bytes are read straight into the destination container (`AssetResolver::ReadAssetToString`) | 128 MiB read through the C ABI: peak RSS 267 MB → 136 MB (~49% lower) |
+| Crate writer: dropped a write-only 4.5 M-entry `path → fieldset` map | less writer memory/time, no behavior change |
+| Composition: per-ancestor source keys are built once and reused | fewer string allocations per composed prim |
+
+Reproduce with:
+
+```sh
+M=/path/to/caldera/caldera.usda
+LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
+  --defer-payloads -o /tmp/caldera.usda "$M"          # proxy structure
+LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
+  --load-payloads -o /tmp/caldera.usdc "$M"            # proxy + payloads
+```
 
 ## 3. Roadmap (remaining implementation)
 

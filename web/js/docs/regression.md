@@ -259,6 +259,19 @@ This configures `web/build_ninja` for the combined legacy module and
 `web/build_next_ninja` for the next-only module, then writes the four generated
 artifacts under `web/js/src/lightusd/`.
 
+The suites load the generated modules from `web/js/src/lightusd/`, so a build
+that writes elsewhere (for example a CMake cache with
+`LIGHTUSD_WASM_OUTPUT_DIRECTORY` pointing at its own `artifacts/` directory)
+leaves stale modules behind and the parity suites fail against the old glue
+instead of the current source. After such a build, copy the generated
+`lightusd_next.*`, `lightusd_combined.*`, `lightusd_next_64.*` and the
+`lightusd_{exr,validator,geometry,raytrace}[_64].*` feature modules into
+`web/js/src/lightusd/`, or re-run the preparation script above.
+
+The memory64 modules require Node 23 or newer
+(`This emscripten-generated code requires node v23.0.0`); run the suite with a
+newer `node` on PATH when the wasm64 rows are selected.
+
 MuJoCo physics-only tests use the prepared cache when run through
 `scripts/verify.sh`. Direct runs should set `MUJOCO_WASM_DIR`, or set
 `MUJOCO_PHYSICS_JS` and `MUJOCO_PHYSICS_WASM` explicitly.

@@ -43,6 +43,9 @@ def test_resolver_memory_alias_and_report():
     resolver.register_memory("demo:dep.usda", dep)
     assert resolver.read("demo:dep.usda") == dep
     resolver.set_alias("dep.usda", "demo:dep.usda")
+    assert resolver.unset_alias("dep.usda") is True
+    assert resolver.unset_alias("dep.usda") is False
+    resolver.set_alias("dep.usda", "demo:dep.usda")
     assert resolver.memory_stats[0] == 1
 
     root = b"#usda 1.0\ndef Xform \"Root\" (references = @dep.usda@) {}\n"
@@ -95,6 +98,30 @@ def test_resolver_scheme_callbacks():
 
     assert resolver.unregister_scheme("studio") is True
     assert resolver.unregister_scheme("studio") is False
+    assert resolver.has_scheme("studio") is False
+
+
+def test_resolver_asset_info_and_timestamp(tmp_path):
+    asset = tmp_path / "tex.usda"
+    asset.write_text("#usda 1.0\n", encoding="utf-8")
+    resolver = lightusd.AssetResolver()
+    resolver.set_alias("tex.usda", str(asset))
+
+    info = resolver.asset_info("tex.usda")
+    assert info["asset_name"] == "tex.usda"
+    assert info["resolved_path"] == str(asset)
+    assert info["repository_path"] == str(tmp_path)
+    assert info["exists"] is True
+
+    stamp = resolver.modification_timestamp("tex.usda")
+    assert stamp is not None and stamp[0] > 0
+
+    identifier = resolver.create_identifier("future.usda", "/tmp/look/layer.usda")
+    assert identifier == "/tmp/look/future.usda"
+    assert resolver.modification_timestamp("missing.usda") is None
+    missing = resolver.asset_info("missing.usda")
+    assert missing["exists"] is False
+    assert missing["repository_path"] == ""
 
 
 def test_resolver_callback_lifetime():
@@ -169,6 +196,7 @@ def test_resolver_scheme_composition(tmp_path):
         lambda identifier, anchor, scheme_context: identifier,
         lambda identifier: dep,
     )
+    assert resolver.has_scheme("STUDIO") is True
     stage = lightusd.load(str(root), resolver=resolver)
     assert stage.prim_at("/Root/Child").path == "/Root/Child"
 

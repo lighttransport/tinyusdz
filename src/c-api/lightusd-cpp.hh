@@ -165,11 +165,67 @@ inline lightusd_status AssetResolverMemoryIdentifier(
       resolver.get(), index, out, capacity, required_size);
 }
 
+inline lightusd_status CreateIdentifier(const AssetResolver& resolver,
+                                       const char* asset_path,
+                                       const char* anchor_path,
+                                       String* out) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  return lightusd_asset_resolver_create_identifier(
+      resolver.get(), asset_path, anchor_path, out->put());
+}
+
+inline lightusd_status UnsetAssetAlias(const AssetResolver& resolver,
+                                       const char* authored_path) {
+  return lightusd_asset_resolver_unset_alias(resolver.get(), authored_path);
+}
+
 inline lightusd_status SetAssetAlias(const AssetResolver& resolver,
                                      const char* authored_path,
                                      const char* resolved_identifier) {
   return lightusd_asset_resolver_set_alias(resolver.get(), authored_path,
                                            resolved_identifier);
+}
+
+/// Resolved asset metadata.
+struct AssetInfo {
+  String resolved_path;
+  String asset_name;
+  String repository_path;
+  bool exists = false;
+};
+
+inline lightusd_status GetAssetInfo(const AssetResolver& resolver,
+                                    const char* asset_path,
+                                    const char* anchor_path, AssetInfo* out) {
+  if (!out) return LIGHTUSD_ERR_INVALID_ARG;
+  lightusd_asset_info info;
+  const lightusd_status status = lightusd_asset_resolver_get_asset_info(
+      resolver.get(), asset_path, anchor_path, &info);
+  if (status != LIGHTUSD_OK) return status;
+  out->resolved_path.reset(info.resolved_path);
+  out->asset_name.reset(info.asset_name);
+  out->repository_path.reset(info.repository_path);
+  out->exists = info.exists != 0;
+  info.resolved_path = nullptr;
+  info.asset_name = nullptr;
+  info.repository_path = nullptr;
+  return LIGHTUSD_OK;
+}
+
+inline lightusd_status GetModificationTimestamp(const AssetResolver& resolver,
+                                                 const char* asset_path,
+                                                 const char* anchor_path,
+                                                 uint64_t* seconds,
+                                                 uint32_t* nanoseconds,
+                                                 bool* valid) {
+  if (!seconds || !nanoseconds || !valid) return LIGHTUSD_ERR_INVALID_ARG;
+  uint8_t is_valid = 0;
+  const lightusd_status status =
+      lightusd_asset_resolver_get_modification_timestamp(
+          resolver.get(), asset_path, anchor_path, seconds, nanoseconds,
+          &is_valid);
+  if (status == LIGHTUSD_OK) *valid = is_valid != 0;
+  return status;
 }
 
 inline lightusd_status ReadResolvedAsset(const AssetResolver& resolver,
@@ -284,6 +340,11 @@ inline lightusd_status RegisterSchemeResolverOwned(
 inline lightusd_status UnregisterSchemeResolver(AssetResolver& resolver,
                                                 const char* scheme) {
   return lightusd_asset_resolver_unregister_scheme(resolver.get(), scheme);
+}
+
+inline bool HasSchemeResolver(const AssetResolver& resolver,
+                              const char* scheme) {
+  return lightusd_asset_resolver_has_scheme(resolver.get(), scheme) != 0;
 }
 
 inline lightusd_status RegisterPackageResolver(

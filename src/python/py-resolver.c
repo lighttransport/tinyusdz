@@ -186,35 +186,10 @@ static void resolver_type_free(PyObject* self) {
   free_fn(self);
 }
 
-static int normalize_extension(const char* extension, char* out, size_t cap) {
-  if (!extension || !extension[0] || !out || cap == 0) return 0;
-  if (*extension == '.') ++extension;
-  const size_t n = strlen(extension);
-  if (n == 0 || n >= cap) return 0;
-  for (size_t i = 0; i < n; ++i) {
-    out[i] = (char)tolower((unsigned char)extension[i]);
-  }
-  out[n] = '\0';
-  return 1;
-}
-
 /* C API copies the string immediately after the callback returns; keep the
  * Python result alive long enough by copying into thread-local storage. */
 static LIGHTUSD_PY_THREAD_LOCAL char g_package_result[4096];
 static LIGHTUSD_PY_THREAD_LOCAL char g_scheme_result[4096];
-
-static int normalize_scheme_name(const char* scheme, char* out, size_t cap) {
-  if (!scheme || !out || cap == 0) return 0;
-  const size_t full = strlen(scheme);
-  size_t n = full;
-  if (n && scheme[n - 1] == ':') --n;
-  if (n == 0 || n >= cap) return 0;
-  for (size_t i = 0; i < n; ++i) {
-    out[i] = (char)tolower((unsigned char)scheme[i]);
-  }
-  out[n] = '\0';
-  return 1;
-}
 
 static int py_scheme_resolver_callback_impl(
     void* userdata, const char* identifier, const char* anchor_path,
@@ -616,6 +591,20 @@ static PyObject* Resolver_set_alias(PyObject* self, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+static PyObject* Resolver_unset_alias(PyObject* self, PyObject* args) {
+  LightUSDResolver* r = resolver_self(self);
+  const char* authored = NULL;
+  if (!PyArg_ParseTuple(args, "s:unset_alias", &authored)) return NULL;
+  const lightusd_status status =
+      lightusd_asset_resolver_unset_alias(r->resolver, authored);
+  if (status == LIGHTUSD_ERR_NOT_FOUND) return PyBool_FromLong(0);
+  if (status != LIGHTUSD_OK) {
+    return lightusd_raise(lightusd_state_from_obj(self), status,
+                          "unset asset alias");
+  }
+  return PyBool_FromLong(1);
+}
+
 static PyObject* Resolver_read(PyObject* self, PyObject* args) {
   LightUSDResolver* r = resolver_self(self);
   const char* identifier = NULL;
@@ -637,6 +626,79 @@ static PyObject* Resolver_read(PyObject* self, PyObject* args) {
                                               (Py_ssize_t)view.len);
   lightusd_string_destroy(text);
   return bytes;
+}
+
+static PyObject* Resolver_create_identifier(PyObject* self, PyObject* args) {
+  LightUSDResolver* r = resolver_self(self);
+  const char* asset_path = NULL;
+  const char* anchor_path = NULL;
+  if (!PyArg_ParseTuple(args, "s|z:create_identifier", &asset_path,
+                        &anchor_path)) {
+    return NULL;
+  }
+  lightusd_string* identifier = NULL;
+  const lightusd_status status = lightusd_asset_resolver_create_identifier(
+      r->resolver, asset_path, anchor_path, &identifier);
+  if (status != LIGHTUSD_OK) {
+    return lightusd_raise(lightusd_state_from_obj(self), status,
+                          "create identifier");
+  }
+  const lightusd_sv view = lightusd_string_view(identifier);
+  PyObject* text = lightusd_sv_to_str(view);
+  lightusd_string_destroy(identifier);
+  return text;
+}
+
+static PyObject* Resolver_asset_info(PyObject* self, PyObject* args) {
+  LightUSDResolver* r = resolver_self(self);
+  const char* asset_path = NULL;
+  const char* anchor_path = NULL;
+  if (!PyArg_ParseTuple(args, "s|z:asset_info", &asset_path, &anchor_path)) {
+    return NULL;
+  }
+  lightusd_asset_info info;
+  const lightusd_status status = lightusd_asset_resolver_get_asset_info(
+      r->resolver, asset_path, anchor_path, &info);
+  if (status != LIGHTUSD_OK) {
+    return lightusd_raise(lightusd_state_from_obj(self), status,
+                          "get asset info");
+  }
+  const lightusd_sv resolved_view = lightusd_string_view(info.resolved_path);
+  const lightusd_sv name_view = lightusd_string_view(info.asset_name);
+  const lightusd_sv repository_view =
+      lightusd_string_view(info.repository_path);
+  PyObject* result = Py_BuildValue(
+      "{s:s,s:s,s:s,s:O}", "resolved_path",
+      resolved_view.data ? resolved_view.data : "", "asset_name",
+      name_view.data ? name_view.data : "", "repository_path",
+      repository_view.data ? repository_view.data : "", "exists",
+      info.exists ? Py_True : Py_False);
+  lightusd_asset_info_destroy(&info);
+  return result;
+}
+
+static PyObject* Resolver_modification_timestamp(PyObject* self,
+                                                 PyObject* args) {
+  LightUSDResolver* r = resolver_self(self);
+  const char* asset_path = NULL;
+  const char* anchor_path = NULL;
+  if (!PyArg_ParseTuple(args, "s|z:modification_timestamp", &asset_path,
+                        &anchor_path)) {
+    return NULL;
+  }
+  uint64_t seconds = 0;
+  uint32_t nanoseconds = 0;
+  uint8_t valid = 0;
+  const lightusd_status status =
+      lightusd_asset_resolver_get_modification_timestamp(
+          r->resolver, asset_path, anchor_path, &seconds, &nanoseconds, &valid);
+  if (status != LIGHTUSD_OK) {
+    return lightusd_raise(lightusd_state_from_obj(self), status,
+                          "get modification timestamp");
+  }
+  if (!valid) Py_RETURN_NONE;
+  return Py_BuildValue("(KK)", (unsigned long long)seconds,
+                       (unsigned long long)nanoseconds);
 }
 
 static PyObject* Resolver_dependency_report(PyObject* self, PyObject* args) {
@@ -702,41 +764,47 @@ static PyObject* Resolver_register_scheme(PyObject* self, PyObject* args,
                     "register_scheme needs a resolver or reader callback");
     return NULL;
   }
-  char normalized[128];
-  if (!normalize_scheme_name(scheme, normalized, sizeof(normalized))) {
-    PyErr_SetString(PyExc_ValueError, "invalid scheme");
-    return NULL;
-  }
   PyCallbackSet* callbacks =
       make_callback_set(r, resolver_obj, reader_obj);
   if (!callbacks) return NULL;
   const lightusd_status status =
       lightusd_asset_resolver_register_scheme_owned(
-          r->resolver, normalized,
+          r->resolver, scheme,
           resolver_obj == Py_None ? NULL : py_scheme_resolver_callback,
           reader_obj == Py_None ? NULL : py_scheme_reader_callback,
           (void*)callbacks, py_callback_set_destroy);
   if (status != LIGHTUSD_OK) {
     py_callback_set_destroy(callbacks);
+    if (status == LIGHTUSD_ERR_INVALID_ARG) {
+      PyErr_SetString(PyExc_ValueError, "invalid scheme");
+      return NULL;
+    }
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "register scheme");
   }
   Py_RETURN_NONE;
 }
 
+static PyObject* Resolver_has_scheme(PyObject* self, PyObject* args) {
+  LightUSDResolver* r = resolver_self(self);
+  const char* scheme = NULL;
+  if (!PyArg_ParseTuple(args, "s:has_scheme", &scheme)) return NULL;
+  return PyBool_FromLong(
+      lightusd_asset_resolver_has_scheme(r->resolver, scheme));
+}
+
 static PyObject* Resolver_unregister_scheme(PyObject* self, PyObject* args) {
   LightUSDResolver* r = resolver_self(self);
   const char* scheme = NULL;
   if (!PyArg_ParseTuple(args, "s:unregister_scheme", &scheme)) return NULL;
-  char normalized[128];
-  if (!normalize_scheme_name(scheme, normalized, sizeof(normalized))) {
-    PyErr_SetString(PyExc_ValueError, "invalid scheme");
-    return NULL;
-  }
   const lightusd_status status =
-      lightusd_asset_resolver_unregister_scheme(r->resolver, normalized);
+      lightusd_asset_resolver_unregister_scheme(r->resolver, scheme);
   if (status == LIGHTUSD_ERR_NOT_FOUND) return PyBool_FromLong(0);
   if (status != LIGHTUSD_OK) {
+    if (status == LIGHTUSD_ERR_INVALID_ARG) {
+      PyErr_SetString(PyExc_ValueError, "invalid scheme");
+      return NULL;
+    }
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "unregister scheme");
   }
@@ -754,19 +822,18 @@ static PyObject* Resolver_register_package(PyObject* self, PyObject* args) {
     PyErr_SetString(PyExc_TypeError, "callback must be callable");
     return NULL;
   }
-  char normalized[128];
-  if (!normalize_extension(extension, normalized, sizeof(normalized))) {
-    PyErr_SetString(PyExc_ValueError, "invalid package extension");
-    return NULL;
-  }
   PyCallbackSet* callbacks = make_callback_set(r, callback, NULL);
   if (!callbacks) return NULL;
   const lightusd_status status =
       lightusd_asset_resolver_register_package_owned(
-          r->resolver, normalized, py_package_callback, (void*)callbacks,
+          r->resolver, extension, py_package_callback, (void*)callbacks,
           py_callback_set_destroy);
   if (status != LIGHTUSD_OK) {
     py_callback_set_destroy(callbacks);
+    if (status == LIGHTUSD_ERR_INVALID_ARG) {
+      PyErr_SetString(PyExc_ValueError, "invalid package extension");
+      return NULL;
+    }
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "register package resolver");
   }
@@ -777,15 +844,14 @@ static PyObject* Resolver_unregister_package(PyObject* self, PyObject* args) {
   LightUSDResolver* r = resolver_self(self);
   const char* extension = NULL;
   if (!PyArg_ParseTuple(args, "s:unregister_package", &extension)) return NULL;
-  char normalized[128];
-  if (!normalize_extension(extension, normalized, sizeof(normalized))) {
-    PyErr_SetString(PyExc_ValueError, "invalid package extension");
-    return NULL;
-  }
   const lightusd_status status =
-      lightusd_asset_resolver_unregister_package(r->resolver, normalized);
+      lightusd_asset_resolver_unregister_package(r->resolver, extension);
   if (status == LIGHTUSD_ERR_NOT_FOUND) return PyBool_FromLong(0);
   if (status != LIGHTUSD_OK) {
+    if (status == LIGHTUSD_ERR_INVALID_ARG) {
+      PyErr_SetString(PyExc_ValueError, "invalid package extension");
+      return NULL;
+    }
     return lightusd_raise(lightusd_state_from_obj(self), status,
                           "unregister package resolver");
   }
@@ -811,15 +877,31 @@ static PyMethodDef Resolver_methods[] = {
      "unregister_memory(identifier) -> bool"},
     {"set_alias", Resolver_set_alias, METH_VARARGS,
      "set_alias(authored_path, resolved_identifier)"},
+    {"unset_alias", Resolver_unset_alias, METH_VARARGS,
+     "unset_alias(authored_path) -> bool\nRemoves an alias; False when none "
+     "was registered."},
     {"read", Resolver_read, METH_VARARGS,
      "read(resolved_identifier) -> bytes"},
     {"dependency_report", Resolver_dependency_report, METH_VARARGS,
      "dependency_report(root) -> (json, complete)"},
+    {"asset_info", Resolver_asset_info, METH_VARARGS,
+     "asset_info(asset_path, anchor_path=None) -> dict\n"
+     "Resolved asset metadata with resolved_path, asset_name,\n"
+     "repository_path and exists keys."},
+    {"create_identifier", Resolver_create_identifier, METH_VARARGS,
+     "create_identifier(asset_path, anchor_path=None) -> str\n"
+     "Stable identifier for an authored path; unresolved relative paths stay\n"
+     "context-dependent."},
+    {"modification_timestamp", Resolver_modification_timestamp, METH_VARARGS,
+     "modification_timestamp(asset_path, anchor_path=None) -> (seconds, ns)\n"
+     "None when the asset has no timestamp."},
     {"register_scheme", (PyCFunction)Resolver_register_scheme,
      METH_VARARGS | METH_KEYWORDS,
      "register_scheme(scheme, resolver, reader=None)"},
     {"unregister_scheme", Resolver_unregister_scheme, METH_VARARGS,
      "unregister_scheme(scheme) -> bool"},
+    {"has_scheme", Resolver_has_scheme, METH_VARARGS,
+     "has_scheme(scheme) -> bool\nWhether a scheme handler is registered."},
     {"register_package", Resolver_register_package, METH_VARARGS,
      "register_package(extension, callback)"},
     {"unregister_package", Resolver_unregister_package, METH_VARARGS,

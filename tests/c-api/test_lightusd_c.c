@@ -620,6 +620,9 @@ static int test_dependency_boundary(void) {
   lightusd_resolver_context_destroy(current_context);
   CHECK_OK(lightusd_asset_resolver_unbind_context(resolver, context,
                                                   &context_binding));
+  CHECK(lightusd_asset_resolver_unbind_context(resolver, context,
+                                               &context_binding) ==
+            LIGHTUSD_ERR_NOT_FOUND);
   lightusd_resolver_context_destroy(context);
 
   TestSchemeState scheme_state;
@@ -654,9 +657,11 @@ static int test_dependency_boundary(void) {
   CHECK_OK(lightusd_asset_resolver_unbind_context(resolver, scheme_context,
                                                    &scheme_binding));
   lightusd_resolver_context_destroy(scheme_context);
+  CHECK(lightusd_asset_resolver_has_scheme(resolver, "STUDIO") == 1);
   CHECK_OK(lightusd_asset_resolver_unregister_scheme(resolver, "studio"));
   CHECK(lightusd_asset_resolver_unregister_scheme(resolver, "studio") ==
         LIGHTUSD_ERR_NOT_FOUND);
+  CHECK(lightusd_asset_resolver_has_scheme(resolver, "studio") == 0);
 
   TestSchemeState owned_state;
   memset(&owned_state, 0, sizeof(owned_state));
@@ -666,6 +671,8 @@ static int test_dependency_boundary(void) {
   CHECK(owned_state.destroy_calls == 0);
   CHECK_OK(lightusd_asset_resolver_unregister_scheme(resolver, "owned"));
   CHECK(owned_state.destroy_calls == 1);
+  CHECK(lightusd_asset_resolver_has_scheme(resolver, "OWNED") == 0);
+  CHECK(lightusd_asset_resolver_has_scheme(resolver, "owned") == 0);
 
   resolved = NULL;
   uint8_t exists = 0, is_package = 0;
@@ -747,6 +754,79 @@ static int test_dependency_boundary(void) {
 
   CHECK_OK(lightusd_asset_resolver_register_memory(
       resolver, "demo:root.usda", (const uint8_t*)source, sizeof(source) - 1));
+  /* Reading a package entry identifier returns the package file's bytes. */
+  {
+    const char* package_path = "resolver-read-fake.usdz";
+    FILE* f = fopen(package_path, "wb");
+    CHECK(f != NULL);
+    CHECK(fwrite("package-bytes", 1, 13, f) == 13);
+    fclose(f);
+    lightusd_string* bytes = NULL;
+    CHECK_OK(lightusd_asset_resolver_read(resolver,
+                                          "resolver-read-fake.usdz[entry.usda]",
+                                          &bytes));
+    lightusd_sv view = lightusd_string_view(bytes);
+    CHECK(view.len == 13 && memcmp(view.data, "package-bytes", 13) == 0);
+    lightusd_string_destroy(bytes);
+    remove(package_path);
+  }
+
+  /* Reading a registered memory asset returns its bytes. */
+  {
+    lightusd_string* bytes = NULL;
+    CHECK_OK(lightusd_asset_resolver_read(resolver, "demo:dep.usda", &bytes));
+    CHECK(bytes != NULL && lightusd_string_view(bytes).len > 0);
+    lightusd_string_destroy(bytes);
+  }
+
+  /* Aliases can be removed again. */
+  {
+    CHECK_OK(lightusd_asset_resolver_set_alias(resolver, "alias.usda",
+                                               "demo:root.usda"));
+    CHECK_OK(lightusd_asset_resolver_unset_alias(resolver, "alias.usda"));
+    CHECK(lightusd_asset_resolver_unset_alias(resolver, "alias.usda") ==
+              LIGHTUSD_ERR_NOT_FOUND);
+  }
+
+  /* Stable identifiers stay context-dependent for unresolved paths. */
+  {
+    lightusd_string* identifier = NULL;
+    CHECK_OK(lightusd_asset_resolver_create_identifier(
+        resolver, "future.usda", "/tmp/look/layer.usda", &identifier));
+    lightusd_sv view = lightusd_string_view(identifier);
+    CHECK(view.len == strlen("/tmp/look/future.usda") &&
+              memcmp(view.data, "/tmp/look/future.usda", view.len) == 0);
+    lightusd_string_destroy(identifier);
+  }
+
+  /* Asset info and timestamps are exposed for resolved assets. */
+  {
+    lightusd_asset_info info;
+    CHECK_OK(lightusd_asset_resolver_get_asset_info(resolver, "demo:root.usda",
+                                                    NULL, &info));
+    lightusd_sv name = lightusd_string_view(info.asset_name);
+    CHECK(name.len > 0);
+    CHECK(info.exists == 1);
+
+    /* An unresolved asset has no known repository. */
+    lightusd_asset_info missing;
+    CHECK_OK(lightusd_asset_resolver_get_asset_info(resolver, "missing.usda",
+                                                    NULL, &missing));
+    CHECK(missing.exists == 0);
+    CHECK(lightusd_string_view(missing.repository_path).len == 0);
+    lightusd_asset_info_destroy(&missing);
+    lightusd_string_destroy(info.resolved_path);
+    lightusd_string_destroy(info.asset_name);
+    lightusd_string_destroy(info.repository_path);
+
+    uint64_t seconds = 0;
+    uint32_t nanoseconds = 0;
+    uint8_t valid = 0;
+    CHECK_OK(lightusd_asset_resolver_get_modification_timestamp(
+        resolver, "demo:root.usda", NULL, &seconds, &nanoseconds, &valid));
+    CHECK(valid == 0 || seconds > 0);
+  }
+
   CHECK_OK(lightusd_asset_resolver_register_memory(
       resolver, "demo:readme.txt", note, sizeof(note)));
   CHECK_OK(lightusd_asset_resolver_set_alias(

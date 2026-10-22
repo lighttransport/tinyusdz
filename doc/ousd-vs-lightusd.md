@@ -395,7 +395,40 @@ provide nested thread-local overrides, `ResolverScopedCache` memoizes
 resolution for a scope, and `RegisterPackageResolver` handles custom package
 formats. Context strings are parsed as platform-separated search paths. These
 APIs are exposed through the portable C ABI and the Python `AssetResolver`
-type, including context managers for bindings and scoped caches.
+type, including context managers for bindings and scoped caches. Resolved
+asset metadata (`GetAssetInfo`) and modification timestamps
+(`GetModificationTimestamp`) are exposed as well: `lightusd_asset_resolver_get_asset_info`,
+`lightusd_asset_resolver_get_modification_timestamp`, and the Python
+`AssetResolver.asset_info()` / `AssetResolver.modification_timestamp()`.
+
+Resolver API parity (C++ `next::AssetResolver` → C ABI → Python):
+
+| C++ | C ABI | Python |
+| --- | --- | --- |
+| `Resolve` | `lightusd_asset_resolver_resolve` | `AssetResolver.resolve()` |
+| `ResolveForNewAsset` | `lightusd_asset_resolver_resolve_for_new_asset` | `AssetResolver.resolve_new()` |
+| `CreateIdentifier` | `lightusd_asset_resolver_create_identifier` | `AssetResolver.create_identifier()` |
+| `GetAssetInfo` | `lightusd_asset_resolver_get_asset_info` | `AssetResolver.asset_info()` |
+| `GetModificationTimestamp` | `lightusd_asset_resolver_get_modification_timestamp` | `AssetResolver.modification_timestamp()` |
+| `ReadAsset` / `OpenAsset` | `lightusd_asset_resolver_read` | `AssetResolver.read()` |
+| `RegisterMemoryAsset` | `lightusd_asset_resolver_register_memory` | `AssetResolver.register_memory()` |
+| `UnregisterMemoryAsset` | `lightusd_asset_resolver_unregister_memory` | `AssetResolver.unregister_memory()` |
+| `SetAlias` | `lightusd_asset_resolver_set_alias` | `AssetResolver.set_alias()` |
+| (alias removal) | `lightusd_asset_resolver_unset_alias` | `AssetResolver.unset_alias()` |
+| `BindContext` / `UnbindContext` | `lightusd_asset_resolver_{bind,unbind}_context` | `AssetResolver.bind_context()` |
+| `GetCurrentContext` | `lightusd_asset_resolver_get_context` | `AssetResolver.current_context` |
+| `IsContextDependentPath` | `lightusd_asset_resolver_is_context_dependent` | `AssetResolver.is_context_dependent()` |
+| `RegisterScheme` / `UnregisterScheme` | `lightusd_asset_resolver_{register,unregister}_scheme[_owned]` | `AssetResolver.{register,unregister}_scheme()` |
+| `HasScheme` | `lightusd_asset_resolver_has_scheme` | `AssetResolver.has_scheme()` |
+| `RegisterPackageResolver` | `lightusd_asset_resolver_{register,unregister}_package[_owned]` | `AssetResolver.{register,unregister}_package()` |
+| `ResolverScopedCache` | `lightusd_asset_resolver_{create,destroy}_cache_scope` | `AssetResolver.cache_scope()` |
+| `ResolverConfig::context` | `lightusd_resolver_context_{set,get}_scheme` | `AssetResolver.bind_context(scheme_contexts=...)` |
+| `CollectDependencies` | `lightusd_dependency_report_json` | `AssetResolver.dependency_report()` |
+
+The C ABI additionally tracks a memory-asset budget that the C++ resolver does
+not: `lightusd_asset_resolver_set_memory_limit` and
+`lightusd_asset_resolver_get_memory_stats` (surfaced as
+`AssetResolver.memory_stats`).
 
 Scheme-specific context objects are supported through
 `ResolverContext::SetSchemeContext` and the context-aware `RegisterScheme`
@@ -403,7 +436,15 @@ overload. The filesystem resolver captures device/inode identity during
 resolution, `ReadAsset(ResolvedAsset)` opens once and verifies the descriptor
 with `fstat`, and file-backed layer loads re-check identity after parsing.
 Package entries carry the package file's identity, so a replaced `.usdz` is
-rejected as well.
+rejected as well. The identity is captured by the same existence probe that
+resolves the path, so verification costs no extra `stat` (measured ~20% faster
+resolution than probing the file a second time). Asset bytes are read straight
+into their destination container, so a large read is copied once instead of
+twice (measured ~49% lower peak RSS for a 128 MiB asset through the C ABI).
+Already-normalized paths skip the component-by-component rewrite, and a
+resolver without callbacks or memory assets skips the registry lock entirely:
+together these are ~37% faster single-threaded and ~44% faster with eight
+resolving threads (micro-benchmark in `tests/next`).
 
 Callback userdata is owned explicitly: the C ABI gained
 `lightusd_asset_resolver_register_{scheme,package}_owned()`, which releases

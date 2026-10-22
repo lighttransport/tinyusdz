@@ -564,6 +564,21 @@ static void test_scheme_and_anonymous_assets() {
             std::string(bytes.begin(), bytes.end()) == dep,
         "registered scheme reader returns bytes");
 
+  // Replacing a memory asset must not desync the memory-asset counter that
+  // lets hot resolution paths skip the registry lock.
+  const std::string counted = resolver.RegisterMemoryAsset(
+      "counted_asset.usda", std::vector<uint8_t>(dep.begin(), dep.end()));
+  CHECK(resolver.Resolve(counted).exists,
+        "registered memory asset resolves");
+  resolver.RegisterMemoryAsset(counted,
+                               std::vector<uint8_t>(dep.begin(), dep.end()));
+  CHECK(resolver.Resolve(counted).exists,
+        "replaced memory asset still resolves");
+  CHECK(resolver.UnregisterMemoryAsset(counted),
+        "memory asset unregisters");
+  CHECK(!resolver.Resolve(counted).exists,
+        "unregistered memory asset no longer resolves");
+
   const std::string anonymous = resolver.RegisterMemoryAsset(
       "", std::vector<uint8_t>(dep.begin(), dep.end()));
   CHECK(AssetResolver::GetIdentifierScheme(anonymous) == "usd-anon" &&

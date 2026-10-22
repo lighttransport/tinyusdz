@@ -411,6 +411,15 @@ LIGHTUSD_API lightusd_status lightusd_stage_explain_property(
  * is owned JSON; `complete` is zero when dependencies are missing or rejected
  * by the bounded scan and is independent of the call status. */
 typedef struct lightusd_asset_resolver lightusd_asset_resolver;
+/* Ownership and threading:
+ * - The resolver owns its registrations; destroy it only after every load
+ *   that borrowed it has finished.
+ * - `lightusd_load_options.resolver` is borrowed for the duration of the
+ *   load call.
+ * - Context bindings and scoped caches are per-thread.
+ * - Resolver callbacks may run on composition worker threads, so callback
+ *   state must be thread-safe. Owned registrations release their userdata
+ *   from whichever thread drops the last reference. */
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_create(
     lightusd_asset_resolver** out);
 LIGHTUSD_API void lightusd_asset_resolver_destroy(lightusd_asset_resolver* resolver);
@@ -439,9 +448,33 @@ LIGHTUSD_API lightusd_status lightusd_asset_resolver_memory_identifier(
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_alias(
     lightusd_asset_resolver* resolver, const char* authored_path,
     const char* resolved_identifier);
+/* Remove an alias; the authored path then resolves normally again. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_unset_alias(
+    lightusd_asset_resolver* resolver, const char* authored_path);
+/* Read asset bytes for an already resolved identifier (a memory asset key, a
+ * scheme identifier, or a filesystem path). A package entry identifier
+ * ("bundle.usdz[entry.usda]") returns the package file's bytes. */
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_read(
     const lightusd_asset_resolver* resolver, const char* resolved_identifier,
     lightusd_string** out);
+/* Resolved asset metadata. The owned strings are released with
+ * lightusd_asset_info_destroy(). Package entries report the entry basename,
+ * the package repository and the package file's timestamp. */
+typedef struct lightusd_asset_info {
+  lightusd_string* resolved_path;
+  lightusd_string* asset_name;
+  lightusd_string* repository_path;
+  uint8_t exists;
+} lightusd_asset_info;
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_asset_info(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_asset_info* out);
+LIGHTUSD_API void lightusd_asset_info_destroy(lightusd_asset_info* info);
+/* Modification timestamp of the resolved file (0 when unavailable). */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_get_modification_timestamp(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, uint64_t* seconds, uint32_t* nanoseconds,
+    uint8_t* valid);
 /* Resolve an authored asset path. `anchor_path` may be null/empty. The owned
  * `resolved_path` may be empty when the identifier is unresolved. `exists` and
  * `is_package` are optional. */
@@ -454,6 +487,11 @@ LIGHTUSD_API lightusd_status lightusd_asset_resolver_resolve_for_new_asset(
     const lightusd_asset_resolver* resolver, const char* asset_path,
     const char* anchor_path, lightusd_string** resolved_path, uint8_t* exists,
     uint8_t* is_package);
+/* Stable identifier for an authored path, used for cache/comparison keys.
+ * Unresolved relative paths stay context-dependent instead of collapsing. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_create_identifier(
+    const lightusd_asset_resolver* resolver, const char* asset_path,
+    const char* anchor_path, lightusd_string** out);
 
 /* Explicit URI scheme handlers. The resolver callback returns a borrowed
  * NUL-terminated resolved identifier (or NULL/0 to fall through). The optional
@@ -484,6 +522,9 @@ LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_scheme_owned(
     lightusd_userdata_destroy_fn destroy);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_unregister_scheme(
     lightusd_asset_resolver* resolver, const char* scheme);
+/* Whether a scheme handler is registered (case-insensitive). */
+LIGHTUSD_API int lightusd_asset_resolver_has_scheme(
+    const lightusd_asset_resolver* resolver, const char* scheme);
 
 /* Resolver contexts. The context object owns a copy of its context string and
  * may be bound to any number of resolvers (bindings are per-thread). */
@@ -506,6 +547,9 @@ LIGHTUSD_API lightusd_sv lightusd_resolver_context_get_scheme(
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_bind_context(
     lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
     void** binding_data);
+/* Unbind a context. Bindings are per-thread: unbinding from another thread
+ * (or unbinding twice) returns LIGHTUSD_ERR_NOT_FOUND and leaves the original
+ * binding in place. */
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_unbind_context(
     lightusd_asset_resolver* resolver, const lightusd_resolver_context* context,
     void** binding_data);

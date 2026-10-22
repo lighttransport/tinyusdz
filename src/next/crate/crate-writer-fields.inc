@@ -6,13 +6,13 @@
 
   // One prim spec + its property specs. Operates on `this` Impl's tables, so a
   // worker Impl can build a disjoint prim range in parallel. `variant_names` is
-  // a read-only prescan shared across workers; `path_to_fs_idx` is per-builder.
+  // a read-only prescan shared across workers.
   void BuildOnePrim(
       const Layer& layer, size_t i,
       const std::unordered_map<std::string,
           std::map<std::string, std::vector<std::string>>>& variant_names,
-      const std::unordered_map<std::string, std::vector<std::string>>& parent_children,
-      std::unordered_map<std::string, uint32_t>& path_to_fs_idx) {
+      const std::unordered_map<std::string, std::vector<std::string>>&
+          parent_children) {
       const PrimSpec& prim = layer.prims()[i];
       // Variant-namespace prims ("/Prim/{vset=sel}/..."): emit them ONLY for an
       // unflattened layer (round-trip), detected by their owning prim still
@@ -532,8 +532,6 @@
       // Record fieldset
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
       fieldsets_.push_back(std::move(fieldset));
-      path_to_fs_idx[prim.path().str()] = fs_idx;
-
       // consume_values: every field referencing this prim's values is now
       // built (their blocks interned), and no later writer pass reads property
       // values -- release them so the layer shrinks as value blocks accumulate
@@ -957,9 +955,8 @@
     }
 
     // 2. Prim specs
-    std::unordered_map<std::string, uint32_t> path_to_fs_idx;
     for (size_t i = 0; i < layer.prims().size(); ++i) {
-      BuildOnePrim(layer, i, variant_names, parent_children, path_to_fs_idx);
+      BuildOnePrim(layer, i, variant_names, parent_children);
       if (!result_.error.empty()) return;
     }
 
