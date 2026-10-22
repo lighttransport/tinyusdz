@@ -23,6 +23,12 @@ auto Cache::Impl::Specs(uint32_t stack_idx,
     const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
     if (std::vector<SpecRef> *v = m.find(site, h)) return *v;
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
+    if (refs.empty()) {
+      // Negative result: share one empty vector instead of caching a key copy
+      // per site. Callers only read the result, and a memo pointing here stays
+      // valid for the lifetime of this Impl.
+      return empty_specs_;
+    }
     return m.insert(site, h, std::move(refs));
   }
 
@@ -41,10 +47,11 @@ auto Cache::Impl::SpecsFor(const Src &s) const -> const std::vector<SpecRef> & {
 auto Cache::Impl::FindSpecs(const LayerStack &st,
                                  const std::string &site) const -> std::vector<SpecRef> {
     std::vector<SpecRef> refs;
-    Path p(site);
     for (size_t i = 0; i < st.layers.size(); ++i) {
       const auto &lp = st.layers[i];
-      if (const PrimSpec *s = lp->prim_at_path(p)) {
+      // The string overload looks the path up directly; building a Path here
+      // would copy the site string for every composed prim.
+      if (const PrimSpec *s = lp->prim_at_path(site)) {
         SpecRef r;
         r.spec = s;
         r.layer = lp.get();

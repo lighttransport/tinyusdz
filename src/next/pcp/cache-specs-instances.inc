@@ -24,6 +24,10 @@
   // InvalidateLayer -> the cache is cleared there (Invalidate(prim) leaves
   // layer stacks intact, so it stays valid).
   mutable std::deque<StackSpecCache> spec_cache_by_stack_;
+  // Shared empty result for sites with no authored spec. Most composed prims
+  // do not exist in most contributing layers, and caching a negative result
+  // would store one key copy per (stack, site) for nothing.
+  mutable std::vector<SpecRef> empty_specs_;
 
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const ;
