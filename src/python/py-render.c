@@ -902,7 +902,17 @@ static PyMethodDef RScene_methods[] = {
     {NULL, NULL, 0, NULL},
 };
 
+PyObject* lightusd_physics_annotations(lightusd_state*, lightusd_render_scene*);
+static PyObject* RScene_get_physics(PyObject* self, void* closure) {
+  (void)closure;
+  lightusd_state* st = lightusd_state_from_obj(self);
+  if (!st) return NULL;
+  return lightusd_physics_annotations(st, ((LightUSDRenderScene*)self)->scene);
+}
+
 static PyGetSetDef RScene_getset[] = {
+    {"physics", RScene_get_physics, NULL, "Retained USD Physics annotations.",
+     NULL},
     {"meshes", RScene_get_items, NULL, NULL,
      (void*)(uintptr_t)LIGHTUSD_RENDER_MESH},
     {"materials", RScene_get_items, NULL, NULL,

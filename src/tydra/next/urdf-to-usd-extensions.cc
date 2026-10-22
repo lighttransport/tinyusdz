@@ -70,6 +70,19 @@ void AddNewtonActuatorFromJson(Scope *scope, std::set<std::string> *siblings,
     AddAPI(prim, schema);
   }
   SetRel(prim, "newton:targets", targets);
+  if (const Json* mjc = JsonObject(act, "mjc")) {
+    for (const auto& entry : *mjc->object_items()) {
+      const std::string key = "mjc:" + entry.key;
+      const Json& v = entry.value();
+      if (v.is_string())
+        SetToken(prim, key, v.get<std::string>(), true);
+      else if (v.is_array())
+        SetDoubles(prim, key, JsonDoubles(*mjc, entry.key.c_str()), true);
+    }
+  }
+  double reduction = 1;
+  if (ReadNumber(act, "mechanicalReduction", &reduction))
+    Set(prim, "urdf:mechanicalReduction", tn::Value(reduction), "double", true);
   if (act.contains("delaySteps")) {
     Set(prim, "newton:delaySteps", tn::Value(JsonInt(act, "delaySteps", 1)),
         "int", true);
@@ -240,7 +253,19 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
   tn::PrimSpec *prim = scope->Add(ChildName(name, siblings), "MjcTendon");
   if (!prim) return;
   SetToken(prim, "mjc:type", type, true);
-  SetRel(prim, "mjc:path", targets);
+  // USD relationship targets are unique, while a closed tendon route may
+  // visit the same site repeatedly. Index the ordered route into that rel.
+  std::vector<std::string> unique_targets;
+  std::vector<int32_t> route_indices;
+  std::map<std::string, int32_t> target_index;
+  for (const auto& target : targets) {
+    auto inserted = target_index.emplace(target, static_cast<int32_t>(unique_targets.size()));
+    if (inserted.second) unique_targets.push_back(target);
+    route_indices.push_back(inserted.first->second);
+  }
+  SetRel(prim, "mjc:path", unique_targets);
+  if (unique_targets.size() != targets.size())
+    Set(prim, "mjc:path:indices", tn::Value::MakeIntArray(route_indices), "int[]", true);
   std::vector<double> route_coef = JsonDoubles(t, "routeCoef");
   if (!route_coef.empty()) coefs = std::move(route_coef);
   if (!coefs.empty()) SetDoubles(prim, "mjc:path:coef", coefs, true);

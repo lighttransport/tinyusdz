@@ -583,6 +583,12 @@ size_t Layer::memory_usage() const {
     pending_layers.pop_back();
     if (!layer || !visited_layers.insert(layer).second) continue;
     add(sizeof(Layer));
+    if (layer->meta_.imported_assets) {
+      for (const auto& asset : layer->meta_.imported_assets->by_identifier) {
+        add(asset.first.capacity());
+        if (asset.second) add(asset.second->size());
+      }
+    }
 
     // Each shared variant content Layer is charged once, even if multiple
     // options reference it or an authored graph points back to an ancestor.

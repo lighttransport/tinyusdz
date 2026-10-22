@@ -2,6 +2,7 @@
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
 //
 #include <sstream>
+#include <limits>
 #include <numeric>
 #include <unordered_set>
 
@@ -33,6 +34,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   (void)warn;
 
   std::stringstream ss;
+  ss.precision(std::numeric_limits<float>::max_digits10);
 
   if (mesh_id < 0) {
     PUSH_ERROR_AND_RETURN("Invalid mesh_id");
@@ -51,11 +53,14 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   }
   ss << "# " << mesh.points.size() << " vertices\n";
 
-  if (mesh.joint_and_weights.jointWeights.size() == (mesh.points.size() * size_t(mesh.joint_and_weights.elementSize))) {
+  if (mesh.joint_and_weights.elementSize > 0 &&
+      mesh.joint_and_weights.jointIndices.size() == mesh.joint_and_weights.jointWeights.size() &&
+      mesh.joint_and_weights.jointWeights.size() / size_t(mesh.joint_and_weights.elementSize) == mesh.points.size() &&
+      mesh.joint_and_weights.jointWeights.size() % size_t(mesh.joint_and_weights.elementSize) == 0) {
 
     size_t elementSize = size_t(mesh.joint_and_weights.elementSize); // # of weights per vertex.
     for (size_t i = 0; i < mesh.points.size(); i++) {
-      ss << "vw ";
+      ss << "vw " << i << " ";
       for (size_t w = 0; w < elementSize; w++) {
         if (w > 0) {
           ss << " ";

@@ -60,7 +60,9 @@ bool Cache::PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn
 bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
                        const PreviewCallback& preview_callback) {
   if (!stage) return false;
-  return impl_->BuildStage(stage, warn, err, preview_callback);
+  const bool ok = impl_->BuildStage(stage, warn, err, preview_callback);
+  if (ok) impl_->registry.RetainImportedAssets(stage->GetRootLayer());
+  return ok;
 }
 
 std::vector<std::string> Cache::GetLayerDependencies() const {

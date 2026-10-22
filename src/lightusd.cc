@@ -36,6 +36,8 @@
 #include "string-pool.hh"
 #include "tiny-format.hh"
 #include "lightusd.hh"
+#include "usdObj.hh"
+#include "tydra/asset-import/import.hh"
 #include "layer.hh"
 #include "usda-reader.hh"
 #include "usda-writer.hh"
@@ -1684,6 +1686,15 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
     DCOUT("Detected as USDZ.");
     return LoadUSDZLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
+#if defined(LIGHTUSD_USE_USDOBJ)
+  } else if (str_tolower(GetFileExtension(asset_name)) == "obj") {
+    tydra::import_asset::Options obj_options;
+    obj_options.max_memory = MaxMemoryBytes(EffectiveMemoryLimitMb(options));
+    obj_options.max_input = obj_options.max_memory;
+    ret = usdObj::ReadObjLayerFromMemory(
+        std::string(reinterpret_cast<const char*>(addr), length), asset_name,
+        layer, obj_options, warn, err);
+#endif
   } else {
     if (err) {
       (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";

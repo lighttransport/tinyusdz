@@ -66,6 +66,10 @@ __all__ = [
     "VariantSet",
     "VariantSets",
     "load",
+    "import_obj",
+    "import_urdf",
+    "import_mjcf",
+    "physics",
     "loads",
     "load_bytes",
     "flatten_file",
@@ -90,8 +94,13 @@ def load(
     load_payloads: bool = True,
     max_memory: int = 0,
     resolver: Optional[AssetResolver] = None,
+    up_axis: str = "Z",
+    asset_dirs: Sequence[_PathLike] = (),
+    packages: Optional[dict[str, _PathLike]] = None,
+    allow_missing: bool = False,
+    tessellate_collision_shapes: bool = False,
 ) -> Stage:
-    """Load a USD file (USDA / USDC / USDZ, auto-detected).
+    """Load USD or import OBJ, URDF or MuJoCo MJCF into a USD stage.
 
     With ``composed=True`` (default) composition arcs — sublayers,
     references, payloads, inherits, specializes and variants — are resolved.
@@ -100,7 +109,21 @@ def load(
     resident estimates in bytes. Zero keeps the library's finite safe defaults.
     ``resolver`` supplies asset resolution for composition arcs; its active
     context is snapshotted for composition workers.
+
+    Native imports resolve assets relative to the source file, with optional
+    ``asset_dirs`` and URDF ``packages`` roots. ``allow_missing`` converts
+    missing assets into stage warnings. OBJ preserves source coordinates;
+    URDF and MJCF use SI units and the requested ``up_axis``.
     """
+    path = _os.fspath(path)
+    extension = _os.path.splitext(path)[1].lower()
+    if format in ("obj", "urdf", "mjcf") or (format is None and extension in (".obj", ".urdf", ".xml", ".mjcf")):
+        if variants:
+            raise ValueError("variant selections apply to USD input only")
+        return _import(path=path, format=format or "auto", max_memory=max_memory,
+                       resolver=resolver, up_axis=up_axis, asset_dirs=asset_dirs,
+                       packages=packages, allow_missing=allow_missing,
+                       tessellate_collision_shapes=tessellate_collision_shapes)
     return _core.load(
         _os.fspath(path),
         format=format,
@@ -122,8 +145,20 @@ def load_bytes(
     *,
     format: Optional[str] = None,
     max_memory: int = 0,
+    source: _PathLike = "",
+    resolver: Optional[AssetResolver] = None,
+    **import_options,
 ) -> Stage:
-    """Load USD from an in-memory buffer (format sniffed from content)."""
+    """Load USD bytes, or import explicit ``obj``, ``urdf`` or ``mjcf`` bytes.
+
+    ``source`` anchors relative import assets; ``resolver`` can supply them
+    without filesystem access. Other import options match :func:`load`.
+    """
+    if format in ("obj", "urdf", "mjcf"):
+        return _import(data=data, source=_os.fspath(source), format=format,
+                       max_memory=max_memory, resolver=resolver, **import_options)
+    if import_options or source or resolver is not None:
+        raise ValueError("source, resolver and import options require obj, urdf or mjcf format")
     return _core.load_bytes(data, format=format, max_memory=max_memory)
 
 
@@ -135,6 +170,39 @@ def is_usd(path: _PathLike) -> bool:
         return False
     stage.close()
     return True
+
+
+def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
+            resolver=None, up_axis="Z", asset_dirs=(), packages=None,
+            allow_missing=False, tessellate_collision_shapes=False):
+    import json
+    if max_memory < 0:
+        raise ValueError("max_memory must be non-negative")
+    if up_axis not in ("Y", "Z"):
+        raise ValueError("up_axis must be Y or Z")
+    settings = json.dumps({
+        "up_axis": up_axis, "asset_dirs": [_os.fspath(p) for p in asset_dirs],
+        "packages": {k: _os.fspath(v) for k, v in (packages or {}).items()},
+        "allow_missing": allow_missing,
+        "tessellate_collision_shapes": tessellate_collision_shapes,
+    })
+    return _core._import_scene(path=path, data=data, source=source, format=format,
+                               settings=settings, max_memory=max_memory, resolver=resolver)
+
+
+def import_obj(path: _PathLike, **options) -> Stage:
+    """Import a Wavefront OBJ and its MTL materials as a USD stage."""
+    return _import(path=_os.fspath(path), format="obj", **options)
+
+
+def import_urdf(path: _PathLike, **options) -> Stage:
+    """Import URDF links, geometry and physics using the native frontend."""
+    return _import(path=_os.fspath(path), format="urdf", **options)
+
+
+def import_mjcf(path: _PathLike, **options) -> Stage:
+    """Import MuJoCo MJCF as USD Physics, mjc and Newton schema data."""
+    return _import(path=_os.fspath(path), format="mjcf", **options)
 
 
 def asarray(array: Array):
@@ -274,3 +342,6 @@ def _normalize_value(value: Any, hint: Optional[str]):
 
 
 _core._set_normalizer(_normalize_value)
+
+# Imported after value normalization is registered.
+from . import physics  # noqa: E402,F401

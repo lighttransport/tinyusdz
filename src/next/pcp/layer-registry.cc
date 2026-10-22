@@ -23,6 +23,23 @@ namespace lightusd {
 namespace next {
 namespace pcp {
 
+void LayerRegistry::RetainImportedAssets(Layer* output) const {
+  if (!output) return;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::lock_guard<std::mutex> lock(*mu_);
+#endif
+  std::shared_ptr<ImportedAssets> merged;
+  auto append = [&](const Layer* layer) {
+    if (!layer || !layer->meta().imported_assets) return;
+    if (!merged) merged = std::make_shared<ImportedAssets>();
+    for (const auto& entry : layer->meta().imported_assets->by_identifier)
+      merged->by_identifier.emplace(entry.first, entry.second);
+  };
+  append(output);
+  for (const auto& entry : by_resolved_) append(entry.second.get());
+  output->meta().imported_assets = std::move(merged);
+}
+
 std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 const std::string &asset_path,
                                                 const std::string &anchor,
@@ -36,6 +53,17 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
     return nullptr;
   }
+  const bool native_file = AssetResolver::GetIdentifierScheme(resolved).empty() &&
+                           !resolver.HasAssetReader();
+  LayerLoadOptions effective = options;
+  // Keep dependent resources on the same resolver/context as their OBJ layer.
+  if (!native_file) effective.asset_read = [&resolver](
+      const std::string& name, const std::string& anchor_name,
+      std::vector<uint8_t>* bytes, std::string* id, std::string* error) {
+    auto asset = resolver.Resolve(name, anchor_name, false);
+    *id = asset.resolved_path;
+    return asset.exists && resolver.ReadAsset(asset, bytes, error);
+  };
   auto load_resolved = [&](std::string* load_warn,
                            std::string* load_err) -> std::shared_ptr<Layer> {
     if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
@@ -43,10 +71,10 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
       std::vector<uint8_t> bytes;
       if (!resolver.ReadAsset(resolved_asset, &bytes, load_err)) return nullptr;
       return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),
-                                 load_warn, load_err, options);
+                                 load_warn, load_err, effective);
     }
     std::shared_ptr<Layer> loaded =
-        LoadLayerFromFile(resolved, load_warn, load_err, options);
+        LoadLayerFromFile(resolved, load_warn, load_err, effective);
     if (loaded && !resolver.FileIdentityUnchanged(resolved_asset)) {
       if (load_err) {
         *load_err += "asset changed while loading: " + resolved + "\n";

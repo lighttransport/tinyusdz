@@ -299,7 +299,10 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
   Set(scene, "physics:gravityDirection",
       tn::Value::MakeVector3f(gravity[0], gravity[1], gravity[2]), "vector3f",
       true);
-  Set(scene, "physics:gravityMagnitude", tn::Value(9.80665f), "float", true);
+  float gravity_magnitude = 9.80665f;
+  ReadNumber(root, "gravityMagnitude", &gravity_magnitude);
+  Set(scene, "physics:gravityMagnitude", tn::Value(gravity_magnitude), "float",
+      true);
   double timestep = 0.002;
   if (ReadNumber(root, "timestep", &timestep)) {
     Set(scene, "mjc:option:timestep", tn::Value(timestep), "double", true);

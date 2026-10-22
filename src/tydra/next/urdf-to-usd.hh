@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace lightusd {
+namespace minijson { class Value; }
 namespace next {
 class Stage;
 }  // namespace next
@@ -43,6 +44,11 @@ struct URDFMeshBuffer {
 /// Newton (newton:*) API schema properties, matching the prim paths, types,
 /// applied API schemas, attribute names/types, and relationships produced by
 /// the legacy converter.
+// Native frontends already own validated bounded JSON; avoid text serialization
+// and a second full parse (large mesh payloads can exceed JSON text caps).
+bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& payload,
+    ::lightusd::next::Stage* stage, std::string* warn = nullptr, std::string* err = nullptr);
+
 bool ConvertURDFJsonToUSDStage(
     const std::string &robot_json,
     ::lightusd::next::Stage *stage,

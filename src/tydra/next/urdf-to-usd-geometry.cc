@@ -182,11 +182,26 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     indices.resize(point_count);
     for (size_t i = 0; i < point_count; ++i) indices[i] = static_cast<int32_t>(i);
   }
-  if (indices.size() % 3 != 0) {
+  std::vector<int32_t> face_counts = JsonInts(*geom, "faceVertexCounts");
+  size_t face_total = 0;
+  for (int32_t c : face_counts) {
+    if (c < 3 || static_cast<size_t>(c) >
+                     indices.size() - std::min(face_total, indices.size())) {
+      if (err) *err = "Invalid polygon face counts";
+      return false;
+    }
+    face_total += static_cast<size_t>(c);
+  }
+  if (!face_counts.empty() && face_total != indices.size()) {
+    if (err) *err = "Polygon face counts do not match indices";
+    return false;
+  }
+  if (face_counts.empty() && indices.size() % 3 != 0) {
     AppendWarn(warn, "Skipping mesh `" + fallback_name +
                          "`: indices must be triangles.\n");
     return true;
   }
+  if (face_counts.empty()) face_counts.assign(indices.size() / 3, 3);
   bool identity_indices = indices.size() == point_count;
   for (size_t i = 0; i < indices.size(); ++i) {
     const int32_t index = indices[i];
@@ -213,9 +228,7 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
       tn::Value::MakeFloatCompArray(std::vector<float>(*positions),
                                     tn::TypeId::Point3f, 3),
       "point3f[]");
-  Set(prim, "faceVertexCounts",
-      tn::Value::MakeIntArray(std::vector<int32_t>(indices.size() / 3, 3)),
-      "int[]");
+  Set(prim, "faceVertexCounts", tn::Value::MakeIntArray(face_counts), "int[]");
   // Non-identity indexing: per-vertex normals/UVs are expanded to
   // faceVarying so the authored data stays consistent with the topology.
   if (normals->size() == positions->size()) {
@@ -251,6 +264,63 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     SetInterpolation(prim, "primvars:st",
                      identity_indices ? "vertex" : "faceVarying");
   }
+  const auto colors = JsonFloats(*geom, "colors");
+  if (colors.size() == point_count * 3) {
+    Set(prim, "primvars:displayColor",
+        tn::Value::MakeFloatCompArray(colors, tn::TypeId::Color3f, 3),
+        "color3f[]");
+    SetInterpolation(prim, "primvars:displayColor", "vertex");
+  }
+  const int32_t influences = JsonInt(*geom, "influences", 0);
+  if (influences > 0) {
+    const auto joint_indices = JsonInts(*geom, "jointIndices");
+    const auto joint_weights = JsonFloats(*geom, "jointWeights");
+    if (point_count > SIZE_MAX / static_cast<size_t>(influences) ||
+        joint_indices.size() != point_count * static_cast<size_t>(influences) ||
+        joint_weights.size() != joint_indices.size()) {
+      if (err) *err = "Invalid OBJ skin influence arrays";
+      return false;
+    }
+    AddAPI(prim, "SkelBindingAPI");
+    Set(prim, "primvars:skel:jointIndices",
+        tn::Value::MakeIntArray(joint_indices), "int[]");
+    Set(prim, "primvars:skel:jointWeights",
+        tn::Value::MakeFloatArray(joint_weights), "float[]");
+    for (const char* attr : {"primvars:skel:jointIndices",
+                             "primvars:skel:jointWeights"}) {
+      SetInterpolation(prim, attr, "vertex");
+      auto& meta = prim->ensure_property_meta(attr);
+      meta.elementSize = influences;
+      meta.authored |= tn::PropMeta::kElementSize;
+    }
+  }
+  const auto material_ids = JsonInts(*geom, "materialIndices");
+  const auto material_names = JsonStrings(*geom, "materialNames");
+  if (JsonString(mesh_json, "material").empty() &&
+      material_ids.size() == face_counts.size()) {
+    std::map<int32_t, std::vector<int32_t>> faces;
+    for (size_t f = 0; f < material_ids.size(); f++)
+      if (material_ids[f] >= 0 &&
+          static_cast<size_t>(material_ids[f]) < material_names.size())
+        faces[material_ids[f]].push_back(static_cast<int32_t>(f));
+    for (const auto& entry : faces) {
+      auto* subset = Define(
+          layer,
+          link_path + "/" + name + "/material_" + std::to_string(entry.first),
+          "GeomSubset");
+      SetToken(subset, "elementType", "face", true);
+      SetToken(subset, "familyName", "materialBind", true);
+      Set(subset, "indices", tn::Value::MakeIntArray(entry.second), "int[]");
+      AddAPI(subset, "MaterialBindingAPI");
+      SetRel(subset, "material:binding",
+             {"/World/Materials/" +
+              Sanitize(material_names[static_cast<size_t>(entry.first)],
+                       "material")});
+    }
+    if (!faces.empty())
+      SetToken(prim, "subsetFamily:materialBind:familyType", "nonOverlapping",
+               true);
+  }
   Set(prim, "faceVertexIndices", tn::Value::MakeIntArray(std::move(indices)),
       "int[]");
   SetTransformFromJson(prim, mesh_json);
@@ -259,7 +329,9 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     AddCollisionAPIs(prim, true, mesh_json, mjcf_source);
     return true;
   }
-  AddAPI(prim, "MjcImageableAPI");
+  bool render_only = false;
+  ReadBool(mesh_json, "renderOnly", &render_only);
+  if (!render_only) AddAPI(prim, "MjcImageableAPI");
   // Bind a UsdShade material (MJCF <geom material=..> ->
   // /World/Materials/<m>); MJCF material names are unique, so the sanitized
   // path is deterministic and the material prim is emitted later.
@@ -269,6 +341,7 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
     SetRel(prim, "material:binding",
            {"/World/Materials/" + Sanitize(material, "material")});
   }
+  if (render_only) return true;
   if (mjcf_source) {
     int32_t group = 0;
     if (ReadIntFrom(mesh_json, "mjc", "group", &group) ||

@@ -4816,3 +4816,83 @@ def Cube "BodyB" {}
     }
   }
 }
+
+#include "usdObj.hh"
+#include "tydra/obj-export.hh"
+void physics_obj_c11_import_test(void) {
+  lightusd::GPrim mesh;
+  std::string error;
+  const char* text =
+      "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn "
+      "0 0 -1\nf 1/1/1 2/2/1 3/3/1 4/4/1\n";
+  TEST_CHECK(lightusd::usdObj::ReadObjFromString(text, &mesh, &error));
+  auto counts = mesh.props.at("faceVertexCounts")
+                    .get_attribute()
+                    .get_value<std::vector<int32_t>>();
+  TEST_CHECK(counts && counts->size() == 1 && (*counts)[0] == 4);
+  auto normals = mesh.props.at("normals")
+                     .get_attribute()
+                     .get_value<std::vector<lightusd::value::normal3f>>();
+  TEST_CHECK(normals && normals->size() == 4 && (*normals)[0][2] == -1);
+  TEST_CHECK(mesh.props.count("primvars:st") == 1);
+  lightusd::tydra::RenderScene scene;
+  lightusd::tydra::RenderMesh rendered;
+  rendered.points = {{0,0,0}, {1,0,0}, {0,1,0}};
+  rendered.usdFaceVertexCounts = {3};
+  rendered.usdFaceVertexIndices = {0,1,2};
+  rendered.joint_and_weights.elementSize = 2;
+  rendered.joint_and_weights.jointIndices = {0,1,1,0,0,1};
+  rendered.joint_and_weights.jointWeights = {.123456789f,.876543211f,2,0,-.5f,1.5f};
+  scene.meshes.push_back(std::move(rendered));
+  std::string exported, mtl, warning;
+  TEST_CHECK(lightusd::tydra::export_to_obj(scene, 0, exported, mtl, &warning, &error));
+  TEST_CHECK(exported.find("vw 0 0 ") != std::string::npos);
+  lightusd::GPrim reloaded;
+  TEST_CHECK(lightusd::usdObj::ReadObjFromString(exported, &reloaded, &error));
+  auto weights = reloaded.props.at("primvars:skel:jointWeights")
+                      .get_attribute().get_value<std::vector<float>>();
+  TEST_CHECK(weights && *weights == scene.meshes[0].joint_and_weights.jointWeights);
+}
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include "composition.hh"
+#include "asset-resolution.hh"
+#include "layer.hh"
+void physics_obj_composition_test(void) {
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+      ("lightusd-obj-" + std::to_string(
+          std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  const std::string obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nvw 0 0 1\nf 1 2 3\nl 1 2\np 3\n";
+  { std::ofstream file(dir / "mesh.obj"); file << obj; }
+  for (const char* arc : {"references", "payload", "subLayers"}) {
+    std::string text = "#usda 1.0\n";
+    if (std::string(arc) == "subLayers")
+      text += "(subLayers = [@mesh.obj@])\n";
+    else
+      text += std::string("def Xform \"Rig\" (prepend ") + arc + " = @mesh.obj@) {}\n";
+    { std::ofstream file(dir / "root.usda"); file << text; }
+    Stage stage;
+    Layer layer, stacked, composed;
+    AssetResolutionResolver resolver;
+    std::string warning, error;
+    const bool ok = LoadLayerFromFile((dir / "root.usda").string(), &layer,
+                                     &warning, &error) &&
+                    CompositeSublayers(resolver, layer, &stacked, &warning, &error) &&
+                    CompositeAllArcs(resolver, stacked, &composed, &warning, &error) &&
+                    LayerToStage(std::move(composed), &stage, &warning, &error);
+    TEST_CHECK(ok);
+    TEST_MSG("%s: %s", arc, error.c_str());
+    if (ok) {
+      const std::string root = std::string(arc) == "subLayers" ? "/World" : "/Rig";
+      TEST_CHECK(bool(stage.GetPrimAtPath(Path(root + "/Links/Geometry/mesh", ""))));
+      TEST_MSG("arc: %s; warnings: %s", arc, warning.c_str());
+      TEST_CHECK(bool(stage.GetPrimAtPath(Path(root + "/Links/Geometry/mesh_curves", ""))));
+      TEST_CHECK(bool(stage.GetPrimAtPath(Path(root + "/Links/Geometry/mesh_points", ""))));
+    }
+  }
+  fs::remove_all(dir);
+}

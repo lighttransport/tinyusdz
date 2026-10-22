@@ -303,6 +303,7 @@ class RenderCamera:
     transform: Matrix4
 
 class RenderScene:
+    physics: dict[str, tuple[dict[str, Any], ...]]
     meshes: tuple[RenderMesh, ...]
     materials: tuple[RenderMaterial, ...]
     textures: tuple[RenderTexture, ...]
@@ -373,3 +374,8 @@ def to_render_scene(stage: Stage, *, triangulate: bool = True,
 def type_from_name(usd_type_name: str) -> int: ...
 def type_name(type_id: int) -> str: ...
 def _set_normalizer(fn: Any) -> None: ...
+
+# Native import backend used by lightusd.import_obj/import_urdf/import_mjcf.
+def _import_scene(*, path: Optional[str] = None, data: Any = None, source: str = "",
+                  format: str = "auto", settings: str = "{}", max_memory: int = 0,
+                  resolver: Optional[AssetResolver] = None) -> Stage: ...

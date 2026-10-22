@@ -33,6 +33,8 @@
 #include "tiny-format.hh"
 #include "lightusd.hh"
 #include "usdGeom.hh"
+#include "usdObj.hh"
+#include "tydra/asset-import/import.hh"
 #include "usdLux.hh"
 #include "usdMtlx.hh"
 #include "usdShade.hh"
@@ -175,7 +177,7 @@ bool IsUSDFileFormat(const std::string &name) {
          (ext.compare("usdc") == 0) || (ext.compare("usdz") == 0);
 }
 
-#if defined(LIGHTUSD_WITH_USDOBJ)
+#if defined(LIGHTUSD_USE_USDOBJ)
 bool IsWavefrontObjFileFormat(const std::string &name) {
   std::string ext = GetExtension(name);
 
@@ -198,7 +200,7 @@ bool IsBuiltinFileFormat(const std::string &name) {
     return true;
   }
 
-#if defined(LIGHTUSD_WITH_USDOBJ)
+#if defined(LIGHTUSD_USE_USDOBJ)
   if (IsWavefrontObjFileFormat(name)) {
     return true;
   }
@@ -611,7 +613,11 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
   if (!layer_from_cache) {
   if (IsBuiltinFileFormat(asset_path)) {
-    if (IsUSDFileFormat(asset_path) || IsMtlxFileFormat(asset_path)) {
+    if (IsUSDFileFormat(asset_path) || IsMtlxFileFormat(asset_path)
+#if defined(LIGHTUSD_USE_USDOBJ)
+        || IsWavefrontObjFileFormat(asset_path)
+#endif
+       ) {
       // ok
     } else {
       // TODO: obj
@@ -661,6 +667,33 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
     }
+#if defined(LIGHTUSD_USE_USDOBJ)
+  } else if (IsWavefrontObjFileFormat(asset_path)) {
+    tydra::import_asset::Options obj_options;
+    obj_options.max_memory = asset_limit;
+    obj_options.max_input = asset_limit;
+    obj_options.read = [&resolver, asset_limit](const std::string& name,
+        const std::string& anchor, std::vector<uint8_t>* bytes,
+        std::string* id, std::string* error) {
+      // Resolver state is per composition worker; restore its anchor after
+      // each dependent read, including failed resolutions.
+      const auto previous = resolver.current_working_path();
+      resolver.set_current_working_path(io::GetBaseDir(anchor));
+      *id = resolver.resolve(name);
+      Asset dependency;
+      std::string warning;
+      const bool ok = !id->empty() && resolver.open_asset(*id, name, &dependency,
+                                                         &warning, error, asset_limit);
+      resolver.set_current_working_path(previous);
+      if (ok) bytes->assign(dependency.data(), dependency.data()+dependency.size());
+      return ok;
+    };
+    if (!usdObj::ReadObjLayerFromMemory(
+            std::string(reinterpret_cast<const char*>(asset.data()), asset.size()),
+            resolved_path, &layer, obj_options, &_warn, &_err)) {
+      PUSH_ERROR_AND_RETURN("Failed to import OBJ layer: " + _err);
+    }
+#endif
   } else if (IsMtlxFileFormat(asset_path)) {
     // A MaterialX reference targets the converted `/MaterialX` prim or one of
     // its descendants — e.g. `@mat.mtlx@</MaterialX/Materials>` (common, as in

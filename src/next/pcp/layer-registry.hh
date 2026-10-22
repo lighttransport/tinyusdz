@@ -17,9 +17,11 @@
 #include "../../safe-arithmetic.hh"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <future>
 #include <mutex>
@@ -54,6 +56,12 @@ struct LayerLoadOptions {
 
   /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
+
+  /// Dependency reader for foreign layers (OBJ MTL/textures). No filesystem
+  /// fallback is used when a resolver supplies this callback.
+  std::function<bool(const std::string&, const std::string&,
+                     std::vector<uint8_t>*, std::string*, std::string*)>
+      asset_read;
 };
 
 class LayerRegistry {
@@ -91,6 +99,8 @@ class LayerRegistry {
   /// Drop a single cached layer by resolved path. Caller must have already
   /// invalidated every PrimIndex that referenced it.
   void Drop(const std::string &resolved_path);
+  /// Merge retained foreign-format dependencies into an owning output layer.
+  void RetainImportedAssets(Layer* output) const;
 
   void Clear() {
 #if defined(LIGHTUSD_ENABLE_THREAD)

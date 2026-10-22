@@ -7,14 +7,15 @@
 #include "next/layer/prim-spec.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
+#include "next/reader/obj-reader.hh"
 #include <cmath>
 #include <utility>
 
 namespace lightusd { namespace tydra { namespace next {
 using namespace urdf_detail;
 
-bool ConvertURDFJsonToUSDStage(
-    const std::string &robot_json,
+static bool ConvertPayload(
+    const ::lightusd::tydra::detail::URDFPayload &payload,
     const std::map<std::string, URDFMeshBuffer> *mesh_buffers,
     ::lightusd::next::Stage *out_stage, std::string *warn, std::string *err) {
   if (!out_stage) {
@@ -24,27 +25,66 @@ bool ConvertURDFJsonToUSDStage(
   if (warn) warn->clear();
   if (err) err->clear();
 
-  ::lightusd::tydra::detail::URDFPayload payload;
-  if (!::lightusd::tydra::detail::URDFPayload::Parse(robot_json, &payload,
-                                                      err)) {
+  const Json &root = payload.Root();
+  if (JsonString(root, "sourceFormat") == "obj") {
+#if defined(LIGHTUSD_WITH_USDOBJ)
+    tn::Layer obj_layer;
+    if (!tn::ConvertOBJPayloadToLayer(root, &obj_layer, err)) return false;
+    out_stage->SetRootLayer(std::move(obj_layer));
+    return true;
+#else
+    if (err) *err = "OBJ support is disabled";
     return false;
+#endif
   }
-  const Json &root = payload.root;
   const Json &links = payload.Array("links");
   const Json &joints = payload.Array("joints");
   const bool mjcf_source = payload.mjcf_source;
+  bool no_physics = false;
+  ReadBool(root, "noPhysics", &no_physics);
 
   tn::Layer layer;
+  // Builders keep PrimSpec pointers while adding shader/subset children.
+  // Reserve from structural payload records, never from numeric mesh lanes.
+  size_t prim_capacity = 128;
+  std::vector<const Json*> pending{&root};
+  while (!pending.empty()) {
+    const Json* object = pending.back();
+    pending.pop_back();
+    if (object->is_object()) {
+      if (prim_capacity > size_t(UINT32_MAX) - 16) {
+        if (err) *err = "Robot prim count limit exceeded";
+        return false;
+      }
+      prim_capacity += 16;
+      if (const auto* names = JsonArray(*object, "materialNames")) {
+        if (names->size() > size_t(UINT32_MAX) - prim_capacity) {
+          if (err) *err = "Robot material count limit exceeded";
+          return false;
+        }
+        prim_capacity += names->size();
+      }
+      for (const auto& item : *object->object_items())
+        if (item.value().is_object() || item.value().is_array())
+          pending.push_back(&item.value());
+    } else if (object->is_array()) {
+      // Heterogeneous arrays may start with a scalar and contain records
+      // later. Count those too, without retaining numeric mesh lanes.
+      for (const auto& item : *object)
+        if (item.is_object() || item.is_array()) pending.push_back(&item);
+    }
+  }
+  layer.reserve(prim_capacity);
   layer.meta().defaultPrim = "World";
   const std::string up_axis = JsonString(root, "upAxis", "Y");
   const bool y_up = !(up_axis == "Z" || up_axis == "z");
   layer.meta().upAxis = y_up ? "Y" : "Z";
   layer.meta().upAxis_set = true;
   // MuJoCo authors in SI units (1 stage unit = 1 m / 1 kg).
-  layer.meta().metersPerUnit = 1.0;
-  layer.meta().metersPerUnit_set = true;
+  layer.meta().metersPerUnit = no_physics ? 0.01 : 1.0;
+  layer.meta().metersPerUnit_set = !no_physics;
   layer.meta().kilogramsPerUnit = 1.0;
-  layer.meta().kilogramsPerUnit_set = true;
+  layer.meta().kilogramsPerUnit_set = !no_physics;
 
   tn::PrimSpec *world = Define(&layer, "/World", "Xform");
   if (!world) {
@@ -55,14 +95,14 @@ bool ConvertURDFJsonToUSDStage(
   // URDF/MJCF sources are Z-up; a Y-up stage gets a single corrective root
   // rotation Rx(-90deg) so local-frame physics data rides along unchanged
   // (doc/usd-physics-upAxis.md).
-  if (y_up) {
+  if (y_up && !no_physics) {
     Set(world, "xformOp:rotateX", tn::Value(-90.0), "double");
     Set(world, "xformOpOrder",
         tn::Value::MakeTokenArray(std::vector<std::string>{"xformOp:rotateX"}),
         "token[]", true);
   }
 
-  AddPhysicsScene(&layer, root);
+  if (!no_physics) AddPhysicsScene(&layer, root);
   Define(&layer, "/World/Links", "Xform");
   Define(&layer, "/World/Joints", "Xform");
 
@@ -94,58 +134,72 @@ bool ConvertURDFJsonToUSDStage(
     // floor/ground geoms) is a static collider, not a dynamic body.
     bool is_static = false;
     ReadBool(link, "static", &is_static);
-    AddAPIs(prim, {"PhysicsRigidBodyAPI", "PhysicsMassAPI"});
-    Set(prim, "physics:rigidBodyEnabled", tn::Value(!is_static), "bool");
-    Set(prim, "physics:startsAsleep", tn::Value(false), "bool");
-    bool flag = false;
-    if (ReadBool(link, "mocap", &flag) && flag) {
-      Set(prim, "mjc:mocap", tn::Value(true), "bool", true);
-    }
-    // MuJoCo <freejoint>: distinguishes a floating-base articulation root
-    // from a fixed (anchored) parentless base.
-    flag = false;
-    ReadBool(link, "floating", &flag);
-    if (flag) Set(prim, "mjc:freeJoint", tn::Value(true), "bool", true);
-    if (!is_static && !child_links.count(source)) {
-      AddAPIs(prim, {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
-      Set(prim, "newton:selfCollisionEnabled",
-          tn::Value(self_collision_enabled), "bool");
-    }
-    if (const Json *inertial = JsonObject(link, "inertial")) {
-      float mass = 0.0f;
-      if (ReadNumber(*inertial, "mass", &mass) && mass > 0.0f) {
-        Set(prim, "physics:mass", tn::Value(mass), "float");
+    SetTransformFromJson(prim, link);
+    if (!no_physics) {
+      AddAPIs(prim, {"PhysicsRigidBodyAPI", "PhysicsMassAPI"});
+      Set(prim, "physics:rigidBodyEnabled", tn::Value(!is_static), "bool");
+      Set(prim, "physics:startsAsleep", tn::Value(false), "bool");
+      bool flag = false;
+      if (ReadBool(link, "mocap", &flag) && flag) {
+        Set(prim, "mjc:mocap", tn::Value(true), "bool", true);
       }
-      const std::vector<float> com = JsonFloats(*inertial, "centerOfMass");
-      if (com.size() >= 3) SetPoint3(prim, "physics:centerOfMass", com, false);
-      // A full inertia tensor is diagonalized into principal moments +
-      // principal-axes rotation (the lossless USD representation).
-      const std::vector<double> full = JsonDoubles(*inertial, "fullInertia");
-      if (full.size() >= 6) {
-        // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
-        const double tensor[3][3] = {{full[0], full[3], full[4]},
-                                     {full[3], full[1], full[5]},
-                                     {full[4], full[5], full[2]}};
-        double eval[3];
-        double evec[3][3];
-        JacobiEigenSymmetric3(tensor, eval, evec);
-        Set(prim, "physics:diagonalInertia",
-            tn::Value::MakeFloat3(static_cast<float>(eval[0]),
-                                  static_cast<float>(eval[1]),
-                                  static_cast<float>(eval[2])),
-            "float3");
-        Set(prim, "physics:principalAxes", RotationMatrixToQuatf(evec),
-            "quatf");
-      } else {
-        const std::vector<float> inertia =
-            JsonFloats(*inertial, "diagonalInertia");
-        if (inertia.size() >= 3) {
-          Set(prim, "physics:diagonalInertia",
-              tn::Value::MakeFloat3(inertia[0], inertia[1], inertia[2]),
-              "float3");
+      // MuJoCo <freejoint>: distinguishes a floating-base articulation root
+      // from a fixed (anchored) parentless base.
+      flag = false;
+      ReadBool(link, "floating", &flag);
+      if (flag) Set(prim, "mjc:freeJoint", tn::Value(true), "bool", true);
+      bool articulation_root = false;
+      ReadBool(link, "articulationRoot", &articulation_root);
+      if (!is_static && (!child_links.count(source) || articulation_root)) {
+        AddAPIs(prim,
+                {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
+        Set(prim, "newton:selfCollisionEnabled",
+            tn::Value(self_collision_enabled), "bool");
+      }
+      if (const Json* inertial = JsonObject(link, "inertial")) {
+        float mass = 0.0f;
+        if (ReadNumber(*inertial, "mass", &mass) && mass > 0.0f) {
+          Set(prim, "physics:mass", tn::Value(mass), "float");
         }
+        const std::vector<float> com = JsonFloats(*inertial, "centerOfMass");
+        if (com.size() >= 3)
+          SetPoint3(prim, "physics:centerOfMass", com, false);
+        // A full inertia tensor is diagonalized into principal moments +
+        // principal-axes rotation (the lossless USD representation).
+        const std::vector<double> full = JsonDoubles(*inertial, "fullInertia");
+        if (full.size() >= 6) {
+          // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
+          const double tensor[3][3] = {{full[0], full[3], full[4]},
+                                       {full[3], full[1], full[5]},
+                                       {full[4], full[5], full[2]}};
+          double eval[3];
+          double evec[3][3];
+          JacobiEigenSymmetric3(tensor, eval, evec);
+          Set(prim, "physics:diagonalInertia",
+              tn::Value::MakeFloat3(static_cast<float>(eval[0]),
+                                    static_cast<float>(eval[1]),
+                                    static_cast<float>(eval[2])),
+              "float3");
+          Set(prim, "physics:principalAxes", RotationMatrixToQuatf(evec),
+              "quatf");
+        } else {
+          const std::vector<float> inertia =
+              JsonFloats(*inertial, "diagonalInertia");
+          if (inertia.size() >= 3) {
+            Set(prim, "physics:diagonalInertia",
+                tn::Value::MakeFloat3(inertia[0], inertia[1], inertia[2]),
+                "float3");
+          }
+        }
+        const auto principal = JsonFloats(*inertial, "principalAxes");
+        if (full.size() < 6 && principal.size() == 4)
+          Set(prim, "physics:principalAxes",
+              tn::Value::MakeQuatf(principal[0], principal[1], principal[2],
+                                   principal[3]),
+              "quatf");
       }
-    }
+
+    }  // physics-bearing link
 
     // Visuals and collisions share the link's child namespace.
     std::set<std::string> siblings;
@@ -468,6 +522,20 @@ bool ConvertURDFJsonToUSDStage(
   stage.SetRootLayer(std::move(layer));
   *out_stage = std::move(stage);
   return true;
+}
+
+bool ConvertURDFJsonToUSDStage(const std::string& robot_json,
+    const std::map<std::string, URDFMeshBuffer>* mesh_buffers,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Parse(robot_json, &payload, err)) return false;
+  return ConvertPayload(payload, mesh_buffers, out_stage, warn, err);
+}
+bool ConvertURDFPayloadToUSDStage(const ::lightusd::minijson::Value& value,
+    ::lightusd::next::Stage* out_stage, std::string* warn, std::string* err) {
+  ::lightusd::tydra::detail::URDFPayload payload;
+  if (!::lightusd::tydra::detail::URDFPayload::Borrow(value, &payload, err)) return false;
+  return ConvertPayload(payload, nullptr, out_stage, warn, err);
 }
 
 bool ConvertURDFJsonToUSDStage(const std::string &robot_json,

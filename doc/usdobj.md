@@ -293,7 +293,61 @@ fail the import. Optional missing MTL/maps,
 incomplete UVs, missing weights and unsupported features are reported through
 `stage.warnings()` in Python or the native warning output.
 
-Regression coverage includes:
+### Large inputs and generated stress tests
+
+OBJ memory inputs are parsed as bounded byte views; they need no NUL terminator
+and the next-core/Python path does not copy the entire input into a string.
+Serial OBJ, MTL and callback parsing visit lines incrementally rather than
+allocating a line table proportional to the input. The next-core layer loader
+and C/Python OBJ import APIs pass compact numeric geometry to USD without a
+JSON node for every coordinate. The legacy/robot JSON bridge remains available
+and checks its additional allocation estimates against the import budget.
+
+Large inputs require explicit budgets above the 512 MiB input/1 GiB memory
+defaults. Python's positive `max_memory` also sets the per-input byte limit; the
+native import C API exposes `max_input_bytes` and `max_memory_bytes` separately.
+Byte offsets use `size_t`, so input larger than 4 GiB is supported on 64-bit
+systems when the configured limits and available memory permit it. Geometry
+indices remain signed 32-bit; oversized counts are rejected before narrowing.
+The shared frontend also limits a line to 16 MiB and face arity to 65,536.
+
+Index and face budgets apply across object/group partitions, not independently
+per object. Lines and points consume the shared geometry-index budget;
+triangulated polygons consume the number of triangles actually requested.
+Malformed/overflowing index tokens and explicit position, UV or normal indices
+outside their arrays fail. Missing UV fields can still omit UVs with a warning.
+Vertex, normal and UV records are checked in the bounded scanner, including
+finite ranges; computed normals use double intermediate arithmetic for large
+coordinates. Repeated object names use advancing suffix counters, so resolving
+name collisions does not restart a search through all prior objects. Warning
+storage is capped even when a single diagnostic is very large.
+
+[`test_obj_large.cc`](../tests/next/test_obj_large.cc) generates OBJ source in
+memory. Its normal CTest case checks geometry, UV/color/skin arrays, allocation
+failure cleanup, expansion budgets, tiny decimals, large coordinates, blank-line
+memory use and non-terminated buffers ending at a guard page. No large fixture
+assets are checked in. Its optional `--triangles` and `--comment-mib` arguments
+exercise dense geometry and byte offsets beyond 32 bits independently:
+
+```sh
+cmake -S src/next -B build_ninja/obj-large-next -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+cmake --build build_ninja/obj-large-next --target test_obj_large -j8
+ctest --test-dir build_ninja/obj-large-next -R next_test_obj_large --output-on-failure
+
+# One million triangles with normals, UVs, colors and vw records.
+build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0
+
+# More than 4 GiB of input, with real geometry after the generated comments.
+build_ninja/obj-large-next/test_obj_large --triangles 100 --comment-mib 4097
+```
+
+These stress sizes are opt-in and allocate the source in RAM. `--parser-only`
+runs the C11 parse without the USD conversion. Python-generated buffer and
+expansion-limit tests are in
+[`test_obj_large.py`](../python/tests/test_obj_large.py).
+
+Regression coverage also includes:
 
 - [C11/next OBJ reader tests](../tests/next/test_obj_reader.cc): float/double
   skin arrays, invalid records, mixed primitive types and influence metadata.

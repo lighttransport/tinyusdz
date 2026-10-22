@@ -694,6 +694,21 @@ lightusd_status lightusd_dict_get_token_array(
 // Stage: load / create / save
 // ------------------------------------------------------------
 
+static void RetainLayerAssets(lightusd_stage* stage) {
+  auto* root = stage->stage.GetRootLayer();
+  if (!root || !root->meta().imported_assets) return;
+  for (const auto& item : root->meta().imported_assets->by_identifier) {
+    std::string basename = item.first;
+    if (!basename.empty() && basename.back() == ']') basename.pop_back();
+    const size_t slash = basename.find_last_of("/\\[");
+    if (slash != std::string::npos) basename = basename.substr(slash + 1);
+    const std::string name = "textures/" + std::to_string(stage->import_assets.size()) + "_" + basename;
+    stage->import_assets[name] = *item.second;
+    stage->import_asset_paths[item.first] = name;
+  }
+  root->meta().imported_assets.reset();
+}
+
 void lightusd_load_options_init(lightusd_load_options* opts) {
   if (!opts) return;
   std::memset(opts, 0, sizeof(*opts));
@@ -774,6 +789,7 @@ lightusd_status lightusd_stage_load(const char* filename,
     return Fail(LoadFailureStatus(err, fallback), err);
   }
   stage->warnings = std::move(warn);
+  RetainLayerAssets(stage.get());
   *out = stage.release();
   return LIGHTUSD_OK;
 }
@@ -800,6 +816,7 @@ lightusd_status lightusd_stage_load_from_memory(const uint8_t* data, size_t size
     return Fail(LoadFailureStatus(err, LIGHTUSD_ERR_PARSE), err);
   }
   stage->warnings = std::move(warn);
+  RetainLayerAssets(stage.get());
   *out = stage.release();
   return LIGHTUSD_OK;
 }
@@ -842,6 +859,27 @@ uint64_t lightusd_stage_generation(const lightusd_stage* stage) {
   return stage ? stage->generation.load(std::memory_order_acquire) : 0;
 }
 
+namespace {
+n::Stage ImportedPackageStage(const lightusd_stage* stage) {
+  n::Stage copy = stage->ReadStage().Clone();
+  auto* layer = copy.GetRootLayer();
+  copy.Traverse([&](const n::UsdPrim& prim) {
+    for (const std::string& name : prim.GetPropertyNames()) {
+      const auto* value = prim.GetPropertyValue(name);
+      if (!value) continue;
+      const auto asset = value->as_asset_path();
+      if (!asset) continue;
+      auto found = stage->import_asset_paths.find(std::string(*asset));
+      if (found != stage->import_asset_paths.end())
+        layer->prim_at_path_mutable(prim.GetPath().str())
+            ->add_property(name, n::Value::MakeAssetPath(found->second));
+    }
+    return true;
+  });
+  return copy;
+}
+}  // namespace
+
 lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* filename,
                             const lightusd_save_options* opts) {
   if (!stage || !filename) {
@@ -866,6 +904,9 @@ lightusd_status lightusd_stage_save(const lightusd_stage* stage, const char* fil
   } else if (format == LIGHTUSD_FORMAT_USDC) {
     ok = n::WriteUSDC(stage->ReadStage(), filename, &err);
   } else if (format == LIGHTUSD_FORMAT_USDZ) {
+    if (!stage->import_assets.empty())
+      return lightusd_stage_save_usdz_with_assets(stage, filename, nullptr,
+                                                  nullptr, nullptr, 0);
     n::USDZWriteResult r = n::WriteUSDZToFile(filename, stage->ReadStage());
     ok = r.success;
     err = r.error;
@@ -883,10 +924,16 @@ lightusd_status lightusd_stage_save_usdz_with_assets(
   if (!stage || !filename || (asset_count && (!asset_names || !asset_data || !asset_sizes))) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset arguments");
   }
+  n::Stage packaged;
+  const n::Stage* source = &stage->ReadStage();
+  if (!stage->import_assets.empty()) {
+    packaged = ImportedPackageStage(stage);
+    source = &packaged;
+  }
   std::vector<uint8_t> usdc;
-  n::USDCWriteResult usdc_result = n::WriteUSDCToMemory(usdc, stage->ReadStage());
+  n::USDCWriteResult usdc_result = n::WriteUSDCToMemory(usdc, *source);
   if (!usdc_result.success) return Fail(LIGHTUSD_ERR_IO, usdc_result.error);
-  std::map<std::string, std::vector<uint8_t>> assets;
+  std::map<std::string, std::vector<uint8_t>> assets = stage->import_assets;
   for (size_t i = 0; i < asset_count; ++i) {
     if (!asset_names[i] || (!asset_data[i] && asset_sizes[i] != 0)) {
       return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset");
@@ -895,7 +942,7 @@ lightusd_status lightusd_stage_save_usdz_with_assets(
     if (asset_sizes[i]) {
       bytes.assign(asset_data[i], asset_data[i] + asset_sizes[i]);
     }
-    assets.emplace(asset_names[i], std::move(bytes));
+    assets[asset_names[i]] = std::move(bytes);
   }
   std::vector<uint8_t> buffer;
   n::USDZWriteResult result = n::WriteUSDZFromUSDCAndAssetsToMemory(
@@ -2490,6 +2537,7 @@ lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage, const char* pr
     auto arr = v.as_token_array();
     if (!arr) return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "expects a token array");
     m.apiSchemas().assign(arr->begin(), arr->end());
+    m.setApiSchemasAuthored();
   } else {
     return Fail(LIGHTUSD_ERR_NOT_FOUND, "unknown prim metadata key: " + k);
   }

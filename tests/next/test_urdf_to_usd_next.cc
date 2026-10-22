@@ -642,6 +642,17 @@ int main() {
   TestEqualitiesAndMjcActuators();
   TestMiscScopes();
   TestUrdfDefaults();
+  // Public JSON entry points reject scalar records, and nested mixed arrays
+  // cannot defeat the reserve used by shader builders holding PrimSpec pointers.
+  assert(!lightusd::tydra::next::ConvertURDFJsonToUSDStage(
+      R"({"links":[{}],"materials":[0,{}]})", &stage, &warn, &err));
+  std::string mixed = R"({"links":[{"name":"b"}],"materials":[{"name":"m","maps":[0)";
+  for (int i = 0; i < 200; ++i)
+    mixed += R"(,{"input":"diffuseColor","file":"tex.png"})";
+  mixed += "]}]}";
+  assert(lightusd::tydra::next::ConvertURDFJsonToUSDStage(mixed, &stage, &warn, &err));
+  const auto* shader = stage.GetRootLayer()->prim_at_path("/World/Materials/m/PreviewSurface");
+  assert(shader && shader->property_value("info:id"));
   std::cout << "All next URDF/MJCF converter tests passed\n";
   return 0;
 }

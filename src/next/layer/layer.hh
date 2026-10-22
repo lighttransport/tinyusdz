@@ -11,13 +11,21 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <map>
 #include <unordered_map>
 
 namespace lightusd {
 namespace next {
+// Runtime ownership for dependencies produced by foreign-format readers.
+// This is not authored USD metadata. Shared immutable bytes survive cache
+// teardown and Layer cloning without copying texture payloads.
+struct ImportedAssets {
+  std::map<std::string, std::shared_ptr<const std::vector<uint8_t>>> by_identifier;
+};
 
 /// Layer metadata
 struct LayerMeta {
+  std::shared_ptr<const ImportedAssets> imported_assets;
   std::string defaultPrim;
   bool defaultPrim_set = false;
   std::string upAxis = "Y";

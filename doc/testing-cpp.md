@@ -2124,3 +2124,109 @@ Their output directories can be retained through `LUSDVIEW_USD_ASSETS_OUT` and
 and runs Vulkan raster/RT plus renderer CPU/Vulkan. Keep `no_renderable` and
 warning statuses visible in the report. See [the viewer corpus procedure](lusdview.md#external-usd-assets-smoke-rendering)
 and [the WASM corpus parser](../web/js/docs/regression.md#usd-wg-corpus-parsing).
+
+## Native OBJ/robot imports and Python physics
+
+The native CLI and Python bindings share the C11 OBJ reader and native
+URDF/MJCF frontends. `next_test_asset_import` checks the public import C API;
+`next_test_urdf_to_usd` checks stage authoring, and
+`physics_obj_c11_import_test` checks the legacy usdObj adapter.
+`python/tests/test_native_import.py` covers OBJ/MTL data and texture packaging,
+URDF/MJCF frames/inertia, include and package resolution, missing assets,
+resource limits, physics snapshots, and authoring.
+
+Use isolated build trees when another checkout consumer is compiling:
+
+```sh
+cmake -S src/next -B build_ninja/physics-import-next -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+cmake --build build_ninja/physics-import-next -j8
+ctest --test-dir build_ninja/physics-import-next --output-on-failure
+LIGHTUSD_PY_BUILD_DIR="$PWD/build_ninja/physics-import-python/native" \
+  python3 setup.py build --build-base build_ninja/physics-import-python/package
+```
+
+Run pytest against that build's `lib.*` directory, or install its wheel into
+an isolated environment; do not replace another worker's editable extension.
+The vendored tessellator's reflex-on-diagonal fix is covered by the concave OBJ
+area regression. For sanitizer verification, build both C and C++ sources with
+AddressSanitizer/UBSan; environments running under ptrace require
+`ASAN_OPTIONS=detect_leaks=0` for the test process.
+
+`next_test_obj_reader` additionally checks both C11 precision families, strict
+`vw` errors, influence metadata and mixed Mesh/BasisCurves/Points imports. It
+also runs with `LIGHTUSD_WITH_TYDRA=OFF`; that configuration creates no XML
+frontend target. `LIGHTUSD_WITH_USDOBJ=OFF` removes the layer adapter entirely.
+`python/tests/test_obj_layers_skin.py` covers seam copies, signed weights, more
+than four influences, composition arcs, package dependencies and texture
+lifetime. Enable its OpenUSD deformation oracle with a separate compatible
+Python executable and OpenUSD's Python/plugin paths:
+
+```sh
+OPENUSD_PYTHON=python3.11 \
+OPENUSD_PYTHONPATH="$OPENUSD_ROOT/dist/lib/python" \
+PXR_PLUGINPATH_NAME="$OPENUSD_ROOT/dist/lib/usd:$OPENUSD_ROOT/dist/plugin/usd" \
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" \
+  python3 -m pytest python/tests/test_obj_layers_skin.py
+```
+
+### Generated large OBJ tests
+
+`next_test_obj_large` builds OBJ text entirely in memory and checks the C11
+reader and typed USD conversion. It covers overflowed/invalid indices, global
+limits across groups and primitive types, allocation-failure cleanup, bounded
+blank-line handling, non-terminated guarded input, large-coordinate normals and
+small decimals. `python/tests/test_obj_large.py` checks generated face/skin
+arrays through bytes, bytearray and memoryview inputs, plus expansion budgets.
+
+The normal CTest case is small. For optional dense-geometry and >4 GiB byte-offset
+stress runs, use the separate-build commands in
+[Large OBJ inputs](usdobj.md#large-inputs-and-generated-stress-tests).
+The generator has explicit size arguments and writes no asset files. Run the
+small case under ASan/UBSan as well as the ordinary native build; do not use the
+multi-gigabyte configuration as a routine sanitizer/CI requirement.
+
+### Updated Menagerie native/Python sweep
+
+`tests/next/run-menagerie-import.py` inventories git-tracked XML/OBJ files at the
+local checkout's actual revision. It does not update or pin the dataset. XML
+fragments are accounted for separately, including the auxiliary Aloha actuator
+fragment that has worldbody sites but cannot compile without its parent bodies.
+Every standalone entry is compiled with Python MuJoCo and imported in strict
+asset mode. The runner compares authored body rest frames, joint anchors/limits
+and engine record counts with MuJoCo, and records physics parity separately
+from conversion success. MuJoCo compiler inference and tendon surface wrapping
+are not implemented by the import frontend.
+
+Pass both independently built native CLIs to check USDA/USDC/USDZ emission,
+Python reopening and OpenUSD reopening, in addition to Python import/export.
+Use frozen copies of the extension and CLIs during a long sweep so a concurrent
+rebuild cannot replace a mapped binary. Reports contain per-file warnings,
+reference mismatches, timing and peak RSS; failed case artifacts are retained.
+
+```sh
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/next/run-menagerie-import.py \
+  --menagerie "$MENAGERIE_ROOT" --out build_ninja/obj-skel-report/final \
+  --cli "$LEGACY_IMPORT_CLI" --cli "$NEXT_IMPORT_CLI" \
+  --usdcat "$OPENUSD_USDCAT" --workers 4
+```
+
+The runner requires `mujoco` and the isolated `lightusd` package in the selected
+Python. `--cases-from retry.json` accepts a JSON array of tracked relative paths
+for focused retries. A conversion pass does not claim simulator equivalence;
+inspect `reference_checks` and warnings in the JSON report as well.
+See [OBJ mapping and skinning](usdobj.md) for supported records and binding rules.
+
+The URDF frontend also tests noncommuting fixed-axis RPY rotations against the
+`Rz(yaw) * Ry(pitch) * Rx(roll)` convention used by
+[urdfdom](https://github.com/ros/urdfdom_headers/blob/rolling/include/urdf_model/pose.hpp).
+The public JSON bridge rejects scalar records, and the converter regression
+includes heterogeneous nested arrays to protect builders holding PrimSpec
+pointers during layer growth. Run that case under ASan/UBSan with the same RTTI
+setting as the core (`-fno-rtti`).
+
+`tests/next/test-obj-wasm.mjs` checks the isolated WASM OBJ layer parser, changed
+skin weights, geometry-property parity with a native USDA import, binary/package
+roundtrips and physics JSON authoring. Pass its module path and a native USDA
+fixture exported from the inline OBJ source in the script. This avoids replacing
+another worker's WASM artifacts.

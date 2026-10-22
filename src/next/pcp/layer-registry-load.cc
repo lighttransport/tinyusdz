@@ -4,6 +4,9 @@
 // LightUSD Next - PCP LayerRegistry implementation
 
 #include "layer-registry.hh"
+#if defined(LIGHTUSD_WITH_USDOBJ)
+#include "../reader/obj-reader.hh"
+#endif
 #include "../next-util.hh"
 #include "../safe-file-size.hh"
 
@@ -13,6 +16,7 @@
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
 #include "../../mtlx-dom.hh"
+#include "../../external/filesystem/include/ghc/filesystem.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -25,6 +29,22 @@ namespace next {
 namespace pcp {
 
 namespace {
+#if defined(LIGHTUSD_WITH_USDOBJ)
+tydra::import_asset::Options OBJOptions(const LayerLoadOptions& options) {
+  tydra::import_asset::Options obj;
+  obj.format = "obj";
+  if (options.max_memory) {
+    obj.max_memory = options.max_memory;
+    obj.max_input = options.max_memory;
+  }
+  obj.read = options.asset_read;
+  return obj;
+}
+bool IsOBJIdentifier(const std::string& key) {
+  std::string package, entry;
+  return EndsWithNoCase(AssetResolver::ParsePackagePath(key, &package, &entry) ? entry : key, ".obj");
+}
+#endif
 
 
 std::string ToLowerExt(const std::string &path) {
@@ -124,6 +144,35 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
   }
 
   const std::string label = package_label + "[" + reader.EntryName(static_cast<size_t>(idx)) + "]";
+#if defined(LIGHTUSD_WITH_USDOBJ)
+  if (EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".obj")) {
+    auto obj_options = OBJOptions(options);
+    obj_options.read = [&reader, &package_label](const std::string& name,
+        const std::string& anchor, std::vector<uint8_t>* bytes,
+        std::string* resolved, std::string* error) {
+      std::string package, entry;
+      if (!AssetResolver::ParsePackagePath(name, &package, &entry)) {
+        if (!AssetResolver::ParsePackagePath(anchor, &package, &entry)) return false;
+        entry = (ghc::filesystem::path(entry).parent_path() / name).lexically_normal().generic_string();
+      }
+      if (package != package_label || entry.empty() || entry.front() == '/' ||
+          entry == ".." || entry.rfind("../", 0) == 0) {
+        if (error) *error = "OBJ dependency escapes package: " + name;
+        return false;
+      }
+      for (size_t i = 0; i < reader.NumEntries(); ++i) {
+        if (NormalizeEntryName(reader.EntryName(i)) != entry) continue;
+        const auto* p = reader.EntryData(i);
+        bytes->assign(p, p + reader.EntrySize(i));
+        *resolved = package + "[" + entry + "]";
+        return true;
+      }
+      if (error) *error = "Missing package OBJ dependency: " + entry;
+      return false;
+    };
+    return LoadOBJLayerFromMemory(label, data, size, obj_options, warn, err);
+  }
+#endif
   bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
   bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
   if (!is_usdc && !is_usda && size >= 8 &&
@@ -236,6 +285,10 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
   }
 
   std::string ext = ToLowerExt(resolved_path);
+#if defined(LIGHTUSD_WITH_USDOBJ)
+  if (ext == "obj")
+    return LoadOBJLayerFromFile(resolved_path, OBJOptions(options), warn, err);
+#endif
 
   // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
   // magic ("PXR-USDC"); UE-exported scenes ship the root layer as `.usd` crate.
@@ -693,6 +746,10 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (LooksLikeMtlxXML(data, size)) {
     return LoadLayerFromMtlxMemory(key, data, size, warn, err);
   }
+#if defined(LIGHTUSD_WITH_USDOBJ)
+  if (IsOBJIdentifier(key))
+    return LoadOBJLayerFromMemory(key, data, size, OBJOptions(options), warn, err);
+#endif
 
   LoadOptions lopts;
   lopts.parse_options = MakeUSDAParseOptions(options);
@@ -710,6 +767,11 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     if (err) *err += "Empty layer buffer for: " + key + "\n";
     return nullptr;
   }
+#if defined(LIGHTUSD_WITH_USDOBJ)
+  if (IsOBJIdentifier(key))
+    return LoadLayerFromMemory(key, reinterpret_cast<const uint8_t*>(data.data()),
+                                data.size(), warn, err, options);
+#endif
   if (options.max_memory > 0 && data.size() > options.max_memory) {
     if (err) {
       *err += "Layer buffer exceeds max_memory for: " + key + "\n";

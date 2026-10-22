@@ -145,6 +145,74 @@ void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
         "color3f");
   }
   Declare(ps, "outputs:surface", tn::TypeId::Token, "token");
+  for (const char* key : {"specularColor", "emissiveColor"}) {
+    auto rgb = JsonFloats(m, key);
+    if (rgb.size() == 3)
+      Set(ps, std::string("inputs:") + key,
+          tn::Value::MakeColor3f(rgb[0], rgb[1], rgb[2]), "color3f");
+  }
+  if (m.contains("useSpecularWorkflow"))
+    Set(ps, "inputs:useSpecularWorkflow",
+        tn::Value(JsonInt(m, "useSpecularWorkflow", 0)), "int");
+  double ior = 1.5;
+  if (ReadNumber(m, "ior", &ior))
+    Set(ps, "inputs:ior", tn::Value(static_cast<float>(ior)), "float");
+  if (const Json* maps = JsonArray(m, "maps")) {
+    for (size_t k = 0; k < maps->size(); k++) {
+      const Json& map = (*maps)[k];
+      const std::string input = JsonString(map, "input"),
+                        file = JsonString(map, "file");
+      if (input.empty() || file.empty()) continue;
+      const bool vector_input = input == "diffuseColor" ||
+                                input == "specularColor" ||
+                                input == "emissiveColor" || input == "normal";
+      bool color = false, clamp = false;
+      ReadBool(map, "color", &color);
+      ReadBool(map, "clamp", &clamp);
+      const std::string stem = name + "/Map_" + std::to_string(k),
+                        path = mat_path + "/Map_" + std::to_string(k);
+      auto* uv = scope->Add(stem + "_UV", "Shader");
+      SetToken(uv, "info:id", "UsdPrimvarReader_float2", true);
+      Set(uv, "inputs:varname", tn::Value(std::string("st")), "string");
+      Declare(uv, "outputs:result", tn::TypeId::Float2, "float2");
+      auto* transform = scope->Add(stem + "_Transform", "Shader");
+      SetToken(transform, "info:id", "UsdTransform2d", true);
+      Connect(transform, "inputs:in", tn::TypeId::Float2, "float2",
+              path + "_UV.outputs:result");
+      auto scale = JsonFloats(map, "scale"), offset = JsonFloats(map, "offset");
+      if (scale.size() == 2)
+        Set(transform, "inputs:scale",
+            tn::Value::MakeFloat2(scale[0], scale[1]), "float2");
+      if (offset.size() == 2)
+        Set(transform, "inputs:translation",
+            tn::Value::MakeFloat2(offset[0], offset[1]), "float2");
+      Declare(transform, "outputs:result", tn::TypeId::Float2, "float2");
+      auto* texture = scope->Add(stem, "Shader");
+      SetToken(texture, "info:id", "UsdUVTexture", true);
+      Set(texture, "inputs:file", tn::Value::MakeAssetPath(file), "asset");
+      Connect(texture, "inputs:st", tn::TypeId::Float2, "float2",
+              path + "_Transform.outputs:result");
+      SetToken(texture, "inputs:wrapS", clamp ? "clamp" : "repeat");
+      SetToken(texture, "inputs:wrapT", clamp ? "clamp" : "repeat");
+      SetToken(texture, "inputs:sourceColorSpace", color ? "sRGB" : "raw");
+      if (input == "normal") {
+        Set(texture, "inputs:scale", tn::Value::MakeFloat4(2, 2, 2, 1),
+            "float4");
+        Set(texture, "inputs:bias", tn::Value::MakeFloat4(-1, -1, -1, 0),
+            "float4");
+      }
+      Declare(texture, "outputs:rgb", tn::TypeId::Float3, "float3");
+      Declare(texture, "outputs:r", tn::TypeId::Float, "float");
+      Connect(
+          ps, "inputs:" + input,
+          input == "normal"
+              ? tn::TypeId::Normal3f
+              : (vector_input ? tn::TypeId::Color3f : tn::TypeId::Float),
+          input == "normal" ? "normal3f" : (vector_input ? "color3f" : "float"),
+          path + (vector_input ? ".outputs:rgb" : ".outputs:r"));
+    }
+  }
+
   if (tex_file.empty()) return;
 
   tn::PrimSpec *reader = scope->Add(name + "/stReader", "Shader");

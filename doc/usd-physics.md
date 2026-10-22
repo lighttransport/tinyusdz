@@ -351,7 +351,7 @@ Concrete typed prim for tendons.
 |---|---|---|---|
 | `mjc:type` | token | `spatial` | Tendon type (`spatial`, `fixed`) |
 | `mjc:path` | rel | — | Sites/geoms (spatial) or joints (fixed) the tendon wraps |
-| `mjc:path:indices` | int[] | [] | Wrap order for path targets |
+| `mjc:path:indices` | int[] | [] | Ordered indices into unique path targets; repeated visits allowed |
 | `mjc:path:coef` | double[] | [] | Joint coefficients (fixed tendons) |
 | `mjc:path:segments` | int[] | [] | Segment indices for path points |
 | `mjc:path:divisors` | double[] | [] | Segment length divisors |

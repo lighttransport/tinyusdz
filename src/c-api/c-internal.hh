@@ -7,13 +7,13 @@
 
 #include <atomic>
 #include <cstring>
-#include <mutex>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "lightusd-c.h"
-
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 
@@ -63,6 +63,8 @@ struct lightusd_stage {
   }
 
   std::string warnings;
+  std::map<std::string, std::vector<uint8_t>> import_assets;
+  std::map<std::string, std::string> import_asset_paths;
   // Directory of the file this stage was loaded from (empty for in-memory /
   // created stages); used to resolve relative texture asset paths.
   std::string source_dir;

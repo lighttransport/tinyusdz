@@ -289,6 +289,15 @@ target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.
 lightusd_next_harden(lightusd_core_c)
 option(LIGHTUSD_NEXT_USE_PCH "Use a precompiled header for native next C++ sources" ON)
 add_library(lightusd_next STATIC ${LIGHTUSD_NEXT_SOURCES} ${LIGHTUSD_NEXT_HEADERS})
+option(LIGHTUSD_WITH_USDOBJ "Import OBJ layers using the C11 loader" ON)
+if(LIGHTUSD_WITH_USDOBJ)
+    set(LIGHTUSD_ASSET_IMPORT_OBJ_ONLY ON)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/lightusd-asset-import.cmake")
+    unset(LIGHTUSD_ASSET_IMPORT_OBJ_ONLY)
+    target_sources(lightusd_next PRIVATE reader/obj-reader.cc)
+    target_link_libraries(lightusd_next PUBLIC lightusd_obj_import)
+    target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_WITH_USDOBJ)
+endif()
 if(LIGHTUSD_NEXT_USE_PCH)
   target_precompile_headers(lightusd_next PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")
@@ -972,7 +981,8 @@ endif()
 if(LIGHTUSD_WITH_TYDRA)
     add_library(lightusd_render_c STATIC
         ../c-api/lightusd-render-c.cc
-        ../c-api/lightusd-render-glb-c.cc)
+        ../c-api/lightusd-render-glb-c.cc
+        ../c-api/lightusd-import-c.cc)
     target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra_next)
     lightusd_next_harden(lightusd_render_c)
     list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
@@ -996,8 +1006,7 @@ endif()
 if(LIGHTUSD_NEXT_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA AND
    NOT LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
     add_executable(urdf-to-usd
-        ../../examples/urdf-to-usd/main.cc
-        ../external/pugixml.cpp)
+        ../../examples/urdf-to-usd/main.cc)
     target_include_directories(urdf-to-usd PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/..
         ${CMAKE_CURRENT_SOURCE_DIR}/../external)
@@ -1065,7 +1074,8 @@ if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
         set_target_properties(tydra_next PROPERTIES POSITION_INDEPENDENT_CODE ON)
         target_sources(lightusd_c_shared PRIVATE
             ../c-api/lightusd-render-c.cc
-            ../c-api/lightusd-render-glb-c.cc)
+            ../c-api/lightusd-render-glb-c.cc
+            ../c-api/lightusd-import-c.cc)
         target_link_libraries(lightusd_c_shared PRIVATE tydra_next)
     endif()
     target_compile_definitions(lightusd_c_shared
@@ -1076,6 +1086,12 @@ if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
 endif()
 
 # Only the C boundary and thin ownership facades are installed for consumers.
+if(LIGHTUSD_WITH_TYDRA)
+  # Packaging must use actual target artifacts, including nested build dirs.
+  # Searching by basename can select an obsolete archive after reconfiguration.
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/lightusd-python-libraries-$<CONFIG>.txt"
+    CONTENT "$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_core_c>\n")
+endif()
 include(GNUInstallDirs)
 set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
 set_target_properties(lightusd_validation_c PROPERTIES EXPORT_NAME validation_c)
@@ -1092,7 +1108,7 @@ if(LIGHTUSD_WITH_TYDRA)
     set_target_properties(lightusd_render_c PROPERTIES EXPORT_NAME render_c)
     install(TARGETS tydra_next lightusd_render_c EXPORT LightUSDTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-    install(FILES ../c-api/lightusd-render-c.h ../c-api/lightusd-render-cpp.hh
+    install(FILES ../c-api/lightusd-render-c.h ../c-api/lightusd-render-cpp.hh ../c-api/lightusd-import-c.h
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()
 if(LIGHTUSD_NEXT_BUILD_SHARED_C_API)
@@ -1108,6 +1124,12 @@ configure_package_config_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/LightUSDConfig.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/LightUSDConfig.cmake"
     INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
+if(TARGET lightusd_asset_import)
+  install(TARGETS lightusd_asset_import EXPORT LightUSDTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+if(TARGET lightusd_obj_import)
+  install(TARGETS lightusd_obj_import EXPORT LightUSDTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 install(EXPORT LightUSDTargets NAMESPACE lightusd::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LightUSD")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/LightUSDConfig.cmake"
@@ -1141,11 +1163,25 @@ endforeach()
 
 # Tydra Next test
 if(LIGHTUSD_NEXT_BUILD_TESTS)
+    if(LIGHTUSD_WITH_USDOBJ)
+        add_executable(test_obj_reader ../../tests/next/test_obj_reader.cc)
+        target_link_libraries(test_obj_reader PRIVATE lightusd_next)
+        add_test(NAME next_test_obj_reader COMMAND test_obj_reader)
+        add_executable(test_obj_large ../../tests/next/test_obj_large.cc)
+        target_link_libraries(test_obj_large PRIVATE lightusd_next)
+        add_test(NAME next_test_obj_large COMMAND test_obj_large)
+
+    endif()
+
   if(LIGHTUSD_WITH_TYDRA)
     add_executable(test_tydra_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
     )
     target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+
+    add_executable(test_asset_import ../../tests/next/test_asset_import.cc)
+    target_link_libraries(test_asset_import PRIVATE lightusd_render_c)
+    add_test(NAME next_test_asset_import COMMAND test_asset_import)
 
     # URDF/MJCF JSON -> USD converter (next port of the legacy builders).
     add_executable(test_urdf_to_usd_next

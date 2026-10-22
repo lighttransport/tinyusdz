@@ -65,7 +65,7 @@ exclude src/*.cc src/*.cpp
 # Transitive standalone-next inputs. Headers are inexpensive and keeping the
 # complete src/ header surface avoids a fragile hand-maintained include graph.
 recursive-include src *.h *.hh *.hpp *.inc *.txt
-include src/color-transform.cc
+include src/color-transform.cc src/logger.cc src/minijson.cc
 include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/mtlx-dom.cc
 include src/ptx-loader.cc
 include src/core/path-expression.cc src/core/path-expression-eval.cc
@@ -104,3 +104,12 @@ exclude resume-dev.md
 exclude vk_layer_settings.txt
 exclude xmake.lua
 exclude *.bat
+
+# Native scene imports used by the Python wheel (including all parser includes).
+recursive-include src/tydra/asset-import *.cc *.hh
+recursive-include src/external/tinyobjloader-c *.c *.h *.inc *.txt LICENSE
+include src/external/pugixml.cpp
+include src/unicode-xid-c.c
+include src/external/zmij/zmij.cc
+recursive-include cmake *.cmake *.in
+recursive-include src/next *.cmake

@@ -78,6 +78,7 @@ def _cmake_configure_and_build() -> None:
         ("-DLIGHTUSD_NEXT_ENABLE_THREAD=" +
          ("ON" if PY_ENABLE_THREAD else "OFF")),
         "-DLIGHTUSD_NEXT_BUILD_TESTS=OFF",
+        "-DLIGHTUSD_NEXT_BUILD_EXAMPLES=OFF",
         "-DLIGHTUSD_WITH_TYDRA=ON",
     ]
     is_windows = platform.system() == "Windows"
@@ -109,38 +110,18 @@ def _cmake_configure_and_build() -> None:
     subprocess.check_call(build_args, env=env)
 
 
-def _find_static_lib(stem: str) -> pathlib.Path:
-    """Locate a static library built by CMake with variable naming across
-    platforms and generator types (multi-config vs single-config)."""
-    candidates = [
-        CMAKE_BUILD_DIR / f"lib{stem}.a",
-        CMAKE_BUILD_DIR / f"{stem}.lib",
-        CMAKE_BUILD_DIR / "MinSizeRel" / f"{stem}.lib",
-    ]
-    candidates += list(CMAKE_BUILD_DIR.rglob(f"lib{stem}.a"))
-    candidates += list(CMAKE_BUILD_DIR.rglob(f"{stem}.lib"))
-    for c in candidates:
-        if c.is_file():
-            return c
-    raise FileNotFoundError(
-        f"Could not locate static library for target '{stem}' under "
-        f"{CMAKE_BUILD_DIR}. Candidates tried: {candidates}")
-
-
 class CMakeBuildExt(build_ext):
     """Drive CMake to produce static libs, then compile the C extension."""
 
     def run(self) -> None:
         _cmake_configure_and_build()
 
-        # Link order matters for static archives on POSIX: dependents first.
-        render_api = _find_static_lib("lightusd_render_c")
-        c_api = _find_static_lib("lightusd_c")
-        tydra = _find_static_lib("tydra_next")
-        core = _find_static_lib("lightusd_next")
-
-        core_c = _find_static_lib("lightusd_core_c")
-        archives = [str(p) for p in (render_api, c_api, tydra, core, core_c)]
+        # CMake emits exact artifact paths in static link order. A recursive
+        # filename search can pick stale archives left by a reconfiguration.
+        manifest = CMAKE_BUILD_DIR / "lightusd-python-libraries-MinSizeRel.txt"
+        archives = manifest.read_text().splitlines()
+        if len(archives) != 7 or not all(pathlib.Path(p).is_file() for p in archives):
+            raise RuntimeError(f"Invalid CMake archive manifest: {manifest}")
         stamp = pathlib.Path(self.build_temp) / "lightusd-build-config.txt"
         stamp.parent.mkdir(parents=True, exist_ok=True)
         config = repr((archives, USE_LIMITED, PY_LIMITED_API, PY_ENABLE_THREAD))
@@ -180,6 +161,8 @@ ext = Extension(
     name="lightusd._core",
     sources=[
         "src/python/py-module.c",
+        "src/python/py-import.c",
+        "src/python/py-physics.c",
         "src/python/py-array.c",
         "src/python/py-numeric.c",
         "src/python/py-prim.c",

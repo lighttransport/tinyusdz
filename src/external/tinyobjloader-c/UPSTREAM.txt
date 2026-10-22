@@ -1,0 +1,21 @@
+Upstream: https://github.com/tinyobjloader/tinyobjloader
+Branch: release
+Revision: 45636bdcef1a4fec140346b90c0b50bf0bc3e23b
+License: MIT
+Vendored C11 loader and tessellator.
+Local patch: tobj_tess.c uses an inclusive point-in-triangle predicate.
+A reflex vertex on an ear diagonal must block clipping, otherwise concave
+polygons can produce overlapping triangles. Covered by native import tests.
+
+Local patch: tiny_obj_c_impl.inc parses the C++ loader's zero-based `vw`
+extension into the existing arena-owned skin_weights fields for float and
+double. Vertex/joint IDs, duplicate records, finite weights, array bounds and
+allocation limits are checked. Signed weights and every influence are retained;
+weights are not normalized. Covered by test_obj_reader and Python import tests.
+
+Local hardening: serial OBJ/MTL/callback paths scan bounded lines without a
+per-line index allocation. Integer overflow and malformed/out-of-range corners
+are errors; geometry caps cover all shapes, line/point records and emitted
+triangles. Numeric records use strict bounded finite scans, preserving tiny
+leading-zero decimals and double subnormals. Checked arena/vector arithmetic
+and failed-load cleanup are covered by generated in-memory OBJ tests.

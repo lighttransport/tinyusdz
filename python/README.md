@@ -121,3 +121,67 @@ exceptions raised by callbacks are re-raised by `resolve`, `read`, or `load`.
   synchronization and free-threaded-CPython safety.
 
 Apache 2.0. Part of [LightUSD](https://github.com/lighttransport/LightUSD).
+
+
+### Native OBJ, URDF and MuJoCo imports
+
+`lightusd.load(path)` also accepts `.obj`, `.urdf`, `.mjcf` and robot/MuJoCo
+`.xml` files. XML is identified by its root element. These imports run inside
+the native extension; Node, MuJoCo and Newton are not required.
+
+```python
+import lightusd
+from lightusd import physics, tydra
+
+stage = lightusd.import_urdf("robot.urdf", packages={"robot_assets": "assets"})
+# Equivalent automatic dispatch: lightusd.load("robot.urdf")
+for joint in physics.inspect(stage).joints:
+    print(joint.prim_path, joint.attributes, joint.relationships)
+
+actuator = physics.define_prim(
+    stage, "/World/Drive", "NewtonActuator",
+    api_schemas=["NewtonPDControlAPI"],
+    attributes={"newton:kp": 100.0, "newton:kd": 5.0},
+    relationships={"newton:targets": ["/World/Joints/hinge"]},
+)
+physics.apply_schema(actuator, "NewtonMaxEffortClampingAPI",
+                     attributes={"newton:maxEffort": 10.0})
+print(tydra.to_render_scene(stage).physics["joints"])
+stage.save_usdz("robot.usdz")  # includes imported textures
+```
+
+`import_obj`, `import_urdf` and `import_mjcf` return ordinary editable `Stage`
+objects. Import options are `up_axis="Z"`, `asset_dirs=()`, `packages=None`,
+`allow_missing=False`, `tessellate_collision_shapes=False`, `max_memory=0`,
+and `resolver=None`. Positive `max_memory` bounds input and aggregate import
+estimates; zero selects finite defaults. Dependencies resolve relative to the
+file that declares them. Supply asset directories or package mappings for
+external asset roots. Resolver callbacks also work for memory-backed inputs.
+
+For bytes, pass an explicit import format and a source anchor when needed:
+`lightusd.load_bytes(data, format="mjcf", source="scene.xml", resolver=resolver)`.
+`loads()` remains a USDA-text parser, and `is_usd()` remains USD-specific.
+
+OBJ imports preserve polygon meshes, normals, smoothing groups, UVs, object/group
+names and MTL material assignments. Common MTL colors, PBR scalars and texture
+maps become USD PreviewSurface networks. Missing MTL/textures warn; missing
+meshes/includes fail unless `allow_missing=True`. Bump-to-normal conversion,
+free-form OBJ surfaces and unsupported MTL shading features are not synthesized.
+Loose USD exports refer to source textures; USDZ exports retain and package them.
+OBJ layers also work in references, payloads and sublayers. Direct imports emit
+linear BasisCurves for `l` and Points for `p`. The zero-based `vw` extension
+becomes vertex SkelBindingAPI primvars, preserving every signed influence without
+normalizing; the containing USD supplies the skeleton and joint order. See
+[OBJ mapping and skin binding](../doc/usdobj.md) for details.
+
+Physics inspection snapshots authored values, arrays and relationship targets,
+including `mjc:*` and `newton:*`; it does not run a simulator. Authoring helpers
+use canonical USD property names, stage length units, degrees for joint angles,
+and real-first quaternions. For a property without a built-in type, pass
+`attributes={"mjc:custom:example": ("double[]", [1.0, 2.0])}`.
+`RenderScene.physics` exposes the existing C annotation records and textual
+extension summaries; use `physics.inspect(stage)` for complete typed engine data.
+
+MJCF flex/deformables and unsupported equality types remain unsupported;
+tendon surface wrapping remains approximate. Import warnings are available
+through `stage.warnings()`.

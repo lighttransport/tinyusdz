@@ -367,6 +367,8 @@ static PyObject* mod_type_name(PyObject* module, PyObject* args) {
 }
 
 static PyMethodDef module_methods[] = {
+    {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,
+     METH_VARARGS | METH_KEYWORDS, "Import OBJ, URDF or MJCF as a USD Stage."},
     {"load", (PyCFunction)(void (*)(void))mod_load,
      METH_VARARGS | METH_KEYWORDS,
      "load(path, *, format=None, composed=True, variants=None, "
@@ -384,13 +386,13 @@ static PyMethodDef module_methods[] = {
      "to_render_scene(stage, *, triangulate=True, compute_normals=True, "
      "compute_tangents=False, load_textures=True, time=0.0, "
      "duplicate_instance_meshes=False) -> RenderScene"},
-    {"_type_descriptor", mod_type_descriptor, METH_VARARGS, "Numeric type layout."},
+    {"_type_descriptor", mod_type_descriptor, METH_VARARGS,
+     "Numeric type layout."},
     {"_set_normalizer", mod_set_normalizer, METH_VARARGS,
      "Register the value normalizer used by authoring APIs (internal)."},
     {"type_from_name", mod_type_from_name, METH_VARARGS,
      "type_from_name(usd_type_name) -> int"},
-    {"type_name", mod_type_name, METH_VARARGS,
-     "type_name(type_id) -> str"},
+    {"type_name", mod_type_name, METH_VARARGS, "type_name(type_id) -> str"},
     {NULL, NULL, 0, NULL},
 };
 

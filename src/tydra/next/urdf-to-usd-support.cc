@@ -228,6 +228,7 @@ void AddAPI(tn::PrimSpec *prim, const std::string &schema) {
   if (!prim) return;
   std::vector<std::string> &apis = prim->meta().apiSchemas();
   prim->meta().apiSchemasQualifier() = "prepend";
+  prim->meta().setApiSchemasAuthored();
   if (std::find(apis.begin(), apis.end(), schema) == apis.end()) {
     apis.push_back(schema);
   }

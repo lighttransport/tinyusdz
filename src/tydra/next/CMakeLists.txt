@@ -88,7 +88,8 @@ if(TYDRA_NEXT_USE_PCH)
 endif()
 
 # Link to lightusd_next
-target_link_libraries(tydra_next PUBLIC lightusd_next)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/lightusd-asset-import.cmake")
+target_link_libraries(tydra_next PUBLIC lightusd_asset_import lightusd_next)
 
 # Windows: GetProcessMemoryInfo (process RSS for the memory budget, see
 # mem-budget.hh) lives in psapi. PUBLIC so every consumer (test_tydra_next,

@@ -1029,8 +1029,7 @@ if(LIGHTUSD_WITH_USDFBX)
 endif()
 
 if(LIGHTUSD_WITH_USDOBJ)
-  list(APPEND LIGHTUSD_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
+  # usdObj uses the shared C11 asset importer.
 endif()
 
 if(LIGHTUSD_WITH_USDVOX)
@@ -1663,7 +1662,9 @@ endif()
 #add_library(${LIGHTUSD_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
 #add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lightusd-asset-import.cmake")
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
 set_target_properties(${LIGHTUSD_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_sanitizers(${LIGHTUSD_TARGET_STATIC})
 #set_target_properties(lightusd_object PROPERTIES FOLDER "lightusd")
@@ -1677,6 +1678,7 @@ if(LIGHTUSD_BUILD_SHARED_LIBS)
   #  ${LIGHTUSD_TARGET} SHARED $<TARGET_OBJECTS:lightusd_object>)
   add_library(
     ${LIGHTUSD_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+  target_link_libraries(${LIGHTUSD_TARGET} lightusd_asset_import)
   add_sanitizers(${LIGHTUSD_TARGET})
 
   # for dllexport

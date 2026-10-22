@@ -71,6 +71,9 @@ typedef struct {
   PyObject* normalizer;
 } lightusd_state;
 
+PyObject* lightusd_wrap_stage(lightusd_state*, lightusd_stage*);
+PyObject* lightusd_import_scene(PyObject*, PyObject*, PyObject*);
+
 int lightusd_numbers_from_python(lightusd_state*, lightusd_type, uint8_t array,
     size_t count, PyObject* data, lightusd_value** out);
 
