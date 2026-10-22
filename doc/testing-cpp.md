@@ -698,9 +698,14 @@ runs of the same build must print the same hash.
 ```
 
 Report-only: never fails on timings. Threading follows the repo-wide
-`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_NEXT_ENABLE_THREAD` CMake options
-(default OFF = fully serial); without them the tool still runs and reports,
-just single-threaded.
+`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_NEXT_ENABLE_THREAD` CMake options. The
+**legacy** `LIGHTUSD_ENABLE_THREAD` stays opt-in (default OFF = fully serial);
+the **next core**'s `LIGHTUSD_NEXT_ENABLE_THREAD` now defaults **ON for native
+builds** (WASM/Emscripten stays OFF, and `web/CMakeLists.txt` forces it off) —
+that switch enables the next parallel paths (source warm, arc-layer prefetch,
+parallel opinion fill, parallel crate-writer build). Pass
+`-DLIGHTUSD_NEXT_ENABLE_THREAD=OFF` to force the serial next path; without
+either switch the tool still runs and reports, just single-threaded.
 
 ## Fixture Coverage
 

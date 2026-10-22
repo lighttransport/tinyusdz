@@ -68,7 +68,15 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
     set(LIGHTUSD_NEXT_BUILD_TESTS ${LIGHTUSD_BUILD_TESTS} CACHE BOOL "Build next tests")
   endif()
   if(NOT DEFINED LIGHTUSD_NEXT_ENABLE_THREAD)
-    set(LIGHTUSD_NEXT_ENABLE_THREAD ${LIGHTUSD_ENABLE_THREAD} CACHE BOOL "Enable next parallel paths")
+    # The next core has its own parallel paths (source warm, arc-layer
+    # prefetch, opinion fill, crate-writer build). They are ON by default for
+    # native builds regardless of the legacy LIGHTUSD_ENABLE_THREAD switch,
+    # which stays opt-in for the legacy library.
+    if(EMSCRIPTEN)
+      set(LIGHTUSD_NEXT_ENABLE_THREAD OFF CACHE BOOL "Enable next parallel paths")
+    else()
+      set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "Enable next parallel paths")
+    endif()
   endif()
   if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE)
     set(LIGHTUSD_NEXT_BUILD_C_API_EXAMPLE ON CACHE BOOL

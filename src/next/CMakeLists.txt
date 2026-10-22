@@ -349,10 +349,19 @@ endif()
 # use_pcp_compose.
 target_compile_definitions(lightusd_next PRIVATE LIGHTUSD_NEXT_PIPELINE_PCP_COMPOSE)
 
-# Optional threading: enables std::thread parallel paths in next. Keep this OFF
-# for WASM/browser builds so they do not require Emscripten pthreads /
-# SharedArrayBuffer.
-option(LIGHTUSD_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next (default OFF; not for default WASM)" OFF)
+# Optional threading: enables std::thread parallel paths in next. Native builds
+# default to ON (the parallel source warm, arc-layer prefetch, opinion fill and
+# crate-writer build are the difference between minutes and hours on large
+# scenes). WASM/browser builds default to OFF: they would need Emscripten
+# pthreads / SharedArrayBuffer.
+if(EMSCRIPTEN)
+    set(LIGHTUSD_NEXT_THREAD_DEFAULT OFF)
+else()
+    set(LIGHTUSD_NEXT_THREAD_DEFAULT ON)
+endif()
+option(LIGHTUSD_NEXT_ENABLE_THREAD
+    "Enable std::thread parallel paths in next (default ON for native, OFF for WASM)"
+    ${LIGHTUSD_NEXT_THREAD_DEFAULT})
 if(LIGHTUSD_NEXT_ENABLE_THREAD)
     find_package(Threads REQUIRED)
     target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_ENABLE_THREAD)

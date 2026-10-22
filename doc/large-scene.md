@@ -1333,12 +1333,31 @@ Measured on the workstation that hosts the Caldera checkout
 NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, i.e. `next_usdcat`),
 `--compose-threads-auto`, `LIGHTUSD_NEXT_TIMING=1`.
 
-| Case | load+compose | write | total | peak RSS | output |
-|---|---:|---:|---:|---:|---|
-| proxy LOD, geometry deferred (`--defer-payloads`) | 8.1 s | 5.8 s | 13.9 s | 1.03 GiB | 190 MB USDA |
-| proxy LOD, payloads loaded (`--load-payloads`) | 14.2 s | 9.3 s | 23.8 s | 1.44 GiB | 286 MB USDC |
-| one district at full LOD (`map_phosphate_mine = full`) | 130–135 s | 67–85 s | ~3.5 min | 8.1 GiB | 580 MB USDC (4,458,013 paths/specs) |
-| whole island at full LOD (all 45 districts `full`) | **79.1 min** (sources 20.5 min, structure 24.6 min, compose 34.8 min, flatten 8.8 min, finalize 7.1 min) | 35.3 min | **114.4 min (1.9 h)** | ~59 GiB | **3.01 GB USDC** (61,833,354 paths/specs) |
+| Case | threads | load+compose | write | total | peak RSS | output |
+|---|---:|---:|---:|---:|---:|---|
+| proxy LOD, geometry deferred (`--defer-payloads`) | 1 | 10.6–11.1 s | 7.3–7.9 s | 18.0–18.7 s | 1.07 GiB | 190 MB USDA |
+| proxy LOD, geometry deferred | auto | **2.22–2.36 s** | **0.75–0.80 s** | **2.97–3.15 s** | 1.35 GiB | 190 MB USDA (byte-identical) |
+| proxy LOD, payloads loaded (`--load-payloads`) | 1 | 13.9–14.6 s | 9.1–9.4 s | 23.0–24.0 s | 1.41 GiB | 286 MB USDC |
+| proxy LOD, payloads loaded | auto | **3.47–3.56 s** | 9.2–9.3 s | **12.8 s** | 1.90 GiB | 286 MB USDC (byte-identical) |
+| one district at full LOD (`map_phosphate_mine = full`) | 1 | 126–133 s | 62–63 s | 188–196 s | 6.8 GiB | 580 MB USDC (4,458,013 paths/specs) |
+| one district at full LOD | auto | **69–72 s** | 59–76 s | **130–148 s** | **20.9–25.2 GiB** | 580 MB USDC (byte-identical) |
+| whole island at full LOD (all 45 districts `full`) | 1 | **79.1 min** (sources 20.5 min, structure 24.6 min, compose 34.8 min, flatten 8.8 min, finalize 7.1 min) | 35.3 min | **114.4 min (1.9 h)** | ~59 GiB | **3.01 GB USDC** (61,833,354 paths/specs) |
+| whole island at full LOD | auto | *not re-measured* | — | — | — | — |
+
+**The threaded next core is the default for native builds** (`LIGHTUSD_NEXT_ENABLE_THREAD`
+now defaults ON outside Emscripten; WASM stays OFF). Every figure above is
+byte-verified: the threaded and single-threaded outputs hash identically
+(SHA-256) for the 190 MB USDA, the 286 MB proxy USDC and the 580 MB district
+USDC, with `--compose-threads 8` and `--compose-threads 16` matching as well.
+
+**The parallel path is the difference between seconds and minutes.** With
+threads on, the source warm covers the whole namespace up front
+(`warm=0.6–20 s`, `source_hits` = every node, `source_misses` = 0) and the
+serial structure walk then consumes cache hits. On the proxy scene the compose
+is **4–5× faster** and the USDA write **9× faster**; on the full-LOD district
+the compose is **~1.8× faster**. The crate (USDC) write does not speed up
+much (9.1 s → 9.3 s on the proxy) because its serial token/string interning
+pre-pass dominates, while the parallel ASCII (USDA) writer does.
 
 **The full-island case fits in RAM — and now completes.** With the whole
 island promoted to `districtLod = full` (all 45 districts) the next-core loader
@@ -1351,6 +1370,14 @@ That is the *whole island* in one process. The per-district full LOD
 (§2.6.2) remains the production-correct approach — one district at full LOD is
 ~3.5 min and ~8 GiB — but the full-island load is now demonstrated to
 complete rather than exhausting the host.
+
+**Memory is the price.** The threaded path keeps per-worker resolver snapshots
+and the merged sources cache alive, so the full-LOD district peaks at
+**20.9–25.2 GiB** versus **6.8 GiB** single-threaded, and the proxy rises from
+1.07 to 1.35 GiB. `--compose-threads 8`/`16` do not reduce the peak (the merge,
+not the worker count, dominates). **Re-measure the whole-island full-LOD case
+before using the threaded build for it** — single-threaded it peaks at ~59 GiB,
+and the threaded warm phase is expected to add a large multiple of that.
 
 **Where the compose time goes** (instrumented on the full-LOD district case):
 
@@ -1366,15 +1393,27 @@ For the whole island the same phases scale to `sources` 20.5 min, `structure`
 `fields_specs` alone is 27 min for 61.8 M specs), so both the compose and the
 writer are linear in the composed prim count.
 
-The single dominant cost is **re-expanding every ancestor source per prim**:
-`ExpandList` calls `ExpandArcs` 7,057,537 times for 735,484 nodes (≈9.6
-expansions per node, i.e. the whole ancestor chain is re-expanded at every
-descendant). Each expansion re-resolves the site's spec list and re-walks its
-arcs, so a tree of depth *d* costs O(n·d) arc expansions even when the deeper
-prims author no arcs of their own. **The next algorithmic lever is to stop
-re-expanding arc-free ancestor sources** (reuse the parent's already-expanded
-result when the child contributes no arcs), which needs the exact strength
-ordering and implied-class re-rooting semantics preserved.
+**What the per-prim cost actually is** (correcting an earlier reading of these
+numbers): `ExpandList` calls `ExpandArcs` 7,057,537 times for 735,484 nodes
+(≈9.6 per node). Those are **not** redundant re-expansions of the same arcs —
+`DeriveChildSources` re-spins each *parent* source onto the child's own site,
+so the 9.6 expansions are that prim's own contributing sources (one per
+contributing layer), each looked up at the prim's own path. **85.6% of them
+find no spec at that site** (the prim does not exist in that layer) and return
+after a single lookup; those negative lookups cost 10.7–14.1 s of the ~55 s
+spent in `ExpandArcs`.
+
+Two follow-ups follow from that (not done in this pass):
+1. *Cheap negative lookups (safe).* Answer "does any layer of this stack have a
+   spec at this site?" with one probe against a per-stack union of path hashes,
+   instead of one `unordered_map<string,uint32_t>` probe per layer. The filter is
+   exact (a hash collision only costs the old per-layer probes), so which specs
+   are found does not change.
+2. *Arc-free ancestor reuse (semantics-sensitive).* Reusing a parent's
+   already-expanded result for a child that authors no arcs of its own would
+   remove the O(n·depth) expansion term entirely, but it must preserve the
+   exact strength ordering and the implied-class re-rooting rules, so it needs
+   the pxr parity gate before it can land.
 
 **Landed in this pass (measured, A/B):**
 
@@ -1386,15 +1425,38 @@ ordering and implied-class re-rooting semantics preserved.
 | Asset bytes are read straight into the destination container (`AssetResolver::ReadAssetToString`) | 128 MiB read through the C ABI: peak RSS 267 MB → 136 MB (~49% lower) |
 | Crate writer: dropped a write-only 4.5 M-entry `path → fieldset` map | less writer memory/time, no behavior change |
 | Composition: per-ancestor source keys are built once and reused | fewer string allocations per composed prim |
+| Composition: negative spec lookups are no longer cached (one shared empty result) | full-LOD district peak RSS 8.1 → 6.5 GiB; spec-lookup time 14.1 → 10.7 s for 7.4 M lookups |
+| Build: next-core threads default ON for native builds (WASM stays OFF) | proxy compose 4–5× faster, district compose ~1.8× faster, byte-identical output |
 
 Reproduce with:
 
 ```sh
 M=/path/to/caldera/caldera.usda
+# threaded (default for native builds)
 LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
   --defer-payloads -o /tmp/caldera.usda "$M"          # proxy structure
 LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
   --load-payloads -o /tmp/caldera.usdc "$M"            # proxy + payloads
+# single-threaded reference (build configured with
+# -DLIGHTUSD_NEXT_ENABLE_THREAD=OFF)
+LIGHTUSD_NEXT_TIMING=1 ./build-next-st/lusdcat -f --compose-threads 1 \
+  --load-payloads -o /tmp/caldera-st.usdc "$M"
+sha256sum /tmp/caldera.usdc /tmp/caldera-st.usdc      # must match
+```
+
+Full-LOD district wrapper (one district promoted to `full`):
+
+```usda
+#usda 1.0
+(
+    subLayers = [ @/path/to/caldera/caldera.usda@ ]
+    upAxis = "Z"
+)
+over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
+    over "mp_wz_island_geo" {
+        over "map_phosphate_mine" ( variants = { string districtLod = "full" } ) {}
+    }
+} } }
 ```
 
 ## 3. Roadmap (remaining implementation)
