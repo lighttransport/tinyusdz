@@ -1509,6 +1509,102 @@ over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
 } } }
 ```
 
+### 2.6.9 Python binding (abi3) load/compose profile (2026-10)
+
+This is the same Caldera fixture measured **through the Python API**
+(`lightusd.load`), not the CLI, to check that the extension adds no second
+parse/compose copy and to A/B the `158add057..3455474cf` commit range. Both
+sides were built as in-place abi3 extensions from clean worktrees; each run is
+a fresh process (so VmHWM is the process peak). RSS is read from
+`/proc/self/status`.
+
+| Case | build | wall (median, range) | CPU | RSS Δ | peak RSS |
+|---|---|---:|---:|---:|---:|
+| proxy (`load_payloads=False`) | `3455474cf` | 1.085 s (1.007–1.113) | 8.21 s | 1223 MiB | 1256 MiB |
+| proxy | `158add057` | 1.036 s (1.035–1.072) | 8.74 s | 1241 MiB | 1272 MiB |
+| proxy, 7 runs | `3455474cf` | 1.040 s (0.985–1.081) | 8.46 s | 1214 MiB | 1246 MiB |
+| proxy, 7 runs | `158add057` | 1.050 s (0.990–1.098) | 9.37 s | 1239 MiB | 1275 MiB |
+| payloads (`load_payloads=True`) | `3455474cf` | **1.668 s (1.596–1.703)** | **17.56 s** | **1876 MiB** | **1908 MiB** |
+| payloads | `158add057` | 2.217 s (2.140–2.273) | 21.72 s | 2163 MiB | 2195 MiB |
+
+Stage accounting is identical on both builds: 480.0 MiB / 13,768 prims for
+proxy, and 897.7 MiB / 53,765 prims / 65.76 M point elements with payloads.
+Proxy wall time is within run-to-run noise; the eager path is **25% faster,
+19% less CPU and 13% lower RSS**, so the commit range is not a regression in
+either metric.
+
+**No double allocation.** Per-process `mallinfo2` after the eager load reports
+`uordblks 972 MiB` plus `hblkhd` (mmap-backed) `261 MiB` = **1233 MiB live**
+against 897.7 MiB of stage accounting — container/metadata overhead, not a
+second geometry copy. `hblkhd` is not part of `uordblks` (a 64 MB NumPy
+allocation moves them by +3.0 MiB and +64.4 MiB respectively). On the proxy
+case the live heap is 678 + 77 = 755 MiB. After `Stage.close()` the live heap
+falls to **3 MiB**, so composition memory is not leaked.
+
+The rest of the RSS is allocator retention. glibc keeps freed composition
+arenas: `malloc_trim(0)` reclaims 437 MiB on the proxy load (1242 → 806 MiB
+RSS) and ~586 MiB with payloads (1940 → 1299 MiB). That memory is free, not
+live. Peak-allocation profiling (heaptrack) attributes the largest sites to
+allocator internals (646 MB), `TimeSampleBlock::find_or_store` (196 MB),
+`lu_value_set_lazy` (125 MB) and `TimeSampleBlock::add` (123 MB); it shows no
+second copy of a geometry array.
+
+Zero-copy holds through the binding: `np.asarray(attribute)` aliases the
+native buffer (two views share the same data pointer), and a 3.4 MiB array
+adds 4.3 MiB RSS at 0.01 ms. `Stage.flattened()` is the one deliberate
+second allocation — it returns a second stage (+338 MiB, 1.4 s on the proxy
+scene); use `flatten_file()` to stream instead. Instance modes do not duplicate
+geometry either: the CLI eager path measures 1808 MB native, 1816 MB holder and
+1859 MB prototypes.
+
+**Binding vs CLI.** With the same untrusted policy (`--aousd-strict`, which is
+what the Python C API uses) the CLI eager path is 1,839 MB / 1.48 s; the Python
+eager path is 1,900 MB / 1.67 s. Proxy is 1,235 MB / 1.02 s (CLI) vs 1,240 MB / 1.09 s (Python). The
+remaining gap (≤100 MB, ≤0.2 s) is the interpreter and NumPy, not duplicate
+scene data.
+
+**Allocator matters more than the binding.** The native CLI links jemalloc
+(`LIGHTUSD_NEXT_TOOLS_ALLOCATOR` auto-detect); the abi3 extension uses the
+platform allocator (glibc here). On the eager path:
+
+| Allocator | wall | CPU | peak RSS | RSS after close |
+|---|---:|---:|---:|---:|
+| jemalloc (`LD_PRELOAD`) | 1.137 s | 10.91 s | 1937 MiB | 1457 MiB |
+| glibc | 1.630 s | 17.28 s | 1920 MiB | 1630 MiB |
+
+Peak is the same — the difference is time and retained free arena. For
+large Python loads, preload jemalloc:
+
+```sh
+LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 python app.py
+```
+
+Do not link an allocator into the abi3 wheel: the allocator is a process-wide
+choice and belongs to the application embedding the extension.
+
+Reproduce (one process per sample):
+
+```sh
+python3 setup.py build_ext --inplace
+for p in 0 1; do
+  PYTHONPATH=python python3 - "$p" <<'EOF'
+import sys, time, lightusd
+payloads = sys.argv[1] == "1"
+t = time.perf_counter()
+st = lightusd.load("/path/to/caldera/caldera.usda",
+                   composed=True, load_payloads=payloads)
+dt = time.perf_counter() - t
+rss = next(int(l.split()[1]) for l in open("/proc/self/status")
+           if l.startswith("VmRSS:")) / 1024
+print({"payloads": payloads, "seconds": round(dt, 3),
+       "rss_mib": round(rss, 1),
+       "stats_mib": round(st.stats["memory_bytes"] / 1048576, 1),
+       "prims": st.stats["prim_count"]})
+st.close()
+EOF
+done
+```
+
 ## 3. Roadmap (remaining implementation)
 
 The loader bounds memory and streams payloads. Cross-directory cwp anchoring

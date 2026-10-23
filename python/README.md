@@ -207,3 +207,23 @@ extension summaries; use `physics.inspect(stage)` for complete typed engine data
 MJCF flex/deformables and unsupported equality types remain unsupported;
 tendon surface wrapping remains approximate. Import warnings are available
 through `stage.warnings()`.
+
+## Performance and memory
+
+- `lightusd.load` runs the same next core as the CLI; the binding does not add
+  a second copy of geometry. Numeric attributes are zero-copy buffer views, and
+  `Stage.flattened()` is the one call that deliberately builds a second stage.
+- Live memory is released on `Stage.close()`. RSS may stay high afterwards
+  because glibc retains freed composition arenas; `malloc_trim` (or process
+  exit) reclaims them.
+- For large scenes, preload jemalloc — the allocator the native CLI links:
+
+  ```sh
+  LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 python your_app.py
+  ```
+
+  On the 10 GB Caldera scene an eager load drops from 1.63 s / 17.3 s CPU to
+  1.14 s / 10.9 s CPU at the same ~1.9 GiB peak. Do not link an allocator into
+  the wheel; the choice belongs to the process embedding the extension.
+- Measurements, A/B method and binding-vs-CLI parity:
+  [large-scene profile §2.6.9](../doc/large-scene.md#269-python-binding-abi3-loadcompose-profile-2026-10).
