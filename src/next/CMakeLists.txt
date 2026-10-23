@@ -525,6 +525,18 @@ endif()
 # and run its ctests. Keep the tests in a Debug build: many test programs use
 # assert(), which is compiled out under NDEBUG.
 option(LIGHTUSD_NEXT_BUILD_TESTS "Build tests for stable LightUSD Next" OFF)
+# `lusdcat` is the next-backed CLI (formerly `next_usdcat`). It is a tool, not
+# a test, so the default `LIGHTUSD_NATIVE_PRODUCT=next` root build ships it
+# without requiring test registration. Default ON for native standalone builds;
+# WASM/WASI builds have no command line to drive so they skip it.
+if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
+  set(_lightusd_next_tools_default OFF)
+else()
+  set(_lightusd_next_tools_default ON)
+endif()
+option(LIGHTUSD_NEXT_BUILD_TOOLS
+    "Build next CLI tools (lusdcat)" ${_lightusd_next_tools_default})
+unset(_lightusd_next_tools_default)
 set(LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT "" CACHE PATH
     "External AOUSD Core supplemental release checkout")
 
@@ -766,18 +778,6 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_include_directories(test_vr_edge_matrix PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
 
-    # lusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
-    # (tests/parse-asset-corpus.mjs --lusdcat $<TARGET_FILE:next_usdcat>).
-    add_executable(lusdcat
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
-    )
-    # Allocator (if found, see LIGHTUSD_NEXT_WITH_ALLOCATOR) first, so it wins
-    # symbol resolution.
-    target_link_libraries(lusdcat PRIVATE
-        ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
-    lightusd_next_harden(lusdcat)
-    add_executable(next_usdcat ALIAS lusdcat)
-
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crash_regressions.cc
@@ -795,6 +795,31 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_limits.cc
     )
     target_link_libraries(test_crate_limits PRIVATE lightusd_next)
+endif()
+
+# ---------------------------------------------------------------------------
+# lusdcat -- the unified LightUSD CLI for the next product.
+#
+# This is the next-backed `next_usdcat` promoted to the `lusdcat` name, so the
+# default `LIGHTUSD_NATIVE_PRODUCT=next` build ships a `lusdcat` binary with no
+# extra options. `next_usdcat` stays as an alias for regression harnesses and
+# scripts that still use the old name. The target is also required by the tests
+# registered above (they run `$<TARGET_FILE:next_usdcat>`), hence the OR.
+# ---------------------------------------------------------------------------
+if((LIGHTUSD_NEXT_BUILD_TOOLS OR LIGHTUSD_NEXT_BUILD_TESTS) AND NOT TARGET lusdcat)
+    add_executable(lusdcat
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/lusdcat.cc
+    )
+    # Allocator (if found, see LIGHTUSD_NEXT_WITH_ALLOCATOR) first, so it wins
+    # symbol resolution.
+    target_link_libraries(lusdcat PRIVATE
+        ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
+    lightusd_next_harden(lusdcat)
+    # Keep the CLI at the build root (`build_ninja/lusdcat`), matching the
+    # legacy tool layout so scripts and AGENTS.md commands work unchanged.
+    set_target_properties(lusdcat PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_executable(next_usdcat ALIAS lusdcat)
 endif()
 
 # ============================================================

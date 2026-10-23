@@ -23,7 +23,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite-root",
                         default=os.environ.get("AOUSD_CORE_SUPPLEMENTAL_ROOT"))
-    parser.add_argument("--next-usdcat", required=True)
+    parser.add_argument("--lusdcat", "--next-usdcat", dest="next_usdcat",
+                        required=True,
+                        help="unified lusdcat CLI (legacy alias: --next-usdcat)")
     parser.add_argument("--aousd-test")
     parser.add_argument("--aousd-value-test",
                         help="test_aousd_value_resolution binary: asserts the "

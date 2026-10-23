@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - next_usdcat
+// LightUSD Next - lusdcat
 //
-// Minimal lusdcat-compatible CLI for the src/next module, so the usd-wg
-// asset-corpus regression gate (tests/parse-asset-corpus.mjs) can drive next
-// the same way it drives the legacy loader:
-//   next_usdcat [-l|-f] file.usd[acz]
+// The unified lusdcat CLI for the src/next module (formerly `next_usdcat`).
+// The usd-wg asset-corpus regression gate (tests/parse-asset-corpus.mjs) drives
+// next the same way it drives the legacy loader; `next_usdcat` remains an
+// alias of this target for scripts that still use the old name:
+//   lusdcat [-l|-f] file.usd[acz]
 //     -l  load only (parse the single layer; default)
 //     -f  flatten (compose sublayers/references/payloads/... via pcp, print USDA)
 // Contract: exit 0 = loaded; diagnostics on stderr prefixed "WARN : " / "ERR : ".
@@ -239,7 +240,7 @@ int main(int argc, char **argv) {
     }
   }
   if (!filename) {
-    std::fprintf(stderr, "Usage: next_usdcat [-l|-f|--rewrite-layer] [-o out.usda] "
+    std::fprintf(stderr, "Usage: lusdcat [-l|-f|--rewrite-layer] [-o out.usda] "
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] [--compose-threads-auto] "
@@ -346,15 +347,15 @@ int main(int argc, char **argv) {
         return 1;
       }
       if (timing) {
-        std::fprintf(stderr, "[next_usdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
+        std::fprintf(stderr, "[lusdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
                      ms(t_parsed - t_start), ms(t_written - t_parsed),
                      ms(t_written - t_start));
-        std::fprintf(stderr, "[next_usdcat] wrote %zu bytes (tokens=%zu paths=%zu specs=%zu)\n",
+        std::fprintf(stderr, "[lusdcat] wrote %zu bytes (tokens=%zu paths=%zu specs=%zu)\n",
                      res.bytes_written, res.token_count, res.path_count, res.spec_count);
       }
       if (fast_exit) ExitAfterSuccessfulWrite();
       layer.reset();
-      if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+      if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                                ms(Clock::now() - t_written));
       return 0;
     }
@@ -393,7 +394,7 @@ int main(int argc, char **argv) {
       const double pms = ms(t_parsed - t_start);
       const double wms = ms(t_written - t_parsed);
       std::fprintf(stderr,
-                   "[next_usdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
+                   "[lusdcat] parse=%.1fms write=%.1fms total=%.1fms\n",
                    pms, wms, ms(t_written - t_start));
       // RAW parse throughput is relative to the input file size.
       long insz = 0;
@@ -403,11 +404,11 @@ int main(int argc, char **argv) {
         std::fclose(inf);
       }
       if (insz > 0 && pms > 0.0) {
-        std::fprintf(stderr, "[next_usdcat] parsed %ld bytes = %.0f MB/s\n",
+        std::fprintf(stderr, "[lusdcat] parsed %ld bytes = %.0f MB/s\n",
                      insz, double(insz) / 1048576.0 / (pms / 1000.0));
       }
       if (res.bytes_written > 0 && wms > 0.0) {
-        std::fprintf(stderr, "[next_usdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
+        std::fprintf(stderr, "[lusdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
                      res.bytes_written,
                      double(res.bytes_written) / 1048576.0 / (wms / 1000.0),
                      out_path ? " -> " : "", out_path ? out_path : "");
@@ -415,7 +416,7 @@ int main(int argc, char **argv) {
     }
     if (fast_exit) ExitAfterSuccessfulWrite();
     layer.reset();
-    if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+    if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                              ms(Clock::now() - t_written));
     return 0;
   }
@@ -497,10 +498,10 @@ int main(int argc, char **argv) {
 
   if (compose_only) {
     std::printf("composed: %zu prims\n", stage.GetStats().prim_count);
-    if (timing) std::fprintf(stderr, "[next_usdcat] load+compose=%.1fms\n",
+    if (timing) std::fprintf(stderr, "[lusdcat] load+compose=%.1fms\n",
                              ms(t_loaded - t_start));
     stage = Stage();
-    if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+    if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                              ms(Clock::now() - t_loaded));
     return 0;
   }
@@ -529,11 +530,11 @@ int main(int argc, char **argv) {
     if (timing) {
       const double wms = ms(t_written - t_w0);
       std::fprintf(stderr,
-                   "[next_usdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
+                   "[lusdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
                    ms(t_loaded - t_start), wms, ms(t_written - t_start));
       if (res.bytes_written > 0 && wms > 0.0) {
         std::fprintf(stderr,
-                     "[next_usdcat] wrote %zu bytes = %.0f MB/s -> %s "
+                     "[lusdcat] wrote %zu bytes = %.0f MB/s -> %s "
                      "(tokens=%zu paths=%zu specs=%zu)\n",
                      res.bytes_written,
                      double(res.bytes_written) / 1048576.0 / (wms / 1000.0),
@@ -542,7 +543,7 @@ int main(int argc, char **argv) {
     }
     if (fast_exit) ExitAfterSuccessfulWrite();
     stage = Stage();
-    if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+    if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                              ms(Clock::now() - t_written));
     return 0;
   }
@@ -595,11 +596,11 @@ int main(int argc, char **argv) {
     if (timing) {
       const double wms = ms(t_written - t_loaded);
       std::fprintf(stderr,
-                   "[next_usdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
+                   "[lusdcat] load+compose=%.1fms write=%.1fms total=%.1fms\n",
                    ms(t_loaded - t_start), wms, ms(t_written - t_start));
       if (bytes_written > 0 && wms > 0.0) {
         std::fprintf(stderr,
-                     "[next_usdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
+                     "[lusdcat] wrote %zu bytes = %.0f MB/s%s%s\n",
                      bytes_written,
                      double(bytes_written) / 1048576.0 / (wms / 1000.0),
                      out_path ? " -> " : "", out_path ? out_path : "");
@@ -608,13 +609,13 @@ int main(int argc, char **argv) {
   } else {
     std::printf("loaded: %zu prims\n", stage.GetStats().prim_count);
     if (timing) {
-      std::fprintf(stderr, "[next_usdcat] load=%.1fms\n", ms(t_loaded - t_start));
+      std::fprintf(stderr, "[lusdcat] load=%.1fms\n", ms(t_loaded - t_start));
     }
   }
   if (flatten && fast_exit) ExitAfterSuccessfulWrite();
   const auto t_teardown = Clock::now();
   stage = Stage();
-  if (timing) std::fprintf(stderr, "[next_usdcat] teardown=%.1fms\n",
+  if (timing) std::fprintf(stderr, "[lusdcat] teardown=%.1fms\n",
                            ms(Clock::now() - t_teardown));
   return 0;
 }

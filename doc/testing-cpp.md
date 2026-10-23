@@ -535,7 +535,7 @@ semantics or numeric tolerances:
 
 ```sh
 PXR_WORK_THREAD_LIMIT=1 node tests/next/run-next-pxr-flatten-diff.mjs \
-  --next-usdcat build_ninja/lightusd_next_build/next_usdcat \
+  --next-usdcat build_ninja/lusdcat \
   --usdcat ref/dist/bin/usdcat --jobs 4 \
   --suite-root /path/to/aousd/releases/1.0.1
 ```

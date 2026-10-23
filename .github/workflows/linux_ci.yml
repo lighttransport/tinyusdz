@@ -300,9 +300,9 @@ jobs:
       run: cmake --build build_hardening -j2
     - name: tests
       run: cd build_hardening && ctest --output-on-failure
-    - name: assert mitigations on next_usdcat
+    - name: assert mitigations on lusdcat
       run: |
-        BIN=build_hardening/src/next/next_usdcat
+        BIN=build_hardening/lusdcat
         test -x "$BIN"
         readelf -hW "$BIN" | grep -q 'DYN (Position-Independent Executable'
         readelf -lW "$BIN" | grep -q GNU_RELRO

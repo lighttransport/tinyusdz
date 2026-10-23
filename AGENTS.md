@@ -108,7 +108,10 @@ tests/                     C++ tests + roundtrip + Python harness
   run-usdcat-compare.sh      Batch roundtrip test runner
 
 examples/                  Standalone example apps (separate builds):
-                           lusdcat, api_tutorial, asset_resolution,
+                           lusdcat (in the default `next` product, `lusdcat`
+                           is built from `tests/next/lusdcat.cc` by
+                           `src/next`; this directory is the legacy fallback),
+                           api_tutorial, asset_resolution,
                            c_api_example, mcp_server, file_format,
                            js-script, progressive_composition, etc.
 models/                    Test USD files for development
@@ -231,7 +234,7 @@ For elevated GPU execution, AMD/RADV or NVIDIA PRIME/offload selection, and
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
 
-The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project with its own Debug test build. It does not appear in the main native `ctest` tree, so run it explicitly as part of the regression gate (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
+The stable `next` module (`src/next/`, `tests/next/`) is also a standalone CMake project with its own Debug test build. With the default native product (`LIGHTUSD_NATIVE_PRODUCT=next`), its tests are registered in the main native `ctest` tree and the unified `lusdcat` CLI is built there; the standalone project remains the way to run the full `next` Debug suite (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
 
 ### Web/WASM regression procedure
 

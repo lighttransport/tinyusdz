@@ -60,7 +60,7 @@ function parseArgs(argv) {
     usdcat: process.env.USDCAT_PATH || '',
     lusddiff: process.env.LUSDDIFF_PATH || './build/lusddiff',
     // Extra args prepended when invoking --lusdcat for the compare-mode layer
-    // serialization (legacy lusdcat prints the layer bare; next_usdcat needs
+    // serialization (legacy lusdcat prints the layer bare; the next CLI (now lusdcat) needs
     // `--rewrite-layer`).
     serializeArgs: [],
   };

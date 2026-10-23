@@ -223,6 +223,11 @@ with lossy assumptions.
 
 ## Application Defaults
 
+- `lusdcat`: the `next` CLI is the default `lusdcat` for native builds. The
+  former `next_usdcat` executable is now built as `lusdcat`, and
+  `next_usdcat` remains a CMake target alias for regression scripts. Select
+  the legacy CLI with `-DLIGHTUSD_NATIVE_PRODUCT=legacy` (deprecated).
+  `LIGHTUSD_NEXT_BUILD_TOOLS=OFF` disables the next CLI when it is not wanted.
 - `lusdview`: next-core and tydra-next are used by default. Use
   `--legacy-load` only for compatibility investigation. `--next` remains an
   accepted no-op for existing scripts.

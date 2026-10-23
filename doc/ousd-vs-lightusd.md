@@ -18,7 +18,7 @@ The gaps selected for the 2026-07-11 remediation pass and the 2026-07-12 deeper 
 | Requested area | Current status | Implementation |
 |---|---|---|
 | Unicode identifiers | **Fixed** | `next` reuses LightUSD's generated Unicode XID tables for UTF-8 lexing and prim-name validation. |
-| Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `next_usdcat --aousd-strict` enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
+| Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `lusdcat --aousd-strict` (the `next_usdcat` target alias carries the same flag) enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
 | Spline support | **Implemented** | Typed splines parse, evaluate (`timeSamples > spline > default`, held/linear/bezier/hermite + extrapolation + `autoEase`), and serialize to USDC type-59. Per-knot `customData` now survives USDA and the Crate `unordered_map<double, VtDictionary>` framing. |
 | Unsupported typed-value loss | **Mitigated; `frame4d`/`pathExpression` first-class, `opaque`/`group` blocks supported** | Typed values round-trip; `opaque`/`group` declarations and their only agreeing value (`None`) are accepted. Other extension defaults are preserved as raw authored values, and strict mode rejects unencodable values. |
 | Recursive dictionaries | **Fixed for next composition paths** | Prim and property dictionary metadata now recursively fill missing weaker keys. |

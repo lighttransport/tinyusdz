@@ -67,6 +67,15 @@ if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
   if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TESTS)
     set(LIGHTUSD_NEXT_BUILD_TESTS ${LIGHTUSD_BUILD_TESTS} CACHE BOOL "Build next tests")
   endif()
+  if(NOT DEFINED LIGHTUSD_NEXT_BUILD_TOOLS)
+    # The next-backed `lusdcat` CLI is the default tool for the default
+    # product. WASM/WASI builds have no command line to drive, so they skip it.
+    if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
+      set(LIGHTUSD_NEXT_BUILD_TOOLS OFF CACHE BOOL "Build next CLI tools (lusdcat)")
+    else()
+      set(LIGHTUSD_NEXT_BUILD_TOOLS ON CACHE BOOL "Build next CLI tools (lusdcat)")
+    endif()
+  endif()
   if(NOT DEFINED LIGHTUSD_NEXT_ENABLE_THREAD)
     # The next core has its own parallel paths (source warm, arc-layer
     # prefetch, opinion fill, crate-writer build). They are ON by default for

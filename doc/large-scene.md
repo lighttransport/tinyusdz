@@ -449,21 +449,23 @@ discovery for `isDunesB` (2.14 s) and by extraction/conversion for the dense
 loaded mesh total, while the last two columns measure the separate raster
 upload/present path and can vary substantially with the software renderer.
 
-### 2.6.1-b Next-core benchmark recipes (`next_usdcat` + `tydra_to_renderscene`)
+### 2.6.1-b Next-core benchmark recipes (`lusdcat` + `tydra_to_renderscene`)
 
 For reproducible next-core timing and memory checks on public large scenes, use the
-following commands from a `build_ninja` tree where both tools are built:
+following commands from a `build_ninja` tree where both tools are built
+(`lusdcat` is the next CLI; the former `next_usdcat` name is kept as a CMake
+target alias):
 
 ```sh
 BUILD_DIR="${BUILD_DIR:-./build_ninja}"
-NEXT_TUSD="${NEXT_TUSD:-${BUILD_DIR}/next_usdcat}"
+NEXT_TUSD="${NEXT_TUSD:-${BUILD_DIR}/lusdcat}"
 NEXT_RENDER="${NEXT_RENDER:-${BUILD_DIR}/tydra_to_renderscene}"
 ```
 
-1) `next_usdcat`: `compose` and `timing` with native payload policy:
+1) `lusdcat`: `compose` and `timing` with native payload policy:
 
 ```sh
-[ -x "$NEXT_TUSD" ] || { echo "SKIP: next_usdcat not found at $NEXT_TUSD"; exit 0; }
+[ -x "$NEXT_TUSD" ] || { echo "SKIP: lusdcat not found at $NEXT_TUSD"; exit 0; }
 if [ ! -f "$1" ]; then
   echo "SKIP: input missing: $1"
   exit 0
@@ -1330,7 +1332,7 @@ line, so the trade can be re-measured rather than re-argued.
 
 Measured on the workstation that hosts the Caldera checkout
 (`/path/to/caldera`, 10.5 GB, 63,684 files; 32 cores, 125 GiB RAM,
-NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, i.e. `next_usdcat`),
+NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, formerly `next_usdcat`),
 `--compose-threads-auto`, `LIGHTUSD_NEXT_TIMING=1`.
 
 | Case | threads | load+compose | write | total | peak RSS | output |
@@ -1877,13 +1879,13 @@ optimized substantially (§6.2). Current full-composition validation uses
 while keeping the output off disk:
 
 ```sh
-env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/caldera/caldera.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/island/usd/island.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entry.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
 ```
 
@@ -2310,9 +2312,9 @@ cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
 # full composition + USDA writer stress checks:
-env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/island/usd/island.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
