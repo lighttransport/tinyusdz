@@ -408,6 +408,53 @@ void TestPackageResolvers() {
   fs::remove_all(root);
 }
 
+void TestAliases() {
+  AssetResolver resolver;
+
+  const std::vector<uint8_t> payload = {'t', 'e', 'x'};
+  resolver.RegisterMemoryAsset("tex.png", payload);
+  CHECK(resolver.SetAlias("a.png", "tex.png"), "alias registration succeeds");
+  CHECK(resolver.SetAlias("b.png", "a.png"), "alias chains are accepted");
+  CHECK(!resolver.SetAlias("tex.png", "a.png"), "alias cycle is rejected");
+  CHECK(!resolver.SetAlias("a.png", "a.png"), "self alias is rejected");
+  CHECK(!resolver.SetAlias("", "tex.png"), "empty alias is rejected");
+
+  const ResolvedAsset a = resolver.Resolve("a.png");
+  CHECK(a.exists && a.resolved_path == "a.png" && a.canonical_path == "tex.png",
+        "alias keeps its authored identity and reports the canonical target");
+
+  const ResolvedAsset b = resolver.Resolve("b.png");
+  CHECK(b.exists && b.canonical_path == "tex.png",
+        "alias chains canonicalize to the final target");
+
+  const ResolvedAsset plain = resolver.Resolve("tex.png");
+  CHECK(plain.canonical_path == "tex.png",
+        "non-alias resolution reports itself as canonical");
+
+  std::vector<uint8_t> bytes;
+  std::string error;
+  CHECK(resolver.ReadAsset("a.png", &bytes, &error) && bytes == payload,
+        "ReadAsset follows an alias identifier");
+  CHECK(resolver.ReadAsset(a, &bytes, &error) && bytes == payload,
+        "ReadAsset(ResolvedAsset) uses the canonical path");
+  CHECK(resolver.GetMemoryAssetView("b.png") != nullptr,
+        "memory views follow alias chains");
+
+  // Copying the resolver preserves the alias table.
+  AssetResolver copy(resolver);
+  const ResolvedAsset copied = copy.Resolve("b.png");
+  CHECK(copied.exists && copied.canonical_path == "tex.png",
+        "copy preserves aliases");
+
+  CHECK(resolver.UnsetAlias("a.png"), "alias removal succeeds");
+  CHECK(!resolver.UnsetAlias("a.png"), "removing a missing alias fails");
+  const ResolvedAsset dangling = resolver.Resolve("b.png");
+  CHECK(!dangling.exists, "a dangling alias no longer resolves");
+  resolver.ClearAliases();
+  CHECK(resolver.Resolve("tex.png").canonical_path == "tex.png",
+        "clearing aliases keeps direct identifiers intact");
+}
+
 void TestAssetInfoAndTimestamp() {
   namespace fs = std::filesystem;
   const fs::path root = MakeTempRoot("info");
@@ -586,6 +633,8 @@ int main() {
   TestPackageResolvers();
   std::cout << "[AssetResolver asset info and timestamps]\n";
   TestAssetInfoAndTimestamp();
+  std::cout << "[AssetResolver aliases]\n";
+  TestAliases();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " resolver check(s) FAILED\n";

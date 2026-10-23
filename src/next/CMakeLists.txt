@@ -1226,6 +1226,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_link_libraries(test_asset_import PRIVATE lightusd_render_c)
     add_test(NAME next_test_asset_import COMMAND test_asset_import)
 
+    add_executable(test_texture_alias ../../tests/next/test_texture_alias.cc)
+    target_link_libraries(test_texture_alias PRIVATE tydra_next lightusd_next)
+    add_test(NAME next_test_texture_alias COMMAND test_texture_alias)
+
     # URDF/MJCF JSON -> USD converter (next port of the legacy builders).
     add_executable(test_urdf_to_usd_next
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_urdf_to_usd_next.cc

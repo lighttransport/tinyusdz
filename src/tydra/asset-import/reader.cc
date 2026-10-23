@@ -366,8 +366,8 @@ bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
   const auto key = std::make_pair(anchor, name);
   auto request = texture_requests.find(key);
   if (request != texture_requests.end()) {
-    *resolved = request->second;
-    auto retained = textures.find(*resolved);
+    *resolved = request->second.resolved;
+    auto retained = textures.find(request->second.canonical);
     if (retained == textures.end()) {
       if (err) *err = "Missing retained texture cache entry";
       return false;
@@ -378,9 +378,13 @@ bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
     trace.cached = trace.success = true;
     return true;
   }
-  const auto remember = [&](const std::string& identifier) {
+  const auto remember = [&](const std::string& resolved_identifier,
+                            const std::string& cache_key) {
+    const size_t key_bytes = cache_key == resolved_identifier
+                                 ? resolved_identifier.size()
+                                 : resolved_identifier.size() + cache_key.size();
     return Charge(sizeof(decltype(texture_requests)::value_type) + 4 * sizeof(void*), err) &&
-           Charge(anchor.size(), err) && Charge(name.size(), err) && Charge(identifier.size(), err);
+           Charge(anchor.size(), err) && Charge(name.size(), err) && Charge(key_bytes, err);
   };
   AssetSource source;
   std::vector<uint8_t> buffer;
@@ -399,7 +403,11 @@ bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
     if (err) *err = "Texture resolver returned an empty identifier";
     return false;
   }
-  auto found = textures.find(identifier);
+  // Alias paths keep their authored identifier for USD output while sharing
+  // one retained payload through the canonical key.
+  const std::string cache_key =
+      source.canonical.empty() ? identifier : source.canonical;
+  auto found = textures.find(cache_key);
   if (found == textures.end()) {
     if (separate) {
       if (!source.read) return false;
@@ -410,14 +418,14 @@ bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
     }
     if (!CheckInput(*this, buffer.size(), err) || !Charge(buffer.size(), err) ||
         !Charge(sizeof(AssetMap::value_type) + sizeof(std::vector<uint8_t>) +
-                6 * sizeof(void*), err) || !Charge(identifier.size(), err)) return false;
-    found = textures.emplace(identifier,
+                6 * sizeof(void*), err) || !Charge(cache_key.size(), err)) return false;
+    found = textures.emplace(cache_key,
         std::make_shared<const std::vector<uint8_t>>(std::move(buffer))).first;
     if (options.report) options.report->retained_texture_bytes = SaturatingAdd(
         options.report->retained_texture_bytes, found->second->size());
   } else trace.cached = true;
-  if (!remember(identifier)) return false;
-  texture_requests.emplace(key, identifier);
+  if (!remember(identifier, cache_key)) return false;
+  texture_requests.emplace(key, TextureRequest{identifier, cache_key});
   *resolved = identifier;
   *data = found->second;
   trace.bytes = (*data)->size();
@@ -428,7 +436,9 @@ bool Reader::ReadTexture(const std::string& name, const std::string& anchor,
 bool GatherTextures(Reader& reader, Result* result, std::string* err) {
   Json* mats = result->payload.find("materials");
   if (!mats) return true;
-  std::map<std::string, std::string> packages;
+  // Deduplicate by retained payload, not by authored identifier: aliases that
+  // resolve to one canonical texture must package one entry.
+  std::map<const std::vector<uint8_t>*, std::string> packages;
   for (Json& mat : *mats) {
     auto retain = [&](const std::string& file) -> std::string {
       if (file.empty()) return {};
@@ -445,11 +455,11 @@ bool GatherTextures(Reader& reader, Result* result, std::string* err) {
         reader.Warn("Texture: " + why, "import.texture_unresolved");
         return {};
       }
-      auto previous = packages.find(resolved);
+      auto previous = packages.find(data.get());
       if (previous != packages.end()) return previous->second;
       std::string name = "textures/" + std::to_string(packages.size()) + "_" +
                          fs::path(resolved).filename().string();
-      packages.emplace(resolved, name);
+      packages.emplace(data.get(), name);
       result->assets.emplace(name, std::move(data));
       return name;
     };

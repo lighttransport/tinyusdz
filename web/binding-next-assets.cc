@@ -229,8 +229,13 @@ int NextAssetStore::unregisterMemoryAsset(const uint8_t* identifier,
 }
 
 std::string NextAssetStore::aliasTarget_(const std::string& identifier) const {
-  const auto it = aliases_.find(identifier);
-  return it == aliases_.end() ? identifier : it->second;
+  std::string key = identifier;
+  for (size_t depth = 0; depth < 64; ++depth) {
+    const auto it = aliases_.find(key);
+    if (it == aliases_.end()) break;
+    key = it->second;
+  }
+  return key;
 }
 
 int NextAssetStore::readMemoryAsset(const uint8_t* identifier, uint32_t size,
@@ -496,11 +501,21 @@ int NextAssetStore::copyAssetsTo(
     if (!register_view(asset.first, std::move(view))) return -1;
   }
   for (const auto& alias : aliases_) {
-    const std::string target = aliasTarget_(alias.first);
-    auto view = resolver_.GetMemoryAssetView(target);
-    // Unresolved aliases stay unresolved, matching NextAssetStore reads.
-    if (!view) continue;
-    if (!register_view(alias.first, std::move(view))) return -1;
+    // Transfer the alias relation itself; registering the target's view under
+    // the alias would make the resolver report two identifiers for one payload.
+    std::string target = alias.first;
+    for (size_t depth = 0; depth < 64; ++depth) {
+      const auto next = aliases_.find(target);
+      if (next == aliases_.end()) break;
+      target = next->second;
+    }
+    if (!resolver_.GetMemoryAssetView(target)) continue;
+    if (!destination->SetAlias(alias.first, target)) return -1;
+    if (registered_keys.insert(alias.first).second) {
+      if (alias.first.size() > (std::numeric_limits<size_t>::max)() - total)
+        return -1;
+      total += alias.first.size();
+    }
   }
   *accounted_bytes = total;
   return 0;

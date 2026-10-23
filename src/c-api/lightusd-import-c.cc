@@ -90,6 +90,7 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
         return false;
       }
       source->identifier = asset.resolved_path;
+      source->canonical = asset.canonical_path;
       source->read = [resolver, asset](std::vector<uint8_t>* data, std::string* why) {
         return resolver->ReadAsset(asset, data, why);
       };

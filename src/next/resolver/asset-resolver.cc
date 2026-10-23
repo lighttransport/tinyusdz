@@ -547,6 +547,9 @@ AssetResolver::AssetResolver(const AssetResolver& other) {
   memory_asset_count_.store(other.memory_asset_count_.load(
                                  std::memory_order_relaxed),
                              std::memory_order_relaxed);
+  aliases_ = other.aliases_;
+  alias_count_.store(other.alias_count_.load(std::memory_order_relaxed),
+                     std::memory_order_relaxed);
   scheme_handler_count_.store(other.scheme_handler_count_.load(
                                    std::memory_order_relaxed),
                                std::memory_order_relaxed);
@@ -578,6 +581,9 @@ AssetResolver& AssetResolver::operator=(const AssetResolver& other) {
     memory_asset_count_.store(other.memory_asset_count_.load(
                                    std::memory_order_relaxed),
                                std::memory_order_relaxed);
+    aliases_ = other.aliases_;
+    alias_count_.store(other.alias_count_.load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
     scheme_handler_count_.store(other.scheme_handler_count_.load(
                                      std::memory_order_relaxed),
                                  std::memory_order_relaxed);
@@ -606,6 +612,10 @@ AssetResolver::AssetResolver(AssetResolver&& other) noexcept {
   memory_asset_count_.store(other.memory_asset_count_.load(
                                  std::memory_order_relaxed),
                              std::memory_order_relaxed);
+  aliases_ = std::move(other.aliases_);
+  alias_count_.store(other.alias_count_.load(std::memory_order_relaxed),
+                     std::memory_order_relaxed);
+  other.alias_count_.store(0, std::memory_order_relaxed);
   scheme_handler_count_.store(other.scheme_handler_count_.load(
                                    std::memory_order_relaxed),
                                std::memory_order_relaxed);
@@ -641,6 +651,10 @@ AssetResolver& AssetResolver::operator=(AssetResolver&& other) noexcept {
     memory_asset_count_.store(other.memory_asset_count_.load(
                                    std::memory_order_relaxed),
                                std::memory_order_relaxed);
+    aliases_ = std::move(other.aliases_);
+    alias_count_.store(other.alias_count_.load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
+    other.alias_count_.store(0, std::memory_order_relaxed);
     scheme_handler_count_.store(other.scheme_handler_count_.load(
                                      std::memory_order_relaxed),
                                  std::memory_order_relaxed);
@@ -811,10 +825,60 @@ void AssetResolver::ClearMemoryAssets() {
   memory_asset_count_.store(0, std::memory_order_relaxed);
 }
 
+bool AssetResolver::SetAlias(const std::string& alias,
+                             const std::string& target) {
+  if (alias.empty() || target.empty() || alias == target) return false;
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  // Reject cycles: following the existing chain from `target` must not reach
+  // the alias we are about to add.
+  std::string cursor = target;
+  for (size_t depth = 0; depth < 64; ++depth) {
+    if (cursor == alias) return false;
+    const auto next = aliases_.find(cursor);
+    if (next == aliases_.end()) break;
+    cursor = next->second;
+    if (depth == 63) return false;
+  }
+  const auto inserted = aliases_.insert_or_assign(alias, target);
+  if (inserted.second) alias_count_.fetch_add(1, std::memory_order_relaxed);
+  return true;
+}
+
+bool AssetResolver::UnsetAlias(const std::string& alias) {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  if (aliases_.erase(alias) == 0) return false;
+  alias_count_.fetch_sub(1, std::memory_order_relaxed);
+  return true;
+}
+
+void AssetResolver::ClearAliases() {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  aliases_.clear();
+  alias_count_.store(0, std::memory_order_relaxed);
+}
+
+std::string AssetResolver::CanonicalPath(const std::string& identifier) const {
+  if (alias_count_.load(std::memory_order_relaxed) == 0) return identifier;
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  std::string cursor = identifier;
+  for (size_t depth = 0; depth < 64; ++depth) {
+    const auto it = aliases_.find(cursor);
+    if (it == aliases_.end()) return cursor;
+    cursor = it->second;
+  }
+  return identifier;  // defensive: an unexpected cycle keeps the input identity
+}
+
 std::shared_ptr<const std::vector<uint8_t>> AssetResolver::GetMemoryAssetView(
     const std::string& identifier) const {
   std::lock_guard<std::mutex> lock(registry_mutex_);
-  const auto it = memory_assets_.find(identifier);
+  std::string key = identifier;
+  for (size_t depth = 0; depth < 64; ++depth) {
+    const auto alias = aliases_.find(key);
+    if (alias == aliases_.end()) break;
+    key = alias->second;
+  }
+  const auto it = memory_assets_.find(key);
   return it == memory_assets_.end() ? nullptr : it->second;
 }
 
@@ -824,6 +888,10 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
   if (!out) {
     if (err) *err += "ReadAsset: null output buffer\n";
     return false;
+  }
+  if (alias_count_.load(std::memory_order_relaxed) != 0) {
+    const std::string canonical = CanonicalPath(resolved_path);
+    if (canonical != resolved_path) return ReadAsset(canonical, out, err);
   }
   out->clear();
 
@@ -878,6 +946,10 @@ bool AssetResolver::ReadAssetToString(const std::string& resolved_path,
     if (err) *err += "ReadAsset: null output buffer\n";
     return false;
   }
+  if (alias_count_.load(std::memory_order_relaxed) != 0) {
+    const std::string canonical = CanonicalPath(resolved_path);
+    if (canonical != resolved_path) return ReadAssetToString(canonical, out, err);
+  }
   out->clear();
 
   AssetReadCallback scheme_reader;
@@ -927,6 +999,10 @@ bool AssetResolver::ReadAssetToString(const std::string& resolved_path,
 bool AssetResolver::ReadAsset(const ResolvedAsset& resolved,
                               std::vector<uint8_t>* out,
                               std::string* err) const {
+  if (!resolved.canonical_path.empty() &&
+      resolved.canonical_path != resolved.resolved_path) {
+    return ReadAsset(resolved.canonical_path, out, err);
+  }
   if (!resolved.has_file_identity) {
     return ReadAsset(resolved.resolved_path, out, err);
   }
@@ -1025,6 +1101,9 @@ ResolvedAsset AssetResolver::Resolve(const std::string& asset_path,
   }
   ResolvedAsset result =
       ResolveInternal(asset_path, anchor_path, allow_suffix_fallback);
+  if (result.exists && result.canonical_path.empty()) {
+    result.canonical_path = result.resolved_path;
+  }
   // The identity captured during resolution is reused; only results that did
   // not come from a filesystem probe need a separate stat here.
   if (result.exists && !result.has_file_identity) {
@@ -1096,6 +1175,24 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
   // must run ahead of the scheme/memory-asset resolution below.
   if (!config_.allow_parent_paths && HasParentComponent(asset_path)) {
     return result;
+  }
+
+  // Alias identifiers keep their authored identity but resolve to the target's
+  // bytes. Resolve the final target and mirror its existence/package state.
+  if (alias_count_.load(std::memory_order_relaxed) != 0) {
+    const std::string canonical = CanonicalPath(asset_path);
+    if (canonical != asset_path) {
+      ResolvedAsset target =
+          ResolveInternal(canonical, std::string(), allow_suffix_fallback);
+      target.original_path = asset_path;
+      if (target.exists) {
+        target.resolved_path = asset_path;
+        target.canonical_path = canonical;
+      } else {
+        target.resolved_path.clear();
+      }
+      return target;
+    }
   }
 
   ResolverCallback scheme_resolver;

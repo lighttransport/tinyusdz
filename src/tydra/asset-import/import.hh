@@ -20,6 +20,10 @@ using AssetBytes = std::shared_ptr<const std::vector<uint8_t>>;
 using AssetMap = std::map<std::string, AssetBytes>;
 struct AssetSource {
   std::string identifier;
+  /// Final identity after alias resolution (for example a shared texture
+  /// payload); empty means `identifier`. Only byte caches key on this, so
+  /// authored identifiers keep their spelling in USD output.
+  std::string canonical;
   std::function<bool(std::vector<uint8_t>*, std::string*)> read;
 };
 enum class UnsupportedPolicy { Warn, Error, Preserve };
@@ -106,7 +110,12 @@ struct Reader {
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;
   AssetMap textures;
-  std::map<std::pair<std::string, std::string>, std::string> texture_requests;
+  struct TextureRequest {
+    std::string resolved;   // authored/resolved identifier for USD output
+    std::string canonical;  // retained-payload cache key (alias target)
+  };
+  std::map<std::pair<std::string, std::string>, TextureRequest>
+      texture_requests;
   Json preserved = Json::array();
   bool Open(const std::string& name, const std::string& anchor,
             AssetSource* source, std::string* err);

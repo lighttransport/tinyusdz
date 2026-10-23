@@ -42,6 +42,10 @@ class AssetPayloadBudget : public std::enable_shared_from_this<AssetPayloadBudge
 /// Resolved asset information
 struct ResolvedAsset {
   std::string resolved_path;    // Full resolved path
+  /// Final identifier after following alias registrations. Equals
+  /// `resolved_path` when no alias applies. Use this for byte caches and
+  /// reads; keep `resolved_path` for authored output and diagnostics.
+  std::string canonical_path;
   std::string original_path;    // Original path before resolution
   bool exists = false;          // Whether the asset exists
   bool is_package = false;      // Whether this is inside a package (USDZ)
@@ -221,6 +225,18 @@ public:
   std::shared_ptr<const std::vector<uint8_t>> GetMemoryAssetView(
       const std::string& identifier) const;
 
+  /// Register an alias identifier that resolves/reads as `target`.
+  /// The alias keeps its own identity in `resolved_path` (authored output is
+  /// preserved) while `canonical_path` points at the target, so byte caches
+  /// can retain one payload for every alias. Rejects empty names, self
+  /// aliases, and cycles.
+  bool SetAlias(const std::string& alias, const std::string& target);
+  bool UnsetAlias(const std::string& alias);
+  void ClearAliases();
+  /// Follow alias registrations to the final identifier. Returns the input
+  /// unchanged when it is not an alias.
+  std::string CanonicalPath(const std::string& identifier) const;
+
   /// Get configuration
   const ResolverConfig& GetConfig() const { return config_; }
   void SetConfig(const ResolverConfig& config) {
@@ -392,11 +408,13 @@ private:
   std::unordered_map<std::string, PackageResolverCallback> package_resolvers_;
   std::unordered_map<std::string, std::shared_ptr<const std::vector<uint8_t>>>
       memory_assets_;
+  std::unordered_map<std::string, std::string> aliases_;
   // Mirror the registry sizes so hot resolution paths can skip the registry
   // lock entirely when no callback or memory asset is registered.
   std::atomic<size_t> memory_asset_count_{0};
   std::atomic<size_t> scheme_handler_count_{0};
   std::atomic<size_t> package_handler_count_{0};
+  std::atomic<size_t> alias_count_{0};
   uint64_t next_anonymous_id_ = 1;
 
   void NormalizeConfigContext();

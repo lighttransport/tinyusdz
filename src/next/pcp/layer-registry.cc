@@ -79,6 +79,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
         return false;
       }
       source->identifier = asset.resolved_path;
+      source->canonical = asset.canonical_path;
       source->read = [&resolver, asset](std::vector<uint8_t>* bytes,
                                         std::string* why) {
         return resolver.ReadAsset(asset, bytes, why);
