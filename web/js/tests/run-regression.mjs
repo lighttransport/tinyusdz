@@ -24,6 +24,8 @@ const NODE_TESTS = [
   ['next-only usdzconvert', 'tests/usdzconvert-next-only.test.mjs'],
   ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
   ['next HTTP asset fallback', 'tests/next-http-asset-fallback.test.mjs'],
+  ['next HTTP texture alias dedup', 'tests/next-http-texture-alias.test.mjs'],
+  ['next asset alias composition', 'tests/next-asset-alias-compose.test.mjs'],
   ['next independent feature modules', 'tests/next-features.test.mjs'],
   ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
   ['next binding copy contracts', 'tests/next-binding-copy-contracts.test.mjs'],
