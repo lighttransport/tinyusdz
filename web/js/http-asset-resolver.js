@@ -59,6 +59,7 @@ export class HttpAssetResolver {
     this.baseUrl = baseUrl;
     this.assetCache = new Map();   // authored path -> ArrayBuffer
     this.urlCache = new Map();     // authored path -> resolved absolute URL
+    this.urlBytes = new Map();     // resolved absolute URL -> ArrayBuffer
     this.fetchLog = [];            // [{ path, url, bytes, ok, error? }]
     this.bytesFetched = 0;
   }
@@ -116,6 +117,12 @@ export class HttpAssetResolver {
     const candidates = [url, ...this.fallbackUrls(assetPath, url)];
     for (let i = 0; i < candidates.length; i++) {
       resolvedUrl = candidates[i];
+      // Canonical-URL cache: two authored aliases that rewrite to the same
+      // URL share one transfer.
+      if (this.urlBytes.has(resolvedUrl)) {
+        bytes = this.urlBytes.get(resolvedUrl);
+        break;
+      }
       try {
         const resp = await fetch(resolvedUrl, { cache: 'no-store', headers: { Accept: '*/*' } });
         if (!resp.ok && resp.status !== 206) {
@@ -130,6 +137,7 @@ export class HttpAssetResolver {
         }
       }
     }
+    this.urlBytes.set(resolvedUrl, bytes);
     for (const key of this.aliases(assetPath)) {
       this.assetCache.set(key, bytes);
       this.urlCache.set(key, resolvedUrl);
@@ -146,8 +154,15 @@ export class HttpAssetResolver {
       this.assetCache.set(key, data);
       if (resolvedUrl) this.urlCache.set(key, resolvedUrl);
     }
+    if (resolvedUrl) this.urlBytes.set(resolvedUrl, data);
   }
-  clearCache() { this.assetCache.clear(); this.urlCache.clear(); this.fetchLog = []; this.bytesFetched = 0; }
+  clearCache() {
+    this.assetCache.clear();
+    this.urlCache.clear();
+    this.urlBytes.clear();
+    this.fetchLog = [];
+    this.bytesFetched = 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -439,17 +454,26 @@ export async function flattenNextOverHttp({ renderer, rootBytes, filename, resol
 
     const referencedAssets = Array.isArray(result.assetPaths) ? result.assetPaths : [];
     let fetchedAssets = 0;
+    const fetchedByUrl = new Map();  // canonical URL -> bytes, shared by aliases
     for (const assetPath of referencedAssets) {
       if (!assetPath || isUsdName(assetPath) || !isTextureName(assetPath)) continue;
       const key = normalizeAssetKey(assetPath);
       if (added.has(key)) continue;
       let bytes = findAssetByKey(prepared.seedAssets, key);
+      let resolvedUrl = '';
       if (!bytes) {
         try {
           const [, fetched, url] = await resolveNextAsset(resolver, assetPath);
-          bytes = new Uint8Array(fetched);
-          resolver.setAsset(assetPath, bytes, url || '');
-          fetchedAssets++;
+          resolvedUrl = url || '';
+          const shared = resolvedUrl ? fetchedByUrl.get(resolvedUrl) : null;
+          if (shared) {
+            bytes = shared;
+          } else {
+            bytes = new Uint8Array(fetched);
+            if (resolvedUrl) fetchedByUrl.set(resolvedUrl, bytes);
+            fetchedAssets++;
+          }
+          resolver.setAsset(assetPath, bytes, resolvedUrl);
           onStatus && onStatus(`Fetched next texture asset: ${assetPath}`);
         } catch (e) {
           onStatus && onStatus(`Next texture missing (skipped): ${assetPath}`);
