@@ -95,7 +95,7 @@ void ValidateQuaternionProperty(const PrimSpec &ps,
                                 const std::string &prop_name,
                                 const std::string &rule_id,
                                 const std::string &prim_location,
-                                USDValidationResult *result);
+                                USDValidationResult *result, bool allow_zero = false);
 void ValidateNumericArrayLengthProperty(const PrimSpec &ps,
                                         const std::string &prop_name,
                                         size_t expected,

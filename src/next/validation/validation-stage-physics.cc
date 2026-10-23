@@ -77,18 +77,14 @@ void ValidateRegisteredPhysics(const Layer& layer, const ValidationOptions& opti
         if (GetNumericScalarProperty(p, "physics:density", &value) && value < 0)
           error("physics.density", "Density cannot be negative");
         const Value* axes = p.property_value("physics:principalAxes");
-        const Value* inertia = p.property_value("physics:diagonalInertia");
-        if (bool(axes) != bool(inertia))
-          error("physics.inertia", "principalAxes and diagonalInertia must both be authored or neither");
-        if (axes && inertia) {
-          std::array<double, 4> q{}; std::array<double, 3> diagonal{};
-          if (ValueToQuat(*axes, &q) && ValueToVec3(*inertia, &diagonal)) {
+        // MassAPI inertia and orientation have independent fallback sentinels.
+        // OpenUSD's mass-property computation resolves each independently.
+        if (axes) {
+          std::array<double, 4> q{};
+          if (ValueToQuat(*axes, &q)) {
             const double norm = q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3];
-            const bool zero = diagonal[0] == 0 && diagonal[1] == 0 && diagonal[2] == 0;
-            if ((norm == 0) != zero || (norm != 0 &&
-                (std::abs(std::sqrt(norm) - 1) > 1e-5 ||
-                 diagonal[0] <= 0 || diagonal[1] <= 0 || diagonal[2] <= 0)))
-              error("physics.inertia", "Inertia requires paired fallback values or unit axes and positive diagonal values");
+            if (norm != 0 && std::abs(std::sqrt(norm) - 1) > 1e-5)
+              error("physics.inertia", "Non-fallback principal axes must have unit length");
           }
         }
       }

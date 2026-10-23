@@ -752,12 +752,149 @@ const char *tobj_result_string(tobj_result r) {
   return "unknown";
 }
 
+/* An indexed AVL tree keeps name lookup/insertion logarithmic even for sorted
+ * or adversarial names. Indices survive vector growth; keys belong to the
+ * builder's arena. No hashing, recursion or per-node allocation is needed. */
+typedef struct tobj_name_entry {
+  const char *key;
+  size_t len, child[2];
+  int id, height;
+} tobj_name_entry;
+
+typedef struct tobj_name_map {
+  tobj_vec nodes;
+  size_t root;
+} tobj_name_map;
+
+static void tobj_name_map_init(tobj_name_map *map) {
+  tobj_vec_init(&map->nodes, sizeof(tobj_name_entry));
+  map->root = (size_t)-1;
+}
+
+static int tobj_name_compare(const char *key, size_t len,
+                              const tobj_name_entry *entry) {
+  const size_t common = len < entry->len ? len : entry->len;
+  const int cmp = tobj_memcmp(key, entry->key, common);
+  return cmp ? cmp : len < entry->len ? -1 : len > entry->len ? 1 : 0;
+}
+
+static int tobj_name_map_find(const tobj_name_map *map, const char *key,
+                               size_t len) {
+  const tobj_name_entry *nodes = (const tobj_name_entry *)map->nodes.data;
+  size_t index = map->root;
+  while (index != (size_t)-1) {
+    const int cmp = tobj_name_compare(key, len, &nodes[index]);
+    if (!cmp) return nodes[index].id;
+    index = nodes[index].child[cmp > 0];
+  }
+  return -1;
+}
+
+static int tobj_name_height(const tobj_name_entry *nodes, size_t index) {
+  return index == (size_t)-1 ? 0 : nodes[index].height;
+}
+
+static void tobj_name_update(tobj_name_entry *nodes, size_t index) {
+  const int left = tobj_name_height(nodes, nodes[index].child[0]);
+  const int right = tobj_name_height(nodes, nodes[index].child[1]);
+  nodes[index].height = 1 + (left > right ? left : right);
+}
+
+static size_t tobj_name_rotate(tobj_name_entry *nodes, size_t index, int side) {
+  const size_t root = nodes[index].child[side];
+  nodes[index].child[side] = nodes[root].child[!side];
+  nodes[root].child[!side] = index;
+  tobj_name_update(nodes, index);
+  tobj_name_update(nodes, root);
+  return root;
+}
+
+/* Existing keys retain their first id. A size_t-indexed AVL tree cannot reach
+ * twice the address-bit count in height; bound the iterative ancestor stack. */
+static tobj_result tobj_name_map_insert(tobj_name_map *map, const char *key,
+                                        size_t len, int id,
+                                        const tobj_allocator *alloc) {
+  size_t path[2 * sizeof(size_t) * CHAR_BIT];
+  unsigned char sides[2 * sizeof(size_t) * CHAR_BIT];
+  size_t depth = 0, index = map->root;
+  const tobj_name_entry *old = (const tobj_name_entry *)map->nodes.data;
+  while (index != (size_t)-1) {
+    const int cmp = tobj_name_compare(key, len, &old[index]);
+    if (!cmp) return TOBJ_OK;
+    if (depth == sizeof(path) / sizeof(path[0])) return TOBJ_ERR_LIMIT_EXCEEDED;
+    path[depth] = index;
+    sides[depth++] = (unsigned char)(cmp > 0);
+    index = old[index].child[cmp > 0];
+  }
+  size_t child = map->nodes.count;
+  tobj_name_entry *entry = (tobj_name_entry *)tobj_vec_push(&map->nodes, alloc);
+  if (!entry) return TOBJ_ERR_ALLOC;
+  entry->key = key;
+  entry->len = len;
+  entry->id = id;
+  entry->height = 1;
+  entry->child[0] = entry->child[1] = (size_t)-1;
+  tobj_name_entry *nodes = (tobj_name_entry *)map->nodes.data;
+  while (depth) {
+    index = path[--depth];
+    nodes[index].child[sides[depth]] = child;
+    tobj_name_update(nodes, index);
+    const int balance = tobj_name_height(nodes, nodes[index].child[0]) -
+                        tobj_name_height(nodes, nodes[index].child[1]);
+    child = index;
+    if (balance > 1 || balance < -1) {
+      const int side = balance < 0;
+      const size_t root = nodes[index].child[side];
+      if (tobj_name_height(nodes, nodes[root].child[!side]) >
+          tobj_name_height(nodes, nodes[root].child[side]))
+        nodes[index].child[side] = tobj_name_rotate(nodes, root, !side);
+      child = tobj_name_rotate(nodes, index, side);
+    }
+  }
+  map->root = child;
+  return TOBJ_OK;
+}
+
 /* Unknown .mtl parameter pending finalization, tagged by material index. */
 typedef struct tobj_pending_kv {
   size_t mat_index;
+  size_t sequence; /* preserve insertion order for equal keys */
   const char *key;
   const char *value;
 } tobj_pending_kv;
+
+static bool tobj_pending_less(const tobj_pending_kv *a,
+                               const tobj_pending_kv *b) {
+  if (a->mat_index != b->mat_index) return a->mat_index < b->mat_index;
+  const int cmp = tobj_strcmp(a->key, b->key);
+  return cmp ? cmp < 0 : a->sequence < b->sequence;
+}
+
+static void tobj_pending_sift(tobj_pending_kv *items, size_t root, size_t count) {
+  while (root < count / 2) {
+    size_t child = root * 2 + 1;
+    if (child + 1 < count && tobj_pending_less(&items[child], &items[child + 1]))
+      ++child;
+    if (!tobj_pending_less(&items[root], &items[child])) break;
+    const tobj_pending_kv temp = items[root];
+    items[root] = items[child];
+    items[child] = temp;
+    root = child;
+  }
+}
+
+/* In-place heapsort bounds work to O(n log n) without libc, recursion or a
+ * scratch allocation. Sequence numbers make equal-key order stable. */
+static void tobj_pending_sort(tobj_pending_kv *items, size_t count) {
+  for (size_t start = count / 2; start > 0;)
+    tobj_pending_sift(items, --start, count);
+  for (size_t end = count; end > 1;) {
+    const tobj_pending_kv temp = items[--end];
+    items[end] = items[0];
+    items[0] = temp;
+    tobj_pending_sift(items, 0, end);
+  }
+}
 
 /* Resolve effective caps (0 => built-in default). */
 typedef struct tobj_caps {

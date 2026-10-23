@@ -441,6 +441,39 @@ void test_write_failure() {
   PASS();
 }
 
+void test_asset_views() {
+  TEST("Borrowed asset views match owning assets and validate bounds");
+  auto stage = MakeTestStage();
+  std::vector<uint8_t> usdc, owned, viewed, streamed;
+  if (!WriteUSDCToMemory(usdc, stage).success) { FAIL("USDC write"); return; }
+  const std::map<std::string, std::vector<uint8_t>> assets = {
+      {"textures/a.bin", {1, 3, 5, 7}}, {"textures/empty.bin", {}}};
+  USDZAssetViews views;
+  for (const auto& asset : assets) views[asset.first] = {asset.second.data(), asset.second.size()};
+  if (!WriteUSDZFromUSDCAndAssetsToMemory(owned, usdc.data(), usdc.size(), assets).success ||
+      !WriteUSDZFromUSDCAndAssetViewsToMemory(viewed, usdc.data(), usdc.size(), views).success ||
+      owned != viewed) { FAIL("owning/view archive parity"); return; }
+  const auto sink = [&](const uint8_t* data, size_t size) {
+    if (size) streamed.insert(streamed.end(), data, data + size);
+    return true;
+  };
+  if (!WriteUSDZFromUSDCAndAssetViewsToSink(usdc.data(), usdc.size(), views, sink).success || streamed != owned) {
+    FAIL("view sink parity"); return;
+  }
+  USDZWriteOptions limits;
+  limits.max_memory_bytes = 1;
+  if (WriteUSDZFromUSDCAndAssetViewsToMemory(viewed, usdc.data(), usdc.size(), views, limits).success ||
+      WriteUSDZFromUSDCAndAssetViewsToSink(usdc.data(), usdc.size(), views, sink, limits).success) {
+    FAIL("view memory budget"); return;
+  }
+  views["textures/bad.bin"] = {nullptr, 1};
+  if (WriteUSDZFromUSDCAndAssetViewsToMemory(viewed, usdc.data(), usdc.size(), views).success ||
+      !viewed.empty() || WriteUSDZFromUSDCAndAssetViewsToSink(usdc.data(), usdc.size(), views, sink).success) {
+    FAIL("null view rejected"); return;
+  }
+  PASS();
+}
+
 int main() {
   printf("USDZ Writer Tests\n");
   printf("=================\n\n");
@@ -457,6 +490,7 @@ int main() {
   test_usdz_rejects_long_entry_name();
   test_write_from_usda_with_assets();
   test_write_failure();
+  test_asset_views();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

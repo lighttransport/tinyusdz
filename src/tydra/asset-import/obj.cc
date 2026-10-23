@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <set>
+#include <map>
 #include <tuple>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
@@ -26,11 +26,17 @@ struct Budget {
     const size_t remaining = b.reader.options.max_memory -
         std::min(b.reader.bytes, b.reader.options.max_memory);
     if (size > remaining) {
+      if (!b.exceeded && b.reader.options.report)
+        b.reader.options.report->Diagnostic("error", "import.memory_limit", "OBJ memory budget exceeded", b.reader.root_source);
       b.exceeded = true;
       return nullptr;
     }
     void* p = std::malloc(size ? size : 1);
-    if (p) { b.used += size; b.reader.bytes += size; }
+    if (p) {
+      b.used += size;
+      b.reader.bytes += size;
+      if (b.reader.options.report) b.reader.options.report->ObserveMemory(b.reader.bytes);
+    }
     return p;
   }
   static void Free(void* ud, void* p, size_t size) {
@@ -43,10 +49,14 @@ struct Budget {
   }
 };
 struct Materials {
+  struct Info {
+    size_t source;
+    bool roughness = false, metallic = false;
+  };
   Reader* reader;
   std::string source;
-  std::map<std::string, std::string> anchors;
-  std::set<std::string> explicit_roughness, explicit_metallic;
+  std::vector<std::string> anchors;
+  std::vector<Info> entries;  // Match material definition order, not names.
   static tobj_result Resolve(void* ud, const char* name, tobj_mtl_source* out) {
     auto& m = *static_cast<Materials*>(ud);
     auto* bytes = new (std::nothrow) std::vector<uint8_t>;
@@ -54,38 +64,47 @@ struct Materials {
     std::string resolved, err;
     if (!m.reader->Read(name, m.source, bytes, &resolved, &err)) {
       delete bytes;
-      m.reader->Warn("MTL: " + err);
+      if (!m.reader->failure.empty()) return TOBJ_ERR_LIMIT_EXCEEDED;
+      m.reader->Warn("MTL: " + err, "obj.material_unresolved", m.source);
       return TOBJ_ERR_NOT_FOUND;
     }
-    // Record each newmtl's defining file: textures are relative to that MTL,
-    // not to the OBJ (which may be in a different directory).
+    // Duplicate names are independent definitions. Keep source/field presence
+    // by material id so a later definition cannot change the first one's maps.
+    if (!m.reader->Charge(2 * sizeof(std::string), &err) ||
+        !m.reader->Charge(resolved.size(), &err)) {
+      delete bytes;
+      return TOBJ_ERR_LIMIT_EXCEEDED;
+    }
+    const size_t anchor = m.anchors.size();
+    m.anchors.push_back(std::move(resolved));
     std::string_view text(bytes->empty() ? "" : reinterpret_cast<const char*>(bytes->data()),
                           bytes->size());
-    size_t pos = 0;
-    std::string current_material;
+    size_t pos = text.substr(0, 3) == "\xef\xbb\xbf" ? 3 : 0;
+    size_t current = SIZE_MAX;
     while (pos < text.size()) {
-      size_t end = text.find('\n', pos);
+      size_t end = text.find_first_of("\r\n", pos);
       if (end == std::string::npos) end = text.size();
       std::string_view line = text.substr(pos, end - pos);
-      size_t begin = line.find_first_not_of(" \t\r");
-      if (begin != std::string::npos && line.compare(begin, 6, "newmtl") == 0 &&
-          line.size() > begin + 6 &&
-          (line[begin + 6] == ' ' || line[begin + 6] == '\t')) {
-        begin = line.find_first_not_of(" \t", begin + 6);
-        if (begin != std::string::npos) {
-          size_t last = line.find_last_not_of(" \t\r");
-          current_material = line.substr(begin, last - begin + 1);
-          m.anchors[current_material] = resolved;
+      size_t begin = line.find_first_not_of(" \t");
+      if (begin != std::string::npos) {
+        size_t last = line.find_first_of(" \t", begin);
+        if (last == std::string::npos) last = line.size();
+        const auto command = line.substr(begin, last - begin);
+        if (command == "newmtl") {
+          if (!m.reader->Charge(2 * sizeof(Info), &err)) {
+            delete bytes;
+            return TOBJ_ERR_LIMIT_EXCEEDED;
+          }
+          current = m.entries.size();
+          m.entries.push_back({anchor, false, false});
+        } else if (current != SIZE_MAX) {
+          if (command == "Pr") m.entries[current].roughness = true;
+          if (command == "Pm") m.entries[current].metallic = true;
         }
       }
-      if (begin != std::string::npos && line.size() > begin + 2 &&
-          (line[begin + 2] == ' ' || line[begin + 2] == '\t')) {
-        if (line.compare(begin, 2, "Pr") == 0)
-          m.explicit_roughness.insert(current_material);
-        if (line.compare(begin, 2, "Pm") == 0)
-          m.explicit_metallic.insert(current_material);
-      }
-      pos = end + 1;
+      pos = end;
+      if (pos < text.size() && text[pos] == '\r') ++pos;
+      if (pos < text.size() && text[pos] == '\n') ++pos;
     }
     out->data = bytes->data();
     out->len = bytes->size();
@@ -97,9 +116,25 @@ struct Materials {
   }
 };
 std::array<double, 3> Unit(std::array<double, 3> n) {
-  double len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-  if (len > 1e-30)
+  // Finite float positions bound these area vectors well inside double's
+  // squared-length range, including areas from subnormal coordinates.
+  const double len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  if (len > 0)
     for (double& v : n) v /= len;
+  return n;
+}
+std::array<double, 3> FaceNormal(const tobj_index* indices, size_t count,
+                                const float* positions) {
+  // Indices have been checked before normal generation. Newell's formula
+  // retains polygon area for smoothing and works for non-triangular faces.
+  std::array<double, 3> n{};
+  for (size_t k = 0; k < count; ++k) {
+    const float* p = positions + size_t(indices[k].vertex_index) * 3;
+    const float* q = positions + size_t(indices[(k + 1) % count].vertex_index) * 3;
+    n[0] += (double(p[1]) - q[1]) * (double(p[2]) + q[2]);
+    n[1] += (double(p[2]) - q[2]) * (double(p[0]) + q[0]);
+    n[2] += (double(p[0]) - q[0]) * (double(p[1]) + q[1]);
+  }
   return n;
 }
 Json RGB(const float* v) { return Json::array({v[0], v[1], v[2]}); }
@@ -149,7 +184,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
   cfg.max_face_arity = 65536;
   cfg.max_line_bytes =
       std::min(size_t(16) * 1024 * 1024, reader.options.max_input);
-  Materials materials{&reader, source, {}, {}, {}};
+  Materials materials{&reader, source, {}, {}};
   cfg.mtl_resolver = Materials::Resolve;
   cfg.mtl_resolver_user_data = &materials;
   tobj_scene_f scene{};
@@ -161,9 +196,11 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     std::string msg =
         "OBJ line " + std::to_string(line) + ": " + std::string(message, len);
     if (severity == TOBJ_SEV_WARNING)
-      r.Warn(msg);
-    else
+      r.Warn(msg, "obj.parser_warning", r.root_source, line);
+    else {
       r.failure = msg;
+      if (r.options.report) r.options.report->Diagnostic("error", "obj.parse_error", msg, r.root_source, line);
+    }
   };
   tobj_result status = tobj_load_obj_from_memory_f(
       &scene, reinterpret_cast<const uint8_t*>(text.data()), text.size(), &cfg,
@@ -192,7 +229,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
       influence_count = std::max(influence_count, row.num_weights);
     }
     if (!influence_count)
-      reader.Warn("OBJ vw records have no influences; omitted skin binding");
+      reader.Warn("OBJ vw records have no influences; omitted skin binding", "obj.empty_skin_weights", source);
   }
   auto skin = [&](Mesh* mesh) {
     if (!influence_count) return true;
@@ -215,7 +252,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     }
     if (missing)
       reader.Warn("OBJ missing skin weights for " + std::to_string(missing) +
-                  " points on " + mesh->name + "; padded with zero weights");
+                  " points on " + mesh->name + "; padded with zero weights", "obj.missing_skin_weights", source);
     return true;
   };
   for (size_t i = 0; i < a.vertices.count; i++)
@@ -223,9 +260,14 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
       if (err) *err = "OBJ has non-finite positions";
       return false;
     }
+  if (materials.entries.size() != scene.num_materials) {
+    if (err) *err = "OBJ material source metadata count mismatch";
+    return false;
+  }
   if (!reader.ChargeArray(scene.num_materials, 4096, err)) return false;
   for (size_t mi = 0; mi < scene.num_materials; mi++) {
     const auto& m = scene.materials[mi];
+    const auto& info = materials.entries[mi];
     const std::string name = m.name ? m.name : "material";
     Json mat{{"name", name},
              {"rgba", Json::array({m.diffuse[0], m.diffuse[1], m.diffuse[2],
@@ -233,22 +275,21 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
              {"specularColor", RGB(m.specular)},
              {"emissiveColor", RGB(m.emission)},
              {"ior", m.ior},
-             {"roughness", materials.explicit_roughness.count(name) != 0
+             {"roughness", info.roughness
                                ? m.roughness
                                : float(std::sqrt(2.0 / (m.shininess + 2.0)))},
              {"metallic", m.metallic},
              {"useSpecularWorkflow",
-              materials.explicit_metallic.count(name) ? 0 : 1}};
+              info.metallic ? 0 : 1}};
     Json maps = Json::array();
     auto texture = [&](const char* file, const char* input,
                        const tobj_texture_option_f& opt, bool color) {
       if (!file || !*file) return;
-      std::vector<uint8_t> bytes;
+      AssetBytes bytes;
       std::string resolved, why;
-      const std::string anchor =
-          materials.anchors.count(name) ? materials.anchors[name] : source;
-      if (!reader.Read(file, anchor, &bytes, &resolved, &why)) {
-        reader.Warn("Texture: " + why);
+      const std::string& anchor = materials.anchors[info.source];
+      if (!reader.ReadTexture(file, anchor, &bytes, &resolved, &why)) {
+        reader.Warn("Texture: " + why, "import.texture_unresolved", anchor);
         return;
       }
       maps.push_back(Json{
@@ -266,69 +307,116 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     texture(m.roughness_texname, "roughness", m.roughness_texopt, false);
     texture(m.metallic_texname, "metallic", m.metallic_texopt, false);
     texture(m.normal_texname, "normal", m.normal_texopt, false);
-    if (m.bump_texname && *m.bump_texname)
-      reader.Warn(
-          "MTL bump maps require height-to-normal conversion and were not "
-          "connected");
+    if (m.bump_texname && *m.bump_texname) {
+      std::string data;
+      if (reader.options.unsupported_policy == UnsupportedPolicy::Preserve)
+        data = Json{{"material", name}, {"bump", m.bump_texname},
+                    {"bump_multiplier", m.bump_texopt.bump_multiplier}}.dump();
+      if (!reader.Unsupported(
+              "MTL bump maps require height-to-normal conversion and were not connected",
+              "obj.bump_map_unconnected", "obj.bump_map", materials.anchors[info.source],
+              0, std::move(data), "json")) { if (err) *err = reader.failure; return false; }
+    }
     if ((m.displacement_texname && *m.displacement_texname) || m.sheen != 0 ||
-        m.anisotropy != 0)
-      reader.Warn("MTL contains shading features outside UsdPreviewSurface");
+        m.anisotropy != 0) {
+      std::string data;
+      if (reader.options.unsupported_policy == UnsupportedPolicy::Preserve)
+        data = Json{{"material", name}, {"displacement", m.displacement_texname ? m.displacement_texname : ""},
+                    {"sheen", m.sheen}, {"anisotropy", m.anisotropy}}.dump();
+      if (!reader.Unsupported("MTL contains shading features outside UsdPreviewSurface",
+              "obj.shading_unsupported", "obj.shading", materials.anchors[info.source],
+              0, std::move(data), "json")) { if (err) *err = reader.failure; return false; }
+    }
     mat["maps"] = std::move(maps);
     obj->materials.push_back(std::move(mat));
   }
-  // Accumulate area-weighted geometric normals across all shapes sharing a
-  // position and smoothing group. Newell's formula works for n-gons too.
+  // First identify the position/group pairs that actually need generated
+  // normals. Fully authored normals need neither a smoothing map nor a
+  // geometric-normal array proportional to the face count.
   using SmoothKey = std::pair<int, unsigned>;
   std::map<SmoothKey, std::array<double, 3>> smooth;
-  std::vector<std::vector<std::array<double, 3>>> face_normals(
-      scene.num_shapes);
+  const auto has_normal = [&](const tobj_index& ix) {
+    return ix.normal_index >= 0 && size_t(ix.normal_index) < a.normals.count / 3;
+  };
+  bool any_authored_normals = false;
+  if (a.normals.count)
+    for (size_t si = 0; si < scene.num_shapes; ++si) {
+      const auto& mesh = scene.shapes[si].mesh;
+      if (mesh.num_indices &&
+          std::any_of(mesh.indices, mesh.indices + mesh.num_indices, has_normal)) {
+        any_authored_normals = true;
+        break;
+      }
+    }
   for (size_t si = 0; si < scene.num_shapes; si++) {
     const auto& shape = scene.shapes[si];
     size_t off = 0;
-    auto& fn = face_normals[si];
-    if (!reader.ChargeArray(shape.mesh.num_faces, sizeof(std::array<double, 3>), err))
-      return false;
-    fn.resize(shape.mesh.num_faces);
     for (size_t f = 0; f < shape.mesh.num_faces; f++) {
       unsigned count = shape.mesh.num_face_vertices[f];
-      if (count < 3 || off + count > shape.mesh.num_indices) {
+      if (count < 3 || off > shape.mesh.num_indices ||
+          count > shape.mesh.num_indices - off) {
         if (err) *err = "Invalid OBJ face";
         return false;
       }
-      std::array<double, 3> n{{0, 0, 0}};
+      const unsigned sg = shape.mesh.smoothing_group_ids
+                              ? shape.mesh.smoothing_group_ids[f] : 0;
       for (unsigned k = 0; k < count; k++) {
-        int vi = shape.mesh.indices[off + k].vertex_index;
-        int vj = shape.mesh.indices[off + (k + 1) % count].vertex_index;
-        if (vi < 0 || vj < 0 || size_t(vi) >= a.vertices.count / 3 ||
-            size_t(vj) >= a.vertices.count / 3) {
+        const auto& ix = shape.mesh.indices[off + k];
+        if (ix.vertex_index < 0 || size_t(ix.vertex_index) >= a.vertices.count / 3) {
           if (err) *err = "OBJ vertex index out of range";
           return false;
         }
-        const float *p = a.vertices.ptr + size_t(vi) * 3,
-                    *q = a.vertices.ptr + size_t(vj) * 3;
-        n[0] += (double(p[1]) - q[1]) * (double(p[2]) + q[2]);
-        n[1] += (double(p[2]) - q[2]) * (double(p[0]) + q[0]);
-        n[2] += (double(p[0]) - q[0]) * (double(p[1]) + q[1]);
       }
-      fn[f] = Unit(n);
-      unsigned sg = shape.mesh.smoothing_group_ids
-                        ? shape.mesh.smoothing_group_ids[f]
-                        : 0;
+      // With entirely generated normals, every smoothing key is needed and
+      // can receive its contribution immediately, avoiding a second map pass.
+      const auto normal = sg && !any_authored_normals
+                              ? FaceNormal(shape.mesh.indices + off, count, a.vertices.ptr)
+                              : std::array<double, 3>{};
       if (sg)
-        for (unsigned k = 0; k < count; k++) {
-          const SmoothKey key{shape.mesh.indices[off + k].vertex_index, sg};
+        for (unsigned k = 0; k < count; ++k) {
+          const auto& ix = shape.mesh.indices[off + k];
+          if (has_normal(ix)) continue;
+          const SmoothKey key{ix.vertex_index, sg};
           auto found = smooth.find(key);
           if (found == smooth.end()) {
             if (!reader.Charge(sizeof(SmoothKey) + sizeof(std::array<double, 3>) +
                                4 * sizeof(void*), err)) return false;
             found = smooth.emplace(key, std::array<double, 3>{}).first;
           }
-          auto& sum = found->second;
-          for (int c = 0; c < 3; c++) sum[c] += n[c];
+          if (!any_authored_normals)
+            for (size_t c = 0; c < 3; ++c) found->second[c] += normal[c];
         }
       off += count;
     }
+    if (off != shape.mesh.num_indices) {
+      if (err) *err = "Invalid OBJ face index count";
+      return false;
+    }
   }
+  // Every incident face contributes to a requested pair, including faces with
+  // authored normals and faces in another object/group partition.
+  if (any_authored_normals && !smooth.empty())
+    for (size_t si = 0; si < scene.num_shapes; ++si) {
+      const auto& mesh = scene.shapes[si].mesh;
+      size_t off = 0;
+      for (size_t f = 0; f < mesh.num_faces; ++f) {
+        const size_t count = mesh.num_face_vertices[f];
+        const unsigned sg = mesh.smoothing_group_ids ? mesh.smoothing_group_ids[f] : 0;
+        const auto* indices = mesh.indices + off;
+        if (sg && std::any_of(indices, indices + count, [&](const tobj_index& ix) {
+              return smooth.find({ix.vertex_index, sg}) != smooth.end();
+            })) {
+          const auto normal = FaceNormal(indices, count, a.vertices.ptr);
+          for (size_t k = 0; k < count; ++k) {
+            auto found = smooth.find({indices[k].vertex_index, sg});
+            if (found != smooth.end())
+              for (size_t c = 0; c < 3; ++c) found->second[c] += normal[c];
+          }
+        }
+        off += count;
+      }
+    }
+  for (auto& entry : smooth) entry.second = Unit(entry.second);
   for (size_t si = 0; si < scene.num_shapes; si++) {
     const auto& shape = scene.shapes[si];
     if ((triangulate && (shape.lines.num_lines || shape.points.num_indices)) ||
@@ -367,10 +455,11 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
       mesh.counts.push_back(static_cast<int32_t>(count));
       mesh.materials.push_back(
           shape.mesh.material_ids ? shape.mesh.material_ids[f] : -1);
+      std::array<double, 3> face_normal{};
+      bool have_face_normal = false;
       for (unsigned k = 0; k < count; k++) {
         const auto ix = shape.mesh.indices[off + k];
-        bool hn = ix.normal_index >= 0 &&
-                  size_t(ix.normal_index) < a.normals.count / 3;
+        const bool hn = has_normal(ix);
         bool ht = ix.texcoord_index >= 0 &&
                   size_t(ix.texcoord_index) < a.texcoords.count / 2;
         uv_complete &= ht;
@@ -383,13 +472,17 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
           mesh.source_vertices.push_back(ix.vertex_index);
           const float* p = a.vertices.ptr + size_t(ix.vertex_index) * 3;
           mesh.positions.insert(mesh.positions.end(), p, p + 3);
+          if (!hn && !sg && !have_face_normal) {
+            face_normal = Unit(FaceNormal(shape.mesh.indices + off, count, a.vertices.ptr));
+            have_face_normal = true;
+          }
           auto n = hn ? std::array<
                             double,
                             3>{{a.normals.ptr[size_t(ix.normal_index) * 3],
                                 a.normals.ptr[size_t(ix.normal_index) * 3 + 1],
                                 a.normals.ptr[size_t(ix.normal_index) * 3 + 2]}}
-                      : (sg ? Unit(smooth[{ix.vertex_index, sg}])
-                            : face_normals[si][f]);
+                      : (sg ? smooth.find({ix.vertex_index, sg})->second
+                            : face_normal);
           for (double c : n) mesh.normals.push_back(static_cast<float>(c));
           mesh.uvs.push_back(ht ? a.texcoords.ptr[size_t(ix.texcoord_index) * 2]
                                 : 0);
@@ -477,17 +570,22 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
 bool BuildOBJScene(std::string_view text, const std::string& source,
                    const Options& options, OBJ* obj, Result* result,
                    std::string* err) {
+  Options effective = options;
+  ImportSession session(&effective, source, "obj", err);
+  effective.report->format = "obj";
+  effective.report->input_bytes = text.size();
   if (!obj || !result || text.size() > options.max_input ||
       text.size() > options.max_memory) {
     if (err) *err = "OBJ input limit exceeded";
     return false;
   }
   *result = Result{};
+  result->report = effective.report;
   if (options.up_axis != "Z" && options.up_axis != "Y") {
     if (err) *err = "up_axis must be Z or Y";
     return false;
   }
-  Reader reader(options);
+  Reader reader(effective);
   reader.root_source = source;
   reader.allow_unanchored = !source.empty();
   *obj = OBJ{};
@@ -496,18 +594,36 @@ bool BuildOBJScene(std::string_view text, const std::string& source,
   result->payload = Json{{"sourceFormat", "obj"}, {"noPhysics", true},
       {"upAxis", options.up_axis}, {"materials", std::move(obj->materials)}};
   if (!GatherTextures(reader, result, err)) return false;
+  if (!reader.preserved.empty()) result->payload["unsupported"] = std::move(reader.preserved);
   result->warnings = reader.warnings;
   result->memory_estimate = reader.bytes;
+  auto& report = *effective.report;
+  report.counts["meshes"] = uint64_t(obj->meshes.size());
+  report.counts["materials"] = uint64_t(result->payload["materials"].size());
+  size_t vertices = 0, faces = 0, indices = 0;
+  for (const auto& mesh : obj->meshes) {
+    vertices += mesh.positions.size() / 3;
+    faces += mesh.counts.size();
+    indices += mesh.indices.size();
+  }
+  report.counts["output_vertices"] = uint64_t(vertices);
+  report.counts["output_faces_or_curves"] = uint64_t(faces);
+  report.counts["output_indices"] = uint64_t(indices);
+  report.Feature("obj.geometry", "imported", source);
+  if (!result->payload["materials"].empty()) report.Feature("obj.materials", "imported", source);
+  session.Succeed();
   return true;
 }
 
 bool BuildOBJPayload(std::string_view text, const std::string& source,
                      const Options& options, Result* result, std::string* err) {
+  Options effective = options;
+  ImportSession session(&effective, source, "obj", err);
   OBJ obj;
-  if (!BuildOBJScene(text, source, options, &obj, result, err)) return false;
+  if (!BuildOBJScene(text, source, effective, &obj, result, err)) return false;
   // The next reader bypasses this compatibility bridge. Bound its scalar JSON
   // nodes as well, so legacy/CLI imports cannot silently amplify a small input.
-  Reader conversion_budget(options);
+  Reader conversion_budget(effective);
   conversion_budget.bytes = result->memory_estimate;
   for (const auto& mesh : obj.meshes) {
     for (size_t count : {mesh.positions.size(), mesh.normals.size(), mesh.uvs.size(),
@@ -527,18 +643,23 @@ bool BuildOBJPayload(std::string_view text, const std::string& source,
   }
   result->payload["links"] = Json::array({Json{{"name", "Geometry"},
       {"visuals", std::move(visuals)}}});
+  session.Succeed();
   return true;
 }
 
 bool BuildOBJPayloadFile(const std::string& filename, const Options& options,
                          Result* result, std::string* err) {
-  Reader reader(options);
+  Options effective = options;
+  ImportSession session(&effective, filename, "obj", err);
+  Reader reader(effective);
   std::vector<uint8_t> bytes;
   std::string source;
   if (!reader.Read(filename, "", &bytes, &source, err)) return false;
-  return BuildOBJPayload(
+  if (!BuildOBJPayload(
       std::string_view(bytes.empty() ? "" : reinterpret_cast<const char*>(bytes.data()), bytes.size()),
-      source, options, result, err);
+      source, effective, result, err)) return false;
+  session.Succeed();
+  return true;
 }
 }  // namespace import_asset
 }  // namespace tydra

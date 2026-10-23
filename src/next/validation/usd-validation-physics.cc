@@ -212,7 +212,7 @@ void ValidatePhysicsInertiaAndMotion(const PrimSpec &ps,
                                         "physics.inertia", prim_location,
                                         result);
   ValidateQuaternionProperty(ps, "physics:principalAxes",
-                             "physics.quaternion", prim_location, result);
+                             "physics.quaternion", prim_location, result, true);
   ValidateFiniteVec3Property(ps, "physics:velocity", "physics.motion",
                              prim_location, result, false);
   ValidateFiniteVec3Property(ps, "physics:angularVelocity", "physics.motion",
@@ -441,7 +441,7 @@ void ValidateMjcTokenEnums(const PrimSpec &ps,
                            USDValidationResult *result) {
   static const std::set<std::string> kAutoBool = {"auto", "true", "false"};
   ValidateTokenSetProperty(ps, "mjc:option:integrator",
-                           {"euler", "implicit", "implicitfast", "RK4"},
+                           {"euler", "implicit", "implicitfast", "rk4", "RK4"},
                            "physics.extension.mjc.token", prim_location,
                            result);
   ValidateTokenSetProperty(ps, "mjc:option:cone", {"pyramidal", "elliptic"},
@@ -494,7 +494,7 @@ void ValidateMjcTokenEnums(const PrimSpec &ps,
         {"touch", "accelerometer", "velocimeter", "gyro", "force", "torque",
          "magnetometer", "camprojection", "rangefinder", "jointpos",
          "jointvel", "tendonpos", "tendonvel", "actuatorpos", "actuatorvel",
-         "actuatorfrc", "ballquat", "ballangvel", "jointlimitpos",
+         "actuatorfrc", "jointactuatorfrc", "ballquat", "ballangvel", "jointlimitpos",
          "jointlimitvel", "jointlimitfrc", "tendonlimitpos",
          "tendonlimitvel", "tendonlimitfrc", "framepos", "framequat",
          "framexaxis", "frameyaxis", "framezaxis", "framelinvel",
@@ -527,10 +527,7 @@ void ValidateMjcPhysics(const PrimSpec &ps,
   ValidateMjcTokenEnums(ps, prim_location, result);
 
   for (const char *prop_name :
-       {"mjc:option:timestep", "mjc:option:impratio", "mjc:option:tolerance",
-        "mjc:option:ls_tolerance", "mjc:option:noslip_tolerance",
-        "mjc:option:ccd_tolerance", "mjc:torsionalfriction",
-        "mjc:rollingfriction"}) {
+       {"mjc:option:timestep", "mjc:option:impratio"}) {
     ValidatePositiveNumericProperty(ps, prop_name,
                                     "physics.extension.mjc.range",
                                     prim_location, result);
@@ -538,6 +535,8 @@ void ValidateMjcPhysics(const PrimSpec &ps,
 
   for (const char *prop_name :
        {"mjc:option:density", "mjc:option:viscosity", "mjc:option:o_margin",
+        "mjc:option:tolerance", "mjc:option:ls_tolerance", "mjc:option:noslip_tolerance",
+        "mjc:option:ccd_tolerance", "mjc:torsionalfriction", "mjc:rollingfriction",
         "mjc:compiler:boundMass", "mjc:compiler:boundInertia",
         "mjc:stiffness", "mjc:damping", "mjc:armature", "mjc:frictionloss",
         "mjc:margin", "mjc:solmix", "mjc:gap", "mjc:crankLength",

@@ -20,11 +20,12 @@ typedef struct lightusd_import_options {
   uint32_t format;
   uint64_t max_memory_bytes;
   uint64_t max_input_bytes;
-  uint32_t max_depth;
+  uint32_t max_depth;  /* XML/include depth in [1, 1024]; default 64. */
   uint32_t _reserved;
   lightusd_asset_resolver* resolver;
   /* Optional UTF-8 JSON object: up_axis (Z/Y), allow_missing (bool),
-   * tessellate_collision_shapes (bool), asset_dirs (string[]),
+   * tessellate_collision_shapes (bool), unsupported_policy (warn/error/preserve),
+   * asset_dirs (string[]),
    * packages (object mapping URDF package names to directories).
    * The importer copies these settings during the synchronous call. */
   const char* settings_json;
@@ -40,6 +41,14 @@ LIGHTUSD_API lightusd_status lightusd_import_file(
 LIGHTUSD_API lightusd_status lightusd_import_memory(
     const uint8_t* data, size_t size, const char* source,
     const lightusd_import_options* options, lightusd_stage** out);
+/* Owned JSON report (version 1). This query does not drain it. Stages loaded
+ * through USD-only APIs return {}. Reports are not serialized into USD. */
+LIGHTUSD_API lightusd_status lightusd_stage_import_report(
+    const lightusd_stage* stage, lightusd_string** out);
+/* Last native import attempt on the calling thread, including failures.
+ * Overwritten by each import_file/import_memory call; invalid arguments/options
+ * leave {}. Copy the owned result before another import on the same thread. */
+LIGHTUSD_API lightusd_status lightusd_import_last_report(lightusd_string** out);
 #ifdef __cplusplus
 }
 #endif

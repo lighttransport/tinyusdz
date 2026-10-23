@@ -228,11 +228,61 @@ std::string AttributeFromTag(const std::string& tag, const std::string& name) {
   return tag.substr(pos + 1, end - pos - 1);
 }
 
+bool ValidateXMLDepth(pugi::xml_node root, size_t limit, const std::string& source,
+                       std::string* err) {
+  // Constant-space DFS also validates skipped/unsupported subtrees. Never
+  // recurse into attacker-controlled XML just to enforce its depth bound.
+  auto node = root;
+  size_t depth = 0;
+  for (;;) {
+    if (depth > limit) {
+      if (err) *err = "XML depth limit exceeded";
+      if (active_reader->options.report)
+        active_reader->options.report->Diagnostic("error", "import.depth_limit", "XML depth limit exceeded", source);
+      return false;
+    }
+    if (node.first_child()) { node = node.first_child(); ++depth; continue; }
+    while (node != root && !node.next_sibling()) { node = node.parent(); --depth; }
+    if (node == root) break;
+    node = node.next_sibling();
+  }
+  return true;
+}
+
+bool UnsupportedXML(pugi::xml_node node, const std::string& message,
+    const char* code, const char* feature, const std::string& source,
+    bool approximated = false) {
+  std::string data;
+  if (active_reader->options.unsupported_policy == UnsupportedPolicy::Preserve) {
+    struct Writer : pugi::xml_writer {
+      size_t cap;
+      std::string text;
+      bool valid = true;
+      explicit Writer(size_t limit) : cap(limit) {}
+      void write(const void* bytes, size_t size) override {
+        if (!valid || size > cap - text.size()) { valid = false; return; }
+        text.append(static_cast<const char*>(bytes), size);
+      }
+    } writer((active_reader->options.max_memory - std::min(active_reader->bytes,
+                     active_reader->options.max_memory)) / 4);
+    node.print(writer, "", pugi::format_raw);
+    if (!writer.valid) {
+      active_reader->failure = "Unsupported XML preservation memory limit exceeded";
+      return false;
+    }
+    data = std::move(writer.text);
+  }
+  return active_reader->Unsupported(message, code, feature, source, 0,
+      std::move(data), "xml", approximated);
+}
+
 bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
                     std::set<fs::path>* seen, std::string* expanded,
-                    std::string* err) {
+                    std::string* err, const std::string& source) {
   if (seen->size() >= active_reader->options.max_depth) {
     if (err) *err = "MJCF include depth limit exceeded";
+    if (active_reader->options.report)
+      active_reader->options.report->Diagnostic("error", "import.depth_limit", "MJCF include depth limit exceeded", source);
     return false;
   }
   if (xml.find("<!DOCTYPE") != std::string::npos ||
@@ -248,6 +298,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
       *err = std::string("MJCF XML parse failed: ") + parsed.description();
     return false;
   }
+  if (!ValidateXMLDepth(doc, active_reader->options.max_depth, source, err)) return false;
   auto root = doc.document_element();
   auto compiler = root.child("compiler");
   // Keep the declaring anchor until every include has contributed compiler
@@ -274,12 +325,21 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
                                                           size_t depth) {
     if (depth > active_reader->options.max_depth) {
       if (err) *err = "XML depth limit exceeded";
+      if (active_reader->options.report)
+        active_reader->options.report->Diagnostic("error", "import.depth_limit", "XML depth limit exceeded", source);
       return false;
     }
     auto node = parent.first_child();
     while (node) {
       auto next = node.next_sibling();
-      if (std::string(node.name()) == "include") {
+      const std::string tag = node.name();
+      if (tag == "flex" || tag == "flexcomp" || tag == "deformable" || tag == "skin") {
+        if (!UnsupportedXML(node, "Unsupported MJCF element: " + tag,
+                            "mjcf.element_unsupported", "mjcf.deformable", source)) {
+          if (err) *err = active_reader->failure;
+          return false;
+        }
+      } else if (tag == "include") {
         std::string file = node.attribute("file").as_string();
         if (file.empty()) {
           if (err) *err = "MJCF include has no file";
@@ -300,7 +360,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
                               bytes.size()),
             child_expanded;
         if (!ExpandIncludes(child_xml, key.parent_path(), seen, &child_expanded,
-                            err))
+                            err, resolved))
           return false;
         seen->erase(key);
         pugi::xml_document child_doc;
@@ -319,6 +379,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
     return true;
   };
   if (!visit(root, 0)) return false;
+  if (!ValidateXMLDepth(doc, active_reader->options.max_depth, source, err)) return false;
   if (seen->empty()) {
     // MJCF permits repeated singleton sections after textual inclusion. Merge
     // attributes in document order rather than reading only the first block.
@@ -380,7 +441,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
         }
         fs::path anchor(base.value()), path(item.attribute("file").value());
         fs::path candidate = anchor / dir / path;
-        if (!active_reader->options.read) {
+        if (!active_reader->options.read && !active_reader->options.open) {
           std::error_code ec;
           if (!fs::exists(candidate, ec) && fs::exists(anchor / path, ec))
             candidate = anchor / path;
@@ -1016,7 +1077,13 @@ fs::path ResolveMeshPath(const fs::path& base_dir, const fs::path& mesh_dir,
                          const std::string& file,
                          const std::map<std::string, fs::path>& index) {
   if (fs::path(file).is_absolute()) return fs::path(file);
-  if (active_reader->options.read) return mesh_dir / file;
+  if (active_reader->options.read || active_reader->options.open) {
+    const auto colon = file.find(':');
+    const auto slash = file.find_first_of("/\\");
+    if (colon != std::string::npos && (slash == std::string::npos || colon < slash))
+      return fs::path(file);
+    return mesh_dir / file;
+  }
   std::error_code ec;
   const std::array<fs::path, 3> candidates{
       {mesh_dir / file, base_dir / "assets" / file, base_dir / file}};
@@ -1321,6 +1388,14 @@ bool BuildGeomPayload(const pugi::xml_node& geom_node, const AttrMap& cls,
     const auto radii =
         ParseDouble3(Eff(geom_node, cls, "size"), {{0.05, 0.05, 0.05}});
     if (!(*is_visual) && !opts.tessellate_collision_shapes) {
+      if ((radii[0] != radii[1] || radii[1] != radii[2]) &&
+          !UnsupportedXML(geom_node,
+              "Ellipsoid collider is represented by a nonuniformly scaled sphere; enable tessellate_collision_shapes for a mesh collider",
+              "mjcf.ellipsoid_collision_approximated", "mjcf.ellipsoid_collision",
+              active_reader->root_source, true)) {
+        if (err) *err = active_reader->failure;
+        return false;
+      }
       payload->shape = {{"type", "sphere"}, {"radius", 1.0}};
       payload->matrix = MultiplyMatrix(payload->matrix, ScaleMatrix(radii));
     } else {
@@ -1478,9 +1553,9 @@ void AddJointFromNode(const pugi::xml_node& joint_node, const AttrMap& jcls,
     const std::vector<double> range =
         ParseDoubles(Eff(joint_node, jcls, "range"));
     if (range.size() >= 2) {
-      if (mj_type == "ball")
-        active_reader->Warn(
-            "MJCF spherical joint cone limits are not converted");
+      if (mj_type == "ball" && !UnsupportedXML(joint_node,
+              "MJCF spherical joint cone limits are not converted",
+              "mjcf.ball_limits_unsupported", "mjcf.ball_limits", active_reader->root_source)) return;
       // The USD converter expects revolute limits in radians (it re-converts to
       // degrees). MJCF hinge ranges are in the compiler's angle unit (degrees
       // by default), so convert them; slide ranges are meters and pass through.
@@ -1679,16 +1754,16 @@ void AddMujocoTendonsJson(const pugi::xml_node& root, const Context& ctx,
         if (wn == "site" && HasAttr(w, "site")) {
           waypoints.push_back({{"site", Attr(w, "site")}});
         } else if (wn == "geom") {
-          active_reader->Warn(
-              "Spatial tendon wrap surfaces are approximated by routing "
-              "points");
+          if (!UnsupportedXML(t_node,
+                  "Spatial tendon wrap surfaces are approximated by routing points",
+                  "mjcf.tendon_wrap_approximated", "mjcf.tendon_wrap", active_reader->root_source, true)) return;
           Json wp = {{"geom", Attr(w, "geom")}};
           if (HasAttr(w, "sidesite")) wp["sidesite"] = Attr(w, "sidesite");
           waypoints.push_back(std::move(wp));
         } else if (wn == "pulley" && HasAttr(w, "divisor")) {
-          active_reader->Warn(
-              "Spatial tendon pulley divisors are retained without wrap "
-              "geometry");
+          if (!UnsupportedXML(t_node,
+                  "Spatial tendon pulley divisors are retained without wrap geometry",
+                  "mjcf.tendon_pulley_preserved", "mjcf.tendon_pulley", active_reader->root_source, true)) return;
           waypoints.push_back({{"pulley", ParseDoubleAttr(w, "divisor", 1.0)}});
         }
       }
@@ -1893,7 +1968,8 @@ void AddMujocoEqualityJson(const pugi::xml_node& root, Json* equalities,
   for (const auto& e_node : eq_root.children()) {
     const std::string kind = e_node.name();  // connect | weld | joint
     if (kind != "connect" && kind != "weld" && kind != "joint") {
-      active_reader->Warn("Unsupported MJCF equality: " + kind);
+      if (!UnsupportedXML(e_node, "Unsupported MJCF equality: " + kind,
+              "mjcf.equality_unsupported", "mjcf.equality", active_reader->root_source)) return;
       continue;
     }
     Json eq = Json::object();
@@ -1990,7 +2066,14 @@ Json BuildMjcSceneJson(const pugi::xml_node& root) {
         opt[k] = static_cast<int>(ParseDoubleAttr(option, k, 0.0));
     };
     auto tok = [&](const char* k) {
-      if (HasAttr(option, k)) opt[k] = Attr(option, k);
+      if (HasAttr(option, k)) {
+        const auto authored = Attr(option, k);
+        const auto canonical = ToLower(authored);
+        opt[k] = canonical;
+        if (authored != canonical && active_reader->options.report)
+          active_reader->options.report->Diagnostic("info", "mjcf.token_canonicalized",
+              std::string(k) + ": " + authored + " -> " + canonical, active_reader->root_source);
+      }
     };
     auto vec = [&](const char* k) {
       auto v = ParseDoubles(Attr(option, k));
@@ -2116,6 +2199,16 @@ void AddMujocoMaterialsJson(const pugi::xml_node& root,
     if (!tref.empty()) {
       const auto it = tex_files.find(tref);
       if (it != tex_files.end()) {
+        if (active_reader && (active_reader->options.read || active_reader->options.open)) {
+          // Resolver identifiers are not filesystem paths. Keep the authored
+          // texture identifier anchored to the source instead of absolutizing
+          // a URI against the process working directory.
+          mat["texture"] = it->second;
+          mat["texture_abs"] = it->second;
+          materials->push_back(std::move(mat));
+          if (stats) stats->materials++;
+          continue;
+        }
         // Emit a portable, source-relative reference (e.g. "assets/foo.png")
         // for inputs:file so the exported usda/usdc opens beside its assets
         // instead of carrying a machine-specific absolute path. Keep the
@@ -2510,7 +2603,7 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path& base_dir,
     std::set<fs::path> seen;
     std::string child_expanded;
     if (!ExpandIncludes(child_xml, it->second.parent_path(), &seen,
-                        &child_expanded, err)) {
+                        &child_expanded, err, it->second.string())) {
       return false;
     }
     pugi::xml_document child_doc;
@@ -2705,6 +2798,47 @@ void FlattenFramesIn(pugi::xml_node parent, const Context& ctx) {
   }
 }
 
+bool IsSolverArray(std::string_view name) {
+  for (const char* key : {"solimp", "solimplimit", "solimpfriction", "o_solimp",
+                          "solref", "solreflimit", "solreffriction", "o_solref"})
+    if (name == key) return true;
+  return false;
+}
+std::string CompleteSolverArray(const std::string& name, const std::string& value,
+                                const std::string& inherited, const std::string& kind) {
+  std::vector<double> defaults;
+  if (name == "solimp" || name == "solimplimit" || name == "solimpfriction" || name == "o_solimp")
+    defaults = {0.9, 0.95, 0.001, 0.5, 2.0};
+  else if (name == "solref" || name == "solreflimit" || name == "solreffriction" || name == "o_solref")
+    defaults = name == "solreffriction" && kind == "pair" ? std::vector<double>{0, 0} : std::vector<double>{0.02, 1};
+  else return value;
+  const auto authored = ParseDoubles(value);
+  if (authored.empty()) return value;
+  if (authored.size() > defaults.size()) {
+    active_reader->failure = "Too many MJCF solver values for " + name;
+    return value;
+  }
+  if (authored.size() == defaults.size()) return value;
+  const auto parent = ParseDoubles(inherited);
+  for (size_t i = 0; i < std::min(parent.size(), defaults.size()); ++i) defaults[i] = parent[i];
+  for (size_t i = 0; i < authored.size(); ++i) defaults[i] = authored[i];
+  std::string completed;
+  for (double number : defaults) {
+    char text[40];
+    std::snprintf(text, sizeof(text), "%.17g", number);
+    if (!completed.empty()) completed += ' ';
+    completed += text;
+  }
+  if (active_reader->options.report) {
+    auto& report = *active_reader->options.report;
+    auto& count = report.counts["completed_solver_arrays"];
+    const auto previous = count.is_number() ? count.get<uint64_t>() : uint64_t(0);
+    count = previous == UINT64_MAX ? previous : previous + 1;
+    report.Diagnostic("info", "mjcf.solver_defaults", name + " completed using inherited/MJCF defaults", active_reader->root_source);
+  }
+  return completed;
+}
+
 // Resolve default classes for every supported element, including actuator,
 // tendon, site and asset defaults (not only geoms and joints).
 void InlineMJCFDefaults(pugi::xml_node root) {
@@ -2714,8 +2848,10 @@ void InlineMJCFDefaults(pugi::xml_node root) {
       [&](pugi::xml_node node, Elements inherited) {
         for (auto child : node.children()) {
           if (std::string(child.name()) == "default") continue;
-          for (auto attr : child.attributes())
-            inherited[child.name()][attr.name()] = attr.value();
+          for (auto attr : child.attributes()) {
+            auto& previous = inherited[child.name()][attr.name()];
+            previous = IsSolverArray(attr.name()) ? CompleteSolverArray(attr.name(), attr.value(), previous, child.name()) : attr.value();
+          }
         }
         const std::string name = Attr(node, "class");
         classes[name] = inherited;
@@ -2737,16 +2873,29 @@ void InlineMJCFDefaults(pugi::xml_node root) {
           if (found == classes.end()) return;
           auto attrs = found->second.find(element);
           if (attrs == found->second.end()) return;
-          for (const auto& attr : attrs->second)
-            if (!node.attribute(attr.first.c_str()))
+          for (const auto& attr : attrs->second) {
+            if (auto own = node.attribute(attr.first.c_str())) {
+              if (IsSolverArray(attr.first)) {
+                const auto completed = CompleteSolverArray(attr.first, own.value(), attr.second, kind);
+                if (completed != own.value()) own.set_value(completed.c_str());
+              }
+            } else
               node.append_attribute(attr.first.c_str())
                   .set_value(attr.second.c_str());
+          }
         };
         // General actuator parameters are the baseline for actuator shortcuts.
         if (std::string(node.parent().name()) == "actuator" &&
             kind != "general")
           merge("general");
+        if (std::string(node.parent().name()) == "tendon") merge("tendon");
+        if (std::string(node.parent().name()) == "equality") merge("equality");
         merge(kind);
+        for (auto attr : node.attributes()) {
+          if (!IsSolverArray(attr.name())) continue;
+          const auto completed = CompleteSolverArray(attr.name(), attr.value(), "", kind);
+          if (completed != attr.value()) attr.set_value(completed.c_str());
+        }
         if (node.attribute("childclass"))
           inherited_class = Attr(node, "childclass");
         for (auto child : node.children()) apply(child, inherited_class);
@@ -2760,7 +2909,7 @@ bool BuildMujocoPayload(const std::string& xml, const fs::path& input_filename,
   std::set<fs::path> seen;
   std::string expanded;
   if (!ExpandIncludes(xml, input_filename.parent_path(), &seen, &expanded,
-                      err)) {
+                      err, input_filename.string())) {
     return false;
   }
 
@@ -3116,14 +3265,14 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
     if (auto c = node.child("color"))
       m["rgba"] = Array(ParseDoubles(Attr(c, "rgba")));
     if (auto t = node.child("texture")) {
-      std::vector<uint8_t> data;
+      AssetBytes data;
       std::string resolved, why;
-      if (active_reader->Read(Attr(t, "filename"), source, &data, &resolved,
+      if (active_reader->ReadTexture(Attr(t, "filename"), source, &data, &resolved,
                               &why)) {
         m["texture"] = resolved;
         m["texture_abs"] = resolved;
       } else
-        active_reader->Warn("Texture: " + why);
+        active_reader->Warn("Texture: " + why, "import.texture_unresolved");
     }
     materials.push_back(std::move(m));
     return name;
@@ -3240,14 +3389,21 @@ bool BuildURDF(const pugi::xml_node& root, const std::string& source,
 
 bool BuildPayload(const std::string& text, const std::string& source,
                   const Options& options, Result* result, std::string* err) {
+  Options effective = options;
+  ImportSession session(&effective, source, options.format, err);
+  effective.report->input_bytes = text.size();
   if (!result) {
     if (err) *err = "Null import result";
     return false;
   }
   *result = Result{};
-  if (text.size() > options.max_input || options.max_memory == 0 ||
-      options.max_depth == 0) {
+  result->report = effective.report;
+  if (text.size() > options.max_input || options.max_memory == 0) {
     if (err) *err = "Import input or memory limit exceeded";
+    return false;
+  }
+  if (options.max_depth == 0 || options.max_depth > 1024) {
+    if (err) *err = "Import depth limit must be in [1, 1024]";
     return false;
   }
   if (options.up_axis != "Z" && options.up_axis != "Y") {
@@ -3257,8 +3413,12 @@ bool BuildPayload(const std::string& text, const std::string& source,
   if (ToLower(options.format) == "obj" ||
       (ToLower(options.format) == "auto" &&
        ToLower(fs::path(source).extension().string()) == ".obj"))
-    return BuildOBJPayload(text, source, options, result, err);
-  Reader reader(options);
+  {
+    if (!BuildOBJPayload(text, source, effective, result, err)) return false;
+    session.Succeed();
+    return true;
+  }
+  Reader reader(effective);
   if (!reader.Charge(text.size(), err)) return false;
   // Filesystem dependencies may refer back to a parent document's directory.
   reader.root_source = source;
@@ -3300,31 +3460,18 @@ bool BuildPayload(const std::string& text, const std::string& source,
       if (err) *err = "XML DTD and entity declarations are unsupported";
       return false;
     }
-    std::function<bool(pugi::xml_node, size_t)> validate = [&](pugi::xml_node n,
-                                                               size_t depth) {
-      if (depth > options.max_depth) {
-        if (err) *err = "XML depth limit exceeded";
-        return false;
-      }
-      const std::string tag = n.name();
-      if (tag == "flex" || tag == "flexcomp" || tag == "deformable" ||
-          tag == "skin")
-        reader.Warn("Unsupported MJCF element: " + tag);
-      for (auto c : n.children())
-        if (!validate(c, depth + 1)) return false;
-      return true;
-    };
-    if (!validate(doc, 0)) return false;
+    if (!ValidateXMLDepth(doc, options.max_depth, source, err)) return false;
     auto root = doc.document_element();
     std::string tag = root.name();
     if (format == "auto")
       format = tag == "mujoco" ? "mjcf" : tag == "robot" ? "urdf" : "unknown";
+    effective.report->format = format;
     if (format == "mjcf" && tag == "mujoco") {
       Stats stats;
-      ok = BuildMujocoPayload(text, fs::path(source), options, &result->payload,
+      ok = BuildMujocoPayload(text, fs::path(source), effective, &result->payload,
                               &stats, err);
     } else if (format == "urdf" && tag == "robot")
-      ok = BuildURDF(root, source, options, &result->payload, err);
+      ok = BuildURDF(root, source, effective, &result->payload, err);
     else {
       if (err) *err = "Expected OBJ, <robot> URDF or <mujoco> MJCF input";
       return false;
@@ -3363,21 +3510,38 @@ bool BuildPayload(const std::string& text, const std::string& source,
     }
   }
   if (!GatherTextures(reader, result, err)) return false;
+  if (!reader.preserved.empty()) result->payload["unsupported"] = std::move(reader.preserved);
   result->warnings = reader.warnings;
+  result->memory_estimate = reader.bytes;
+  for (const char* key : {"links", "joints", "materials", "actuators", "tendons",
+                         "equalities", "sites", "sensors", "contactPairs", "filteredPairs", "keyframes"})
+    if (result->payload[key].is_array()) {
+      effective.report->counts[key] = uint64_t(result->payload[key].size());
+      if (!result->payload[key].empty()) effective.report->Feature(key, "imported", source);
+    }
+  session.Succeed();
   return true;
 }
 
 bool BuildPayloadFile(const std::string& filename, const Options& options,
                       Result* result, std::string* err) {
+  Options effective = options;
+  ImportSession session(&effective, filename, options.format, err);
   if (ToLower(options.format) == "obj" || (ToLower(options.format) == "auto" &&
       ToLower(fs::path(filename).extension().string()) == ".obj"))
-    return BuildOBJPayloadFile(filename, options, result, err);
-  Reader reader(options);
+  {
+    if (!BuildOBJPayloadFile(filename, effective, result, err)) return false;
+    session.Succeed();
+    return true;
+  }
+  Reader reader(effective);
   std::vector<uint8_t> bytes;
   std::string resolved;
   if (!reader.Read(filename, "", &bytes, &resolved, err)) return false;
   std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-  return BuildPayload(text, resolved, options, result, err);
+  if (!BuildPayload(text, resolved, effective, result, err)) return false;
+  session.Succeed();
+  return true;
 }
 
 }  // namespace import_asset

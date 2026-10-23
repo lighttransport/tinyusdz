@@ -19,3 +19,21 @@ are errors; geometry caps cover all shapes, line/point records and emitted
 triangles. Numeric records use strict bounded finite scans, preserving tiny
 leading-zero decimals and double subnormals. Checked arena/vector arithmetic
 and failed-load cleanup are covered by generated in-memory OBJ tests.
+
+Local MTL hardening: recognized numeric fields use bounded complete-token
+finite/range validation; negative shininess, malformed integer and boolean
+options and missing texture filenames are errors. Optional texture components
+preserve numeric-looking filenames. Custom properties use in-place heapsort
+with sequence tie-breakers and linear material grouping, replacing quadratic
+material scans/insertion sorting while retaining duplicate-key order. Covered
+by test_obj_materials in float/double, OBJ/callback, allocator-failure and Python
+resolver paths. Material resolver errors other than NOT_FOUND abort loading;
+callback parsing stops reading libraries after a fatal resolution/parse error.
+
+Local material indexing: arena-backed keys and vector-indexed AVL nodes replace
+linear material-name scans and track requested mtllib names. Iterative balanced
+insertion/lookup uses a fixed bounded ancestor stack, preserving definition
+order and first-definition IDs. Repeated authored library names (including
+NOT_FOUND results) are resolved once per load. Scene and callback loaders share
+the same library handler. Covered by ordered/alternating/prefix/duplicate name
+tests and index allocation-failure sweeps in both precision families.

@@ -319,7 +319,7 @@ void ValidateQuaternionProperty(const PrimSpec &ps,
                                 const std::string &prop_name,
                                 const std::string &rule_id,
                                 const std::string &prim_location,
-                                USDValidationResult *result) {
+                                USDValidationResult *result, bool allow_zero) {
   if (!HasProperty(ps, prop_name)) {
     return;
   }
@@ -346,6 +346,7 @@ void ValidateQuaternionProperty(const PrimSpec &ps,
     }
   }
   if (len2 == 0.0) {
+    if (allow_zero) return;
     AddError(result, rule_id, location,
              prop_name + " must be finite and non-zero");
   } else if (std::fabs(len2 - 1.0) > 1.0e-3) {

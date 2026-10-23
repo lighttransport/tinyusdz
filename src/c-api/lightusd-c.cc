@@ -623,6 +623,11 @@ lightusd_status lightusd_value_get_token_array(const lightusd_value* v,
 
 int lightusd_dict_is_valid(lightusd_dict_ref d) { return d._dict != nullptr; }
 
+lightusd_dict_ref lightusd_value_get_dictionary(const lightusd_value* v) {
+  lightusd_dict_ref out{};
+  if (v && v->v.is_dictionary()) out._dict = v->v.as_dictionary().core();
+  return out;
+}
 size_t lightusd_dict_size(lightusd_dict_ref d) {
   n::DictView  dict = n::DictView(static_cast<const lu_value*>(d._dict));
   return dict ? dict->size() : 0;
@@ -697,15 +702,7 @@ lightusd_status lightusd_dict_get_token_array(
 static void RetainLayerAssets(lightusd_stage* stage) {
   auto* root = stage->stage.GetRootLayer();
   if (!root || !root->meta().imported_assets) return;
-  for (const auto& item : root->meta().imported_assets->by_identifier) {
-    std::string basename = item.first;
-    if (!basename.empty() && basename.back() == ']') basename.pop_back();
-    const size_t slash = basename.find_last_of("/\\[");
-    if (slash != std::string::npos) basename = basename.substr(slash + 1);
-    const std::string name = "textures/" + std::to_string(stage->import_assets.size()) + "_" + basename;
-    stage->import_assets[name] = *item.second;
-    stage->import_asset_paths[item.first] = name;
-  }
+  lightusd_internal::RetainImportedAssets(stage, *root->meta().imported_assets);
   root->meta().imported_assets.reset();
 }
 
@@ -871,8 +868,9 @@ n::Stage ImportedPackageStage(const lightusd_stage* stage) {
       if (!asset) continue;
       auto found = stage->import_asset_paths.find(std::string(*asset));
       if (found != stage->import_asset_paths.end())
-        layer->prim_at_path_mutable(prim.GetPath().str())
-            ->add_property(name, n::Value::MakeAssetPath(found->second));
+        if (auto* spec = layer->prim_at_path_mutable(prim.GetPath().str()))
+          spec->set_property_value(n::GetPropNameTable().find(name),
+                                   n::Value::MakeAssetPath(found->second));
     }
     return true;
   });
@@ -933,19 +931,17 @@ lightusd_status lightusd_stage_save_usdz_with_assets(
   std::vector<uint8_t> usdc;
   n::USDCWriteResult usdc_result = n::WriteUSDCToMemory(usdc, *source);
   if (!usdc_result.success) return Fail(LIGHTUSD_ERR_IO, usdc_result.error);
-  std::map<std::string, std::vector<uint8_t>> assets = stage->import_assets;
+  n::USDZAssetViews assets;
+  for (const auto& asset : stage->import_assets)
+    if (asset.second) assets[asset.first] = {asset.second->data(), asset.second->size()};
   for (size_t i = 0; i < asset_count; ++i) {
     if (!asset_names[i] || (!asset_data[i] && asset_sizes[i] != 0)) {
       return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid USDZ asset");
     }
-    std::vector<uint8_t> bytes;
-    if (asset_sizes[i]) {
-      bytes.assign(asset_data[i], asset_data[i] + asset_sizes[i]);
-    }
-    assets[asset_names[i]] = std::move(bytes);
+    assets[asset_names[i]] = {asset_data[i], asset_sizes[i]};
   }
   std::vector<uint8_t> buffer;
-  n::USDZWriteResult result = n::WriteUSDZFromUSDCAndAssetsToMemory(
+  n::USDZWriteResult result = n::WriteUSDZFromUSDCAndAssetViewsToMemory(
       buffer, usdc.data(), usdc.size(), assets);
   if (!result.success) return Fail(LIGHTUSD_ERR_IO, result.error);
   std::ofstream ofs(filename, std::ios::binary);
@@ -2638,6 +2634,26 @@ lightusd_status lightusd_prim_set_variant_selection(lightusd_stage* stage,
 }  // extern "C"
 
 namespace lightusd_internal {
+void RetainImportedAssets(lightusd_stage* stage, const n::ImportedAssets& assets) {
+  std::map<const std::vector<uint8_t>*, std::string> packages;
+  for (const auto& item : stage->import_assets)
+    if (item.second) packages[item.second.get()] = item.first;
+  for (const auto& item : assets.by_identifier) {
+    if (!item.second) continue;
+    auto previous = packages.find(item.second.get());
+    if (previous == packages.end()) {
+      std::string basename = item.first;
+      if (!basename.empty() && basename.back() == ']') basename.pop_back();
+      const size_t slash = basename.find_last_of("/\\[");
+      if (slash != std::string::npos) basename = basename.substr(slash + 1);
+      const std::string name = "textures/" + std::to_string(stage->import_assets.size()) + "_" + basename;
+      stage->import_assets[name] = item.second;
+      previous = packages.emplace(item.second.get(), name).first;
+    }
+    stage->import_asset_paths[item.first] = previous->second;
+  }
+}
+
 lightusd::next::Layer* MutableNativeRootLayer(lightusd_stage* stage) {
   if (!stage || stage->snapshot_stage) return nullptr;
   n::Layer* layer = RootLayerOf(stage);

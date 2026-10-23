@@ -3,6 +3,7 @@
  */
 
 #include "py-internal.h"
+#include "lightusd-import-c.h"
 
 /* Defined in py-module.c */
 PyObject* lightusd_wrap_stage(lightusd_state* st, lightusd_stage* stage);
@@ -492,6 +493,17 @@ static PyObject* Stage_warnings(PyObject* self, PyObject* noargs) {
   return res;
 }
 
+static PyObject* Stage_import_report(PyObject* self, PyObject* noargs) {
+  (void)noargs;
+  lightusd_stage* stage;
+  lightusd_state* st = stage_context(self, &stage);
+  if (!st) return NULL;
+  lightusd_string* report = NULL;
+  lightusd_status status = lightusd_stage_import_report(stage, &report);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "import_report");
+  return lightusd_import_report_object(report);
+}
+
 /* ---- authoring ---- */
 
 static PyObject* Stage_define_prim(PyObject* self, PyObject* args,
@@ -738,6 +750,8 @@ static PyMethodDef Stage_methods[] = {
      "add_sublayer(asset_path)"},
     {"warnings", Stage_warnings, METH_NOARGS,
      "Drain accumulated load warnings."},
+    {"import_report", Stage_import_report, METH_NOARGS,
+     "Return a copy of the native import report (empty for USD-only loads)."},
     {"define_prim", (PyCFunction)(void (*)(void))Stage_define_prim,
      METH_VARARGS | METH_KEYWORDS,
      "define_prim(path, type_name=None, *, specifier='def') -> Prim"},

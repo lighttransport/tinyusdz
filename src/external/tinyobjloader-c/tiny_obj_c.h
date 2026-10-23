@@ -154,8 +154,9 @@ typedef struct tobj_mtl_source {
 } tobj_mtl_source;
 
 /* Resolve a `mtllib` name to bytes. Return TOBJ_OK and fill *out, or
- * TOBJ_ERR_NOT_FOUND (treated as a warning by the loader). Called once per
- * distinct name encountered. Replaces the C++ virtual MaterialReader. */
+ * TOBJ_ERR_NOT_FOUND (treated as a warning by the loader). Each distinct
+ * authored name is requested once per load, including NOT_FOUND results.
+ * Other errors abort loading. Replaces the C++ virtual MaterialReader. */
 typedef tobj_result (*tobj_material_resolver)(void *ud, const char *mtllib_name,
                                               tobj_mtl_source *out);
 

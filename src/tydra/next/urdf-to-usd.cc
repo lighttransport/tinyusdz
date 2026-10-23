@@ -76,6 +76,12 @@ static bool ConvertPayload(
   }
   layer.reserve(prim_capacity);
   layer.meta().defaultPrim = "World";
+  if (root["unsupported"].is_array() && !root["unsupported"].empty()) {
+    layer.meta().customLayerData = tn::Value::MakeDictionary();
+    layer.meta().customLayerData.as_dictionary()->set("lightusdImportUnsupported",
+        tn::Value(root["unsupported"].dump()));
+    layer.meta().customLayerData_set = true;
+  }
   const std::string up_axis = JsonString(root, "upAxis", "Y");
   const bool y_up = !(up_axis == "Z" || up_axis == "z");
   layer.meta().upAxis = y_up ? "Y" : "Z";

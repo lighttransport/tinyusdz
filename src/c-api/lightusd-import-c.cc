@@ -17,11 +17,12 @@
 namespace ia = lightusd::tydra::import_asset;
 using lightusd_internal::Fail;
 namespace {
+thread_local std::string last_import_report = "{}";
 lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
   if (!in) return LIGHTUSD_OK;
   if (in->struct_size < sizeof(*in) || in->format > LIGHTUSD_IMPORT_MJCF ||
       in->max_memory_bytes > SIZE_MAX || in->max_input_bytes > SIZE_MAX ||
-      !in->max_depth)
+      !in->max_depth || in->max_depth > 1024)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "Invalid import options");
   const char* formats[] = {"auto", "obj", "urdf", "mjcf"};
   out->format = formats[in->format];
@@ -46,6 +47,13 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
         out->allow_missing = v.get<bool>();
       else if (key == "tessellate_collision_shapes" && v.is_boolean())
         out->tessellate_collision_shapes = v.get<bool>();
+      else if (key == "unsupported_policy" && v.is_string()) {
+        const auto policy = v.get<std::string>();
+        if (policy == "warn") out->unsupported_policy = ia::UnsupportedPolicy::Warn;
+        else if (policy == "error") out->unsupported_policy = ia::UnsupportedPolicy::Error;
+        else if (policy == "preserve") out->unsupported_policy = ia::UnsupportedPolicy::Preserve;
+        else return Fail(LIGHTUSD_ERR_INVALID_ARG, "unsupported_policy must be warn, error or preserve");
+      }
       else if (key == "asset_dirs" && v.is_array()) {
         for (const auto& dir : v) {
           if (!dir.is_string())
@@ -67,6 +75,19 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
   }
   if (in->resolver) {
     auto* resolver = lightusd_internal::AssetResolverForLoad(in->resolver);
+    out->open = [resolver](const std::string& name, const std::string& anchor,
+                           ia::AssetSource* source, std::string* err) {
+      auto asset = resolver->Resolve(name, anchor, false);
+      if (!asset.exists) {
+        if (err) *err = "Unresolved import asset: " + name;
+        return false;
+      }
+      source->identifier = asset.resolved_path;
+      source->read = [resolver, asset](std::vector<uint8_t>* data, std::string* why) {
+        return resolver->ReadAsset(asset, data, why);
+      };
+      return true;
+    };
     out->read = [resolver](const std::string& name, const std::string& anchor,
                            std::vector<uint8_t>* bytes, std::string* resolved,
                            std::string* err) {
@@ -100,12 +121,7 @@ lightusd_status FinishOBJ(std::shared_ptr<lightusd::next::Layer> layer,
   if (!handle) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "Cannot allocate imported stage");
   auto assets = layer->meta().imported_assets;
   if (assets) {
-    for (const auto& item : assets->by_identifier) {
-      const auto name = "textures/" + std::to_string(handle->import_assets.size()) +
-          "_" + ghc::filesystem::path(item.first).filename().string();
-      handle->import_assets[name] = *item.second;
-      handle->import_asset_paths[item.first] = name;
-    }
+    lightusd_internal::RetainImportedAssets(handle, *assets);
     layer->meta().imported_assets.reset();
   }
   handle->stage.SetRootLayer(std::move(*layer));
@@ -127,6 +143,8 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
     return Failure(err);
   }
   handle->warnings = result.warnings + warn;
+  if (!warn.empty() && result.report)
+    result.report->Diagnostic("warning", "import.conversion_warning", warn, source);
   handle->source_dir = ghc::filesystem::path(source).parent_path().string();
   // source_filename is intentionally empty: a USD provenance query must not
   // try to reload a robot or OBJ file through the USD-only core loader.
@@ -144,6 +162,28 @@ lightusd_status Finish(ia::Result& result, const std::string& source,
   *out = handle;
   return LIGHTUSD_OK;
 }
+template <class Import>
+lightusd_status ReportedImport(ia::Options& options, const std::string& source,
+                               lightusd_stage** out, Import import) {
+  std::string error;
+  lightusd_status status;
+  {
+    ia::ImportSession session(&options, source, options.format, &error);
+    status = import(&error);
+    if (status == LIGHTUSD_OK) session.Succeed();
+    else if (error.empty()) error = lightusd_last_error();
+  }
+  last_import_report = options.report->ToJSON().dump();
+  if (status == LIGHTUSD_OK && *out) (*out)->import_report = last_import_report;
+  return status;
+}
+lightusd_status CopyReport(const std::string& report, lightusd_string** out) {
+  if (!out) return Fail(LIGHTUSD_ERR_INVALID_ARG, "Report output is null");
+  *out = new (std::nothrow) lightusd_string;
+  if (!*out) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "Cannot allocate import report");
+  (*out)->s = report;
+  return LIGHTUSD_OK;
+}
 }  // namespace
 extern "C" {
 void lightusd_import_options_init(lightusd_import_options* o) {
@@ -157,51 +197,68 @@ void lightusd_import_options_init(lightusd_import_options* o) {
 lightusd_status lightusd_import_file(const char* filename,
                                      const lightusd_import_options* options,
                                      lightusd_stage** out) {
+  last_import_report = "{}";
   if (out) *out = nullptr;
   if (!filename || !out)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "Import filename/output is null");
   ia::Options opts;
   auto status = Options(options, &opts);
   if (status != LIGHTUSD_OK) return status;
-  ia::Result result;
-  std::string err;
+  return ReportedImport(opts, filename, out, [&](std::string* err) {
+    ia::Result result;
 #ifdef LIGHTUSD_WITH_USDOBJ
-  if (IsOBJ(filename, opts)) {
-    std::string warn;
-    auto layer = lightusd::next::LoadOBJLayerFromFile(filename, opts, &warn, &err);
-    if (!layer) return Failure(err);
-    return FinishOBJ(std::move(layer), filename, std::move(warn), out);
-  }
+    if (IsOBJ(filename, opts)) {
+      std::string warn;
+      auto layer = lightusd::next::LoadOBJLayerFromFile(filename, opts, &warn, err);
+      if (!layer) return Failure(*err);
+      return FinishOBJ(std::move(layer), filename, std::move(warn), out);
+    }
 #endif
-  if (!ia::BuildPayloadFile(filename, opts, &result, &err)) return Failure(err);
-  return Finish(result, filename, out);
+    if (!ia::BuildPayloadFile(filename, opts, &result, err)) return Failure(*err);
+    return Finish(result, filename, out);
+  });
 }
 lightusd_status lightusd_import_memory(const uint8_t* data, size_t size,
                                        const char* source,
                                        const lightusd_import_options* options,
                                        lightusd_stage** out) {
+  last_import_report = "{}";
   if (out) *out = nullptr;
   if ((!data && size) || !out)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "Import data/output is null");
   ia::Options opts;
   auto status = Options(options, &opts);
   if (status != LIGHTUSD_OK) return status;
-  if (size > opts.max_input || size > opts.max_memory)
-    return Fail(LIGHTUSD_ERR_RESOURCE_LIMIT, "Import input limit exceeded");
-  ia::Result result;
-  std::string err;
+  return ReportedImport(opts, source ? source : "", out, [&](std::string* err) {
+    opts.report->input_bytes = size;
+    if (size > opts.max_input || size > opts.max_memory) {
+      *err = "Import input limit exceeded";
+      opts.report->Diagnostic("error", "import.input_limit", *err);
+      return Fail(LIGHTUSD_ERR_RESOURCE_LIMIT, *err);
+    }
+    ia::Result result;
 #ifdef LIGHTUSD_WITH_USDOBJ
-  if (IsOBJ(source ? source : "", opts)) {
-    std::string warn;
-    auto layer = lightusd::next::LoadOBJLayerFromMemory(source ? source : "",
-        data, size, opts, &warn, &err);
-    if (!layer) return Failure(err);
-    return FinishOBJ(std::move(layer), source ? source : "", std::move(warn), out);
-  }
+    if (IsOBJ(source ? source : "", opts)) {
+      std::string warn;
+      auto layer = lightusd::next::LoadOBJLayerFromMemory(source ? source : "",
+          data, size, opts, &warn, err);
+      if (!layer) return Failure(*err);
+      return FinishOBJ(std::move(layer), source ? source : "", std::move(warn), out);
+    }
 #endif
-  std::string text(size ? reinterpret_cast<const char*>(data) : "", size);
-  if (!ia::BuildPayload(text, source ? source : "", opts, &result, &err))
-    return Failure(err);
-  return Finish(result, source ? source : "", out);
+    std::string text(size ? reinterpret_cast<const char*>(data) : "", size);
+    if (!ia::BuildPayload(text, source ? source : "", opts, &result, err))
+      return Failure(*err);
+    return Finish(result, source ? source : "", out);
+  });
+}
+lightusd_status lightusd_stage_import_report(const lightusd_stage* stage,
+                                             lightusd_string** out) {
+  if (out) *out = nullptr;
+  if (!stage) return Fail(LIGHTUSD_ERR_INVALID_ARG, "Stage is null");
+  return CopyReport(stage->import_report, out);
+}
+lightusd_status lightusd_import_last_report(lightusd_string** out) {
+  return CopyReport(last_import_report, out);
 }
 }

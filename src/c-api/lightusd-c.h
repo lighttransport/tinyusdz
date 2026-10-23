@@ -267,6 +267,8 @@ typedef struct lightusd_dict_ref {
 } lightusd_dict_ref;
 
 LIGHTUSD_API int lightusd_dict_is_valid(lightusd_dict_ref d);
+/* Borrowed cursor; valid while the owned value is alive. Invalid for non-dicts. */
+LIGHTUSD_API lightusd_dict_ref lightusd_value_get_dictionary(const lightusd_value* v);
 LIGHTUSD_API size_t lightusd_dict_size(lightusd_dict_ref d);
 /* Fetch entry i. Any out-param may be NULL. If the entry is itself a
  * dictionary, *subdict becomes valid and *val reports LIGHTUSD_TYPE_DICTIONARY.

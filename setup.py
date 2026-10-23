@@ -3,7 +3,7 @@ Build driver for the lightusd PyPI wheel.
 
 Flow:
   1. Invoke CMake on the standalone `src/next` project (next-core), building
-     the `lightusd_next`, `tydra_next`, `lightusd_c` and `lightusd_render_c` libraries.
+     the next core, Tydra, asset importer, C API and native validation libraries.
      The legacy lightusd core is NOT built or linked into the Python wheel
      (v1.0.0 next + tydra-next only, npm preview tag). Native
      (`cmake -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
@@ -105,6 +105,7 @@ def _cmake_configure_and_build() -> None:
         "--target", "lightusd_next",
         "--target", "tydra_next",
         "--target", "lightusd_render_c",
+        "--target", "lightusd_validation_c",
         "--parallel", os.environ.get("LIGHTUSD_PY_JOBS", str(min(16, os.cpu_count() or 2))),
     ]
     subprocess.check_call(build_args, env=env)
@@ -120,7 +121,7 @@ class CMakeBuildExt(build_ext):
         # filename search can pick stale archives left by a reconfiguration.
         manifest = CMAKE_BUILD_DIR / "lightusd-python-libraries-MinSizeRel.txt"
         archives = manifest.read_text().splitlines()
-        if len(archives) != 7 or not all(pathlib.Path(p).is_file() for p in archives):
+        if len(archives) != 9 or not all(pathlib.Path(p).is_file() for p in archives):
             raise RuntimeError(f"Invalid CMake archive manifest: {manifest}")
         stamp = pathlib.Path(self.build_temp) / "lightusd-build-config.txt"
         stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +164,7 @@ ext = Extension(
         "src/python/py-module.c",
         "src/python/py-import.c",
         "src/python/py-physics.c",
+        "src/python/py-validation.c",
         "src/python/py-array.c",
         "src/python/py-numeric.c",
         "src/python/py-prim.c",

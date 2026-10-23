@@ -330,9 +330,10 @@ static bool WriteSinkDirectory(const USDZWriteSink& sink,
 // Public API
 // ============================================================
 
+template <class Assets>
 static USDZWriteResult WriteUSDZFromRootAndAssetsToMemory(
     std::vector<uint8_t>& buffer, const uint8_t* root_data, size_t root_size,
-    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const Assets& assets,
     const std::string& root_name, const USDZWriteOptions& options);
 
 USDZWriteResult WriteUSDZToMemory(std::vector<uint8_t>& buffer, const Stage& stage,
@@ -403,9 +404,10 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
       buffer, usdc_data, usdc_size, assets, "root.usdc", options);
 }
 
-USDZWriteResult WriteUSDZFromUSDCAndAssetsToSink(
+template <class Assets>
+static USDZWriteResult WriteAssetRangeToSink(
     const uint8_t* usdc_data, size_t usdc_size,
-    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const Assets& assets,
     const USDZWriteSink& sink, const USDZWriteOptions& options) {
   USDZWriteResult result;
   if (!sink || !usdc_data || usdc_size == 0) {
@@ -479,6 +481,34 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToSink(
   return result;
 }
 
+USDZWriteResult WriteUSDZFromUSDCAndAssetsToSink(
+    const uint8_t* data, size_t size,
+    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const USDZWriteSink& sink, const USDZWriteOptions& options) {
+  return WriteAssetRangeToSink(data, size, assets, sink, options);
+}
+
+USDZWriteResult WriteUSDZFromUSDCAndAssetViewsToSink(
+    const uint8_t* data, size_t size, const USDZAssetViews& assets,
+    const USDZWriteSink& sink, const USDZWriteOptions& options) {
+  for (const auto& asset : assets)
+    if (!asset.second.empty() && !asset.second.data())
+      return {false, "USDZ asset view has null bytes", 0};
+  return WriteAssetRangeToSink(data, size, assets, sink, options);
+}
+
+USDZWriteResult WriteUSDZFromUSDCAndAssetViewsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* data, size_t size,
+    const USDZAssetViews& assets, const USDZWriteOptions& options) {
+  for (const auto& asset : assets)
+    if (!asset.second.empty() && !asset.second.data()) {
+      buffer.clear();
+      return {false, "USDZ asset view has null bytes", 0};
+    }
+  return WriteUSDZFromRootAndAssetsToMemory(buffer, data, size, assets,
+                                           "root.usdc", options);
+}
+
 USDZWriteResult WriteUSDZFromUSDAAndAssetsToMemory(
     std::vector<uint8_t>& buffer, const uint8_t* usda_data, size_t usda_size,
     const std::map<std::string, std::vector<uint8_t>>& assets,
@@ -487,9 +517,10 @@ USDZWriteResult WriteUSDZFromUSDAAndAssetsToMemory(
       buffer, usda_data, usda_size, assets, "root.usda", options);
 }
 
+template <class Assets>
 static USDZWriteResult WriteUSDZFromRootAndAssetsToMemory(
     std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
-    const std::map<std::string, std::vector<uint8_t>>& assets,
+    const Assets& assets,
     const std::string& root_name, const USDZWriteOptions& options) {
   USDZWriteResult result;
 

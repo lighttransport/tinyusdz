@@ -2267,7 +2267,11 @@ PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" \
 reader and typed USD conversion. It covers overflowed/invalid indices, global
 limits across groups and primitive types, allocation-failure cleanup, bounded
 blank-line handling, non-terminated guarded input, large-coordinate normals and
-small decimals. `python/tests/test_obj_large.py` checks generated face/skin
+small decimals. Normal regressions cover subnormal-to-large position scales,
+area-weighted smoothing across objects with mixed explicit/generated normals,
+cancelled normals and avoiding smoothing allocations for fully authored normals.
+The optional `--smooth` stress flag exercises the fully authored case at scale.
+`python/tests/test_obj_large.py` checks generated face/skin
 arrays through bytes, bytearray and memoryview inputs, plus expansion budgets.
 
 The normal CTest case is small. For optional dense-geometry and >4 GiB byte-offset
@@ -2276,6 +2280,73 @@ stress runs, use the separate-build commands in
 The generator has explicit size arguments and writes no asset files. Run the
 small case under ASan/UBSan as well as the ordinary native build; do not use the
 multi-gigabyte configuration as a routine sanitizer/CI requirement.
+
+`next_test_obj_materials` supplies generated MTL bytes to both C precision
+families through standalone parsing, referenced OBJ materials and callbacks.
+It rejects malformed/non-finite numeric fields and overflowing integer options,
+checks optional transform components and numeric texture filenames, and sweeps
+allocator failures for cleanup. Its 2,001-material / 30,000 reverse-key case
+checks sorted custom properties and stable duplicate order without large assets.
+`python/tests/test_obj_materials.py` verifies the same numeric failures and
+texture-transform behavior through an in-memory asset resolver. Resolver error
+tests check that fatal MTL failures stop dependency reads; Python checks that
+oversized MTL/texture dependencies fail through resolvers and filesystem reads.
+Material lookup tests use 4,096 generated names in ascending, descending and
+alternating order, preserve first-definition IDs for duplicates, distinguish
+prefix names, and verify each repeated/missing library is resolved once per
+load. Allocation-failure sweeps cover both indexes in scene and callback paths.
+`--lookup-materials COUNT` increases this generated workload for opt-in stress
+runs. Python cases preserve per-definition texture anchors and `Pr`/`Pm` flags
+for duplicate names across BOM and LF/CRLF/CR source variants.
+
+`next_test_obj_textures` checks request/canonical texture caching, separate
+resolution and I/O, immutable shared ownership through layer cloning, per-import
+cache lifetimes, compatibility with combined read callbacks, resource limits
+and authoritative resolver failures. `next_test_usdz_writer` compares owning
+and borrowed asset views byte-for-byte through memory and streaming writers,
+including empty assets, invalid pointers and budget failures.
+`python/tests/test_import_textures.py` checks OBJ/URDF/MJCF texture aliasing under
+a tight memory budget, resolver removal, composed OBJ references and package
+deletion. Both save methods must produce one texture entry and shader paths
+that reopen from the resulting USDZ without the original resolver. The source
+stage's paths remain unchanged.
+
+`next_test_asset_import` covers owned report queries, failure reports, option
+validation and the shared unsupported-feature policies through the C API.
+`next_test_obj_textures` also checks native collector reuse, bounded diagnostic
+storage, malformed UTF-8 and explicit truncation counts.
+`python/tests/test_import_report.py` exercises independent input/memory/depth
+limits, warning drainage, concurrent failed imports, resolver exception identity,
+included XML policies, preservation budget failures and preserved metadata
+round trips through USDA/USDC/USDZ. Reports remain runtime data after reopening.
+The contract is documented in [import-report.md](import-report.md).
+
+`next_test_physics_query` checks the shared native C++/C typed snapshot path:
+coherent numeric time, overlapping groups, authored types/variability,
+relationship targets, owned array lifetime, shared immutable storage and
+snapshot memory limits. It links only `lightusd_c`.
+`python/tests/test_physics_query.py` verifies the same behavior through
+`physics.inspect`, including DefaultTime, blocks, empty declarations, unknown
+engine properties, dictionary metadata, large array views, stage edits/closure
+and invalid arguments. The new C header is also valid C11.
+Generated standard physics descriptor cases verify uniform/varying authoring,
+allowed-token metadata and drive/limit instance namespaces. The descriptor
+lookups also link from a pure C11 consumer of `lightusd_core_c`, without the
+C++ validation engine.
+
+`next_test_validation_report` checks the owned C/C++ report, native streaming
+issue/byte limits, merge accounting, input validation, stage-independent lifetime
+and explicit failure when all findings are omitted. Existing validation registry
+and semantic suites cover the shared engine. `python/tests/test_physics_validation.py`
+checks native rule IDs, group selection, immutable ownership, coherent sampled
+mass values (with and without defaults), coverage/sample limits, large generated
+invalid-body reports and independent inertia fallbacks. MJCF cases compare
+inherited partial solver vectors with MuJoCo when installed, check canonical
+option tokens and zero tolerances, and exercise ellipsoid approximation policies.
+The optional Menagerie `--validate-physics` gate records semantic findings
+separately from conversion/reference success. Add `--tessellate-collision-shapes`
+to test explicit mesh colliders; see
+[physics-validation.md](physics-validation.md).
 
 ### Updated Menagerie native/Python sweep
 

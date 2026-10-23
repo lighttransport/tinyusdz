@@ -2464,6 +2464,11 @@ static bool ConvertPayload(
 
   Stage stage;
   stage.metas().defaultPrim = value::token("World");
+  if (root["unsupported"].is_array() && !root["unsupported"].empty()) {
+    stage.metas().customLayerData["lightusdImportUnsupported"] =
+        MetaVariable(root["unsupported"].dump());
+    stage.metas().customLayerDataAuthored = true;
+  }
   const std::string up_axis = JsonString(root, "upAxis", "Y");
   const bool y_up = !(up_axis == "Z" || up_axis == "z");
   bool no_physics = false;

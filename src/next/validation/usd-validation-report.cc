@@ -656,6 +656,8 @@ std::string FormatValidationResult(const USDValidationResult &result) {
 
   const size_t errors = result.error_count();
   const size_t warnings = result.warning_count();
+  if (result.omitted_issues)
+    ss << "\nOmitted " << result.omitted_issues << " issues due to report limits.\n";
 
   ss << "\nResult: ";
   if (!result.complete) {

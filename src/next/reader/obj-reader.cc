@@ -118,9 +118,7 @@ void RetainAssets(tydra::import_asset::Result& result, Layer* layer) {
       if (!map["package"].is_string()) continue;
       auto found = result.assets.find(map["package"].get<std::string>());
       if (found != result.assets.end())
-        retained->by_identifier[map["file"].get<std::string>()] =
-            std::make_shared<const std::vector<uint8_t>>(
-                std::move(found->second));
+        retained->by_identifier[map["file"].get<std::string>()] = found->second;
     }
   if (!retained->by_identifier.empty())
     layer->meta().imported_assets = std::move(retained);
@@ -283,6 +281,12 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
   layer->meta().defaultPrim = "World";
   layer->meta().upAxis = JsonString(payload, "upAxis", "Z");
   layer->meta().upAxis_set = true;
+  if (payload["unsupported"].is_array() && !payload["unsupported"].empty()) {
+    layer->meta().customLayerData = Value::MakeDictionary();
+    layer->meta().customLayerData.as_dictionary()->set("lightusdImportUnsupported",
+        Value(payload["unsupported"].dump()));
+    layer->meta().customLayerData_set = true;
+  }
   Define(layer, "/World", "Xform");
   Define(layer, "/World/Links", "Xform");
   Define(layer, "/World/Links/Geometry", "Xform");
@@ -434,6 +438,8 @@ std::shared_ptr<Layer> LoadOBJLayerFromMemory(
     const std::string& source, const uint8_t* data, size_t size,
     const tydra::import_asset::Options& options, std::string* warn,
     std::string* err) {
+  auto effective = options;
+  tydra::import_asset::ImportSession session(&effective, source, "obj", err);
   if ((!data && size) || size > options.max_input || size > options.max_memory) {
     if (err) *err = !data && size ? "Null OBJ data" : "OBJ input limit exceeded";
     return nullptr;
@@ -442,22 +448,27 @@ std::shared_ptr<Layer> LoadOBJLayerFromMemory(
   tydra::import_asset::OBJ obj;
   if (!tydra::import_asset::BuildOBJScene(
           std::string_view(size ? reinterpret_cast<const char*>(data) : "", size),
-          source, options, &obj, &result, err)) return nullptr;
+          source, effective, &obj, &result, err)) return nullptr;
   auto layer = std::make_shared<Layer>();
   if (!ConvertOBJSceneToLayer(obj, result.payload, layer.get(), err)) return nullptr;
   RetainAssets(result, layer.get());
   if (warn) *warn += result.warnings;
+  session.Succeed();
   return layer;
 }
 std::shared_ptr<Layer> LoadOBJLayerFromFile(
     const std::string& source, const tydra::import_asset::Options& options,
     std::string* warn, std::string* err) {
-  tydra::import_asset::Reader reader(options);
+  auto effective = options;
+  tydra::import_asset::ImportSession session(&effective, source, "obj", err);
+  tydra::import_asset::Reader reader(effective);
   std::vector<uint8_t> bytes;
   std::string resolved;
   if (!reader.Read(source, "", &bytes, &resolved, err)) return nullptr;
-  return LoadOBJLayerFromMemory(resolved, bytes.data(), bytes.size(), options,
-                                 warn, err);
+  auto layer = LoadOBJLayerFromMemory(resolved, bytes.data(), bytes.size(), effective,
+                                      warn, err);
+  if (layer) session.Succeed();
+  return layer;
 }
 }  // namespace next
 }  // namespace lightusd

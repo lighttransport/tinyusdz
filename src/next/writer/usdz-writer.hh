@@ -30,6 +30,23 @@ struct USDZWriteOptions {
 
 using USDZWriteSink = std::function<bool(const uint8_t*, size_t)>;
 
+/// Borrowed package bytes. The owner must stay alive until the synchronous
+/// writer returns. No texture payload copy is needed to construct this map.
+struct USDZAssetView {
+  const uint8_t* bytes = nullptr;
+  size_t byte_count = 0;
+  const uint8_t* data() const { return bytes; }
+  size_t size() const { return byte_count; }
+  bool empty() const { return byte_count == 0; }
+};
+using USDZAssetViews = std::map<std::string, USDZAssetView>;
+USDZWriteResult WriteUSDZFromUSDCAndAssetViewsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
+    const USDZAssetViews& assets, const USDZWriteOptions& options = {});
+USDZWriteResult WriteUSDZFromUSDCAndAssetViewsToSink(
+    const uint8_t* usdc_data, size_t usdc_size, const USDZAssetViews& assets,
+    const USDZWriteSink& sink, const USDZWriteOptions& options = {});
+
 /// Stream a USDC root and package assets to a caller-owned sink. The sink is
 /// called synchronously and must consume each span before returning.
 USDZWriteResult WriteUSDZFromUSDCAndAssetsToSink(

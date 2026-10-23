@@ -109,6 +109,34 @@ leave the geometry usable. Bump maps require height-to-normal conversion and
 are not connected. Displacement and unsupported shading features such as sheen
 or anisotropy are not reconstructed; this is not a lossless MTL shader archive.
 
+Loaded MTL files validate recognized numeric fields as complete tokens with
+finite values in the loader's precision. Malformed numbers, overflowed integer
+options, negative `Ns`, invalid on/off options and missing texture filenames
+fail the import. A malformed MTL dependency is an error; an unavailable optional
+MTL file still produces a warning. Dependency byte/memory limits remain fatal
+for MTL files and textures, including resolver-provided bytes. Fatal material
+resolution or parsing errors stop subsequent material-library reads.
+Omitted trailing color components retain
+their defaults. Texture `-s`, `-o` and `-t` accept one to three components, and
+filenames beginning with digits (such as `123.png`) are preserved intact.
+
+The C parser retains custom MTL properties in sorted arrays. Finalization uses
+an in-place sort with bounded `O(n log n)` work across the library, followed by
+linear grouping by material. Equal keys retain their original order. These
+custom properties are not translated into USD shader inputs.
+
+Material names and previously requested library names use balanced indexes;
+lookup and insertion take logarithmic comparisons instead of scanning every
+definition. Repeated identical authored `mtllib` names are resolved once per
+load, including unavailable libraries. Different authored names are independent
+requests even if a resolver maps them to the same file.
+
+For duplicate material names, `usemtl` binds the first definition. Later
+definitions retain their own generated USD material names, source files and
+explicit `Pr`/`Pm` flags. A later duplicate cannot redirect an earlier
+definition's textures or change its shading workflow. MTL source tracking
+handles UTF-8 BOMs and LF, CRLF and CR line endings.
+
 Relative MTL paths resolve from the OBJ file. Each material's texture paths
 resolve from the MTL file that defines it. Additional filesystem roots can be
 provided through `asset_dirs`; dependencies outside the source/allowed roots
@@ -119,6 +147,27 @@ need a source anchor or a resolver capable of resolving those dependencies.
 Successfully loaded texture bytes are retained for later USDZ packaging,
 including after USD composition. Loose USDA/USDC exports keep source texture
 identifiers; they do not copy the textures alongside the output.
+
+Within one import, texture requests are cached by source anchor and name, then
+by resolved identifier. Material maps and aliases that resolve to the same
+identifier share one immutable byte buffer and one USDZ entry. Layers, their
+clones and C/Python stages retain shared ownership, so saving remains valid
+after a resolver is unregistered or an input package is removed. Each foreign
+layer import has its own read cache. USDZ export rewrites shader paths on an
+export copy; the original stage keeps its source identifiers.
+
+The shared C++ import frontend offers `Options::open` to separate resolution
+from reading, allowing aliases to hit the cache before I/O. The built-in
+filesystem, C/Python resolver and package paths use this interface. Existing
+combined `Options::read` callbacks remain supported: repeated requests are
+cached, while a distinct alias may need one read to discover its identifier.
+Both interfaces preserve authoritative resolution and resource limits.
+
+Import reports, independent input/depth limits and `unsupported_policy` are
+described in [native import reports and policies](import-report.md). In Python,
+`stage.import_report()` exposes conversion counts, dependency reads, diagnostic
+codes and memory estimates. `unsupported_policy="preserve"` retains unconverted
+MTL bump/displacement/sheen/anisotropy data as non-executable layer metadata.
 
 ## Skin weights: the `vw` extension
 
@@ -318,13 +367,22 @@ Malformed/overflowing index tokens and explicit position, UV or normal indices
 outside their arrays fail. Missing UV fields can still omit UVs with a warning.
 Vertex, normal and UV records are checked in the bounded scanner, including
 finite ranges; computed normals use double intermediate arithmetic for large
-coordinates. Repeated object names use advancing suffix counters, so resolving
+and subnormal float coordinates. Nonzero generated normals are normalized;
+zero-area faces and exactly cancelling smoothing contributions retain zero
+normals. Explicit normals are preserved without normalization. Smoothing
+accumulators are allocated only for source position/group pairs with missing
+normals. All incident faces still contribute their area, including faces with
+explicit normals in another object. Flat normals are computed on demand without
+a full per-face scratch array.
+
+Repeated object names use advancing suffix counters, so resolving
 name collisions does not restart a search through all prior objects. Warning
 storage is capped even when a single diagnostic is very large.
 
 [`test_obj_large.cc`](../tests/next/test_obj_large.cc) generates OBJ source in
 memory. Its normal CTest case checks geometry, UV/color/skin arrays, allocation
-failure cleanup, expansion budgets, tiny decimals, large coordinates, blank-line
+failure cleanup, expansion budgets, tiny decimals, scale-independent and mixed
+explicit/generated normals, smoothing memory use, large coordinates, blank-line
 memory use and non-terminated buffers ending at a guard page. No large fixture
 assets are checked in. Its optional `--triangles` and `--comment-mib` arguments
 exercise dense geometry and byte offsets beyond 32 bits independently:
@@ -338,6 +396,9 @@ ctest --test-dir build_ninja/obj-large-next -R next_test_obj_large --output-on-f
 # One million triangles with normals, UVs, colors and vw records.
 build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0
 
+# Explicit normals with a smoothing group must avoid unused smoothing maps.
+build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0 --smooth
+
 # More than 4 GiB of input, with real geometry after the generated comments.
 build_ninja/obj-large-next/test_obj_large --triangles 100 --comment-mib 4097
 ```
@@ -346,6 +407,19 @@ These stress sizes are opt-in and allocate the source in RAM. `--parser-only`
 runs the C11 parse without the USD conversion. Python-generated buffer and
 expansion-limit tests are in
 [`test_obj_large.py`](../python/tests/test_obj_large.py).
+Generated MTL validation and allocation-failure tests are in
+[`test_obj_materials.cc`](../tests/next/test_obj_materials.cc). They cover both
+precision families, standalone/OBJ/callback entry points, 2,001 materials,
+30,000 reverse-ordered custom fields and duplicate-key order. Python resolver
+coverage is in [`test_obj_materials.py`](../python/tests/test_obj_materials.py).
+The material test also generates ascending, descending and alternating name
+orders, repeated/missing library requests and prefix/duplicate name lookups for
+scene and callback loading in both precisions. For a larger optional run:
+
+```sh
+cmake --build build_ninja/obj-large-next --target test_obj_materials -j8
+build_ninja/obj-large-next/test_obj_materials --lookup-materials 100000
+```
 
 Regression coverage also includes:
 

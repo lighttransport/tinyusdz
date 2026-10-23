@@ -96,6 +96,7 @@ set(LIGHTUSD_NEXT_SOURCES
     schema/physics-api.cc
     schema/physics-joint.cc
     schema/physics-collision.cc
+    schema/physics-query.cc
     schema/usd-ar.cc
     schema/usd-media.cc
     schema/usd-mtlx.cc
@@ -223,6 +224,7 @@ set(LIGHTUSD_NEXT_HEADERS
     schema/physics-api.hh
     schema/physics-joint.hh
     schema/physics-collision.hh
+    schema/physics-query.hh
     schema/usd-ar.hh
     schema/usd-media.hh
     schema/usd-mtlx.hh
@@ -280,6 +282,10 @@ set(LIGHTUSD_CORE_C_SOURCES ${LIGHTUSD_NEXT_SOURCES})
 list(FILTER LIGHTUSD_CORE_C_SOURCES INCLUDE REGEX "\\.c$")
 list(FILTER LIGHTUSD_NEXT_SOURCES EXCLUDE REGEX "\\.c$")
 add_library(lightusd_core_c STATIC ${LIGHTUSD_CORE_C_SOURCES} ${LZ4_SOURCES})
+# The generated descriptor queries are public C11 core APIs. Keep their data
+# and lookup code here so bindings do not need the C++ validation engine merely
+# to enumerate schema names, property types and variability.
+target_sources(lightusd_core_c PRIVATE c/validation-tables.c c/generated-schema-tables.c)
 set_target_properties(lightusd_core_c PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 if(UNIX)
@@ -306,8 +312,6 @@ target_link_libraries(lightusd_next PUBLIC lightusd_core_c)
 
 # Validation is an explicit component: resolver/core consumers must not pull it in.
 add_library(lightusd_validation STATIC
-    c/validation-tables.c
-    c/generated-schema-tables.c
     validation/usd-validation.cc
     validation/usd-validation-props.cc
     validation/usd-validation-compose.cc
@@ -918,6 +922,7 @@ set(LIGHTUSD_C_SOURCES
     ../c-api/lightusd-c.cc
     ../c-api/lightusd-c-format.cc
     ../c-api/lightusd-c-dependencies.cc
+    ../c-api/lightusd-physics-c.cc
     ../c-api/lightusd-session-c.cc)
 add_library(lightusd_c STATIC ${LIGHTUSD_C_SOURCES})
 add_library(lightusd_validation_c STATIC
@@ -1090,7 +1095,7 @@ if(LIGHTUSD_WITH_TYDRA)
   # Packaging must use actual target artifacts, including nested build dirs.
   # Searching by basename can select an obsolete archive after reconfiguration.
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/lightusd-python-libraries-$<CONFIG>.txt"
-    CONTENT "$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_core_c>\n")
+    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra_next>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_next>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_core_c>\n")
 endif()
 include(GNUInstallDirs)
 set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
@@ -1102,6 +1107,7 @@ install(FILES c/lightusd-core-c.h c/storage.h c/value.h c/chunks.h c/descriptor.
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/next/c)
 install(FILES ../c-api/lightusd-validation-c.h ../c-api/lightusd-validation-cpp.hh
               ../c-api/lightusd-c.h ../c-api/lightusd-cpp.hh
+              ../c-api/lightusd-physics-c.h
               ../c-api/lightusd-session-c.h ../c-api/lightusd-session-cpp.hh
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(LIGHTUSD_WITH_TYDRA)
@@ -1170,6 +1176,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         add_executable(test_obj_large ../../tests/next/test_obj_large.cc)
         target_link_libraries(test_obj_large PRIVATE lightusd_next)
         add_test(NAME next_test_obj_large COMMAND test_obj_large)
+        add_executable(test_obj_materials ../../tests/next/test_obj_materials.cc)
+        target_compile_features(test_obj_materials PRIVATE cxx_std_17)
+        target_include_directories(test_obj_materials PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+        target_link_libraries(test_obj_materials PRIVATE lightusd_obj_import)
+        add_test(NAME next_test_obj_materials COMMAND test_obj_materials)
+        add_executable(test_obj_textures ../../tests/next/test_obj_textures.cc)
+        target_link_libraries(test_obj_textures PRIVATE lightusd_next)
+        add_test(NAME next_test_obj_textures COMMAND test_obj_textures)
 
     endif()
 
@@ -1212,6 +1226,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     # Register tests with ctest
     enable_testing()
+
+    add_executable(test_physics_query ../../tests/next/test_physics_query.cc)
+    target_link_libraries(test_physics_query PRIVATE lightusd_c)
+    add_test(NAME next_test_physics_query COMMAND test_physics_query)
+
+    add_executable(test_validation_report ../../tests/next/test_validation_report.cc)
+    target_link_libraries(test_validation_report PRIVATE lightusd_validation_c)
+    add_test(NAME next_test_validation_report COMMAND test_validation_report)
 
     add_executable(test_lightusd_cpp ../../tests/c-api/test_lightusd_cpp.cc)
     target_link_libraries(test_lightusd_cpp PRIVATE lightusd_c)

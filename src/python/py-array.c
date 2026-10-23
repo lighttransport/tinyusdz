@@ -329,6 +329,12 @@ PyObject* lightusd_view_to_python(lightusd_state* st, PyObject* owner,
 }
 
 PyObject* lightusd_value_to_python(lightusd_state* st, lightusd_value* val) {
+  lightusd_dict_ref dict = lightusd_value_get_dictionary(val);
+  if (lightusd_dict_is_valid(dict)) {
+    PyObject* result = lightusd_dict_to_python(st, dict);
+    lightusd_value_destroy(val);
+    return result;
+  }
   /* Try string family first. */
   lightusd_sv sv;
   if (lightusd_value_get_string(val, &sv) == LIGHTUSD_OK) {

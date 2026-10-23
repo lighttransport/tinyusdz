@@ -42,8 +42,8 @@ typedef struct TOBJ_T(tobj_builder) {
 
   /* materials + name->id map (filled by the .mtl parser) */
   tobj_vec materials;   /* TOBJ_T(tobj_material) */
-  tobj_vec matmap_key;  /* const char* (interned) */
-  tobj_vec matmap_id;   /* int */
+  tobj_name_map matmap; /* first definition for each material name */
+  tobj_name_map libraries; /* mtllib names already resolved in this load */
   tobj_vec mat_unknown; /* tobj_pending_kv */
 
   /* finalized shapes */
@@ -575,21 +575,67 @@ static void TOBJ_T(material_init)(TOBJ_T(tobj_material) * m, tobj_arena *ar) {
 
 static int TOBJ_T(mat_find)(TOBJ_T(tobj_builder) * b, const char *name,
                             size_t len) {
-  const char **keys = (const char **)b->matmap_key.data;
-  const int *ids = (const int *)b->matmap_id.data;
-  for (size_t i = 0; i < b->matmap_key.count; i++) {
-    if (tobj_slice_eq(name, len, keys[i])) return ids[i];
-  }
-  return -1;
+  return tobj_name_map_find(&b->matmap, name, len);
 }
 
-/* Read up to `n` reals from the cursor into dst (missing left untouched). */
-static void TOBJ_T(read_reals)(tobj_cursor *c, TOBJ_REAL *dst, int n) {
-  double d;
-  for (int i = 0; i < n; i++) {
-    if (!tobj_scan_double(&c->p, c->end, &d)) break;
-    dst[i] = (TOBJ_REAL)d;
+/* Numeric tokens must be consumed completely and fit the selected precision.
+ * The permissive scanner alone substitutes nan/inf and accepts prefixes. */
+static bool TOBJ_T(real_token)(const char *tok, size_t len, TOBJ_REAL *out) {
+  const char *p = tok, *end = tok + len, *first = tok;
+  if (first < end && (*first == '+' || *first == '-')) ++first;
+  double value;
+  if (first == end || (!tobj_is_digit(*first) && *first != '.') ||
+      !tobj_scan_double(&p, end, &value) || p != end ||
+      !(value <= DBL_MAX && value >= -DBL_MAX) ||
+      (sizeof(TOBJ_REAL) == sizeof(float) &&
+       !(value <= FLT_MAX && value >= -FLT_MAX))) return false;
+  *out = (TOBJ_REAL)value;
+  return true;
+}
+
+/* Preserve omitted trailing color components, but require at least one valid
+ * number and reject malformed or surplus tokens rather than dropping them. */
+static bool TOBJ_T(read_reals)(TOBJ_T(tobj_builder) *b, tobj_cursor *c,
+                               TOBJ_REAL *dst, int n) {
+  const char *tok;
+  size_t len;
+  for (int i = 0; i < n; ++i) {
+    if (!tobj_next_token(c, &tok, &len))
+      return i > 0 || TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+    if (!TOBJ_T(real_token)(tok, len, &dst[i]))
+      return TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
   }
+  return !tobj_next_token(c, &tok, &len) || TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+}
+
+/* Optional texture components stop before a filename or another option. A
+ * numeric-looking filename such as 123.png must not lose its numeric prefix. */
+static bool TOBJ_T(read_tex_reals)(TOBJ_T(tobj_builder) *b, tobj_cursor *c,
+                                   TOBJ_REAL *dst, int n) {
+  for (int i = 0; i < n; ++i) {
+    tobj_cursor probe = *c;
+    const char *tok;
+    size_t len;
+    if (!tobj_next_token(&probe, &tok, &len))
+      return i > 0 || TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+    const char *p = tok;
+    double value;
+    if (!tobj_scan_double(&p, tok + len, &value) || p != tok + len)
+      return i > 0 || TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+    if (!TOBJ_T(real_token)(tok, len, &dst[i]))
+      return TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+    *c = probe;
+  }
+  return true;
+}
+
+static bool TOBJ_T(read_int)(TOBJ_T(tobj_builder) *b, tobj_cursor *c, int *out) {
+  const char *tok;
+  size_t len;
+  if (!tobj_next_token(c, &tok, &len)) return TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+  const char *p = tok;
+  return (tobj_scan_int(&p, tok + len, out) && p == tok + len) ||
+         TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
 }
 
 /* Trim leading/trailing spaces of the cursor remainder and intern it. */
@@ -618,7 +664,7 @@ static const char *TOBJ_T(parse_texopt)(TOBJ_T(tobj_builder) * b, tobj_cursor *c
                                         TOBJ_T(tobj_texture_option) * opt) {
   const char *tok;
   size_t tl;
-  for (;;) {
+  while (b->err == TOBJ_OK) {
     const char *save = c->p;
     if (!tobj_next_token(c, &tok, &tl)) {
       c->p = save;
@@ -631,31 +677,34 @@ static const char *TOBJ_T(parse_texopt)(TOBJ_T(tobj_builder) * b, tobj_cursor *c
     if (tobj_slice_eq(tok, tl, "-blendu")) {
       const char *v;
       size_t vl;
-      if (tobj_next_token(c, &v, &vl)) TOBJ_T(tok_onoff)(v, vl, &opt->blendu);
+      if (!tobj_next_token(c, &v, &vl) || !TOBJ_T(tok_onoff)(v, vl, &opt->blendu))
+        TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
     } else if (tobj_slice_eq(tok, tl, "-blendv")) {
       const char *v;
       size_t vl;
-      if (tobj_next_token(c, &v, &vl)) TOBJ_T(tok_onoff)(v, vl, &opt->blendv);
+      if (!tobj_next_token(c, &v, &vl) || !TOBJ_T(tok_onoff)(v, vl, &opt->blendv))
+        TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
     } else if (tobj_slice_eq(tok, tl, "-clamp")) {
       const char *v;
       size_t vl;
-      if (tobj_next_token(c, &v, &vl)) TOBJ_T(tok_onoff)(v, vl, &opt->clamp);
+      if (!tobj_next_token(c, &v, &vl) || !TOBJ_T(tok_onoff)(v, vl, &opt->clamp))
+        TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
     } else if (tobj_slice_eq(tok, tl, "-bm")) {
-      TOBJ_T(read_reals)(c, &opt->bump_multiplier, 1);
+      TOBJ_T(read_tex_reals)(b, c, &opt->bump_multiplier, 1);
     } else if (tobj_slice_eq(tok, tl, "-boost")) {
-      TOBJ_T(read_reals)(c, &opt->sharpness, 1);
+      TOBJ_T(read_tex_reals)(b, c, &opt->sharpness, 1);
     } else if (tobj_slice_eq(tok, tl, "-o")) {
-      TOBJ_T(read_reals)(c, opt->origin_offset, 3);
+      TOBJ_T(read_tex_reals)(b, c, opt->origin_offset, 3);
     } else if (tobj_slice_eq(tok, tl, "-s")) {
-      TOBJ_T(read_reals)(c, opt->scale, 3);
+      TOBJ_T(read_tex_reals)(b, c, opt->scale, 3);
     } else if (tobj_slice_eq(tok, tl, "-t")) {
-      TOBJ_T(read_reals)(c, opt->turbulence, 3);
+      TOBJ_T(read_tex_reals)(b, c, opt->turbulence, 3);
     } else if (tobj_slice_eq(tok, tl, "-mm")) {
-      TOBJ_T(read_reals)(c, &opt->brightness, 1);
-      TOBJ_T(read_reals)(c, &opt->contrast, 1);
+      TOBJ_T(read_tex_reals)(b, c, &opt->brightness, 1);
+      TOBJ_T(read_tex_reals)(b, c, &opt->contrast, 1);
     } else if (tobj_slice_eq(tok, tl, "-texres")) {
       int v = -1;
-      tobj_scan_int(&c->p, c->end, &v);
+      TOBJ_T(read_int)(b, c, &v);
       opt->texture_resolution = v;
     } else if (tobj_slice_eq(tok, tl, "-imfchan")) {
       const char *v;
@@ -683,13 +732,19 @@ static const char *TOBJ_T(parse_texopt)(TOBJ_T(tobj_builder) * b, tobj_cursor *c
     } else if (tobj_slice_eq(tok, tl, "-colorspace")) {
       const char *v;
       size_t vl;
-      if (tobj_next_token(c, &v, &vl))
+      if (tobj_next_token(c, &v, &vl)) {
         opt->colorspace = tobj_intern(b->arena, v, vl);
+        if (!opt->colorspace) TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
+      } else TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
     } else {
       /* unknown option flag: skip just the flag token */
     }
   }
-  return TOBJ_T(intern_rest)(b, c);
+  if (b->err != TOBJ_OK) return NULL;
+  const char *name = TOBJ_T(intern_rest)(b, c);
+  if (!name) TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
+  else if (!*name || *name == '#') TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+  return b->err == TOBJ_OK ? name : NULL;
 }
 
 /* Record an unrecognized "key value" .mtl line for material `mi`. */
@@ -699,6 +754,7 @@ static bool TOBJ_T(push_unknown)(TOBJ_T(tobj_builder) * b, size_t mi,
   tobj_pending_kv *kv = (tobj_pending_kv *)tobj_vec_push(&b->mat_unknown, b->alloc);
   if (!kv) return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
   kv->mat_index = mi;
+  kv->sequence = b->mat_unknown.count - 1;
   kv->key = tobj_intern(b->arena, key, keylen);
   kv->value = TOBJ_T(intern_rest)(b, c);
   if (!kv->key || !kv->value) return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
@@ -738,7 +794,7 @@ static bool TOBJ_T(parse_mtl_buffer)(TOBJ_T(tobj_builder) * b,
         TOBJ_T(apply_kd_default)(
             (TOBJ_T(tobj_material) *)tobj_vec_at(&b->materials, (size_t)cur),
             kd_seen);
-      if (b->materials.count >= b->caps.materials) {
+      if (b->materials.count >= b->caps.materials || b->materials.count >= (size_t)INT_MAX) {
         TOBJ_T(b_fail)(b, TOBJ_ERR_LIMIT_EXCEEDED);
         break;
       }
@@ -750,16 +806,12 @@ static bool TOBJ_T(parse_mtl_buffer)(TOBJ_T(tobj_builder) * b,
       }
       TOBJ_T(material_init)(m, b->arena);
       m->name = TOBJ_T(intern_rest)(b, &c);
+      if (!m->name) return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
       cur = (int)(b->materials.count - 1);
       kd_seen = false;
-      const char **k = (const char **)tobj_vec_push(&b->matmap_key, b->alloc);
-      int *id = (int *)tobj_vec_push(&b->matmap_id, b->alloc);
-      if (!k || !id) {
-        TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
-        break;
-      }
-      *k = m->name;
-      *id = cur;
+      const tobj_result inserted = tobj_name_map_insert(
+          &b->matmap, m->name, tobj_strlen(m->name), cur, b->alloc);
+      if (inserted != TOBJ_OK) return TOBJ_T(b_fail)(b, inserted);
       continue;
     }
     if (cur < 0) continue;
@@ -767,44 +819,48 @@ static bool TOBJ_T(parse_mtl_buffer)(TOBJ_T(tobj_builder) * b,
         (TOBJ_T(tobj_material) *)tobj_vec_at(&b->materials, (size_t)cur);
 
     if (tobj_slice_eq(tok, tl, "Ka")) {
-      TOBJ_T(read_reals)(&c, m->ambient, 3);
+      TOBJ_T(read_reals)(b, &c, m->ambient, 3);
     } else if (tobj_slice_eq(tok, tl, "Kd")) {
-      TOBJ_T(read_reals)(&c, m->diffuse, 3);
+      TOBJ_T(read_reals)(b, &c, m->diffuse, 3);
       kd_seen = true;
     } else if (tobj_slice_eq(tok, tl, "Ks")) {
-      TOBJ_T(read_reals)(&c, m->specular, 3);
+      TOBJ_T(read_reals)(b, &c, m->specular, 3);
     } else if (tobj_slice_eq(tok, tl, "Ke")) {
-      TOBJ_T(read_reals)(&c, m->emission, 3);
+      TOBJ_T(read_reals)(b, &c, m->emission, 3);
     } else if (tobj_slice_eq(tok, tl, "Kt") || tobj_slice_eq(tok, tl, "Tf")) {
-      TOBJ_T(read_reals)(&c, m->transmittance, 3);
+      TOBJ_T(read_reals)(b, &c, m->transmittance, 3);
     } else if (tobj_slice_eq(tok, tl, "Ns")) {
-      TOBJ_T(read_reals)(&c, &m->shininess, 1);
+      TOBJ_T(read_reals)(b, &c, &m->shininess, 1);
+      if (m->shininess < 0) TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
     } else if (tobj_slice_eq(tok, tl, "Ni")) {
-      TOBJ_T(read_reals)(&c, &m->ior, 1);
+      TOBJ_T(read_reals)(b, &c, &m->ior, 1);
     } else if (tobj_slice_eq(tok, tl, "d")) {
-      TOBJ_T(read_reals)(&c, &m->dissolve, 1);
+      TOBJ_T(read_reals)(b, &c, &m->dissolve, 1);
     } else if (tobj_slice_eq(tok, tl, "Tr")) {
       TOBJ_REAL tr = 0;
-      TOBJ_T(read_reals)(&c, &tr, 1);
+      TOBJ_T(read_reals)(b, &c, &tr, 1);
       m->dissolve = (TOBJ_REAL)1 - tr;
     } else if (tobj_slice_eq(tok, tl, "illum")) {
       int v = 0;
-      tobj_scan_int(&c.p, c.end, &v);
+      TOBJ_T(read_int)(b, &c, &v);
+      const char *extra;
+      size_t extra_len;
+      if (tobj_next_token(&c, &extra, &extra_len)) TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
       m->illum = v;
     } else if (tobj_slice_eq(tok, tl, "Pr")) {
-      TOBJ_T(read_reals)(&c, &m->roughness, 1);
+      TOBJ_T(read_reals)(b, &c, &m->roughness, 1);
     } else if (tobj_slice_eq(tok, tl, "Pm")) {
-      TOBJ_T(read_reals)(&c, &m->metallic, 1);
+      TOBJ_T(read_reals)(b, &c, &m->metallic, 1);
     } else if (tobj_slice_eq(tok, tl, "Ps")) {
-      TOBJ_T(read_reals)(&c, &m->sheen, 1);
+      TOBJ_T(read_reals)(b, &c, &m->sheen, 1);
     } else if (tobj_slice_eq(tok, tl, "Pc")) {
-      TOBJ_T(read_reals)(&c, &m->clearcoat_thickness, 1);
+      TOBJ_T(read_reals)(b, &c, &m->clearcoat_thickness, 1);
     } else if (tobj_slice_eq(tok, tl, "Pcr")) {
-      TOBJ_T(read_reals)(&c, &m->clearcoat_roughness, 1);
+      TOBJ_T(read_reals)(b, &c, &m->clearcoat_roughness, 1);
     } else if (tobj_slice_eq(tok, tl, "aniso")) {
-      TOBJ_T(read_reals)(&c, &m->anisotropy, 1);
+      TOBJ_T(read_reals)(b, &c, &m->anisotropy, 1);
     } else if (tobj_slice_eq(tok, tl, "anisor")) {
-      TOBJ_T(read_reals)(&c, &m->anisotropy_rotation, 1);
+      TOBJ_T(read_reals)(b, &c, &m->anisotropy_rotation, 1);
     } else if (tobj_slice_eq(tok, tl, "map_Ka")) {
       m->ambient_texname = TOBJ_T(parse_texopt)(b, &c, &m->ambient_texopt);
     } else if (tobj_slice_eq(tok, tl, "map_Kd")) {
@@ -857,15 +913,20 @@ static bool TOBJ_T(handle_mtllib)(TOBJ_T(tobj_builder) * b, tobj_cursor *c) {
   const char *tok;
   size_t tl;
   while (tobj_next_token(c, &tok, &tl)) {
+    if (tobj_name_map_find(&b->libraries, tok, tl) >= 0) continue;
     char *name = (char *)tobj_arena_alloc(b->arena, tl + 1, 1);
     if (!name) return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
     tobj_memcpy(name, tok, tl);
     name[tl] = '\0';
+    const tobj_result inserted =
+        tobj_name_map_insert(&b->libraries, name, tl, 0, b->alloc);
+    if (inserted != TOBJ_OK) return TOBJ_T(b_fail)(b, inserted);
     tobj_mtl_source src;
     tobj_memset(&src, 0, sizeof src);
     tobj_result r =
         b->cfg->mtl_resolver(b->cfg->mtl_resolver_user_data, name, &src);
     if (r != TOBJ_OK) {
+      if (r != TOBJ_ERR_NOT_FOUND) return TOBJ_T(b_fail)(b, r);
       TOBJ_T(b_warn)(b, "tinyobjc: failed to resolve mtllib\n");
       continue;
     }
@@ -1282,33 +1343,29 @@ static bool TOBJ_T(dispatch_line)(TOBJ_T(tobj_builder) * b, const char *p,
 
 /* Group pending unknown params by material, sort by key, attach to materials. */
 static bool TOBJ_T(finalize_unknowns)(TOBJ_T(tobj_builder) * b) {
-  if (b->mat_unknown.count == 0) return true;
-  const tobj_pending_kv *pend = (const tobj_pending_kv *)b->mat_unknown.data;
-  for (size_t mi = 0; mi < b->materials.count; mi++) {
-    size_t cnt = 0;
-    for (size_t j = 0; j < b->mat_unknown.count; j++)
-      if (pend[j].mat_index == mi) cnt++;
-    if (cnt == 0) continue;
-    tobj_kv *arr = (tobj_kv *)tobj_arena_alloc(b->arena, cnt * sizeof(tobj_kv),
-                                               16);
-    if (!arr) return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
-    size_t w = 0;
-    for (size_t j = 0; j < b->mat_unknown.count; j++) {
-      if (pend[j].mat_index != mi) continue;
-      /* stable insertion sort by key; equal keys keep insertion order */
-      size_t pos = w;
-      while (pos > 0 && tobj_strcmp(arr[pos - 1].key, pend[j].key) > 0) {
-        arr[pos] = arr[pos - 1];
-        pos--;
-      }
-      arr[pos].key = pend[j].key;
-      arr[pos].value = pend[j].value;
-      w++;
-    }
+  const size_t count = b->mat_unknown.count;
+  if (count == 0) return true;
+  size_t bytes;
+  if (!tobj_size_mul(count, sizeof(tobj_kv), &bytes))
+    return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
+  tobj_kv *arr = (tobj_kv *)tobj_arena_alloc(b->arena, bytes, 16);
+  if (!arr) return TOBJ_T(b_fail)(b, TOBJ_ERR_ALLOC);
+  tobj_pending_kv *pend = (tobj_pending_kv *)b->mat_unknown.data;
+  tobj_pending_sort(pend, count);
+  for (size_t begin = 0; begin < count;) {
+    const size_t mi = pend[begin].mat_index;
+    if (mi >= b->materials.count) return TOBJ_T(b_fail)(b, TOBJ_ERR_PARSE);
+    size_t end = begin;
+    do {
+      arr[end].key = pend[end].key;
+      arr[end].value = pend[end].value;
+      ++end;
+    } while (end < count && pend[end].mat_index == mi);
     TOBJ_T(tobj_material) *m =
         (TOBJ_T(tobj_material) *)tobj_vec_at(&b->materials, mi);
-    m->unknown_params = arr;
-    m->num_unknown_params = w;
+    m->unknown_params = arr + begin;
+    m->num_unknown_params = end - begin;
+    begin = end;
   }
   return true;
 }
@@ -1323,8 +1380,8 @@ static void TOBJ_T(builder_init)(TOBJ_T(tobj_builder) * b) {
   tobj_vec_init(&b->skin_records, sizeof(TOBJ_T(skin_record)));
   tobj_vec_init(&b->skin_pairs, sizeof(TOBJ_T(tobj_joint_weight)));
   tobj_vec_init(&b->materials, sizeof(TOBJ_T(tobj_material)));
-  tobj_vec_init(&b->matmap_key, sizeof(const char *));
-  tobj_vec_init(&b->matmap_id, sizeof(int));
+  tobj_name_map_init(&b->matmap);
+  tobj_name_map_init(&b->libraries);
   tobj_vec_init(&b->mat_unknown, sizeof(tobj_pending_kv));
   tobj_vec_init(&b->shapes, sizeof(TOBJ_T(tobj_shape)));
   tobj_vec_init(&b->m_idx, sizeof(tobj_index));
@@ -1364,8 +1421,8 @@ static void TOBJ_T(builder_dispose)(TOBJ_T(tobj_builder) * b) {
   tobj_vec_free(&b->skin_records, a);
   tobj_vec_free(&b->skin_pairs, a);
   tobj_vec_free(&b->materials, a);
-  tobj_vec_free(&b->matmap_key, a);
-  tobj_vec_free(&b->matmap_id, a);
+  tobj_vec_free(&b->matmap.nodes, a);
+  tobj_vec_free(&b->libraries.nodes, a);
   tobj_vec_free(&b->mat_unknown, a);
   tobj_vec_free(&b->shapes, a);
   tobj_vec_free(&b->m_idx, a);
@@ -2078,30 +2135,11 @@ tobj_result TOBJ_T(tobj_load_obj_with_callbacks)(
         cb->usemtl_cb(ud, name, id);
       }
     } else if (tobj_slice_eq(tok, tl, "mtllib")) {
-      if (cfg->mtl_resolver) {
-        const char *t2;
-        size_t l2;
-        size_t before = b.materials.count;
-        while (tobj_next_token(&c, &t2, &l2)) {
-          char *name = (char *)tobj_arena_alloc(arena, l2 + 1, 1);
-          if (!name) {
-            b.err = TOBJ_ERR_ALLOC;
-            break;
-          }
-          tobj_memcpy(name, t2, l2);
-          name[l2] = '\0';
-          tobj_mtl_source src;
-          tobj_memset(&src, 0, sizeof src);
-          if (cfg->mtl_resolver(cfg->mtl_resolver_user_data, name, &src) ==
-              TOBJ_OK) {
-            TOBJ_T(parse_mtl_buffer)(&b, src.data, src.len);
-            if (src.release) src.release(src.release_ud, src.data, src.len);
-          }
-        }
-        if (b.err == TOBJ_OK && cb->mtllib_cb && b.materials.count > before) {
-          cb->mtllib_cb(ud, (const TOBJ_T(tobj_material) *)b.materials.data,
-                        tobj_size_to_int(b.materials.count));
-        }
+      const size_t before = b.materials.count;
+      TOBJ_T(handle_mtllib)(&b, &c);
+      if (b.err == TOBJ_OK && cb->mtllib_cb && b.materials.count > before) {
+        cb->mtllib_cb(ud, (const TOBJ_T(tobj_material) *)b.materials.data,
+                      tobj_size_to_int(b.materials.count));
       }
     }
   }

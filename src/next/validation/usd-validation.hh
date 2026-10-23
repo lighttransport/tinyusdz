@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,10 @@ struct ValidationOptions {
   bool require_complete{false};
   bool run_callbacks{true};
   std::vector<std::string> validator_keywords{};
+  // Retained diagnostic limits; legacy native callers keep their previous
+  // unlimited behavior. Omissions mark the result incomplete, never valid.
+  size_t max_issues{(std::numeric_limits<size_t>::max)()};
+  size_t max_report_bytes{(std::numeric_limits<size_t>::max)()};
 
   // Human-readable list of enabled groups, e.g. "core, geom, shade".
   std::string group_summary() const;
@@ -103,7 +108,10 @@ struct USDValidationResult {
   // can state coverage (a core-only "OK" did not check geom/shade).
   ValidationOptions checked_groups;
   bool complete{true};
+  size_t omitted_issues{0};
+  size_t report_bytes{0};  // Conservative retained-issue accounting.
 
+  void AddIssue(USDValidationIssue issue);
   size_t error_count() const;
   size_t warning_count() const;
   bool ok() const;

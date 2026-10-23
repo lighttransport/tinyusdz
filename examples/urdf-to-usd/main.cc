@@ -16,6 +16,7 @@ using OutputStage = lightusd::next::Stage;
 #include "usdc-writer.hh"
 using OutputStage = lightusd::Stage;
 #endif
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -33,7 +34,9 @@ void Help() {
          "Options: --up-axis Z|Y --asset-dir DIR --package NAME=DIR "
          "--allow-missing\n"
          "         --tessellate-collision-shapes --dump-json FILE --max-memory "
-         "BYTES\n";
+         "BYTES\n"
+         "         --max-input BYTES --max-depth 1..1024 "
+         "--unsupported-policy warn|error|preserve\n";
 }
 bool Convert(const ia::Json& payload, OutputStage* stage, std::string* warn,
              std::string* err) {
@@ -47,7 +50,7 @@ bool Convert(const ia::Json& payload, OutputStage* stage, std::string* warn,
 }
 bool Save(const OutputStage& stage, const std::string& path,
           const std::string& format,
-          const std::map<std::string, std::vector<uint8_t>>& assets,
+          const ia::AssetMap& assets,
           std::string* err) {
 #if defined(LIGHTUSD_URDF_TO_USD_NEXT)
   if (format == "usda") return lightusd::next::WriteUSDA(stage, path, err);
@@ -58,8 +61,11 @@ bool Save(const OutputStage& stage, const std::string& path,
     *err = cr.error;
     return false;
   }
-  auto z = lightusd::next::WriteUSDZFromUSDCAndAssetsToMemory(
-      zip, crate.data(), crate.size(), assets);
+  lightusd::next::USDZAssetViews views;
+  for (const auto& asset : assets)
+    if (asset.second) views[asset.first] = {asset.second->data(), asset.second->size()};
+  auto z = lightusd::next::WriteUSDZFromUSDCAndAssetViewsToMemory(
+      zip, crate.data(), crate.size(), views);
   if (!z.success) {
     *err = z.error;
     return false;
@@ -78,7 +84,10 @@ bool Save(const OutputStage& stage, const std::string& path,
     return lightusd::usda::SaveAsUSDA(path, stage, &warn, err);
   if (format == "usdc")
     return lightusd::usdc::SaveAsUSDCToFile(path, stage, &warn, err);
-  return lightusd::SaveAsUSDZToFile(path, stage, assets, &warn, err);
+  std::map<std::string, std::vector<uint8_t>> owned;
+  for (const auto& asset : assets)
+    if (asset.second) owned[asset.first] = *asset.second;
+  return lightusd::SaveAsUSDZToFile(path, stage, owned, &warn, err);
 #endif
 }
 }  // namespace
@@ -117,14 +126,25 @@ int main(int argc, char** argv) {
         err = "--package expects NAME=DIR";
       else
         opts.packages[p.substr(0, eq)] = p.substr(eq + 1);
-    } else if (arg == "--max-memory") {
+    } else if (arg == "--max-memory" || arg == "--max-input" || arg == "--max-depth") {
       auto str = value();
       char* end = nullptr;
+      errno = 0;
       auto amount = std::strtoull(str.c_str(), &end, 10);
-      if (!end || *end || !amount || amount > SIZE_MAX)
-        err = "Invalid memory limit";
-      else
+      if (str.empty() || str.find_first_not_of("0123456789") != std::string::npos ||
+          !end || *end || errno == ERANGE || !amount || amount > SIZE_MAX ||
+          (arg == "--max-depth" && amount > 1024))
+        err = "Invalid limit for " + arg;
+      else if (arg == "--max-memory")
         opts.max_memory = static_cast<size_t>(amount);
+      else if (arg == "--max-input") opts.max_input = static_cast<size_t>(amount);
+      else opts.max_depth = static_cast<size_t>(amount);
+    } else if (arg == "--unsupported-policy") {
+      auto policy = value();
+      if (policy == "warn") opts.unsupported_policy = ia::UnsupportedPolicy::Warn;
+      else if (policy == "error") opts.unsupported_policy = ia::UnsupportedPolicy::Error;
+      else if (policy == "preserve") opts.unsupported_policy = ia::UnsupportedPolicy::Preserve;
+      else err = "--unsupported-policy expects warn, error or preserve";
     } else if (arg == "--allow-missing")
       opts.allow_missing = true;
     else if (arg == "--tessellate-collision-shapes")

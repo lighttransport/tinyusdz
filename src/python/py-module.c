@@ -367,6 +367,12 @@ static PyObject* mod_type_name(PyObject* module, PyObject* args) {
 }
 
 static PyMethodDef module_methods[] = {
+    {"_validate_physics", (PyCFunction)(void (*)(void))lightusd_validate_physics,
+     METH_VARARGS | METH_KEYWORDS, "Validate physics through the native semantic validator."},
+    {"_physics_schema_definitions", lightusd_physics_schema_definitions, METH_NOARGS,
+     "Return generated native UsdPhysics schema/property descriptors."},
+    {"_query_physics", (PyCFunction)(void (*)(void))lightusd_query_physics,
+     METH_VARARGS | METH_KEYWORDS, "Query owned authored physics values through the native snapshot API."},
     {"_import_scene", (PyCFunction)(void (*)(void))lightusd_import_scene,
      METH_VARARGS | METH_KEYWORDS, "Import OBJ, URDF or MJCF as a USD Stage."},
     {"load", (PyCFunction)(void (*)(void))mod_load,

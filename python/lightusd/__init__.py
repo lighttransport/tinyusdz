@@ -99,6 +99,9 @@ def load(
     packages: Optional[dict[str, _PathLike]] = None,
     allow_missing: bool = False,
     tessellate_collision_shapes: bool = False,
+    max_input: Optional[int] = None,
+    max_depth: Optional[int] = None,
+    unsupported_policy: str = "warn",
 ) -> Stage:
     """Load USD or import OBJ, URDF or MuJoCo MJCF into a USD stage.
 
@@ -114,16 +117,25 @@ def load(
     ``asset_dirs`` and URDF ``packages`` roots. ``allow_missing`` converts
     missing assets into stage warnings. OBJ preserves source coordinates;
     URDF and MJCF use SI units and the requested ``up_axis``.
+    For native imports, ``max_input`` independently caps each source/dependency
+    in bytes (zero uses 512 MiB); omission preserves the ``max_memory`` input
+    cap. ``max_depth`` bounds XML/include nesting (default 64).
+    ``unsupported_policy`` selects ``warn``, ``error`` or non-executable source
+    ``preserve`` for known unsupported OBJ/MJCF features; see doc/usdobj.md.
     """
     path = _os.fspath(path)
     extension = _os.path.splitext(path)[1].lower()
-    if format in ("obj", "urdf", "mjcf") or (format is None and extension in (".obj", ".urdf", ".xml", ".mjcf")):
+    if format in ("obj", "urdf", "mjcf") or (format in (None, "auto") and extension in (".obj", ".urdf", ".xml", ".mjcf")):
         if variants:
             raise ValueError("variant selections apply to USD input only")
         return _import(path=path, format=format or "auto", max_memory=max_memory,
                        resolver=resolver, up_axis=up_axis, asset_dirs=asset_dirs,
                        packages=packages, allow_missing=allow_missing,
-                       tessellate_collision_shapes=tessellate_collision_shapes)
+                       tessellate_collision_shapes=tessellate_collision_shapes,
+                       max_input=max_input, max_depth=max_depth,
+                       unsupported_policy=unsupported_policy)
+    if max_input is not None or max_depth is not None or unsupported_policy != "warn":
+        raise ValueError("resource/import policies require obj, urdf or mjcf input")
     return _core.load(
         _os.fspath(path),
         format=format,
@@ -174,10 +186,17 @@ def is_usd(path: _PathLike) -> bool:
 
 def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             resolver=None, up_axis="Z", asset_dirs=(), packages=None,
-            allow_missing=False, tessellate_collision_shapes=False):
+            allow_missing=False, tessellate_collision_shapes=False,
+            max_input=None, max_depth=None, unsupported_policy="warn"):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
+    if max_input is not None and max_input < 0:
+        raise ValueError("max_input must be non-negative")
+    if max_depth is not None and not 1 <= max_depth <= 1024:
+        raise ValueError("max_depth must be in [1, 1024]")
+    if unsupported_policy not in ("warn", "error", "preserve"):
+        raise ValueError("unsupported_policy must be warn, error or preserve")
     if up_axis not in ("Y", "Z"):
         raise ValueError("up_axis must be Y or Z")
     settings = json.dumps({
@@ -185,9 +204,11 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         "packages": {k: _os.fspath(v) for k, v in (packages or {}).items()},
         "allow_missing": allow_missing,
         "tessellate_collision_shapes": tessellate_collision_shapes,
+        "unsupported_policy": unsupported_policy,
     })
     return _core._import_scene(path=path, data=data, source=source, format=format,
-                               settings=settings, max_memory=max_memory, resolver=resolver)
+                               settings=settings, max_memory=max_memory, resolver=resolver,
+                               max_input=max_input, max_depth=max_depth)
 
 
 def import_obj(path: _PathLike, **options) -> Stage:

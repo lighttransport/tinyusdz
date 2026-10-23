@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 
 #include "c-api/lightusd-import-c.h"
+#include "minijson.hh"
+
+static lightusd::minijson::Value Report(lightusd_stage* stage) {
+  lightusd_string* text = nullptr;
+  assert((stage ? lightusd_stage_import_report(stage, &text)
+                : lightusd_import_last_report(&text)) == LIGHTUSD_OK);
+  auto view = lightusd_string_view(text);
+  lightusd::minijson::Value report;
+  assert(lightusd::minijson::Parse(std::string(view.data, view.len), &report));
+  lightusd_string_destroy(text);
+  return report;
+}
 
 static lightusd_stage* Import(const char* text, uint32_t format) {
   lightusd_import_options options;
@@ -24,6 +37,35 @@ int main() {
   lightusd_value_view counts{};
   assert(lightusd_attr_get(mesh, "faceVertexCounts", &counts) == LIGHTUSD_OK);
   assert(counts.count == 1 && static_cast<const int32_t*>(counts.data)[0] == 4);
+  auto report = Report(stage);
+  assert(report["version"].get<int>() == 1);
+  assert(report["status"].get<std::string>() == "success");
+  assert(report["counts"]["output_vertices"].get<int>() == 4);
+  lightusd_string* warnings = nullptr;
+  assert(lightusd_stage_take_warnings(stage, &warnings) == LIGHTUSD_OK);
+  lightusd_string_destroy(warnings);
+  assert(Report(stage).dump() == report.dump());
+  lightusd_stage_destroy(stage);
+  const char* solver = R"(<mujoco><option solver="Newton" integrator="RK4" noslip_tolerance="0"/>
+<default><geom solimp=".8 .9 .02 .4 3" solref=".03 .8"/>
+<default class="child"><geom solimp=".7 .85 .01" solref=".05"/></default></default>
+<worldbody><body name="body"><joint name="j"/>
+<geom name="shape" class="child" type="sphere" size=".2" solimp=".6 .8"/>
+</body></worldbody></mujoco>)";
+  stage = Import(solver, LIGHTUSD_IMPORT_MJCF);
+  // Visual and collider share a source name; the collider gets the next name.
+  const auto shape = lightusd_stage_prim_at_path(stage, "/World/Links/body/shape1");
+  lightusd_value_view values{};
+  assert(lightusd_attr_get(shape, "mjc:solimp", &values) == LIGHTUSD_OK);
+  assert(values.is_array && values.storage == LIGHTUSD_COMP_FLOAT64 && values.count == 5);
+  const double expected[] = {.6, .8, .01, .4, 3.};
+  for (size_t i = 0; i < 5; ++i)
+    assert(std::abs(static_cast<const double*>(values.data)[i] - expected[i]) < 1e-12);
+  assert(lightusd_attr_get(shape, "mjc:solref", &values) == LIGHTUSD_OK);
+  assert(values.is_array && values.storage == LIGHTUSD_COMP_FLOAT64 && values.count == 2);
+  assert(std::abs(static_cast<const double*>(values.data)[0] - .05) < 1e-12);
+  assert(std::abs(static_cast<const double*>(values.data)[1] - .8) < 1e-12);
+  assert(Report(stage)["counts"]["completed_solver_arrays"].get<int>() > 0);
   lightusd_stage_destroy(stage);
   stage = Import("<robot><link name='base'/></robot>", LIGHTUSD_IMPORT_URDF);
   auto base = lightusd_stage_prim_at_path(stage, "/World/Links/base");
@@ -41,9 +83,42 @@ int main() {
                                 "", &options,
                                 &stage) == LIGHTUSD_ERR_RESOURCE_LIMIT);
   assert(!stage);
+  report = Report(nullptr);
+  assert(report["status"].get<std::string>() == "failed");
+  assert(report["limits"]["max_memory_bytes"].get<int>() == 4);
   options.struct_size = 0;
   assert(lightusd_import_memory(nullptr, 0, "", &options, &stage) ==
          LIGHTUSD_ERR_INVALID_ARG);
   assert(!stage);
+  assert(Report(nullptr).empty());
+  lightusd_string* invalid = reinterpret_cast<lightusd_string*>(uintptr_t(1));
+  assert(lightusd_stage_import_report(nullptr, &invalid) == LIGHTUSD_ERR_INVALID_ARG);
+  assert(!invalid);
+  assert(lightusd_import_last_report(nullptr) == LIGHTUSD_ERR_INVALID_ARG);
+  lightusd_import_options_init(&options);
+  options.format = LIGHTUSD_IMPORT_MJCF;
+  const char* oversized = "<mujoco><worldbody><body><geom size='.1' solref='1 2 3'/></body></worldbody></mujoco>";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(oversized),
+      std::strlen(oversized), "memory:physics.xml", &options, &stage) == LIGHTUSD_ERR_PARSE);
+  assert(!stage);
+  assert(Report(nullptr)["error"].get<std::string>().find("Too many MJCF solver values") != std::string::npos);
+  options.settings_json = "{\"unsupported_policy\":\"error\"}";
+  const char* unsupported = "<mujoco><worldbody><body name='base'/><flexcomp name='cloth'/></worldbody></mujoco>";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(unsupported),
+      std::strlen(unsupported), "memory:physics.xml", &options, &stage) == LIGHTUSD_ERR_PARSE);
+  assert(!stage);
+  report = Report(nullptr);
+  assert(report["status"].get<std::string>() == "failed");
+  assert(report["features"][size_t(0)]["disposition"].get<std::string>() == "rejected");
+  options.settings_json = "{\"unsupported_policy\":\"preserve\"}";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(unsupported),
+      std::strlen(unsupported), "memory:physics.xml", &options, &stage) == LIGHTUSD_OK);
+  assert(Report(stage)["features"][size_t(0)]["disposition"].get<std::string>() == "preserved");
+  lightusd_string* text = nullptr;
+  assert(lightusd_stage_export_usda(stage, &text) == LIGHTUSD_OK);
+  const auto view = lightusd_string_view(text);
+  assert(std::string(view.data, view.len).find("lightusdImportUnsupported") != std::string::npos);
+  lightusd_string_destroy(text);
+  lightusd_stage_destroy(stage);
   std::cout << "Native import C API tests passed\n";
 }

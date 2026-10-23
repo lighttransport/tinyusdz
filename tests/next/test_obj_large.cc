@@ -56,6 +56,58 @@ void Reject(const std::string& text, const tobj_load_config* config = nullptr) {
   Check(tobj_load_obj_from_memory_d(&d, reinterpret_cast<const uint8_t*>(text.data()), text.size(), config, nullptr) != TOBJ_OK, text.c_str());
   Check(!d.arena && !d.attrib.vertices.ptr && !d.shapes, "failed double output cleared");
 }
+void GeneratedNormals() {
+  ia::Options options;
+  for (const char* scale : {"e-40", "e-20", "e0", "e30"}) {
+    const std::string one = std::string("1") + scale;
+    const std::string two = std::string("2") + scale;
+    const std::string vertices = "v 0 0 0\nv " + two + " 0 0\nv 0 " + one +
+        " 0\nv 0 0 " + two + "\n";
+    for (bool smoothing : {false, true}) {
+      // The authored face contributes to the geometric smoothing of its
+      // neighbor, even across an object boundary. Its own normals stay intact.
+      const auto text = vertices + "vn 0 0 -3\n" + (smoothing ? "s 1\n" : "s off\n") +
+          "o authored\nf 1//1 2//1 3//1\no generated\nf 1 4 2";
+      std::string warn, err;
+      auto layer = n::LoadOBJLayerFromMemory("", reinterpret_cast<const uint8_t*>(text.data()), text.size(), options, &warn, &err);
+      Check(bool(layer), err.c_str());
+      const auto authored = layer->prim_at_path("/World/Links/Geometry/authored")->property_value("normals")->as_float_array();
+      Check(authored == std::vector<float>({0, 0, -3, 0, 0, -3, 0, 0, -3}), "authored normals retained without normalization");
+      const auto generated = layer->prim_at_path("/World/Links/Geometry/generated")->property_value("normals")->as_float_array();
+      // Account for source coordinates rounded to float subnormal values.
+      const double first = std::strtof(one.c_str(), nullptr);
+      const double second = std::strtof(two.c_str(), nullptr);
+      for (size_t i = 0; i < 3; ++i) {
+        const float y = smoothing && i != 1 ? float(second / std::hypot(first, second)) : 1;
+        const float z = smoothing && i != 1 ? float(first / std::hypot(first, second)) : 0;
+        Check(std::abs(generated[i * 3]) < 1e-6f &&
+              std::abs(generated[i * 3 + 1] - y) < 1e-6f &&
+              std::abs(generated[i * 3 + 2] - z) < 1e-6f, "scale-independent area-weighted normals");
+      }
+    }
+  }
+  // Smoothing groups do not need a geometric-normal map when every corner
+  // already has an authored normal. Use disconnected faces to expose growth.
+  std::string text = "vn 0 0 -3\ns 0\n";
+  for (size_t i = 0; i < 5000; ++i) {
+    const auto base = i * 3 + 1;
+    text += triangle + "f " + std::to_string(base) + "//1 " +
+        std::to_string(base + 1) + "//1 " + std::to_string(base + 2) + "//1\n";
+  }
+  ia::OBJ obj;
+  ia::Result flat, smooth;
+  std::string err;
+  Check(ia::BuildOBJScene(text, "", options, &obj, &flat, &err), err.c_str());
+  text[text.find("s 0") + 2] = '1';
+  Check(ia::BuildOBJScene(text, "", options, &obj, &smooth, &err), err.c_str());
+  Check(flat.memory_estimate == smooth.memory_estimate, "authored normals avoid smoothing-map growth");
+  const auto cancelled = triangle + "s 1\nf 1 2 3\nf 3 2 1";
+  std::string warn;
+  auto layer = n::LoadOBJLayerFromMemory("", reinterpret_cast<const uint8_t*>(cancelled.data()), cancelled.size(), options, &warn, &err);
+  Check(bool(layer), err.c_str());
+  const auto normals = layer->prim_at_path("/World/Links/Geometry/mesh")->property_value("normals")->as_float_array();
+  Check(normals == std::vector<float>(9, 0), "cancelled normals remain finite zero vectors");
+}
 void Hardening() {
   for (const char* record : {"f 0 2 3", "f 4 2 3", "f 1x 2 3", "f 1/ 2 3", "f 1/0 2 3", "f 1//4 2 3",
       "f 2147483648 2 3", "f -2147483648 2 3", "f -9999999999999999999999999 2 3",
@@ -136,6 +188,26 @@ void Hardening() {
   Check(!reader.ChargeArray(SIZE_MAX, 8, &err), "checked array multiplication");
   reader.Warn(std::string(2 * 1024 * 1024, 'w'));
   Check(reader.warnings.size() <= 1024 * 1024, "bounded warning memory");
+  for (bool input_limit : {false, true}) {
+    ia::Options limits;
+    limits.max_input = input_limit ? 4 : 16;
+    limits.max_memory = input_limit ? 16 : 4;
+    size_t reads = 0;
+    limits.read = [&](const std::string& name, const std::string&,
+                      std::vector<uint8_t>* data, std::string* resolved, std::string*) {
+      ++reads;
+      data->assign(8, 0);
+      *resolved = name;
+      return true;
+    };
+    ia::Reader limited(limits);
+    std::vector<uint8_t> bytes;
+    std::string resolved;
+    Check(!limited.Read("oversized", "", &bytes, &resolved, &err) &&
+          !limited.failure.empty(), "dependency limit is fatal");
+    Check(!limited.Read("untouched", "", &bytes, &resolved, &err) && reads == 1,
+          "dependency limit stops subsequent reads");
+  }
   std::string groups = triangle;
   for (size_t i = 0; i < 2048; ++i) groups += "o repeat\nf 1 2 3\n";
   options = ia::Options{};
@@ -167,7 +239,7 @@ size_t Number(const char* text) {
   Check(r.ec == std::errc{} && r.ptr == end, "integer argument");
   return n;
 }
-std::string Generate(size_t triangles, size_t comment_mib) {
+std::string Generate(size_t triangles, size_t comment_mib, bool smoothing) {
   const size_t mib = 1024 * 1024;
   Check(triangles && triangles <= size_t(INT32_MAX) / 3, "triangle count fits USD indices");
   Check(comment_mib <= (SIZE_MAX - triangles * 320) / mib, "generated input size");
@@ -178,6 +250,7 @@ std::string Generate(size_t triangles, size_t comment_mib) {
     obj[pos] = '#'; obj[pos + mib - 1] = '\n';
   }
   obj += "o generated\nvt 0 0\nvt 1 0\nvt 0 1\nvn 0 0 1\n";
+  if (smoothing) obj += "s 1\n";
   for (size_t i = 0; i < triangles; ++i) {
     const auto x = std::to_string(i);
     obj += "v " + x + " 0 0 1 0 0\nv " + x + " 1 0 0 1 0\nv " + x + " 0 1 0 0 1\n";
@@ -191,9 +264,9 @@ std::string Generate(size_t triangles, size_t comment_mib) {
   obj += "f -3/1/1 -2/2/1 -1/3/1 # last face, no newline";
   return obj;
 }
-void Large(size_t triangles, size_t comment_mib, bool parser_only) {
+void Large(size_t triangles, size_t comment_mib, bool parser_only, bool smoothing) {
   const auto start = std::chrono::steady_clock::now();
-  auto obj = Generate(triangles, comment_mib);
+  auto obj = Generate(triangles, comment_mib, smoothing);
   tobj_load_config cfg = tobj_default_config(); cfg.num_threads = 1;
   cfg.max_input_bytes = obj.size();
   tobj_scene_f scene{};
@@ -217,6 +290,8 @@ void Large(size_t triangles, size_t comment_mib, bool parser_only) {
     Check(mesh->property_value("faceVertexCounts")->array_size() == triangles, "large USD polygons");
     Check(mesh->property_value("primvars:st")->array_size() == triangles * 3, "large USD UVs");
     Check(mesh->property_value("primvars:displayColor")->array_size() == triangles * 3, "large USD colors");
+    const auto normals = mesh->property_value("normals")->as_float_array();
+    Check(normals.size() == triangles * 9 && normals[2] == 1 && normals.back() == 1, "large authored normals");
     auto weights = mesh->property_value("primvars:skel:jointWeights")->as_float_array();
     Check(weights.size() == triangles * 6 && weights.front() == .25f && weights.back() == .75f, "large USD skin weights");
     Check(warn.empty(), "large input has no warnings");
@@ -232,10 +307,11 @@ void Large(size_t triangles, size_t comment_mib, bool parser_only) {
 }  // namespace
 int main(int argc, char** argv) {
   size_t triangles = 10000, comment_mib = 1;
-  bool parser_only = false;
+  bool parser_only = false, smoothing = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--parser-only") parser_only = true;
+    else if (arg == "--smooth") smoothing = true;
     else {
       Check(i + 1 < argc, "option requires value");
       const size_t value = Number(argv[++i]);
@@ -245,6 +321,7 @@ int main(int argc, char** argv) {
     }
   }
   Hardening();
-  Large(triangles, comment_mib, parser_only);
+  GeneratedNormals();
+  Large(triangles, comment_mib, parser_only, smoothing);
   std::cout << "OBJ memory, limits, malformed-input and allocation regressions passed\n";
 }

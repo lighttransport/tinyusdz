@@ -7,6 +7,7 @@ and OBJ is accounted for; XML fragments are dependencies, not standalone robots.
 """
 import argparse
 import concurrent.futures
+import dataclasses
 import hashlib
 import json
 import os
@@ -114,6 +115,8 @@ def worker(args):
             stage = lightusd.import_obj(source, max_memory=args.memory)
             row['python'] = metrics(stage)
             row['warnings'] = stage.warnings()
+            if args.validate_physics:
+                row['physics_validation'] = dataclasses.asdict(lightusd.physics.validate(stage))
             stage.close()
         else:
             import mujoco
@@ -121,16 +124,20 @@ def worker(args):
             data = mujoco.MjData(model)
             mujoco.mj_forward(model, data)
             row['reference'] = {k: int(getattr(model, k)) for k in ('nbody', 'njnt', 'ngeom', 'nu', 'nsite', 'ntendon', 'neq')}
-            stage = lightusd.import_mjcf(source, max_memory=args.memory, asset_dirs=[args.menagerie])
+            stage = lightusd.import_mjcf(source, max_memory=args.memory, asset_dirs=[args.menagerie],
+                                        tessellate_collision_shapes=args.tessellate_collision_shapes)
             row['python'] = metrics(stage)
             row['reference_checks'] = reference_checks(stage, model, data)
             row['warnings'] = stage.warnings()
+            if args.validate_physics:
+                row['physics_validation'] = dataclasses.asdict(lightusd.physics.validate(stage))
             expected = row['python']
             for cli in ([] if args.reference_only else args.cli):
                 label = Path(cli).name
                 destination = out / (label + '.usda')
                 run = command([cli, str(source), '--format', 'all', '-o', str(destination),
-                               '--asset-dir', str(args.menagerie), '--max-memory', str(args.memory)], timeout=args.timeout)
+                               '--asset-dir', str(args.menagerie), '--max-memory', str(args.memory)] +
+                              (['--tessellate-collision-shapes'] if args.tessellate_collision_shapes else []), timeout=args.timeout)
                 (out / (label + '.log')).write_text(run.stdout)
                 if run.returncode:
                     raise RuntimeError(label + ': ' + run.stdout[-3000:])
@@ -175,6 +182,8 @@ def main():
     p.add_argument('--memory', type=int, default=4 * 1024**3)
     p.add_argument('--case')
     p.add_argument('--reference-only', action='store_true', help='Import and compare MuJoCo without output roundtrips')
+    p.add_argument('--validate-physics', action='store_true', help='Also report native semantic physics/core validation separately')
+    p.add_argument('--tessellate-collision-shapes', action='store_true', help='Use mesh representations of analytic collision shapes')
     p.add_argument('--limit', type=int)
     p.add_argument('--cases-from', type=Path, help='JSON list of source paths to rerun')
     p.add_argument('--only', choices=['xml', 'obj', 'all'], default='all')
@@ -202,6 +211,8 @@ def main():
     if a.limit: cases = cases[:a.limit]
     report = {'dataset_revision': command(['git', '-C', str(a.menagerie), 'rev-parse', 'HEAD']).stdout.strip(),
               'python_version': sys.version, 'reference_only': a.reference_only,
+              'validate_physics': a.validate_physics,
+              'tessellate_collision_shapes': a.tessellate_collision_shapes,
               'cli_sha256': {v: hashlib.sha256(Path(v).read_bytes()).hexdigest() for v in a.cli},
               'source_revision': command(['git', 'rev-parse', 'HEAD']).stdout.strip(),
               'inventory': {'xml': len(xml), 'entry_points': len(entries), 'obj': len(objs),
@@ -218,11 +229,13 @@ def main():
         for cli in a.cli: cmd += ['--cli', cli]
         if a.usdcat: cmd += ['--usdcat', a.usdcat]
         if a.reference_only: cmd += ['--reference-only']
+        if a.validate_physics: cmd += ['--validate-physics']
+        if a.tessellate_collision_shapes: cmd += ['--tessellate-collision-shapes']
         try:
             result = command(cmd, timeout=a.timeout, start_new_session=True)
             if (directory / 'result.json').exists():
                 row = json.loads((directory / 'result.json').read_text())
-                if row['status'] == 'PASS': shutil.rmtree(directory)
+                if row['status'] == 'PASS' and row.get('physics_validation', {}).get('valid', True): shutil.rmtree(directory)
                 return row
             return {'file': case, 'status': 'FAIL', 'error': result.stdout[-4000:] or 'Worker exited before reporting a result', 'returncode': result.returncode}
         except subprocess.TimeoutExpired:
@@ -234,16 +247,18 @@ def main():
             (a.out / 'report.json').write_text(json.dumps(report, indent=2))
     failed = [r for r in report['cases'] if r['status'] != 'PASS']
     parity = [r for r in report['cases'] if r.get('reference_checks', {}).get('status') == 'FAIL']
+    validation = [r for r in report['cases'] if not r.get('physics_validation', {}).get('valid', True)]
     report['summary'] = {'passed': len(cases) - len(failed), 'failed': len(failed),
-                         'physics_parity_failures': len(parity)}
+                         'physics_parity_failures': len(parity), 'physics_validation_failures': len(validation)}
     (a.out / 'report.json').write_text(json.dumps(report, indent=2))
     summary = [f"# Menagerie import results", '', f"Dataset: `{report['dataset_revision']}`", '',
                f"{len(cases) - len(failed)}/{len(cases)} cases passed; {len(fragments)} XML fragments accounted for.",
                f"Physics reference mismatches in {len(parity)} entries (see JSON for field-level diagnostics).", '',
+               f"Native physics validation failures in {len(validation)} entries (requested: {a.validate_physics}).", '',
                '| File | Conversion | Physics reference | Seconds |', '|---|---|---|---:|']
     summary += [f"| {r['file']} | {r['status']} | {r.get('reference_checks', {}).get('status', 'n/a')} | {r.get('seconds', '')} |" for r in report['cases']]
     (a.out / 'report.md').write_text('\n'.join(summary) + '\n')
-    return bool(failed or parity)
+    return bool(failed or parity or validation)
 
 
 if __name__ == '__main__':

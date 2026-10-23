@@ -168,6 +168,28 @@ maps become USD PreviewSurface networks. Missing MTL/textures warn; missing
 meshes/includes fail unless `allow_missing=True`. Bump-to-normal conversion,
 free-form OBJ surfaces and unsupported MTL shading features are not synthesized.
 Loose USD exports refer to source textures; USDZ exports retain and package them.
+Repeated maps and aliases resolving to the same texture share retained bytes
+within an import and one USDZ entry. A stage can still save those bytes after
+its resolver is unregistered. USDZ path rewriting leaves the source stage intact.
+
+`stage.import_report()` returns native conversion counts, coded diagnostics,
+dependency reads, timing and memory estimates without draining warnings.
+Failed-import exceptions expose `error.import_report`. Native imports also
+accept independent `max_input` (bytes), `max_depth` and
+`unsupported_policy="warn"|"error"|"preserve"` options. Preservation retains
+known unsupported source records as non-executable USD layer metadata.
+See [import reports and policies](../doc/import-report.md) for scope and limits.
+
+`physics.inspect(stage, array_views=True)` uses the shared native physics query
+and retains read-only numeric buffers for large state arrays. Snapshots include
+property types, variability, blocks and collision groups and survive stage
+closure. See [typed physics snapshots](../doc/physics-query.md).
+
+`physics.validate(stage, samples=True)` returns an immutable native validation
+report with rule IDs, locations, sample times and coverage. Findings do not
+raise exceptions; inspect `report.valid` and `report.complete`. Diagnostic
+limits report omissions and prevent a truncated result from passing. See
+[physics validation](../doc/physics-validation.md) for coverage and C/C++ APIs.
 OBJ layers also work in references, payloads and sublayers. Direct imports emit
 linear BasisCurves for `l` and Points for `p`. The zero-based `vw` extension
 becomes vertex SkelBindingAPI primvars, preserving every signed influence without

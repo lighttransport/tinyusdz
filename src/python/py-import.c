@@ -2,16 +2,43 @@
 #include "lightusd-import-c.h"
 #include "py-internal.h"
 
+/* Consumes the native string; all bindings use the same JSON contract. */
+PyObject* lightusd_import_report_object(lightusd_string* report) {
+  PyObject* text = lightusd_sv_to_str(lightusd_string_view(report));
+  lightusd_string_destroy(report);
+  if (!text) return NULL;
+  PyObject* json = PyImport_ImportModule("json");
+  PyObject* result = json ? PyObject_CallMethod(json, "loads", "O", text) : NULL;
+  Py_XDECREF(json);
+  Py_DECREF(text);
+  return result;
+}
+static void attach_import_report(void) {
+  PyObject *type = NULL, *value = NULL, *traceback = NULL;
+  PyErr_Fetch(&type, &value, &traceback);
+  PyErr_NormalizeException(&type, &value, &traceback);
+  lightusd_string* report = NULL;
+  if (value && lightusd_import_last_report(&report) == LIGHTUSD_OK) {
+    PyObject* object = lightusd_import_report_object(report);
+    if (object) {
+      if (PyObject_SetAttrString(value, "import_report", object) < 0) PyErr_Clear();
+      Py_DECREF(object);
+    }
+  }
+  PyErr_Clear();
+  PyErr_Restore(type, value, traceback);
+}
+
 PyObject* lightusd_import_scene(PyObject* module, PyObject* args,
                                 PyObject* kwargs) {
   static char* names[] = {"path",     "data",       "source",   "format",
-                          "settings", "max_memory", "resolver", NULL};
+                          "settings", "max_memory", "resolver", "max_input", "max_depth", NULL};
   const char *path = NULL, *source = "", *format = "auto", *settings = "{}";
   PyObject *data = Py_None, *resolver_obj = Py_None;
-  unsigned long long max_memory = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|zOsssKO:_import_scene",
+  PyObject *memory_obj = Py_None, *input_obj = Py_None, *depth_obj = Py_None;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|zOsssOOOO:_import_scene",
                                    names, &path, &data, &source, &format,
-                                   &settings, &max_memory, &resolver_obj))
+                                   &settings, &memory_obj, &resolver_obj, &input_obj, &depth_obj))
     return NULL;
   lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
@@ -31,9 +58,27 @@ PyObject* lightusd_import_scene(PyObject* module, PyObject* args,
     return NULL;
   }
   opts.settings_json = settings;
+  unsigned long long max_memory = 0;
+  if (memory_obj != Py_None) {
+    max_memory = PyLong_AsUnsignedLongLong(memory_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
   if (max_memory) {
     opts.max_memory_bytes = max_memory;
     opts.max_input_bytes = max_memory;
+  }
+  if (input_obj != Py_None) {
+    opts.max_input_bytes = PyLong_AsUnsignedLongLong(input_obj);
+    if (PyErr_Occurred()) return NULL;
+  }
+  if (depth_obj != Py_None) {
+    unsigned long long depth = PyLong_AsUnsignedLongLong(depth_obj);
+    if (PyErr_Occurred()) return NULL;
+    if (!depth || depth > 1024) {
+      PyErr_SetString(PyExc_ValueError, "max_depth must be in [1, 1024]");
+      return NULL;
+    }
+    opts.max_depth = (uint32_t)depth;
   }
   opts.resolver = lightusd_resolver_handle(st, resolver_obj);
   if (resolver_obj != Py_None && !opts.resolver) return NULL;
@@ -54,9 +99,13 @@ PyObject* lightusd_import_scene(PyObject* module, PyObject* args,
   Py_END_ALLOW_THREADS if (data != Py_None) PyBuffer_Release(&view);
   if (lightusd_resolver_restore_error(resolver_obj)) {
     if (stage) lightusd_stage_destroy(stage);
+    attach_import_report();
     return NULL;
   }
-  if (status != LIGHTUSD_OK)
-    return lightusd_raise(st, status, path ? path : "import");
+  if (status != LIGHTUSD_OK) {
+    lightusd_raise(st, status, path ? path : "import");
+    attach_import_report();
+    return NULL;
+  }
   return lightusd_wrap_stage(st, stage);
 }

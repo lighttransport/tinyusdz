@@ -642,6 +642,8 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
     const ValidationContext& context, const EvalOptions& eval_options) {
   USDValidationResult result;
   result.checked_groups.core = false;
+  result.checked_groups.max_issues = context.options.max_issues;
+  result.checked_groups.max_report_bytes = context.options.max_report_bytes;
   const Layer* layer = stage.GetRootLayer();
   if (!layer) { Incomplete(&result, "checker.coverage.stage", "<stage>", "Stage has no root layer"); return result; }
   std::set<double> times;
@@ -728,10 +730,16 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
     options.stage_presence_checks = false;
     options.run_callbacks = false;
     USDValidationResult sample = ValidateLayerAgainstAOUSDCore(snapshot, options);
+    USDValidationResult tagged;
+    tagged.checked_groups = sample.checked_groups;
+    tagged.complete = sample.complete;
+    tagged.omitted_issues = sample.omitted_issues;
     for (auto& issue : sample.issues) {
       issue.has_time = true; issue.time = time;
       issue.source_asset = context.source_asset; issue.variants = context.variants;
+      tagged.AddIssue(std::move(issue));
     }
+    sample = std::move(tagged);
     Stage sampled_stage;
     sampled_stage.SetRootLayer(std::move(snapshot));
     ValidationContext sampled_context = context;

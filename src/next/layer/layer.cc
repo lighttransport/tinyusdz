@@ -578,6 +578,7 @@ size_t Layer::memory_usage() const {
   };
   std::vector<const Layer*> pending_layers{this};
   std::unordered_set<const Layer*> visited_layers;
+  std::unordered_set<const std::vector<uint8_t>*> visited_import_assets;
   while (!pending_layers.empty()) {
     const Layer* layer = pending_layers.back();
     pending_layers.pop_back();
@@ -586,7 +587,8 @@ size_t Layer::memory_usage() const {
     if (layer->meta_.imported_assets) {
       for (const auto& asset : layer->meta_.imported_assets->by_identifier) {
         add(asset.first.capacity());
-        if (asset.second) add(asset.second->size());
+        if (asset.second && visited_import_assets.insert(asset.second.get()).second)
+          add(asset.second->size());
       }
     }
 

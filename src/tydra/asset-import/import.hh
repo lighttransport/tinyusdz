@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -14,27 +16,84 @@ namespace lightusd {
 namespace tydra {
 namespace import_asset {
 using Json = ::lightusd::minijson::Value;
+using AssetBytes = std::shared_ptr<const std::vector<uint8_t>>;
+using AssetMap = std::map<std::string, AssetBytes>;
+struct AssetSource {
+  std::string identifier;
+  std::function<bool(std::vector<uint8_t>*, std::string*)> read;
+};
+enum class UnsupportedPolicy { Warn, Error, Preserve };
+// Versioned, bounded import telemetry. Estimates describe importer accounting,
+// not process RSS. A caller may reuse a collector between synchronous imports;
+// each outermost ImportSession resets it. No resolver callbacks are retained.
+struct ImportReport {
+  Json diagnostics = Json::array(), dependencies = Json::array();
+  Json features = Json::array(), counts = Json::object();
+  std::string source, format, error, status = "pending";
+  size_t input_bytes = 0, peak_memory = 0, retained_texture_bytes = 0;
+  size_t dependency_reads = 0, dependency_bytes = 0, texture_cache_hits = 0;
+  size_t dropped_records = 0, truncated_fields = 0;
+  size_t max_memory = 0, max_input = 0, max_depth = 0;
+  double elapsed_seconds = 0;
+  void Diagnostic(const char* severity, const char* code,
+                  const std::string& message, const std::string& location = {},
+                  size_t line = 0, const std::string& prim_path = {});
+  void Dependency(const std::string& name, const std::string& anchor,
+                  const std::string& identifier, size_t bytes, bool read,
+                  bool cached, bool success, bool texture);
+  void Feature(const char* name, const char* disposition,
+               const std::string& location = {}, size_t line = 0);
+  void ObserveMemory(size_t bytes) { if (bytes > peak_memory) peak_memory = bytes; }
+  Json ToJSON() const;
+ private:
+  friend struct ImportSession;
+  size_t sessions_ = 0, storage_bytes_ = 0, storage_limit_ = 1024 * 1024;
+  bool Reserve(size_t bytes, size_t entries);
+  std::string Text(const std::string& text);
+};
 struct Options {
   std::string format = "auto";
   std::string up_axis = "Z";
   bool allow_missing = false;
   bool tessellate_collision_shapes = false;
+  UnsupportedPolicy unsupported_policy = UnsupportedPolicy::Warn;
   size_t max_memory = size_t(1024) * 1024 * 1024;
   size_t max_input = size_t(512) * 1024 * 1024;
   size_t max_depth = 64;
   std::vector<std::string> asset_dirs;
   std::map<std::string, std::string> packages;
+  std::shared_ptr<ImportReport> report;
   // Resolve and read an asset, returning its resolved identifier. False may
   // carry a diagnostic; no direct filesystem fallback follows a callback.
   std::function<bool(const std::string&, const std::string&,
                      std::vector<uint8_t>*, std::string*, std::string*)>
       read;
+  // Separate resolution from I/O so aliases can share retained texture bytes.
+  // The source reader keeps any resolver identity/security checks captured by
+  // resolution. When supplied, it is authoritative and takes precedence.
+  std::function<bool(const std::string&, const std::string&, AssetSource*,
+                     std::string*)> open;
+};
+// Nestable so file I/O, parsing and conversion contribute to one report.
+struct ImportSession {
+  ImportSession(Options* options, const std::string& source,
+                const std::string& format, const std::string* error);
+  ImportSession(const ImportSession&) = delete;
+  ImportSession& operator=(const ImportSession&) = delete;
+  ~ImportSession();
+  void Succeed() { success_ = true; }
+ private:
+  std::shared_ptr<ImportReport> report_;
+  const std::string* error_;
+  std::chrono::steady_clock::time_point started_;
+  bool success_ = false;
 };
 struct Result {
   Json payload;
   size_t memory_estimate = 0;  // OBJ conversion budget, including the input.
-  std::map<std::string, std::vector<uint8_t>> assets;
+  AssetMap assets;
   std::string warnings;
+  std::shared_ptr<ImportReport> report;
 };
 struct Reader {
   explicit Reader(const Options& o) : options(o) {}
@@ -42,12 +101,24 @@ struct Reader {
   size_t bytes = 0;
   std::string warnings, failure, root_source;
   bool allow_unanchored = true;
+  AssetMap textures;
+  std::map<std::pair<std::string, std::string>, std::string> texture_requests;
+  Json preserved = Json::array();
+  bool Open(const std::string& name, const std::string& anchor,
+            AssetSource* source, std::string* err);
   bool Read(const std::string& name, const std::string& anchor,
             std::vector<uint8_t>* data, std::string* resolved,
             std::string* err);
+  bool ReadTexture(const std::string& name, const std::string& anchor,
+                   AssetBytes* data, std::string* resolved, std::string* err);
   bool Charge(size_t amount, std::string* err);
   bool ChargeArray(size_t count, size_t stride, std::string* err);
-  void Warn(const std::string& message);
+  void Warn(const std::string& message, const char* code = "import.warning",
+            const std::string& source = {}, size_t line = 0);
+  bool Unsupported(const std::string& message, const char* code,
+                   const char* feature, const std::string& source,
+                   size_t line = 0, std::string data = {},
+                   const char* encoding = "xml", bool approximated = false);
 };
 struct Mesh {
   std::string name;

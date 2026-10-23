@@ -110,7 +110,7 @@ void AddIssue(USDValidationResult *result, USDValidationSeverity severity,
   if (!result) {
     return;
   }
-  result->issues.push_back({severity, rule_id, location, message});
+  result->AddIssue({severity, rule_id, location, message});
 }
 
 void AddError(USDValidationResult *result, const std::string &rule_id,
@@ -1612,6 +1612,23 @@ using namespace validation_detail;
 // Public API
 // ---------------------------------------------------------------------------
 
+void USDValidationResult::AddIssue(USDValidationIssue issue) {
+  size_t bytes = sizeof(USDValidationIssue) * 2;
+  for (const auto* text : {&issue.rule_id, &issue.location, &issue.message,
+                            &issue.source_asset, &issue.variants}) {
+    if (text->size() > (SIZE_MAX - bytes) / 2) { bytes = SIZE_MAX; break; }
+    bytes += text->size() * 2;
+  }
+  if (issues.size() >= checked_groups.max_issues ||
+      bytes > checked_groups.max_report_bytes - std::min(report_bytes, checked_groups.max_report_bytes)) {
+    if (omitted_issues != SIZE_MAX) ++omitted_issues;
+    complete = false;
+    return;
+  }
+  report_bytes += bytes;
+  issues.push_back(std::move(issue));
+}
+
 size_t USDValidationResult::error_count() const {
   size_t count = 0;
   for (const auto &issue : issues) {
@@ -1712,11 +1729,12 @@ std::vector<const USDValidationIssue *> GetOrderedValidationIssues(
 
 void MergeValidationResults(USDValidationResult *dst,
                             const USDValidationResult &src) {
-  if (!dst) {
+  if (!dst || dst == &src) {
     return;
   }
   dst->complete = dst->complete && src.complete;
-  dst->issues.insert(dst->issues.end(), src.issues.begin(), src.issues.end());
+  for (const auto& issue : src.issues) dst->AddIssue(issue);
+  dst->omitted_issues += std::min(src.omitted_issues, SIZE_MAX - dst->omitted_issues);
   dst->checked_groups.render = dst->checked_groups.render || src.checked_groups.render;
   dst->checked_groups.core =
       dst->checked_groups.core || src.checked_groups.core;
@@ -1955,8 +1973,9 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
     for (USDValidationIssue &issue : local.issues) {
       issue.location =
           MapVariantContentLocation(action.location, issue.location);
-      result.issues.push_back(std::move(issue));
+      result.AddIssue(std::move(issue));
     }
+    result.omitted_issues += std::min(local.omitted_issues, SIZE_MAX - result.omitted_issues);
 
     // Leave only after all content reachable from this layer, allowing the
     // active set to distinguish cycles from legitimate shared layer bodies.
