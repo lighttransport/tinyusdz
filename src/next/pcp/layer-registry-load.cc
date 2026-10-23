@@ -38,6 +38,7 @@ tydra::import_asset::Options OBJOptions(const LayerLoadOptions& options) {
     obj.max_input = options.max_memory;
   }
   obj.read = options.asset_read;
+  obj.open = options.asset_open;
   return obj;
 }
 bool IsOBJIdentifier(const std::string& key) {
@@ -150,9 +151,9 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
 #if defined(LIGHTUSD_WITH_USDOBJ)
   if (EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".obj")) {
     auto obj_options = OBJOptions(options);
-    obj_options.read = [&reader, &package_label](const std::string& name,
-        const std::string& anchor, std::vector<uint8_t>* bytes,
-        std::string* resolved, std::string* error) {
+    auto resolve_entry = [&reader, &package_label](
+        const std::string& name, const std::string& anchor, size_t* index,
+        std::string* id, std::string* error) {
       std::string package, entry;
       if (!AssetResolver::ParsePackagePath(name, &package, &entry)) {
         if (!AssetResolver::ParsePackagePath(anchor, &package, &entry)) return false;
@@ -165,13 +166,42 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
       }
       for (size_t i = 0; i < reader.NumEntries(); ++i) {
         if (NormalizeEntryName(reader.EntryName(i)) != entry) continue;
-        const auto* p = reader.EntryData(i);
-        bytes->assign(p, p + reader.EntrySize(i));
-        *resolved = package + "[" + entry + "]";
+        *index = i;
+        *id = package + "[" + entry + "]";
         return true;
       }
       if (error) *error = "Missing package OBJ dependency: " + entry;
       return false;
+    };
+    obj_options.read = [&reader, resolve_entry](const std::string& name,
+        const std::string& anchor, std::vector<uint8_t>* bytes,
+        std::string* resolved, std::string* error) {
+      size_t index = 0;
+      if (!resolve_entry(name, anchor, &index, resolved, error)) return false;
+      const size_t size = reader.EntrySize(index);
+      const auto* p = reader.EntryData(index);
+      if (size && p) bytes->assign(p, p + size);
+      else bytes->clear();
+      return true;
+    };
+    // Separate resolution from I/O so aliased texture paths that map to one
+    // package entry reuse the retained bytes instead of re-reading the zip.
+    obj_options.open = [&reader, resolve_entry](const std::string& name,
+        const std::string& anchor, tydra::import_asset::AssetSource* source,
+        std::string* error) {
+      if (!source) return false;
+      size_t index = 0;
+      std::string id;
+      if (!resolve_entry(name, anchor, &index, &id, error)) return false;
+      source->identifier = std::move(id);
+      source->read = [&reader, index](std::vector<uint8_t>* bytes, std::string*) {
+        const size_t size = reader.EntrySize(index);
+        const auto* p = reader.EntryData(index);
+        if (size && p) bytes->assign(p, p + size);
+        else bytes->clear();
+        return true;
+      };
+      return true;
     };
     return LoadOBJLayerFromMemory(label, data, size, obj_options, warn, err);
   }

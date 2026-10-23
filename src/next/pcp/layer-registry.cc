@@ -12,6 +12,7 @@
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
 #include "../../mtlx-dom.hh"
+#include "../../tydra/asset-import/import.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -57,13 +58,34 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                            !resolver.HasAssetReader();
   LayerLoadOptions effective = options;
   // Keep dependent resources on the same resolver/context as their OBJ layer.
-  if (!native_file) effective.asset_read = [&resolver](
-      const std::string& name, const std::string& anchor_name,
-      std::vector<uint8_t>* bytes, std::string* id, std::string* error) {
-    auto asset = resolver.Resolve(name, anchor_name, false);
-    *id = asset.resolved_path;
-    return asset.exists && resolver.ReadAsset(asset, bytes, error);
-  };
+  if (!native_file) {
+    effective.asset_read = [&resolver](
+        const std::string& name, const std::string& anchor_name,
+        std::vector<uint8_t>* bytes, std::string* id, std::string* error) {
+      auto asset = resolver.Resolve(name, anchor_name, false);
+      *id = asset.resolved_path;
+      return asset.exists && resolver.ReadAsset(asset, bytes, error);
+    };
+    // Resolve once, read lazily: the importer can then recognize two authored
+    // names that map to one identifier (e.g. map_Kd/map_Ks aliases) and reuse
+    // the retained bytes instead of invoking the resolver reader again.
+    effective.asset_open = [&resolver](
+        const std::string& name, const std::string& anchor_name,
+        tydra::import_asset::AssetSource* source, std::string* error) {
+      if (!source) return false;
+      auto asset = resolver.Resolve(name, anchor_name, false);
+      if (!asset.exists || asset.resolved_path.empty()) {
+        if (error) *error = "Failed to resolve asset path: " + name;
+        return false;
+      }
+      source->identifier = asset.resolved_path;
+      source->read = [&resolver, asset](std::vector<uint8_t>* bytes,
+                                        std::string* why) {
+        return resolver.ReadAsset(asset, bytes, why);
+      };
+      return true;
+    };
+  }
   auto load_resolved = [&](std::string* load_warn,
                            std::string* load_err) -> std::shared_ptr<Layer> {
     if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||

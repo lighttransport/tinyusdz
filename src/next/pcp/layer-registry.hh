@@ -29,6 +29,11 @@
 #endif
 
 namespace lightusd {
+namespace tydra {
+namespace import_asset {
+struct AssetSource;
+}  // namespace import_asset
+}  // namespace tydra
 namespace next {
 namespace pcp {
 
@@ -70,6 +75,12 @@ struct LayerLoadOptions {
   std::function<bool(const std::string&, const std::string&,
                      std::vector<uint8_t>*, std::string*, std::string*)>
       asset_read;
+  /// Split resolution from I/O for foreign layers so several authored paths
+  /// that resolve to one identifier (texture aliases) share the retained
+  /// bytes instead of re-reading. Takes precedence over `asset_read`.
+  std::function<bool(const std::string&, const std::string&,
+                     tydra::import_asset::AssetSource*, std::string*)>
+      asset_open;
 };
 
 class LayerRegistry {
