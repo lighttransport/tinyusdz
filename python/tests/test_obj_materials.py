@@ -119,3 +119,50 @@ def test_duplicate_material_names_keep_their_source_metadata(tmp_path, newline, 
     assert stage.prim_at("/World/Materials/shared/Map_0")["inputs:file"] == str(tmp_path / "first/color.png")
     assert stage.prim_at("/World/Materials/shared_1/Map_0")["inputs:file"] == str(tmp_path / "second/color.png")
     assert stage.prims_of_type("GeomSubset")[0].relationship("material:binding").targets == ("/World/Materials/shared",)
+
+
+def _surface(stage):
+    return [p for p in stage.prims_of_type("Shader") if p.get("info:id") == "UsdPreviewSurface"][0]
+
+
+def _mtl_stage(tmp_path, mtl, **options):
+    (tmp_path / "m.mtl").write_text(mtl)
+    (tmp_path / "t.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (tmp_path / "m.obj").write_text("mtllib m.mtl\nusemtl m\nv 0 0 0\nv 1 0 0\nv 0 1 0\n"
+                                    "vt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n")
+    return lightusd.import_obj(tmp_path / "m.obj", **options)
+
+
+def test_absent_ni_does_not_author_ior(tmp_path):
+    surface = _surface(_mtl_stage(tmp_path, "newmtl m\nKd 1 1 1\nPm 1\n"))
+    assert "inputs:ior" not in surface
+    surface = _surface(_mtl_stage(tmp_path, "newmtl m\nKd 1 1 1\nNi 1.45\n"))
+    assert surface["inputs:ior"] == pytest.approx(1.45)
+
+
+@pytest.mark.parametrize("lines", ["d 0.25\nTr 0.9\n", "Tr 0.9\nd 0.25\n"])
+def test_dissolve_wins_over_tr(tmp_path, lines):
+    surface = _surface(_mtl_stage(tmp_path, "newmtl m\n" + lines))
+    assert surface["inputs:opacity"] == pytest.approx(0.25)
+
+
+def test_clearcoat_channel_and_bump_multiplier(tmp_path):
+    stage = _mtl_stage(tmp_path, "newmtl m\nPc 0.5\nPcr 0.2\nmap_Pr -imfchan g t.png\n"
+                                 "norm -bm 0.5 t.png\n")
+    surface = _surface(stage)
+    assert surface["inputs:clearcoat"] == pytest.approx(0.5)
+    assert surface["inputs:clearcoatRoughness"] == pytest.approx(0.2)
+    text = stage.export_usda()
+    assert ".outputs:g>" in text  # roughness reads the green channel
+    normal = [p for p in stage.prims_of_type("Shader") if p.get("info:id") == "UsdUVTexture"
+              and p.get("inputs:bias") is not None
+              and tuple(p.get("inputs:bias"))[:1] == pytest.approx((-0.5,))]
+    assert len(normal) == 1 and tuple(normal[0]["inputs:scale"])[:2] == pytest.approx((1, 1))
+
+
+def test_obj_units_and_kind_by_profile(tmp_path):
+    stage = _mtl_stage(tmp_path, "newmtl m\n")
+    assert stage.meters_per_unit == 1
+    assert stage.prim_at("/World").kind == "component"
+    legacy = _mtl_stage(tmp_path, "newmtl m\n", profile="legacy")
+    assert legacy.prim_at("/World").kind in (None, "")

@@ -51,7 +51,9 @@ struct Budget {
 struct Materials {
   struct Info {
     size_t source;
-    bool roughness = false, metallic = false;
+    bool roughness = false, metallic = false, ior = false;
+    // Dissolve: `d` is authoritative over `Tr` (tinyobjloader C++ order).
+    bool dissolve = false, transparency = false;
   };
   Reader* reader;
   std::string source;
@@ -96,10 +98,13 @@ struct Materials {
             return TOBJ_ERR_LIMIT_EXCEEDED;
           }
           current = m.entries.size();
-          m.entries.push_back({anchor, false, false});
+          m.entries.push_back(Info{anchor});
         } else if (current != SIZE_MAX) {
           if (command == "Pr") m.entries[current].roughness = true;
           if (command == "Pm") m.entries[current].metallic = true;
+          if (command == "Ni") m.entries[current].ior = true;
+          if (command == "d") m.entries[current].dissolve = true;
+          if (command == "Tr") m.entries[current].transparency = true;
         }
       }
       pos = end;
@@ -274,13 +279,18 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
                                    m.dissolve})},
              {"specularColor", RGB(m.specular)},
              {"emissiveColor", RGB(m.emission)},
-             {"ior", m.ior},
              {"roughness", info.roughness
                                ? m.roughness
                                : float(std::sqrt(2.0 / (m.shininess + 2.0)))},
              {"metallic", m.metallic},
              {"useSpecularWorkflow",
               info.metallic ? 0 : 1}};
+    // An absent Ni must not author ior = 1, which zeroes dielectric F0.
+    if (info.ior) mat["ior"] = m.ior;
+    if (m.clearcoat_thickness > 0) {
+      mat["clearcoat"] = m.clearcoat_thickness;
+      mat["clearcoatRoughness"] = m.clearcoat_roughness;
+    }
     Json maps = Json::array();
     auto texture = [&](const char* file, const char* input,
                        const tobj_texture_option_f& opt, bool color) {
@@ -299,6 +309,12 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
           {"scale", Json::array({opt.scale[0], opt.scale[1]})},
           {"offset", Json::array({opt.origin_offset[0], opt.origin_offset[1]})},
           {"clamp", opt.clamp}});
+      Json& map = maps[maps.size() - 1];
+      // -imfchan selects the scalar channel; -bm scales normal maps.
+      if (opt.imfchan) map["channel"] = std::string(1, opt.imfchan);
+      if (std::string(input) == "normal" && opt.bump_multiplier != 1)
+        map["bumpMultiplier"] = opt.bump_multiplier;
+      if (opt.colorspace && *opt.colorspace) map["colorSpace"] = opt.colorspace;
     };
     texture(m.diffuse_texname, "diffuseColor", m.diffuse_texopt, true);
     texture(m.specular_texname, "specularColor", m.specular_texopt, true);
@@ -592,7 +608,8 @@ bool BuildOBJScene(std::string_view text, const std::string& source,
   if (!reader.Charge(text.size(), err) ||
       !ReadOBJ(text, source, reader, false, obj, err)) return false;
   result->payload = Json{{"sourceFormat", "obj"}, {"noPhysics", true},
-      {"upAxis", options.up_axis}, {"materials", std::move(obj->materials)}};
+      {"upAxis", options.up_axis}, {"profile", options.profile},
+      {"materials", std::move(obj->materials)}};
   if (!GatherTextures(reader, result, err)) return false;
   if (!reader.preserved.empty()) result->payload["unsupported"] = std::move(reader.preserved);
   result->warnings = reader.warnings;

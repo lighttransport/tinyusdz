@@ -94,6 +94,7 @@
 
 TEST_LIST = {
   { "physics_obj_c11_import_test", physics_obj_c11_import_test },
+  { "physics_obj_export_facevarying_test", physics_obj_export_facevarying_test },
   { "physics_obj_composition_test", physics_obj_composition_test },
   { "minijson_parse_basic_test", minijson_parse_basic_test },
   { "minijson_shortest_double_roundtrip_test", minijson_shortest_double_roundtrip_test },

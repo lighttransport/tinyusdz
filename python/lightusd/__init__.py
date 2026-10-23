@@ -187,7 +187,8 @@ def is_usd(path: _PathLike) -> bool:
 def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
             resolver=None, up_axis="Z", asset_dirs=(), packages=None,
             allow_missing=False, tessellate_collision_shapes=False,
-            max_input=None, max_depth=None, unsupported_policy="warn"):
+            max_input=None, max_depth=None, unsupported_policy="warn",
+            profile="newton"):
     import json
     if max_memory < 0:
         raise ValueError("max_memory must be non-negative")
@@ -199,8 +200,10 @@ def _import(*, path=None, data=None, source="", format="auto", max_memory=0,
         raise ValueError("unsupported_policy must be warn, error or preserve")
     if up_axis not in ("Y", "Z"):
         raise ValueError("up_axis must be Y or Z")
+    if profile not in ("newton", "openusd", "legacy"):
+        raise ValueError("profile must be newton, openusd or legacy")
     settings = json.dumps({
-        "up_axis": up_axis, "asset_dirs": [_os.fspath(p) for p in asset_dirs],
+        "up_axis": up_axis, "profile": profile, "asset_dirs": [_os.fspath(p) for p in asset_dirs],
         "packages": {k: _os.fspath(v) for k, v in (packages or {}).items()},
         "allow_missing": allow_missing,
         "tessellate_collision_shapes": tessellate_collision_shapes,

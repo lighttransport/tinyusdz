@@ -43,6 +43,13 @@ lightusd_status Options(const lightusd_import_options* in, ia::Options* out) {
       const auto& v = member.value();
       if (key == "up_axis" && v.is_string())
         out->up_axis = v.get<std::string>();
+      else if (key == "profile" && v.is_string()) {
+        out->profile = v.get<std::string>();
+        if (out->profile != "newton" && out->profile != "openusd" &&
+            out->profile != "legacy")
+          return Fail(LIGHTUSD_ERR_INVALID_ARG,
+                      "profile must be newton, openusd or legacy");
+      }
       else if (key == "allow_missing" && v.is_boolean())
         out->allow_missing = v.get<bool>();
       else if (key == "tessellate_collision_shapes" && v.is_boolean())

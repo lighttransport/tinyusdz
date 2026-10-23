@@ -170,9 +170,10 @@ for _name in ("integrator", "cone", "jacobian", "solver"):
     _types("token", "mjc:option:" + _name)
 
 
-# Standard UsdPhysics names, types and variability come from the same generated
-# native C11 definitions used by validation. Engine extensions remain explicitly
-# typed above until their versioned native descriptors are available.
+# UsdPhysics, MuJoCo (mjc:*) and Newton (newton:*) names, types and variability
+# come from the same generated native C11 definitions used by validation (the
+# engine rows are versioned in doc/generated/engine-physics-schemas.json). The
+# table above only types legacy extension properties outside those schemas.
 from . import _core as _native_core
 _SCHEMA_DEFINITIONS = _native_core._physics_schema_definitions()
 _STANDARD_PROPERTIES = {}
@@ -188,11 +189,12 @@ for _name, _property in _STANDARD_PROPERTIES.items():
 
 
 def schema_definitions():
-    """Return immutable generated standard UsdPhysics descriptors.
+    """Return immutable generated UsdPhysics, MuJoCo and Newton descriptors.
 
     Definitions list local properties, parent schema, multiple-apply namespace,
     native source, types, variability, relationships and allowed token values.
-    Engine extension descriptor generation is separate roadmap work.
+    Engine schemas are generated from pinned MuJoCo and newton-usd-schemas
+    releases; ``source`` identifies the originating schema file.
     """
     return _freeze(_native_core._physics_schema_definitions())
 
@@ -233,18 +235,7 @@ def _prepare(attributes, relationships):
     return result, targets
 
 
-_SCHEMAS = frozenset((
-    'MjcCollisionAPI', 'MjcEqualityAPI', 'MjcEqualityConnectAPI',
-    'MjcEqualityJointAPI', 'MjcEqualityWeldAPI', 'MjcImageableAPI',
-    'MjcJointAPI', 'MjcMaterialAPI', 'MjcMeshCollisionAPI',
-    'MjcSceneAPI', 'MjcSiteAPI', 'NewtonActuatorClampingBaseAPI',
-    'NewtonActuatorControlBaseAPI', 'NewtonActuatorDelayAPI', 'NewtonArticulationRootAPI',
-    'NewtonCollisionAPI', 'NewtonDCMotorClampingAPI', 'NewtonKaminoSceneAPI',
-    'NewtonMaterialAPI', 'NewtonMaxEffortClampingAPI', 'NewtonMeshCollisionAPI',
-    'NewtonMimicAPI', 'NewtonNeuralControlAPI', 'NewtonPDControlAPI',
-    'NewtonPIDControlAPI', 'NewtonPositionBasedClampingAPI', 'NewtonSceneAPI',
-    'NewtonXpbdSceneAPI',
-)) | frozenset(name for name in _SCHEMA_DEFINITIONS if name.endswith("API"))
+_SCHEMAS = frozenset(name for name in _SCHEMA_DEFINITIONS if name.endswith("API"))
 
 
 def _check_schema(name):

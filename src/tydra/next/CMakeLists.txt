@@ -51,6 +51,7 @@ set(TYDRA_NEXT_SOURCES
     materialx.cc
     urdf-to-usd.cc
     urdf-to-usd-support.cc
+    urdf-to-usd-profile.cc
     urdf-to-usd-geometry.cc
     urdf-to-usd-physics.cc
     urdf-to-usd-extensions.cc

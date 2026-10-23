@@ -836,10 +836,12 @@ static bool TOBJ_T(parse_mtl_buffer)(TOBJ_T(tobj_builder) * b,
       TOBJ_T(read_reals)(b, &c, &m->ior, 1);
     } else if (tobj_slice_eq(tok, tl, "d")) {
       TOBJ_T(read_reals)(b, &c, &m->dissolve, 1);
+      m->dissolve_set = true;
     } else if (tobj_slice_eq(tok, tl, "Tr")) {
       TOBJ_REAL tr = 0;
       TOBJ_T(read_reals)(b, &c, &tr, 1);
-      m->dissolve = (TOBJ_REAL)1 - tr;
+      /* Like the C++ loader, `d` wins over `Tr` in either order. */
+      if (!m->dissolve_set) m->dissolve = (TOBJ_REAL)1 - tr;
     } else if (tobj_slice_eq(tok, tl, "illum")) {
       int v = 0;
       TOBJ_T(read_int)(b, &c, &v);

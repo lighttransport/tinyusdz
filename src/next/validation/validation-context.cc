@@ -423,6 +423,13 @@ void ValidateRegisteredProperties(const Layer& layer, const ValidationOptions& o
         if (!actual.empty() && actual != expected)
           AddWarning(result, "core.schema.attributeType", prim.path().str() + "." + name,
                      "Schema requires '" + expected + "', authored '" + actual + "'");
+        // Generated descriptors carry variability; supplemental definitions
+        // do not, so only check when the descriptor states it.
+        const std::string variability = d ? std::string(d->variability) : std::string();
+        if ((variability == "uniform") != slot.is_uniform() && !variability.empty())
+          AddWarning(result, "core.schema.variability", prim.path().str() + "." + name,
+                     "Schema declares '" + variability + "', authored '" +
+                         (slot.is_uniform() ? "uniform" : "varying") + "'");
       }
     }
   }

@@ -185,8 +185,26 @@ static tobj_tess_status tobj_tess_run2d(tobj_tess_work *w, uint32_t n,
   uint32_t cur = 0;
   uint32_t guard = 0;
   int relax = 0; /* 0,1,2 escalation level */
+  /* Ear clipping is O(n^2) per relax level in the worst case (and adversarial
+   * zig-zag inputs approach it). Bound the containment-test work linearly in
+   * n; past the budget the remaining ring is fanned (best effort) so a single
+   * long face line cannot stall an import. */
+  uint64_t work = 0;
+  const uint64_t work_budget = (uint64_t)n * 512u + 65536u;
 
   while (remaining > 3) {
+    if (work > work_budget) {
+      uint32_t a = cur;
+      uint32_t b = w->nxt[a];
+      while (remaining >= 3) {
+        uint32_t c = w->nxt[b];
+        tobj_tess_emit(out, &k, a, b, c);
+        b = c;
+        remaining--;
+      }
+      return TOBJ_TESS_DEGENERATE_BESTEFFORT;
+    }
+    ++work;
     uint32_t prev = w->prv[cur];
     uint32_t next = w->nxt[cur];
     const double *pp = tobj_tess_pt(w, prev);
@@ -207,6 +225,7 @@ static tobj_tess_status tobj_tess_run2d(tobj_tess_work *w, uint32_t n,
       int blocked = 0;
       uint32_t r = w->nxt[next];
       while (r != prev) {
+        ++work;
         if (tobj_tess_is_reflex(w, r) &&
             tobj_point_in_tri(tobj_tess_pt(w, r), pp, pc, pn, wind,
                               eps_scaled)) {

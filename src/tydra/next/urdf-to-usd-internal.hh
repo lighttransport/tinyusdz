@@ -20,6 +20,54 @@ namespace tn = ::lightusd::next;
 using NameMap = std::map<std::string, std::string>;
 using Matrix4 = std::array<double, 16>;  // row-major, translation in row 3
 
+// Output profile. `legacy` reproduces the historical converter output byte for
+// byte (the JSON bridge default). `newton` matches Newton 1.8 /
+// newton-usd-schemas 0.6 / mujoco-usd-converter 0.8 consumers and is the native
+// importer default. `openusd` authors only standard UsdPhysics/UsdGeom/UsdShade
+// data: engine extensions (mjc:*, newton:*, physx*) are omitted and reported.
+struct Profile {
+  const char *name = "legacy";
+  bool legacy = true;   // historical names, variability and aliases
+  bool newton = false;  // Newton 1.8 parity APIs (NewtonJointAPI, ...)
+  bool engine = true;   // author MuJoCo/Newton/PhysX extension data at all
+};
+bool ParseProfile(const std::string &name, Profile *out);
+const Profile &ActiveProfile();
+class ProfileScope {
+ public:
+  explicit ProfileScope(const Profile &profile);
+  ~ProfileScope();
+  ProfileScope(const ProfileScope &) = delete;
+  ProfileScope &operator=(const ProfileScope &) = delete;
+ private:
+  const Profile *previous_;
+};
+// Generated UsdPhysics/MuJoCo/Newton descriptors (doc/generated/*.json).
+struct SchemaProperty {
+  std::string type;
+  bool uniform = false;
+  bool relationship = false;
+};
+const SchemaProperty *FindSchemaProperty(const std::string &name);
+bool IsEngineName(const std::string &name);
+// Deduplicated MuJoCo friction triplets as bound UsdShade physics materials
+// (non-legacy profiles). Active for the duration of one conversion.
+class PhysicsMaterials {
+ public:
+  explicit PhysicsMaterials(tn::Layer *layer);
+  ~PhysicsMaterials();
+  PhysicsMaterials(const PhysicsMaterials &) = delete;
+  PhysicsMaterials &operator=(const PhysicsMaterials &) = delete;
+  std::string Bind(tn::PrimSpec *collider, std::vector<double> friction);
+ private:
+  tn::Layer *layer_;
+  PhysicsMaterials *previous_;
+  std::map<std::string, std::string> by_key_;
+  bool defined_ = false;
+};
+PhysicsMaterials *ActivePhysicsMaterials();
+bool IsEngineSchema(const std::string &schema);
+
 // Omit empty scopes and define each populated scope at its first child.
 class Scope {
  public:
@@ -100,6 +148,7 @@ bool AddNativeCollisionShapeFromJson(tn::Layer *layer,
 void JacobiEigenSymmetric3(const double in[3][3], double eval[3],
                            double evec[3][3]);
 tn::Value RotationMatrixToQuatf(double r[3][3]);
+void AuthorInertia(tn::PrimSpec *prim, const Json &inertial);
 std::string AxisToken(const Json &joint);
 std::string JointDofName(const std::string &axis, bool rotational);
 void SetPoint3(tn::PrimSpec *prim, const std::string &name,
@@ -115,10 +164,23 @@ void AddNewtonActuatorFromJson(Scope *scope, std::set<std::string> *siblings,
                                size_t index, std::string *warn);
 void AddMjcSiteFromJson(Scope *scope, const Json &site,
                         const std::string &name);
+void AuthorMjcSite(tn::PrimSpec *prim, const Json &site, const Matrix4 *local);
+Matrix4 InverseRigid(const Matrix4 &m);
+Matrix4 MultiplyRowMajor(const Matrix4 &a, const Matrix4 &b);
 void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
                           const Json &t, const NameMap &joint_names,
                           const NameMap &site_names, NameMap *tendon_names,
                           size_t index, std::string *warn);
+// Non-legacy MJCF equalities: connect -> PhysicsSphericalJoint, weld ->
+// PhysicsFixedJoint (both excluded from articulation), joint -> NewtonMimicAPI
+// + MjcEqualityJointAPI on the follower joint.
+void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
+                           std::set<std::string> *siblings, const Json &e,
+                           size_t index, const NameMap &link_names,
+                           const std::map<std::string, Matrix4> &link_worlds,
+                           const std::set<std::string> &static_links,
+                           const NameMap &joint_names, const Json &sites,
+                           std::string *warn);
 void AddMjcEqualityFromJson(Scope *scope, std::set<std::string> *siblings,
                             const Json &e, const NameMap &link_names,
                             const NameMap &joint_names, size_t index);

@@ -108,12 +108,21 @@ void AddMjcSiteFromJson(Scope *scope, const Json &site,
                         const std::string &name) {
   tn::PrimSpec *prim = scope->Add(name, "Sphere");
   if (!prim) return;
+  AuthorMjcSite(prim, site, nullptr);
+}
+
+void AuthorMjcSite(tn::PrimSpec *prim, const Json &site,
+                   const Matrix4 *local) {
   double radius = 0.005;
   ReadNumber(site, "size", &radius);
   if (radius <= 0.0) radius = 0.005;
   Set(prim, "radius", tn::Value(radius), "double");
-  SetTransformFromJson(prim, site);
+  if (local) SetTransform(prim, *local);
+  else SetTransformFromJson(prim, site);
   AddAPI(prim, "MjcSiteAPI");
+  // MuJoCo 3.16's MjcSiteAPI has NewtonSiteAPI built in; Newton only loads
+  // sites that are Gprim descendants of a rigid body.
+  if (ActiveProfile().newton) AddAPI(prim, "NewtonSiteAPI");
   int32_t group = 0;
   if (ReadIntFrom(site, "", "group", &group)) {
     Set(prim, "mjc:group", tn::Value(group), "int", true);
@@ -137,7 +146,6 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
   }
   if (source.empty()) source = "tendon_" + std::to_string(index);
   const std::string name = Sanitize(source, "tendon");
-  (*tendon_names)[source] = name;
   const std::string type = JsonString(t, "type", "fixed");
 
   auto resolve_in = [](const NameMap &names, const char *scope_path,
@@ -153,7 +161,7 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
       *out = ref;
       return true;
     }
-    if (type == "spatial") return resolve_in(site_names, "/World/Sites/", ref, out);
+    if (type == "spatial") return resolve_in(site_names, "/World/", ref, out);
     return resolve_in(joint_names, "/World/Joints/", ref, out);
   };
   auto resolve_site_ref = [&](const std::string &ref, std::string *out) {
@@ -162,7 +170,7 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
       *out = ref;
       return true;
     }
-    return resolve_in(site_names, "/World/Sites/", ref, out);
+    return resolve_in(site_names, "/World/", ref, out);
   };
   auto append_route_ref = [&](const std::string &ref,
                               std::vector<std::string> *out) {
@@ -250,8 +258,12 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
                          "partial route.\n");
   }
 
-  tn::PrimSpec *prim = scope->Add(ChildName(name, siblings), "MjcTendon");
+  // Record the authored (uniquified) name only once the tendon exists, so
+  // actuators never target a skipped tendon or a sibling's renamed prim.
+  const std::string usd_name = ChildName(name, siblings);
+  tn::PrimSpec *prim = scope->Add(usd_name, "MjcTendon");
   if (!prim) return;
+  tendon_names->emplace(source, usd_name);
   SetToken(prim, "mjc:type", type, true);
   // USD relationship targets are unique, while a closed tendon route may
   // visit the same site repeatedly. Index the ordered route into that rel.
@@ -336,7 +348,11 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
   if (ReadRange(t, "range", &lo, &hi)) {
     Set(prim, "mjc:range:min", tn::Value(lo), "double", true);
     Set(prim, "mjc:range:max", tn::Value(hi), "double", true);
-    SetToken(prim, "mjc:limited", "true", true);
+    // MJCF `limited` is a true/false/auto token; legacy payloads omit it and
+    // imply a limit whenever a range exists.
+    SetToken(prim, "mjc:limited", JsonString(t, "limited", "true"), true);
+  } else if (t.contains("limited")) {
+    SetToken(prim, "mjc:limited", JsonString(t, "limited"), true);
   }
   if (ReadRange(t, "actuatorfrcrange", &lo, &hi)) {
     Set(prim, "mjc:actuatorfrcrange:min", tn::Value(lo), "double", true);
@@ -367,6 +383,182 @@ void AddMjcTendonFromJson(Scope *scope, std::set<std::string> *siblings,
       SetDoubles(prim, std::string("mjc:") + key, std::move(values), true);
     }
   }
+}
+
+namespace {
+// Row-major USD (row-vector) matrix from position + quaternion (w, x, y, z).
+Matrix4 PoseMatrix(const double p[3], double w, double x, double y, double z) {
+  const double n = std::sqrt(w * w + x * x + y * y + z * z);
+  if (n > 1e-12) { w /= n; x /= n; y /= n; z /= n; } else { w = 1; x = y = z = 0; }
+  // Column-vector rotation R; the row-vector matrix stores R^T.
+  const double r[3][3] = {
+      {1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+      {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+      {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+  Matrix4 m = IdentityMatrix();
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) m[i * 4 + j] = r[j][i];
+  for (int j = 0; j < 3; ++j) m[12 + j] = p[j];
+  return m;
+}
+
+void SetLocalFrame(tn::PrimSpec *prim, int index, const Matrix4 &local) {
+  const std::string suffix = std::to_string(index);
+  SetPoint3(prim, "physics:localPos" + suffix,
+            {static_cast<float>(local[12]), static_cast<float>(local[13]),
+             static_cast<float>(local[14])},
+            false);
+  double r[3][3];
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) r[i][j] = local[j * 4 + i];
+  Set(prim, "physics:localRot" + suffix, RotationMatrixToQuatf(r), "quatf");
+}
+}  // namespace
+
+void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
+                           std::set<std::string> *siblings, const Json &e,
+                           size_t index, const NameMap &link_names,
+                           const std::map<std::string, Matrix4> &link_worlds,
+                           const std::set<std::string> &static_links,
+                           const NameMap &joint_names, const Json &sites,
+                           std::string *warn) {
+  const std::string type = JsonString(e, "type", "connect");
+  const std::string name = Sanitize(
+      JsonString(e, "name", "equality_" + std::to_string(index)), "equality");
+  bool active = true;
+  ReadBool(e, "active", &active);
+  const std::vector<double> solref = JsonDoubles(e, "solref");
+  const std::vector<double> solimp = JsonDoubles(e, "solimp");
+  auto solver = [&](tn::PrimSpec *prim) {
+    if (!solref.empty()) SetDoubles(prim, "mjc:solref", solref);
+    if (!solimp.empty()) SetDoubles(prim, "mjc:solimp", solimp);
+  };
+  constexpr double kPi = 3.14159265358979323846;
+
+  if (type == "joint") {
+    // joint1 = polycoef(joint2): joint1 follows joint2.
+    auto follower = joint_names.find(JsonString(e, "joint1"));
+    if (follower == joint_names.end()) {
+      AppendWarn(warn, "Skipping joint equality `" + name + "`: joint1 was not exported.\n");
+      return;
+    }
+    tn::PrimSpec *prim = layer->prim_at_path_mutable("/World/Joints/" + follower->second);
+    if (!prim) return;
+    std::vector<double> coef = JsonDoubles(e, "polycoef");
+    coef.resize(std::max<size_t>(coef.size(), 5), 0.0);
+    if (!e.contains("polycoef")) coef[1] = 1.0;  // MuJoCo default 0 1 0 0 0
+    const bool angular = prim->type_name() == "PhysicsRevoluteJoint";
+    AddAPI(prim, "MjcEqualityJointAPI");
+    solver(prim);
+    for (int i = 2; i < 5; ++i)
+      if (coef[size_t(i)] != 0.0)
+        Set(prim, "mjc:coef" + std::to_string(i), tn::Value(coef[size_t(i)]), "double");
+    auto leader = joint_names.find(JsonString(e, "joint2"));
+    if (leader == joint_names.end()) {
+      // A single-joint equality pins joint1 to coef0; keep the MJC form.
+      Set(prim, "mjc:coef0", tn::Value(coef[0]), "double");
+      return;
+    }
+    SetRel(prim, "mjc:target", {"/World/Joints/" + leader->second});
+    AddAPI(prim, "NewtonMimicAPI");
+    SetRel(prim, "newton:mimicJoint", {"/World/Joints/" + leader->second});
+    // NewtonMimicAPI coef0 is in the follower's position unit (degrees).
+    Set(prim, "newton:mimicCoef0",
+        tn::Value(static_cast<float>(angular ? coef[0] * 180.0 / kPi : coef[0])), "float");
+    Set(prim, "newton:mimicCoef1", tn::Value(static_cast<float>(coef[1])), "float");
+    Set(prim, "newton:mimicEnabled", tn::Value(active), "bool");
+    if (coef[2] != 0.0 || coef[3] != 0.0 || coef[4] != 0.0)
+      AppendWarn(warn, "Joint equality `" + name +
+                           "` has nonlinear coefficients; NewtonMimicAPI keeps only "
+                           "the linear terms (mjc:coef2..4 preserved).\n");
+    return;
+  }
+
+  // connect / weld: a loop-closing joint between body1 and body2 (or world).
+  std::string body1 = JsonString(e, "body1");
+  std::string body2 = JsonString(e, "body2");
+  // Site form: bodies and per-side frames come from the two sites.
+  const std::string site1 = JsonString(e, "site1"), site2 = JsonString(e, "site2");
+  const Json *site_json[2] = {nullptr, nullptr};
+  if (!site1.empty() || !site2.empty()) {
+    for (const Json &site : sites) {
+      if (JsonString(site, "name") == site1) site_json[0] = &site;
+      if (JsonString(site, "name") == site2) site_json[1] = &site;
+    }
+    if (!site_json[0] || !site_json[1]) {
+      AppendWarn(warn, "Skipping equality `" + name + "`: its sites were not exported.\n");
+      return;
+    }
+    body1 = JsonString(*site_json[0], "body");
+    body2 = JsonString(*site_json[1], "body");
+  }
+  auto world_of = [&](const std::string &body, bool *is_world) {
+    *is_world = body.empty() || static_links.count(body) > 0 || !link_names.count(body);
+    auto found = link_worlds.find(body);
+    return *is_world || found == link_worlds.end() ? IdentityMatrix() : found->second;
+  };
+  bool world1 = false, world2 = false;
+  const Matrix4 w1 = world_of(body1, &world1);
+  const Matrix4 w2 = world_of(body2, &world2);
+  if (!body1.empty() && !link_names.count(body1)) {
+    AppendWarn(warn, "Skipping equality `" + name + "`: body1 was not exported.\n");
+    return;
+  }
+  if (world1 && world2) {
+    AppendWarn(warn, "Skipping equality `" + name + "`: both bodies are static.\n");
+    return;
+  }
+  std::vector<double> anchor = JsonDoubles(e, "anchor");
+  anchor.resize(3, 0.0);
+  const double rot_identity[4] = {1, 0, 0, 0};
+  Matrix4 frame_world;
+  if (type == "weld") {
+    const std::vector<double> rel = JsonDoubles(e, "relpose");
+    const bool has_rel = rel.size() == 7 &&
+                         (rel[3] != 0.0 || rel[4] != 0.0 || rel[5] != 0.0 || rel[6] != 0.0);
+    if (has_rel) {
+      // body2's pose in body1, then the anchor point in body2.
+      const double rp[3] = {rel[0], rel[1], rel[2]};
+      const Matrix4 rel_m = PoseMatrix(rp, rel[3], rel[4], rel[5], rel[6]);
+      const double ap[3] = {anchor[0], anchor[1], anchor[2]};
+      frame_world = MultiplyRowMajor(
+          MultiplyRowMajor(PoseMatrix(ap, 1, 0, 0, 0), rel_m), w1);
+    } else {
+      const double ap[3] = {anchor[0], anchor[1], anchor[2]};
+      frame_world = MultiplyRowMajor(PoseMatrix(ap, 1, 0, 0, 0), w2);
+    }
+  } else {
+    const double ap[3] = {anchor[0], anchor[1], anchor[2]};
+    frame_world = MultiplyRowMajor(PoseMatrix(ap, 1, 0, 0, 0), w1);
+  }
+  (void)rot_identity;
+  tn::PrimSpec *prim = scope->Add(ChildName(name, siblings),
+                                  type == "weld" ? "PhysicsFixedJoint" : "PhysicsSphericalJoint");
+  if (!prim) return;
+  // body1 must be a dynamic body; an empty body0 is the world.
+  struct Side { std::string body; Matrix4 world; bool is_world; };
+  Side a{body1, w1, world1}, b{body2, w2, world2};
+  Matrix4 frame_a = frame_world, frame_b = frame_world;
+  if (site_json[0]) {
+    frame_a = MatrixFromArray(JsonDoubles(*site_json[0], "matrix"));
+    frame_b = MatrixFromArray(JsonDoubles(*site_json[1], "matrix"));
+  }
+  if (b.is_world) {
+    std::swap(a, b);
+    std::swap(frame_a, frame_b);
+  }
+  if (!a.is_world) SetRel(prim, "physics:body0", {"/World/Links/" + link_names.at(a.body)});
+  SetRel(prim, "physics:body1", {"/World/Links/" + link_names.at(b.body)});
+  SetLocalFrame(prim, 0, MultiplyRowMajor(frame_a, InverseRigid(a.world)));
+  SetLocalFrame(prim, 1, MultiplyRowMajor(frame_b, InverseRigid(b.world)));
+  Set(prim, "physics:jointEnabled", tn::Value(active), "bool");
+  Set(prim, "physics:collisionEnabled", tn::Value(false), "bool");
+  Set(prim, "physics:excludeFromArticulation", tn::Value(true), "bool");
+  AddAPI(prim, type == "weld" ? "MjcEqualityWeldAPI" : "MjcEqualityConnectAPI");
+  solver(prim);
+  double v = 0.0;
+  if (type == "weld" && ReadNumber(e, "torquescale", &v))
+    Set(prim, "mjc:torqueScale", tn::Value(static_cast<float>(v)), "float");
 }
 
 void AddMjcEqualityFromJson(Scope *scope, std::set<std::string> *siblings,
@@ -447,7 +639,7 @@ void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
   } else if (!t_joint.empty()) {
     targets = resolve(joint_names, "/World/Joints/", t_joint);
   } else if (!t_site.empty()) {
-    targets = resolve(site_names, "/World/Sites/", t_site);
+    targets = resolve(site_names, "/World/", t_site);
   } else if (!t_body.empty()) {  // <adhesion body=..>
     targets = resolve(link_names, "/World/Links/", t_body);
   }
@@ -515,7 +707,7 @@ void AddMjcActuatorFromJson(Scope *scope, std::set<std::string> *used,
     if (site.empty()) continue;
     SetRel(prim, std::string("mjc:") + key,
            site[0] == '/' ? std::vector<std::string>{site}
-                          : resolve(site_names, "/World/Sites/", site));
+                          : resolve(site_names, "/World/", site));
   }
 }
 

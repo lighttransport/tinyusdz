@@ -94,6 +94,77 @@ tn::Value RotationMatrixToQuatf(double r[3][3]) {
                               static_cast<float>(y), static_cast<float>(z));
 }
 
+// Body-frame inertia for non-legacy profiles. UsdPhysics stores principal
+// moments + principal-axes rotation; NewtonMassAPI additionally carries the
+// full [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] tensor that Newton and MuJoCo's USD
+// decoder prefer (mujoco-usd-converter / urdf-usd-converter parity). An
+// all-zero tensor is left unauthored so consumers infer it from colliders.
+void AuthorInertia(tn::PrimSpec *prim, const Json &inertial) {
+  double tensor[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+  const std::vector<double> full = JsonDoubles(inertial, "fullInertia");
+  const std::vector<double> diag = JsonDoubles(inertial, "diagonalInertia");
+  std::vector<double> axes = JsonDoubles(inertial, "principalAxes");
+  if (full.size() >= 6) {
+    const double t[3][3] = {{full[0], full[3], full[4]},
+                            {full[3], full[1], full[5]},
+                            {full[4], full[5], full[2]}};
+    std::copy(&t[0][0], &t[0][0] + 9, &tensor[0][0]);
+  } else if (diag.size() >= 3) {
+    double w = 1, x = 0, y = 0, z = 0;
+    if (axes.size() == 4) {
+      const double n = std::sqrt(axes[0] * axes[0] + axes[1] * axes[1] +
+                                 axes[2] * axes[2] + axes[3] * axes[3]);
+      if (n > 1e-12 && std::isfinite(n)) {
+        w = axes[0] / n; x = axes[1] / n; y = axes[2] / n; z = axes[3] / n;
+      }
+    }
+    const double r[3][3] = {
+        {1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+        {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+        {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+        for (int k = 0; k < 3; ++k) tensor[i][j] += r[i][k] * diag[k] * r[j][k];
+    axes = {w, x, y, z};
+  } else {
+    return;
+  }
+  double magnitude = 0.0;
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) {
+      if (!std::isfinite(tensor[i][j])) return;
+      magnitude = std::max(magnitude, std::fabs(tensor[i][j]));
+    }
+  if (magnitude == 0.0) return;
+  if (full.size() >= 6) {
+    double eval[3];
+    double evec[3][3];
+    JacobiEigenSymmetric3(tensor, eval, evec);
+    Set(prim, "physics:diagonalInertia",
+        tn::Value::MakeFloat3(static_cast<float>(eval[0]),
+                              static_cast<float>(eval[1]),
+                              static_cast<float>(eval[2])),
+        "float3");
+    Set(prim, "physics:principalAxes", RotationMatrixToQuatf(evec), "quatf");
+  } else {
+    Set(prim, "physics:diagonalInertia",
+        tn::Value::MakeFloat3(static_cast<float>(diag[0]),
+                              static_cast<float>(diag[1]),
+                              static_cast<float>(diag[2])),
+        "float3");
+    Set(prim, "physics:principalAxes",
+        tn::Value::MakeQuatf(static_cast<float>(axes[0]), static_cast<float>(axes[1]),
+                             static_cast<float>(axes[2]), static_cast<float>(axes[3])),
+        "quatf");
+  }
+  if (ActiveProfile().newton) {
+    AddAPI(prim, "NewtonMassAPI");
+    SetDoubles(prim, "newton:inertia",
+               {tensor[0][0], tensor[1][1], tensor[2][2], tensor[0][1],
+                tensor[0][2], tensor[1][2]});
+  }
+}
+
 std::string AxisToken(const Json &joint) {
   const std::string authored = JsonString(joint, "axisToken");
   if (!authored.empty()) return authored;
@@ -121,7 +192,7 @@ void SetPoint3(tn::PrimSpec *prim, const std::string &name,
 void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
                      const std::string &parent, const std::string &child,
                      const NameMap &joint_names) {
-  SetRel(prim, "physics:body0", {"/World/Links/" + parent});
+  if (!parent.empty()) SetRel(prim, "physics:body0", {"/World/Links/" + parent});
   SetRel(prim, "physics:body1", {"/World/Links/" + child});
   std::vector<float> pos0 = JsonFloats(joint, "localPos0");
   if (pos0.size() < 3) {
@@ -148,46 +219,115 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
   Set(prim, "physics:jointEnabled", tn::Value(true), "bool", true);
   Set(prim, "physics:collisionEnabled", tn::Value(false), "bool", true);
 
-  // revolute -> physxLimit:angular:*, prismatic -> physxLimit:linear:*; other
-  // joint types keep the mjc:* attributes only (no PhysX analog).
   const std::string subtype = JsonString(joint, "type");
-  const bool is_revolute = subtype == "revolute";
+  const bool is_revolute = subtype == "revolute" || subtype == "continuous";
   const bool is_prismatic = subtype == "prismatic";
-  const std::string limit_ns =
-      is_prismatic ? "physxLimit:linear:" : "physxLimit:angular:";
-  if (const Json *dyn = JsonObject(joint, "dynamics")) {
-    // damping / frictionloss are MjcJointAPI schema attributes (uniform);
-    // stiffness / armature are plain mjc:* extension attributes.
+  const bool angular = is_revolute || subtype == "spherical";
+  constexpr double kPi = 3.14159265358979323846;
+  const Profile &profile = ActiveProfile();
+  if (profile.legacy) {
+    // revolute -> physxLimit:angular:*, prismatic -> physxLimit:linear:*;
+    // other joint types keep the mjc:* attributes only (no PhysX analog).
+    // Historical mapping, retained byte for byte.
+    const bool legacy_revolute = subtype == "revolute";
+    const std::string limit_ns =
+        is_prismatic ? "physxLimit:linear:" : "physxLimit:angular:";
+    if (const Json *dyn = JsonObject(joint, "dynamics")) {
+      double value = 0.0;
+      if (ReadNumber(*dyn, "damping", &value)) {
+        Set(prim, "mjc:damping", tn::Value(value), "double", true);
+        if (legacy_revolute || is_prismatic) {
+          Set(prim, limit_ns + "damping", tn::Value(value), "double");
+        }
+      }
+      if (ReadNumber(*dyn, "friction", &value)) {
+        Set(prim, "mjc:frictionloss", tn::Value(value), "double", true);
+        Set(prim, "physxJoint:jointFriction", tn::Value(value), "double");
+      }
+      if (ReadNumber(*dyn, "stiffness", &value)) {
+        Set(prim, "mjc:stiffness", tn::Value(value), "double");
+        if (legacy_revolute || is_prismatic) {
+          Set(prim, limit_ns + "stiffness", tn::Value(value), "double");
+        }
+      }
+      if (ReadNumber(*dyn, "armature", &value)) {
+        Set(prim, "mjc:armature", tn::Value(value), "double");
+        Set(prim, "physxJoint:armature", tn::Value(value), "double");
+      }
+    }
+  } else {
+    // NewtonJointAPI carries passive joint dynamics for Newton 1.8 and
+    // MuJoCo 3.16's USD decoder; angular gains are per degree. The deprecated
+    // mjc:armature/frictionloss/damping aliases would take precedence in
+    // MuJoCo's decoder, so they are not authored. newton:limitStiffness/
+    // limitDamping are left unauthored: MJCF limits are solref-based
+    // (mjc:solreflimit), matching mujoco-usd-converter 0.8.
+    const Json *dyn = JsonObject(joint, "dynamics");
     double value = 0.0;
-    if (ReadNumber(*dyn, "damping", &value)) {
-      Set(prim, "mjc:damping", tn::Value(value), "double", true);
-      if (is_revolute || is_prismatic) {
-        Set(prim, limit_ns + "damping", tn::Value(value), "double");
+    bool newton_joint = false;
+    auto newton = [&](const char *name, double v) {
+      Set(prim, name, tn::Value(static_cast<float>(v)), "float");
+      newton_joint = true;
+    };
+    if (dyn && ReadNumber(*dyn, "armature", &value)) newton("newton:armature", value);
+    if (dyn && ReadNumber(*dyn, "friction", &value)) newton("newton:friction", value);
+    if (dyn && ReadNumber(*dyn, "damping", &value))
+      newton("newton:damping", angular ? value * kPi / 180.0 : value);
+    if (const Json *limit = JsonObject(joint, "limit")) {
+      // URDF <limit velocity> is rad/s (or m/s); NewtonJointAPI uses deg/s.
+      if (ReadNumber(*limit, "velocity", &value) && value > 0.0)
+        newton("newton:velocityLimit", angular ? value * 180.0 / kPi : value);
+      if (ReadNumber(*limit, "effort", &value))
+        Set(prim, "urdf:limit:effort", tn::Value(value), "double");
+    }
+    if (newton_joint && profile.newton) AddAPI(prim, "NewtonJointAPI");
+    // URDF-only metadata without a schema home (urdf-usd-converter parity).
+    for (const char *section : {"safety_controller", "calibration"}) {
+      const Json *object = JsonObject(joint, section);
+      if (!object || !object->object_items()) continue;
+      for (const auto &member : *object->object_items()) {
+        if (!member.value().is_number()) continue;
+        Set(prim, std::string("urdf:") + section + ":" + member.key,
+            tn::Value(member.value().get<double>()), "double");
       }
     }
-    if (ReadNumber(*dyn, "friction", &value)) {
-      Set(prim, "mjc:frictionloss", tn::Value(value), "double", true);
-      Set(prim, "physxJoint:jointFriction", tn::Value(value), "double");
-    }
-    if (ReadNumber(*dyn, "stiffness", &value)) {
-      Set(prim, "mjc:stiffness", tn::Value(value), "double");
-      if (is_revolute || is_prismatic) {
-        Set(prim, limit_ns + "stiffness", tn::Value(value), "double");
+    if (const Json *mjc = JsonObject(joint, "mjc")) {
+      for (const char *key : {"ref", "springref", "margin", "stiffness"})
+        if (ReadNumber(*mjc, key, &value))
+          Set(prim, std::string("mjc:") + key, tn::Value(value), "double", true);
+      for (const char *key : {"solreflimit", "solimplimit", "solreffriction",
+                              "solimpfriction", "springdamper"}) {
+        std::vector<double> values = JsonDoubles(*mjc, key);
+        if (!values.empty())
+          SetDoubles(prim, std::string("mjc:") + key, std::move(values), true);
       }
-    }
-    if (ReadNumber(*dyn, "armature", &value)) {
-      Set(prim, "mjc:armature", tn::Value(value), "double");
-      Set(prim, "physxJoint:armature", tn::Value(value), "double");
+      double lo = 0.0, hi = 0.0;
+      if (ReadRange(*mjc, "actuatorfrcrange", &lo, &hi)) {
+        Set(prim, "mjc:actuatorfrcrange:min", tn::Value(lo), "double", true);
+        Set(prim, "mjc:actuatorfrcrange:max", tn::Value(hi), "double", true);
+      }
+      const std::string limited = JsonString(*mjc, "actuatorfrclimited");
+      if (!limited.empty()) SetToken(prim, "mjc:actuatorfrclimited", limited, true);
+      bool flag = false;
+      if (ReadBool(*mjc, "actuatorgravcomp", &flag))
+        Set(prim, "mjc:actuatorgravcomp", tn::Value(flag), "bool", true);
+      if (mjc->contains("group"))
+        Set(prim, "mjc:group", tn::Value(JsonInt(*mjc, "group", 0)), "int", true);
+    } else if (dyn && ReadNumber(*dyn, "stiffness", &value)) {
+      Set(prim, "mjc:stiffness", tn::Value(value), "double", true);
     }
   }
-  // Initial joint configuration as the Newton state:*:physics:position
-  // attribute (revolute in degrees, prismatic in meters).
+  // Initial joint configuration as the PhysX JointStateAPI
+  // state:*:physics:position attribute (revolute in degrees, prismatic in
+  // meters), which Newton reads through its PhysX resolver.
   double init_q = 0.0;
-  if (ReadNumber(joint, "initPosition", &init_q) && init_q != 0.0) {
-    if (is_revolute) {
+  if (profile.engine && ReadNumber(joint, "initPosition", &init_q) && init_q != 0.0) {
+    if (is_revolute && (profile.legacy ? subtype == "revolute" : true)) {
+      if (!profile.legacy) AddAPI(prim, "PhysicsJointStateAPI:angular");
       Set(prim, "state:angular:physics:position",
-          tn::Value(init_q * 180.0 / 3.14159265358979323846), "double");
+          tn::Value(init_q * 180.0 / kPi), "double");
     } else if (is_prismatic) {
+      if (!profile.legacy) AddAPI(prim, "PhysicsJointStateAPI:linear");
       Set(prim, "state:linear:physics:position", tn::Value(init_q), "double");
     }
   }
@@ -201,6 +341,10 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
       float multiplier = 1.0f;
       ReadNumber(*mimic, "offset", &offset);
       ReadNumber(*mimic, "multiplier", &multiplier);
+      // NewtonMimicAPI documents coef0 in the follower's position units:
+      // degrees for angular joints (Newton >= 1.5, MuJoCo 3.16 decoder).
+      if (!profile.legacy && angular)
+        offset = static_cast<float>(offset * 180.0 / kPi);
       Set(prim, "newton:mimicEnabled", tn::Value(enabled), "bool", true);
       SetRel(prim, "newton:mimicJoint", {"/World/Joints/" + found->second});
       Set(prim, "newton:mimicCoef0", tn::Value(offset), "float", true);

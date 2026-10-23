@@ -207,31 +207,56 @@ bool Reader::Open(const std::string& name, const std::string& anchor,
   } else if (path.rfind("file://", 0) == 0)
     path = path.substr(7);
   std::error_code ec;
-  fs::path base =
-      anchor.empty() ? fs::current_path(ec) : fs::path(anchor).parent_path();
-  fs::path candidate =
-      fs::path(path).is_absolute() ? fs::path(path) : base / path;
-  if (!fs::exists(candidate, ec))
+  // Anchors such as "mesh.obj" have no directory part. Resolve them against the
+  // working directory first: an empty base must never become an empty (and
+  // therefore all-accepting) containment root.
+  const fs::path cwd = fs::current_path(ec);
+  const auto absolute = [&](const fs::path& p) {
+    return p.is_absolute() ? p : (cwd / p);
+  };
+  fs::path base = anchor.empty() ? cwd : absolute(fs::path(anchor)).parent_path();
+  const auto locate = [&](const std::string& relative) {
+    fs::path c = fs::path(relative).is_absolute() ? fs::path(relative) : base / relative;
+    if (fs::exists(c, ec)) return c;
     for (const std::string& dir : options.asset_dirs) {
-      fs::path p = fs::path(dir) / path;
-      if (fs::exists(p, ec)) {
-        candidate = p;
-        break;
-      }
+      if (dir.empty()) continue;
+      fs::path p = absolute(fs::path(dir)) / relative;
+      if (fs::exists(p, ec)) return p;
     }
+    return fs::path();
+  };
+  fs::path candidate = locate(path);
+  // Windows-authored MTL/URDF files commonly use '\' separators. Retry with
+  // portable separators only when the literal name does not exist.
+  if (candidate.empty() && path.find('\\') != std::string::npos) {
+    std::string portable = path;
+    std::replace(portable.begin(), portable.end(), '\\', '/');
+    candidate = locate(portable);
+    if (!candidate.empty()) path = portable;
+  }
+  if (candidate.empty())
+    candidate = fs::path(path).is_absolute() ? fs::path(path) : base / path;
   candidate = fs::weakly_canonical(candidate, ec);
   // A dependency may be anywhere under the root document or explicitly
   // supplied asset/package roots. Canonicalization also rejects symlink
-  // escapes.
+  // escapes. Empty roots are ignored; every root is absolute. An empty anchor
+  // is the caller-selected root document itself.
   if (!anchor.empty()) {
-    std::vector<std::string> roots = options.asset_dirs;
-    for (const auto& p : options.packages) roots.push_back(p.second);
-    roots.push_back(base.string());
+    std::vector<fs::path> roots;
+    const auto add_root = [&](const std::string& r) {
+      if (r.empty()) return;
+      fs::path root = fs::weakly_canonical(absolute(fs::path(r)), ec).lexically_normal();
+      if (root.empty()) return;
+      if (!root.has_filename() && root != root.root_path()) root = root.parent_path();
+      roots.push_back(root);
+    };
+    for (const std::string& r : options.asset_dirs) add_root(r);
+    for (const auto& p : options.packages) add_root(p.second);
+    add_root(base.string());
     if (!root_source.empty())
-      roots.push_back(fs::path(root_source).parent_path().string());
+      add_root(absolute(fs::path(root_source)).parent_path().string());
     bool allowed = false;
-    for (const std::string& r : roots) {
-      fs::path root = fs::weakly_canonical(r, ec);
+    for (const fs::path& root : roots) {
       auto ci = candidate.begin(), ri = root.begin();
       for (; ri != root.end() && ci != candidate.end() && *ri == *ci;
            ++ri, ++ci) {
@@ -409,7 +434,14 @@ bool GatherTextures(Reader& reader, Result* result, std::string* err) {
       if (file.empty()) return {};
       AssetBytes data;
       std::string resolved, why;
-      if (!reader.ReadTexture(file, reader.root_source, &data, &resolved, &why)) {
+      // Material maps already carry identifiers resolved by ReadTexture. Do
+      // not resolve them again: a custom resolver may reject an identifier as
+      // a request name, and a second Open repeats I/O and canonicalization.
+      auto retained = reader.textures.find(file);
+      if (retained != reader.textures.end()) {
+        resolved = retained->first;
+        data = retained->second;
+      } else if (!reader.ReadTexture(file, reader.root_source, &data, &resolved, &why)) {
         reader.Warn("Texture: " + why, "import.texture_unresolved");
         return {};
       }

@@ -29,7 +29,11 @@ PyObject* lightusd_physics_schema_definitions(PyObject* module, PyObject* noargs
   for (size_t i = 0; result && i < count; ++i) {
     lu_validation_schema_view schema;
     if (lu_validation_schema_at(i, &schema) != LU_OK) { Py_CLEAR(result); break; }
-    if (schema.name.len < 7 || memcmp(schema.name.data, "Physics", 7) != 0) continue;
+    /* Standard UsdPhysics plus the versioned MuJoCo/Newton engine schemas. */
+    const int physics = schema.name.len >= 7 && memcmp(schema.name.data, "Physics", 7) == 0;
+    const int mjc = schema.name.len >= 3 && memcmp(schema.name.data, "Mjc", 3) == 0;
+    const int newton = schema.name.len >= 6 && memcmp(schema.name.data, "Newton", 6) == 0;
+    if (!physics && !mjc && !newton) continue;
     PyObject *key = schema_text(schema.name), *record = PyDict_New(), *properties = PyDict_New();
     int failed = !key || !record || !properties;
     if (!failed) failed = put(record, "parent", schema_text(schema.parent)) < 0 ||

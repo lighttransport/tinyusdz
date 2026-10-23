@@ -226,6 +226,7 @@ void AppendWarn(std::string *warn, const std::string &message) {
 
 void AddAPI(tn::PrimSpec *prim, const std::string &schema) {
   if (!prim) return;
+  if (!ActiveProfile().engine && IsEngineSchema(schema)) return;
   std::vector<std::string> &apis = prim->meta().apiSchemas();
   prim->meta().apiSchemasQualifier() = "prepend";
   prim->meta().setApiSchemasAuthored();
@@ -242,6 +243,13 @@ void AddAPIs(tn::PrimSpec *prim,
 void Set(tn::PrimSpec *prim, const std::string &name, tn::Value value,
          const std::string &type_name, bool uniform) {
   if (!prim) return;
+  const Profile &profile = ActiveProfile();
+  if (!profile.engine && IsEngineName(name)) return;
+  // Non-legacy profiles take variability from the generated schema
+  // descriptors instead of per-call-site flags.
+  if (!profile.legacy)
+    if (const SchemaProperty *definition = FindSchemaProperty(name))
+      uniform = definition->uniform;
   uint16_t flags = uniform ? tn::PropSlot::kFlagUniform : 0;
   prim->upsert_property(name, std::move(value), flags);
   prim->set_property_type_name(name, type_name);
@@ -286,6 +294,7 @@ void Connect(tn::PrimSpec *prim, const std::string &name, tn::TypeId type_id,
 void SetRel(tn::PrimSpec *prim, const std::string &name,
             const std::vector<std::string> &targets) {
   if (!prim || targets.empty()) return;
+  if (!ActiveProfile().engine && IsEngineName(name)) return;
   std::vector<tn::Path> paths;
   paths.reserve(targets.size());
   for (const std::string &target : targets) paths.emplace_back(target);
@@ -308,6 +317,31 @@ tn::PrimSpec *Define(tn::Layer *layer, const std::string &path,
 
 Matrix4 IdentityMatrix() {
   return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+}
+
+// Row-major product a * b (USD row-vector convention: p' = p * a * b).
+Matrix4 MultiplyRowMajor(const Matrix4 &a, const Matrix4 &b) {
+  Matrix4 r{};
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j) {
+      double sum = 0.0;
+      for (int k = 0; k < 4; ++k) sum += a[i * 4 + k] * b[k * 4 + j];
+      r[i * 4 + j] = sum;
+    }
+  return r;
+}
+
+// Inverse of a rigid transform [R 0; t 1]: [R^T 0; -t R^T 1].
+Matrix4 InverseRigid(const Matrix4 &m) {
+  Matrix4 r = IdentityMatrix();
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) r[i * 4 + j] = m[j * 4 + i];
+  for (int j = 0; j < 3; ++j) {
+    double sum = 0.0;
+    for (int k = 0; k < 3; ++k) sum += m[12 + k] * r[k * 4 + j];
+    r[12 + j] = -sum;
+  }
+  return r;
 }
 
 Matrix4 MatrixFromArray(const std::vector<double> &flat) {

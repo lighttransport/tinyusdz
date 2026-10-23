@@ -4854,6 +4854,64 @@ void physics_obj_c11_import_test(void) {
   TEST_CHECK(weights && *weights == scene.meshes[0].joint_and_weights.jointWeights);
 }
 
+// USD -> OBJ export: face-varying corners are 1-based corner indices, subset
+// groups follow face order, materials are written once, and the result
+// reloads with the same topology and attributes.
+void physics_obj_export_facevarying_test(void) {
+  lightusd::tydra::RenderScene scene;
+  lightusd::tydra::RenderMesh rendered;
+  rendered.prim_name = "quads";
+  rendered.points = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {2, 0, 0}, {2, 1, 0}};
+  rendered.usdFaceVertexCounts = {4, 4, 3};
+  rendered.usdFaceVertexIndices = {0, 1, 2, 3, 1, 4, 5, 2, 0, 1, 3};
+  std::vector<float> uv;
+  std::vector<float> normals;
+  for (size_t corner = 0; corner < 11; corner++) {
+    uv.push_back(float(corner) * 0.1f);
+    uv.push_back(1.0f - float(corner) * 0.05f);
+    normals.insert(normals.end(), {0.0f, 0.0f, corner % 2 ? 1.0f : -1.0f});
+  }
+  lightusd::tydra::VertexAttribute texcoord;
+  texcoord.format = lightusd::tydra::VertexAttributeFormat::Vec2;
+  texcoord.variability = lightusd::tydra::VertexVariability::FaceVarying;
+  texcoord.set_buffer(reinterpret_cast<const uint8_t *>(uv.data()), uv.size() * sizeof(float));
+  rendered.texcoords[0] = texcoord;
+  rendered.normals.format = lightusd::tydra::VertexAttributeFormat::Vec3;
+  rendered.normals.variability = lightusd::tydra::VertexVariability::FaceVarying;
+  rendered.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()),
+                              normals.size() * sizeof(float));
+  for (const char *name : {"red", "blue"}) {
+    lightusd::tydra::RenderMaterial material;
+    material.name = name;
+    scene.materials.push_back(material);
+  }
+  // Subsets listed out of face order; face 0 has no subset.
+  lightusd::tydra::MaterialSubset late, early;
+  late.material_id = 0;
+  late.usdIndices = {2};
+  early.material_id = 1;
+  early.usdIndices = {1};
+  rendered.material_subsetMap["zz_late"] = late;
+  rendered.material_subsetMap["aa_early"] = early;
+  rendered.material_id = 0;
+  scene.meshes.push_back(std::move(rendered));
+  std::string obj, mtl, warning, error;
+  TEST_CHECK(lightusd::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
+  // Corner (not face) offsets, 1-based, in face order.
+  TEST_CHECK(obj.find("f 1/1/1 2/2/2 3/3/3 4/4/4\n") != std::string::npos);
+  TEST_CHECK(obj.find("g aa_early\nusemtl blue\nf 2/5/5 5/6/6 6/7/7 3/8/8\n") != std::string::npos);
+  TEST_CHECK(obj.find("g zz_late\nusemtl red\nf 1/9/9 2/10/10 4/11/11\n") != std::string::npos);
+  TEST_CHECK(obj.find("g aa_early") < obj.find("g zz_late"));
+  // Each material once, even when used by two groups.
+  TEST_CHECK(mtl.find("newmtl red") == mtl.rfind("newmtl red"));
+  TEST_CHECK(mtl.find("# 2 materials.") != std::string::npos);
+  lightusd::GPrim reloaded;
+  TEST_CHECK(lightusd::usdObj::ReadObjFromString(obj, &reloaded, &error));
+  // Out-of-range subset faces are rejected, not read past the array.
+  scene.meshes[0].material_subsetMap["zz_late"].usdIndices = {7};
+  TEST_CHECK(!lightusd::tydra::export_to_obj(scene, 0, obj, mtl, &warning, &error));
+}
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>

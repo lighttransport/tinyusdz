@@ -195,11 +195,12 @@ void ValidatePhysicsScene(const PrimSpec &ps,
     return;
   }
   const double len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-  if (!std::isfinite(v[0]) || !std::isfinite(v[1]) || !std::isfinite(v[2]) ||
-      len2 == 0.0) {
+  // (0, 0, 0) is the schema fallback: "use the negative upAxis".
+  (void)len2;
+  if (!std::isfinite(v[0]) || !std::isfinite(v[1]) || !std::isfinite(v[2])) {
     AddError(result, "physics.scene.gravity",
              MakePropertyLocation(prim_location, "physics:gravityDirection"),
-             "physics:gravityDirection must be finite and non-zero");
+             "physics:gravityDirection must be finite");
   }
 }
 
@@ -366,17 +367,45 @@ void ValidatePhysicsDriveAndLimitAPIs(
   std::map<std::string, std::pair<double, bool>> limit_low;
   std::map<std::string, std::pair<double, bool>> limit_high;
   for (const std::string &prop_name : AllPropertyNames(ps)) {
-    if (StartsWith(prop_name, "physics:drive:")) {
-      const std::string rest =
-          prop_name.substr(std::string("physics:drive:").size());
-      const size_t colon = rest.find(':');
-      if (colon == std::string::npos) {
+    // Standard multiple-apply names are drive:<dof>:physics:<field> and
+    // limit:<dof>:physics:<field>. The historical physics:drive:<dof>:<field>
+    // spelling is still checked but flagged as non-standard: UsdPhysics
+    // consumers do not read it.
+    std::string api, dof, field;
+    bool standard = false;
+    for (const char *ns : {"drive", "limit"}) {
+      const std::string prefix = std::string(ns) + ":";
+      const std::string legacy = std::string("physics:") + ns + ":";
+      std::string rest;
+      if (StartsWith(prop_name, prefix)) {
+        rest = prop_name.substr(prefix.size());
+        const size_t colon = rest.find(':');
+        if (colon == std::string::npos ||
+            !StartsWith(rest.substr(colon + 1), "physics:"))
+          continue;
+        dof = rest.substr(0, colon);
+        field = rest.substr(colon + 1 + std::string("physics:").size());
+        standard = true;
+      } else if (StartsWith(prop_name, legacy)) {
+        rest = prop_name.substr(legacy.size());
+        const size_t colon = rest.find(':');
+        if (colon == std::string::npos) continue;
+        dof = rest.substr(0, colon);
+        field = rest.substr(colon + 1);
+      } else {
         continue;
       }
-      const std::string dof = rest.substr(0, colon);
-      const std::string field = rest.substr(colon + 1);
-      const std::string location =
-          MakePropertyLocation(prim_location, prop_name);
+      api = ns;
+      break;
+    }
+    if (api.empty()) continue;
+    const std::string location = MakePropertyLocation(prim_location, prop_name);
+    if (!standard) {
+      AddWarning(result, "physics.property.nonStandardName", location,
+                 "use " + api + ":" + dof + ":physics:" + field +
+                     "; UsdPhysics does not read " + prop_name);
+    }
+    if (api == "drive") {
       if (!IsPhysicsDofName(dof)) {
         AddError(result, "physics.drive.dof", location,
                  "PhysicsDriveAPI DOF `" + dof + "` is not supported");
@@ -393,27 +422,20 @@ void ValidatePhysicsDriveAndLimitAPIs(
         ValidateFiniteNumericProperty(ps, prop_name, "physics.drive.value",
                                       prim_location, result);
       }
-    } else if (StartsWith(prop_name, "physics:limit:")) {
-      const std::string rest =
-          prop_name.substr(std::string("physics:limit:").size());
-      const size_t colon = rest.find(':');
-      if (colon == std::string::npos) {
-        continue;
-      }
-      const std::string dof = rest.substr(0, colon);
-      const std::string field = rest.substr(colon + 1);
-      const std::string location =
-          MakePropertyLocation(prim_location, prop_name);
+    } else {
       if (!IsPhysicsDofName(dof)) {
         AddError(result, "physics.limit.dof", location,
                  "PhysicsLimitAPI DOF `" + dof + "` is not supported");
       }
       if (field == "low" || field == "high") {
-        ValidateFiniteNumericProperty(ps, prop_name, "physics.limit.range",
-                                      prim_location, result);
+        // +-inf are the schema fallbacks (unlimited in that direction).
         double value = 0.0;
         const bool have_value =
             GetNumericScalarProperty(ps, prop_name, &value);
+        if (have_value && std::isnan(value)) {
+          AddError(result, "physics.limit.range", location,
+                   "limit bounds must not be NaN");
+        }
         if (field == "low") {
           limit_low[dof] = std::make_pair(value, have_value);
         } else {
@@ -423,17 +445,9 @@ void ValidatePhysicsDriveAndLimitAPIs(
     }
   }
 
-  for (const auto &entry : limit_low) {
-    const auto high_it = limit_high.find(entry.first);
-    if (high_it == limit_high.end()) {
-      continue;
-    }
-    if (entry.second.second && high_it->second.second &&
-        entry.second.first > high_it->second.first) {
-      AddError(result, "physics.limit.range", prim_location,
-               "physics:limit:" + entry.first + " low must be <= high");
-    }
-  }
+  // UsdPhysics: a low limit above the high limit locks the axis. That is the
+  // standard spelling of a locked DOF (e.g. a D6 planar joint), not an error.
+  (void)limit_high;
 }
 
 void ValidateMjcTokenEnums(const PrimSpec &ps,

@@ -37,3 +37,13 @@ order and first-definition IDs. Repeated authored library names (including
 NOT_FOUND results) are resolved once per load. Scene and callback loaders share
 the same library handler. Covered by ordered/alternating/prefix/duplicate name
 tests and index allocation-failure sweeps in both precision families.
+
+Local tessellation budget: ear clipping counts containment-test and corner-
+advance steps and, past a budget linear in the face arity, fans the remaining
+ring with TOBJ_TESS_DEGENERATE_BESTEFFORT. Adversarial high-arity zig-zag faces
+therefore cost O(n) after the budget instead of approaching O(n^3). Covered by
+the generated zig-zag case in test_obj_large.
+
+Local MTL precedence: `d` (dissolve) is authoritative over `Tr` regardless of
+line order, matching the C++ loader; `dissolve_set` records it. Covered by the
+Python MTL material tests.

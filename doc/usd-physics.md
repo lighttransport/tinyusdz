@@ -20,7 +20,8 @@ applied together on the same prims.
 ### Source Reference
 
 - MuJoCo mjcPhysics schema: `schema.usda` from MuJoCo's `src/experimental/usd/mjcPhysics/`
-- Newton schema: `/mnt/nvme02/work/newton-usd-schemas/newton_usd_schemas/generatedSchema.usda`
+- Newton schema: newton-usd-schemas 0.6.0 `newton_usd_schemas/generatedSchema.usda`
+  (versioned descriptors in `doc/generated/engine-physics-schemas.json`)
 - USD Physics schema: OpenUSD `pxr/usd/usdPhysics/`
 
 ### PhysicsScene Attributes
@@ -33,6 +34,63 @@ Per the official USD Physics schema (`pxr.UsdPhysics.Scene`):
 | `physics:gravityMagnitude` | `float` | `TypedAttribute<float>` | Gravity magnitude (m/s^2) |
 
 ---
+
+## Output profiles
+
+The native OBJ/URDF/MJCF importers (C++, C, Python and both CLIs) author USD
+in one of three profiles, selected with `profile=` (Python), `"profile"` in the C
+`settings_json`, or `--profile` (CLI). JSON payloads given to
+`ConvertURDFJsonToUSDStage` without a `profile` member keep `legacy`.
+
+| | `newton` (default) | `openusd` | `legacy` |
+|---|---|---|---|
+| Target consumers | Newton 1.8, MuJoCo 3.16 USD decoder, OpenUSD 26.08 | any UsdPhysics consumer | historical output |
+| Engine schemas | UsdPhysics + MjcPhysics + Newton (newton-usd-schemas 0.6.0) | UsdPhysics/UsdGeom/UsdShade only; engine-only records omitted with a warning | as before |
+| Variability | from generated descriptors | from generated descriptors | historical (several `uniform` mismatches) |
+| Revolute/prismatic limits | `physics:lower/upperLimit` | same | also non-standard `physics:limit:<dof>:low/high` |
+| World link | static Xform; joints to the world omit `physics:body0` | same | disabled rigid body |
+| Sites | Gprims under their body, `MjcSiteAPI` + `NewtonSiteAPI` | under their body | `/World/Sites` |
+| Friction | deduplicated `Material` + `PhysicsMaterialAPI` (static = dynamic = mu0), `newton:torsional/rollingFriction`, `material:binding:physics` | `PhysicsMaterialAPI` only | `mjc:geomFriction` |
+| Joint dynamics | `NewtonJointAPI` (`newton:armature`, `newton:friction`, `newton:damping` per degree for angular joints, `newton:velocityLimit`); `MjcJointAPI` `ref/springref/margin/stiffness/sol*` | omitted | `mjc:*` + `physxJoint/physxLimit` aliases |
+| Inertia | `diagonalInertia` + `principalAxes` + `NewtonMassAPI` `newton:inertia`; MJCF bodies without `<inertial>` get MuJoCo's `inertiafromgeom` result | diagonal + axes | as authored only |
+| Multi-joint bodies | stacked joints between the body pair (`newton:jointsAddMobility`) | stacked | massless intermediate links |
+| MJCF actuators | `MjcActuator` with MuJoCo's compiled gain/bias/dynamics expansion (Newton maps position/velocity shapes to joint targets) | omitted | `NewtonActuator` PD for joint motors/position/velocity |
+| MJCF equalities | connect → `PhysicsSphericalJoint`, weld → `PhysicsFixedJoint` (excluded from articulation, `active` → `jointEnabled`, site forms supported); joint → `NewtonMimicAPI` + `MjcEqualityJointAPI` on the follower (`mimicCoef0` in degrees) | spherical/fixed joints only | `Xform` + `MjcEquality*API` |
+| MJCF collision | collides iff `contype|conaffinity != 0`; group 3+ non-colliders become guide visuals | same | group-based split |
+| Mocap / gravcomp | `physics:kinematicEnabled`, `mjc:gravcomp` | kinematic only | `mjc:mocap` |
+| URDF `planar` | D6 `PhysicsJoint`, `transX/rotY/rotZ` locked (`low > high`) | same | error |
+| OBJ stage | `metersPerUnit = 1`, root `kind = component` | same | no units |
+
+Profile-independent fixes also changed `legacy` output for affected inputs:
+MuJoCo mesh-fit primitives (`mesh=` on a primitive type) are sized from the
+mesh's equivalent inertia box, `limited="false"`/`autolimits="false"` are
+honored, a downward `zaxis` rotates about X as in MuJoCo, joint axes and light
+directions inside `<frame>` are rotated, class orientations no longer override
+an element's own orientation, the root `<default>` is class `main`, and
+`UsdUVTexture.inputs:st` is `float2`.
+
+Inferred MJCF inertia ports MuJoCo's compiler: geoms in `inertiagrouprange`
+(visual or not) with `density` (default 1000) or `mass`; analytic primitives
+(including shell inertia and `fromto`); meshes by MuJoCo's tetrahedral
+integration in `legacy` (default), `exact` or `shell` mode (`convex` uses the
+exact volume and is reported); MuJoCo only reads the first object of an OBJ
+mesh asset. Across Menagerie revision `cda5236f`, 1,226 of 1,237 bodies match
+MuJoCo 3.16's compiled mass and principal inertia (rtol 1e-3/2e-3); the
+remainder are thin open `ms_human_700` rib surfaces within 1.2%.
+
+Engine schema descriptors are generated from newton-usd-schemas 0.6.0 and
+MuJoCo 3.16.0 (`scripts/generate-engine-schema-manifest.py` →
+`doc/generated/engine-physics-schemas.json` →
+`scripts/generate-checker-definitions.py`). The validator checks authored
+type and variability against them (`core.schema.attributeType`,
+`core.schema.variability`) and flags non-standard multiple-apply names
+(`physics.property.nonStandardName`).
+
+Downstream checks (optional, see [testing](testing-cpp.md)):
+`tests/next/run-newton-compare.py` compares Newton's `add_mjcf` with Newton's
+`add_usd` of the converted file (MuJoCo arbitrates mass/COM/inertia/collider
+differences); `tests/next/run-openusd-physics-check.py` runs every OpenUSD
+`UsdValidation` validator and the UsdPhysics parser on each profile.
 
 ## Newton Physics Implementation
 

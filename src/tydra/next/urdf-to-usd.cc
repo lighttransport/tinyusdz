@@ -9,6 +9,7 @@
 #include "next/types/value.hh"
 #include "next/reader/obj-reader.hh"
 #include <cmath>
+#include <memory>
 #include <utility>
 
 namespace lightusd { namespace tydra { namespace next {
@@ -26,6 +27,25 @@ static bool ConvertPayload(
   if (err) err->clear();
 
   const Json &root = payload.Root();
+  // The JSON bridge keeps the historical output unless a profile is named;
+  // native importers always name one (default "newton").
+  Profile profile;
+  if (!ParseProfile(JsonString(root, "profile", "legacy"), &profile)) {
+    if (err) *err = "Unknown output profile `" + JsonString(root, "profile") +
+                    "` (expected legacy, newton or openusd)";
+    return false;
+  }
+  ProfileScope profile_scope(profile);
+  // The openusd profile has no schema for MuJoCo/Newton-only records; say
+  // what was omitted instead of authoring empty engine-typed prims.
+  auto engine_section = [&](const char *key, const char *what) {
+    if (profile.engine) return true;
+    const Json *items = JsonArray(root, key);
+    if (items && !items->empty())
+      AppendWarn(warn, "openusd profile omits " + std::to_string(items->size()) + " " +
+                           what + " (no standard UsdPhysics schema).\n");
+    return false;
+  };
   if (JsonString(root, "sourceFormat") == "obj") {
 #if defined(LIGHTUSD_WITH_USDOBJ)
     tn::Layer obj_layer;
@@ -109,6 +129,9 @@ static bool ConvertPayload(
   }
 
   if (!no_physics) AddPhysicsScene(&layer, root);
+  std::unique_ptr<PhysicsMaterials> physics_materials;
+  if (!no_physics && !profile.legacy && mjcf_source)
+    physics_materials.reset(new PhysicsMaterials(&layer));
   Define(&layer, "/World/Links", "Xform");
   Define(&layer, "/World/Joints", "Xform");
 
@@ -123,6 +146,9 @@ static bool ConvertPayload(
     ReadBool(*newton, "selfCollisionEnabled", &self_collision_enabled);
   }
   NameMap link_names;
+  std::set<std::string> static_links;                          // by source name
+  std::map<std::string, urdf_detail::Matrix4> link_worlds;                 // by source name
+  std::map<std::string, std::set<std::string>> link_children;  // by USD name
   std::set<std::string> used_links;
   for (size_t i = 0; i < links.size(); ++i) {
     const Json &link = links[i];
@@ -141,19 +167,31 @@ static bool ConvertPayload(
     bool is_static = false;
     ReadBool(link, "static", &is_static);
     SetTransformFromJson(prim, link);
-    if (!no_physics) {
+    link_worlds[source] = MatrixFromArray(JsonDoubles(link, "matrix"));
+    if (is_static) static_links.insert(source);
+    // Non-legacy profiles: the synthetic world link is a plain static Xform
+    // holding static colliders, not a disabled rigid body (Newton and the
+    // UsdPhysics parser count every RigidBodyAPI prim as a body).
+    if (!no_physics && !(is_static && !profile.legacy)) {
       AddAPIs(prim, {"PhysicsRigidBodyAPI", "PhysicsMassAPI"});
       Set(prim, "physics:rigidBodyEnabled", tn::Value(!is_static), "bool");
       Set(prim, "physics:startsAsleep", tn::Value(false), "bool");
       bool flag = false;
       if (ReadBool(link, "mocap", &flag) && flag) {
-        Set(prim, "mjc:mocap", tn::Value(true), "bool", true);
+        // Mocap bodies are driven externally: a kinematic rigid body.
+        if (profile.legacy) Set(prim, "mjc:mocap", tn::Value(true), "bool", true);
+        else Set(prim, "physics:kinematicEnabled", tn::Value(true), "bool");
       }
       // MuJoCo <freejoint>: distinguishes a floating-base articulation root
-      // from a fixed (anchored) parentless base.
+      // from a fixed (anchored) parentless base. UsdPhysics bodies are free
+      // unless jointed, so only legacy output records it.
       flag = false;
       ReadBool(link, "floating", &flag);
-      if (flag) Set(prim, "mjc:freeJoint", tn::Value(true), "bool", true);
+      if (flag && profile.legacy)
+        Set(prim, "mjc:freeJoint", tn::Value(true), "bool", true);
+      double gravcomp = 0.0;
+      if (!profile.legacy && ReadNumber(link, "gravcomp", &gravcomp))
+        Set(prim, "mjc:gravcomp", tn::Value(gravcomp), "double");
       bool articulation_root = false;
       ReadBool(link, "articulationRoot", &articulation_root);
       if (!is_static && (!child_links.count(source) || articulation_root)) {
@@ -161,6 +199,10 @@ static bool ConvertPayload(
                 {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
         Set(prim, "newton:selfCollisionEnabled",
             tn::Value(self_collision_enabled), "bool");
+        bool adds_mobility = false;
+        if (profile.newton && ReadBool(link, "jointsAddMobility", &adds_mobility) &&
+            adds_mobility)
+          Set(prim, "newton:jointsAddMobility", tn::Value(true), "bool");
       }
       if (const Json* inertial = JsonObject(link, "inertial")) {
         float mass = 0.0f;
@@ -173,7 +215,9 @@ static bool ConvertPayload(
         // A full inertia tensor is diagonalized into principal moments +
         // principal-axes rotation (the lossless USD representation).
         const std::vector<double> full = JsonDoubles(*inertial, "fullInertia");
-        if (full.size() >= 6) {
+        if (!profile.legacy) {
+          AuthorInertia(prim, *inertial);
+        } else if (full.size() >= 6) {
           // [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] -> symmetric 3x3.
           const double tensor[3][3] = {{full[0], full[3], full[4]},
                                        {full[3], full[1], full[5]},
@@ -198,7 +242,7 @@ static bool ConvertPayload(
           }
         }
         const auto principal = JsonFloats(*inertial, "principalAxes");
-        if (full.size() < 6 && principal.size() == 4)
+        if (profile.legacy && full.size() < 6 && principal.size() == 4)
           Set(prim, "physics:principalAxes",
               tn::Value::MakeQuatf(principal[0], principal[1], principal[2],
                                    principal[3]),
@@ -207,8 +251,9 @@ static bool ConvertPayload(
 
     }  // physics-bearing link
 
-    // Visuals and collisions share the link's child namespace.
-    std::set<std::string> siblings;
+    // Visuals, collisions and (non-legacy) sites share the link's child
+    // namespace.
+    std::set<std::string> &siblings = link_children[name];
     if (const Json *visuals = JsonArray(link, "visuals")) {
       size_t n = 0;
       for (const Json &visual : *visuals) {
@@ -309,6 +354,9 @@ static bool ConvertPayload(
     } else if (type == "spherical") {
       // MuJoCo ball joint; cone limits are not carried in the JSON.
       usd_type = "PhysicsSphericalJoint";
+    } else if (type == "planar" && !profile.legacy) {
+      // Generic (D6) joint; locks are authored below.
+      usd_type = "PhysicsJoint";
     } else if (type != "fixed") {
       AppendWarn(warn, "Joint `" + name + "` type `" + type +
                            "` is exported as PhysicsFixedJoint.\n");
@@ -318,10 +366,29 @@ static bool ConvertPayload(
       if (err) *err = "Failed to add joint `" + name + "`";
       return false;
     }
-    AssignJointBase(prim, joint, link_names[parent], link_names[child],
-                    joint_names);
-    if (usd_type != "PhysicsFixedJoint") {
+    // An empty body0 means the world frame in UsdPhysics.
+    AssignJointBase(prim, joint,
+                    !profile.legacy && static_links.count(parent)
+                        ? std::string() : link_names[parent],
+                    link_names[child], joint_names);
+    if (usd_type != "PhysicsFixedJoint" && usd_type != "PhysicsJoint") {
       SetToken(prim, "physics:axis", axis, true);
+    }
+    if (usd_type == "PhysicsJoint") {
+      // URDF planar: the joint frame's X is the plane normal (localRot aligns
+      // X with the URDF axis). Translate in Y/Z and rotate about X; lock the
+      // rest with low > high (UsdPhysics "locked axis").
+      for (const char *dof : {"transX", "rotY", "rotZ"}) {
+        AddAPI(prim, std::string("PhysicsLimitAPI:") + dof);
+        Set(prim, std::string("limit:") + dof + ":physics:low", tn::Value(1.0f), "float");
+        Set(prim, std::string("limit:") + dof + ":physics:high", tn::Value(-1.0f), "float");
+      }
+    }
+    double cone = 0.0;
+    if (usd_type == "PhysicsSphericalJoint" && ReadNumber(joint, "coneLimit", &cone)) {
+      const float degrees = static_cast<float>(cone * kRadToDeg);
+      Set(prim, "physics:coneAngle0Limit", tn::Value(degrees), "float");
+      Set(prim, "physics:coneAngle1Limit", tn::Value(degrees), "float");
     }
     // Limits: revolute in degrees, prismatic in meters (continuous joints
     // are unlimited).
@@ -340,12 +407,17 @@ static bool ConvertPayload(
         Set(prim, "physics:upperLimit",
             tn::Value(static_cast<float>(upper * scale)), "float", true);
       }
-      const std::string dof = JointDofName(axis, revolute_limit);
-      AddAPI(prim, "PhysicsLimitAPI:" + dof);
-      Set(prim, "physics:limit:" + dof + ":low",
-          tn::Value(static_cast<float>(lower * scale)), "float");
-      Set(prim, "physics:limit:" + dof + ":high",
-          tn::Value(static_cast<float>(upper * scale)), "float");
+      // Revolute/prismatic joints carry their limits in lower/upperLimit.
+      // PhysicsLimitAPI is the D6 mechanism; legacy output also applied it
+      // with non-standard property names, kept for byte compatibility.
+      if (profile.legacy) {
+        const std::string dof = JointDofName(axis, revolute_limit);
+        AddAPI(prim, "PhysicsLimitAPI:" + dof);
+        Set(prim, "physics:limit:" + dof + ":low",
+            tn::Value(static_cast<float>(lower * scale)), "float");
+        Set(prim, "physics:limit:" + dof + ":high",
+            tn::Value(static_cast<float>(upper * scale)), "float");
+      }
     }
   }
 
@@ -354,24 +426,44 @@ static bool ConvertPayload(
   {
     std::set<std::string> siblings;
     const Json &items = payload.Array("actuators");
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; engine_section("actuators", "Newton actuators") && i < items.size(); ++i) {
       AddNewtonActuatorFromJson(&actuators_scope, &siblings, items[i],
                                 joint_names, i, warn);
     }
   }
 
   // Site names are resolved up front: spatial tendons route through them
-  // although the Sites scope follows Tendons/Equalities.
+  // although the legacy Sites scope follows Tendons/Equalities. Values are
+  // paths relative to /World. Non-legacy profiles author each site under its
+  // owning link (Newton only loads sites below rigid bodies).
   const Json &sites = payload.Array("sites");
   NameMap site_names;
   std::vector<std::string> site_usd_names(sites.size());
+  std::vector<bool> site_on_link(sites.size(), false);
   {
     std::set<std::string> used;
     for (size_t i = 0; i < sites.size(); ++i) {
       const std::string source =
           JsonString(sites[i], "name", "site_" + std::to_string(i));
+      const auto owner = link_names.find(JsonString(sites[i], "body"));
+      if (!profile.legacy && owner != link_names.end()) {
+        const std::string name =
+            ChildName(Sanitize(source, "site"), &link_children[owner->second]);
+        const std::string path = "/World/Links/" + owner->second + "/" + name;
+        tn::PrimSpec *site = Define(&layer, path, "Sphere");
+        if (site) {
+          const urdf_detail::Matrix4 world = MatrixFromArray(JsonDoubles(sites[i], "matrix"));
+          const urdf_detail::Matrix4 local =
+              MultiplyRowMajor(world, InverseRigid(link_worlds[owner->first]));
+          AuthorMjcSite(site, sites[i], &local);
+        }
+        site_usd_names[i] = name;
+        site_on_link[i] = true;
+        site_names[source] = "Links/" + owner->second + "/" + name;
+        continue;
+      }
       site_usd_names[i] = Unique(source, "site", &used);
-      site_names[source] = site_usd_names[i];
+      site_names[source] = "Sites/" + site_usd_names[i];
     }
   }
 
@@ -380,7 +472,7 @@ static bool ConvertPayload(
   {
     std::set<std::string> siblings;
     const Json &items = payload.Array("tendons");
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; engine_section("tendons", "MuJoCo tendons") && i < items.size(); ++i) {
       AddMjcTendonFromJson(&tendons_scope, &siblings, items[i], joint_names,
                            site_names, &tendon_names, i, warn);
     }
@@ -391,21 +483,28 @@ static bool ConvertPayload(
     std::set<std::string> siblings;
     const Json &items = payload.Array("equalities");
     for (size_t i = 0; i < items.size(); ++i) {
-      AddMjcEqualityFromJson(&equalities_scope, &siblings, items[i],
-                             link_names, joint_names, i);
+      if (profile.legacy || no_physics) {
+        AddMjcEqualityFromJson(&equalities_scope, &siblings, items[i],
+                               link_names, joint_names, i);
+        continue;
+      }
+      AddEqualityConstraint(&layer, &equalities_scope, &siblings, items[i], i,
+                            link_names, link_worlds, static_links, joint_names,
+                            sites, warn);
     }
   }
 
   Scope sites_scope(&layer, "Sites");
   for (size_t i = 0; i < sites.size(); ++i) {
-    AddMjcSiteFromJson(&sites_scope, sites[i], site_usd_names[i]);
+    if (!site_on_link[i])
+      AddMjcSiteFromJson(&sites_scope, sites[i], site_usd_names[i]);
   }
 
   Scope mjc_actuators_scope(&layer, "MjcActuators");
   {
     std::set<std::string> used;
     const Json &items = payload.Array("mjcActuators");
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; engine_section("mjcActuators", "MuJoCo actuators") && i < items.size(); ++i) {
       AddMjcActuatorFromJson(&mjc_actuators_scope, &used, items[i],
                              joint_names, tendon_names, site_names, link_names,
                              i);
@@ -416,7 +515,7 @@ static bool ConvertPayload(
   {
     std::set<std::string> used;
     const Json &items = payload.Array("keyframes");
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; engine_section("keyframes", "MuJoCo keyframes") && i < items.size(); ++i) {
       AddMjcKeyframeFromJson(&keyframes_scope, &used, items[i], i);
     }
   }
@@ -453,7 +552,7 @@ static bool ConvertPayload(
   {
     std::set<std::string> used;
     const Json &items = payload.Array("sensors");
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; engine_section("sensors", "MuJoCo sensors") && i < items.size(); ++i) {
       AddMjcSensorFromJson(&sensors_scope, &used, items[i], i);
     }
   }
@@ -462,14 +561,14 @@ static bool ConvertPayload(
   {
     std::set<std::string> used;
     const Json &items = payload.Array("contactPairs");
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; engine_section("contactPairs", "MuJoCo contact pairs") && i < items.size(); ++i) {
       AddContactPairFromJson(&contacts_scope, &used, items[i], i);
     }
   }
 
   // MJCF <custom><numeric|text> -> /World/MjcCustom (model metadata / MJX
   // knobs), authored only when it carries at least one entry.
-  if (const Json *custom = JsonObject(root, "custom")) {
+  if (const Json *custom = profile.engine ? JsonObject(root, "custom") : nullptr) {
     std::vector<std::pair<std::string, const Json *>> numeric, text;
     if (const Json *items = JsonArray(*custom, "numeric")) {
       for (const Json &n : *items) {
@@ -499,7 +598,7 @@ static bool ConvertPayload(
   // MJCF <extension><plugin><instance><config> -> /World/MjcPlugins; the
   // instance config (e.g. a PID actuator's kp/ki/kd) is referenced by an
   // MjcActuator's mjc:instance.
-  if (const Json *plugins = JsonArray(root, "plugins")) {
+  if (const Json *plugins = profile.engine ? JsonArray(root, "plugins") : nullptr) {
     std::vector<std::pair<std::string, std::string>> tokens;
     for (const Json &p : *plugins) {
       const std::string inst = JsonString(p, "instance");

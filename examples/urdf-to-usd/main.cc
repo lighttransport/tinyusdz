@@ -36,7 +36,9 @@ void Help() {
          "         --tessellate-collision-shapes --dump-json FILE --max-memory "
          "BYTES\n"
          "         --max-input BYTES --max-depth 1..1024 "
-         "--unsupported-policy warn|error|preserve\n";
+         "--unsupported-policy warn|error|preserve\n"
+         "         --profile newton|openusd|legacy (next-core writer; the "
+         "legacy writer always emits legacy)\n";
 }
 bool Convert(const ia::Json& payload, OutputStage* stage, std::string* warn,
              std::string* err) {
@@ -113,6 +115,12 @@ int main(int argc, char** argv) {
       format = value();
     else if (arg == "--up-axis")
       opts.up_axis = value();
+    else if (arg == "--profile") {
+      opts.profile = value();
+      if (opts.profile != "newton" && opts.profile != "openusd" &&
+          opts.profile != "legacy")
+        err = "--profile expects newton, openusd or legacy";
+    }
     else if (arg == "-o" || arg == "--output")
       output = value();
     else if (arg == "--dump-json")

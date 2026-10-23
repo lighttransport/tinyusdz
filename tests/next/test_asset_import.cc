@@ -120,5 +120,53 @@ int main() {
   assert(std::string(view.data, view.len).find("lightusdImportUnsupported") != std::string::npos);
   lightusd_string_destroy(text);
   lightusd_stage_destroy(stage);
+
+  // Newton profile paths in one model (also the sanitizer target): inferred
+  // inertia, stacked joints, expanded actuators, sites below bodies, every
+  // equality kind and physics materials; then the legacy and openusd profiles.
+  const char* robot = R"(<mujoco><compiler inertiagrouprange="0 4"/><worldbody>
+<body name="a" pos="0 0 1"><freejoint/><geom type="capsule" fromto="0 0 0 .2 0 0" size=".05" friction=".8"/>
+<geom type="box" size=".1 .1 .1" contype="0" conaffinity="0" group="4"/><site name="sa" pos=".1 0 0"/>
+<body name="b" pos=".3 0 0"><joint name="j1" axis="0 1 0" range="-30 30" damping="2" armature=".1"/>
+<joint name="j2" type="slide" axis="1 0 0" limited="false" range="-1 1"/>
+<geom type="ellipsoid" size=".05 .06 .07" density="300"/><site name="sb" pos="-.1 0 0"/></body>
+<body name="c" pos="0 .3 0"><joint name="j3" axis="1 0 0"/><geom type="sphere" size=".04"/></body></body>
+</worldbody><equality><connect site1="sa" site2="sb"/><weld body1="c"/>
+<joint joint1="j3" joint2="j1" polycoef="0 -1 0 0 0" active="false"/></equality>
+<actuator><position joint="j1" kp="5" kv=".5"/><motor joint="j3" gear="2"/>
+<velocity joint="j2"/></actuator></mujoco>)";
+  for (const char* profile : {"newton", "legacy", "openusd"}) {
+    lightusd_import_options_init(&options);
+    options.format = LIGHTUSD_IMPORT_MJCF;
+    const std::string settings = std::string("{\"profile\":\"") + profile + "\"}";
+    options.settings_json = settings.c_str();
+    assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(robot), std::strlen(robot),
+                                  "memory:robot.xml", &options, &stage) == LIGHTUSD_OK);
+    const bool legacy = std::string(profile) == "legacy";
+    auto a = lightusd_stage_prim_at_path(stage, "/World/Links/a");
+    lightusd_value_view mass{};
+    assert((lightusd_attr_get(a, "physics:mass", &mass) == LIGHTUSD_OK) == !legacy);
+    auto site = lightusd_stage_prim_at_path(stage, "/World/Links/a/sa");
+    assert(lightusd_prim_is_valid(site) == !legacy);
+    // Unnamed equalities are numbered in kept order (legacy skips the site
+    // connect), so find the weld by name prefix.
+    auto weld = lightusd_stage_prim_at_path(stage, legacy ? "/World/Equalities/weld_0"
+                                                          : "/World/Equalities/weld_1");
+    assert(lightusd_prim_is_valid(weld));
+    auto drive = lightusd_stage_prim_at_path(stage, legacy ? "/World/Actuators/position_j1"
+                                                           : "/World/MjcActuators/position_j1");
+    assert(lightusd_prim_is_valid(drive) == (std::string(profile) != "openusd"));
+    lightusd_string* usda = nullptr;
+    assert(lightusd_stage_export_usda(stage, &usda) == LIGHTUSD_OK);
+    const auto out = lightusd_string_view(usda);
+    const std::string body(out.data, out.len);
+    assert((body.find("newton:") != std::string::npos) == (std::string(profile) != "openusd"));
+    assert((body.find("PhysicsMaterialAPI") != std::string::npos) == !legacy);
+    lightusd_string_destroy(usda);
+    lightusd_stage_destroy(stage);
+  }
+  options.settings_json = "{\"profile\":\"bogus\"}";
+  assert(lightusd_import_memory(reinterpret_cast<const uint8_t*>(robot), std::strlen(robot),
+                                "memory:robot.xml", &options, &stage) == LIGHTUSD_ERR_INVALID_ARG);
   std::cout << "Native import C API tests passed\n";
 }

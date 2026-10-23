@@ -225,7 +225,9 @@ void AddMaterialFromJson(Scope *scope, std::set<std::string> *used,
   if (!tex) return;
   SetToken(tex, "info:id", "UsdUVTexture", true);
   Set(tex, "inputs:file", tn::Value::MakeAssetPath(tex_file), "asset");
-  Connect(tex, "inputs:st", tn::TypeId::Texcoord2f, "texCoord2f",
+  // UsdUVTexture declares inputs:st as float2 (texCoord2f fails OpenUSD's
+  // MismatchedPropertyType validator).
+  Connect(tex, "inputs:st", tn::TypeId::Float2, "float2",
           mat_path + "/stReader.outputs:result");
   SetToken(tex, "inputs:wrapS", "repeat");
   SetToken(tex, "inputs:wrapT", "repeat");

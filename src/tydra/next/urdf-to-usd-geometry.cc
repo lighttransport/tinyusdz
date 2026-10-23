@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 - Present Light Transport Entertainment Inc.
 #include "urdf-to-usd-internal.hh"
+#include <cstdio>
 #include "next/layer/layer.hh"
 #include "next/layer/prim-spec.hh"
 #include "next/types/value.hh"
@@ -21,8 +22,72 @@ constexpr int32_t kLegacyUrdfVisualGroup = 2;
 constexpr int32_t kDefaultNewtonMaxHullVertices = 64;
 
 
+namespace {
+thread_local PhysicsMaterials *active_physics_materials = nullptr;
+
+std::string FrictionKey(const std::vector<double> &mu) {
+  std::string key;
+  char buffer[32];
+  for (double v : mu) {
+    std::snprintf(buffer, sizeof(buffer), "%.17g,", v);
+    key += buffer;
+  }
+  return key;
+}
+}  // namespace
+
+PhysicsMaterials::PhysicsMaterials(tn::Layer *layer)
+    : layer_(layer), previous_(active_physics_materials) {
+  active_physics_materials = this;
+}
+PhysicsMaterials::~PhysicsMaterials() { active_physics_materials = previous_; }
+
+std::string PhysicsMaterials::Bind(tn::PrimSpec *collider,
+                                   std::vector<double> friction) {
+  // MuJoCo geom friction defaults to (1, 0.005, 0.0001); a partial triplet
+  // keeps the remaining defaults.
+  static const double kDefault[3] = {1.0, 0.005, 0.0001};
+  const size_t authored = friction.size();
+  friction.resize(3);
+  for (size_t i = 0; i < 3; ++i)
+    if (i >= authored || !std::isfinite(friction[i])) friction[i] = kDefault[i];
+  const std::string key = FrictionKey(friction);
+  auto found = by_key_.find(key);
+  std::string path;
+  if (found != by_key_.end()) {
+    path = found->second;
+  } else {
+    if (!defined_) {
+      Define(layer_, "/World/PhysicsMaterials", "Scope");
+      defined_ = true;
+    }
+    path = "/World/PhysicsMaterials/PhysicsMaterial" +
+           (by_key_.empty() ? std::string() : "_" + std::to_string(by_key_.size()));
+    tn::PrimSpec *material = Define(layer_, path, "Material");
+    if (!material) return {};
+    AddAPIs(material, {"PhysicsMaterialAPI", "MjcMaterialAPI", "NewtonMaterialAPI"});
+    // MuJoCo's single sliding coefficient bounds the friction cone whether a
+    // contact sticks or slips: static == dynamic (mujoco-usd-converter 0.4.1).
+    Set(material, "physics:staticFriction",
+        tn::Value(static_cast<float>(friction[0])), "float");
+    Set(material, "physics:dynamicFriction",
+        tn::Value(static_cast<float>(friction[0])), "float");
+    Set(material, "newton:torsionalFriction",
+        tn::Value(static_cast<float>(friction[1])), "float");
+    Set(material, "newton:rollingFriction",
+        tn::Value(static_cast<float>(friction[2])), "float");
+    by_key_.emplace(key, path);
+  }
+  AddAPI(collider, "MaterialBindingAPI");
+  SetRel(collider, "material:binding:physics", {path});
+  return path;
+}
+
+PhysicsMaterials *ActivePhysicsMaterials() { return active_physics_materials; }
+
 void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
                       const Json &src, bool mjcf_source) {
+  const Profile &profile = ActiveProfile();
   AddAPIs(prim, {"PhysicsCollisionAPI", "MjcCollisionAPI", "MjcImageableAPI",
                  "NewtonCollisionAPI"});
   if (mesh_collision) {
@@ -50,12 +115,14 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
       Set(prim, "mjc:condim",
           tn::Value(JsonInt(src, "condim", kMjcfDefaultCondim)), "int", true);
     }
-    if (ReadIntFrom(src, "mjc", "geomContype", &ivalue) ||
-        ReadIntFrom(src, "mjc", "contype", &ivalue)) {
+    // mjc:geomContype/geomConaffinity are historical aliases of the
+    // mjc:contype/conaffinity bits authored below (which Newton reads).
+    if (profile.legacy && (ReadIntFrom(src, "mjc", "geomContype", &ivalue) ||
+                           ReadIntFrom(src, "mjc", "contype", &ivalue))) {
       Set(prim, "mjc:geomContype", tn::Value(ivalue), "int", true);
     }
-    if (ReadIntFrom(src, "mjc", "geomConaffinity", &ivalue) ||
-        ReadIntFrom(src, "mjc", "conaffinity", &ivalue)) {
+    if (profile.legacy && (ReadIntFrom(src, "mjc", "geomConaffinity", &ivalue) ||
+                           ReadIntFrom(src, "mjc", "conaffinity", &ivalue))) {
       Set(prim, "mjc:geomConaffinity", tn::Value(ivalue), "int", true);
     }
     if (ReadIntFrom(src, "mjc", "priority", &ivalue)) {
@@ -82,13 +149,29 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     }
     std::vector<double> values = JsonDoublesFrom(src, "mjc", "geomFriction");
     if (values.empty()) values = JsonDoublesFrom(src, "mjc", "friction");
-    if (!values.empty()) SetDoubles(prim, "mjc:geomFriction", values, true);
+    if (profile.legacy) {
+      if (!values.empty()) SetDoubles(prim, "mjc:geomFriction", values, true);
+    } else if (PhysicsMaterials *materials = ActivePhysicsMaterials()) {
+      // Friction is a bound physics material: the only place UsdPhysics,
+      // Newton and MuJoCo's USD decoder read it.
+      materials->Bind(prim, values);
+    }
     values = JsonDoublesFrom(src, "mjc", "solref");
     if (!values.empty()) SetDoubles(prim, "mjc:solref", values, true);
     values = JsonDoublesFrom(src, "mjc", "solimp");
     if (!values.empty()) SetDoubles(prim, "mjc:solimp", values, true);
     values = JsonDoublesFrom(src, "mjc", "geomSize");
-    if (!values.empty()) SetDoubles(prim, "mjc:geomSize", values, true);
+    if (!values.empty() && profile.legacy)
+      SetDoubles(prim, "mjc:geomSize", values, true);
+    if (!profile.legacy) {
+      double mass = 0.0, density = 0.0;
+      const bool has_mass = ReadNumberFrom(src, "mjc", "mass", &mass);
+      const bool has_density = ReadNumberFrom(src, "mjc", "density", &density);
+      if (has_mass || has_density) AddAPI(prim, "PhysicsMassAPI");
+      if (has_mass) Set(prim, "physics:mass", tn::Value(static_cast<float>(mass)), "float");
+      if (has_density)
+        Set(prim, "physics:density", tn::Value(static_cast<float>(density)), "float");
+    }
   } else {
     Set(prim, "mjc:group",
         tn::Value(JsonInt(src, "group", kLegacyUrdfCollisionGroup)), "int",
@@ -124,6 +207,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
     ReadNumber(src, key, &fallback);
     double value = fallback;
     if (mjc) ReadNumber(*mjc, key, &value);
+    if (!(value >= double(INT32_MIN) && value <= double(INT32_MAX))) return int32_t(1);
     return static_cast<int32_t>(value);
   };
   Set(prim, "mjc:contype", tn::Value(contact_bits("contype")), "int", true);
@@ -332,6 +416,7 @@ bool AddMeshFromJson(tn::Layer *layer, const std::string &link_path,
   bool render_only = false;
   ReadBool(mesh_json, "renderOnly", &render_only);
   if (!render_only) AddAPI(prim, "MjcImageableAPI");
+  if (JsonString(mesh_json, "purpose") == "guide") SetToken(prim, "purpose", "guide", true);
   // Bind a UsdShade material (MJCF <geom material=..> ->
   // /World/Materials/<m>); MJCF material names are unique, so the sanitized
   // path is deterministic and the material prim is emitted later.

@@ -41,6 +41,7 @@ typedef struct TOBJ_T(tobj_material) {
   TOBJ_REAL ior;
   TOBJ_REAL dissolve;           /* 1 = opaque */
   int illum;
+  bool dissolve_set;            /* `d` seen: authoritative over `Tr` */
 
   /* PBR extension. */
   TOBJ_REAL roughness;

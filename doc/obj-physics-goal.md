@@ -159,7 +159,52 @@ avoid implementing a second conversion or validation engine in Python.
   `physics.collider.nonUniformScale` findings across 10 entries with nonuniform
   ellipsoids. Meshes remain polygon approximations; these checks establish
   neither analytic collision nor simulation equivalence.
-- Pending: remaining Priority 1.3 and the Priority 2–3 roadmap above.
+- 2026-10-23 review/parity round (uncommitted): reviewed d6a78ccfd/acd9725f3
+  against newton-usd-schemas 0.6.0, mujoco-usd-converter 0.8.0,
+  urdf-usd-converter 0.3.4, Newton 1.8 `import_usd`, MuJoCo 3.16's USD decoder
+  and OpenUSD 26.08. Delivered:
+  - Output profiles `newton` (native default) / `openusd` / `legacy` (JSON
+    bridge default); see [USD physics](usd-physics.md#output-profiles).
+    Legacy output is byte-identical for 59 of 69 Menagerie models; the other
+    10 differ only through profile-independent fixes listed there.
+  - Versioned engine descriptors (Priority 1.3 remainder): Newton/MuJoCo
+    schemas in the native tables and Python `schema_definitions()`; writer
+    variability from descriptors; validator `core.schema.variability` and
+    standard `limit:`/`drive:` names; zero gravity direction accepted;
+    `low > high` treated as a locked axis.
+  - Security/hardening: dependency containment for bare source names (an
+    empty root accepted every path), backslash texture paths, bounded
+    ear-clipping work, checked MJCF integer conversion, int32-safe heightfield
+    ids, iterative URDF chain transforms.
+  - MJCF semantics: `limited`/`autolimits`, class orientation precedence,
+    root class `main`, unknown classes, downward `zaxis`, frame joint axes and
+    light directions, actuator shortcut expansion, collision by
+    `contype|conaffinity`, stacked joints, equality joints (body and site
+    forms), mesh-fit primitives, box/ellipsoid `fromto`, MuJoCo
+    `inertiafromgeom` (Priority 2.4 inference path) and first-OBJ-object
+    meshes.
+  - URDF: planar D6, zero axis on fixed joints, missing/unknown geometry under
+    the policy, ASCII STL, COLLADA meshes/materials (`dae.cc`),
+    `urdf:safety_controller:*`/`calibration:*`/`limit:effort`.
+  - OBJ: export rewritten (corner indices, deterministic groups, bounds,
+    locale, one MTL entry per material); MTL `Ni` presence, `d` over `Tr`,
+    clearcoat, `-imfchan`, `-bm`, `-colorspace`; `metersPerUnit`/`kind`.
+- Verification of this round: full Python suite 353 passed / 11 optional
+  skips; all 70 standalone next tests; legacy `unit-test-lightusd` all pass;
+  ASan/UBSan clean on the import/OBJ/converter/validation/query tests (the
+  known `-fno-rtti` vptr false positive excepted). Inferred inertia matches
+  MuJoCo 3.16 for 1,226 of 1,237 Menagerie bodies. OpenUSD 26.08's 28
+  validators report no issues for sampled Menagerie models in all profiles
+  after the `inputs:st` fix. Newton comparison results are in
+  [testing](testing-cpp.md#downstream-newton-and-openusd-checks).
+- Still pending: Atomic Component layout, nested body hierarchy, ghost-link
+  collapse, unit conversion (Priority 2.5), compact OBJ topology (2.6),
+  supplied-skeleton binding (2.7), tendon wrap evaluation (2.8), Newton
+  validator rules for `NewtonMassAPI`/`NewtonJointAPI`, composed-stage
+  physics validation, MJCF visual completeness (camera clipping, light
+  intensity, texrepeat, capsule caps, builtin textures), the typed mesh path
+  and other Phase E performance work, a COLLADA/MJCF fuzz harness, and
+  Priority 3.
 
 Reference specifications: [UsdPhysics](https://openusd.org/dev/api/usd_physics_page_front.html),
 [MJCF](https://mujoco.readthedocs.io/en/stable/XMLreference.html), and

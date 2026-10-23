@@ -60,7 +60,19 @@ Some conversion warnings still use the general `import.warning` or
 `import.texture_unresolved`, `import.memory_limit`, `import.input_limit`,
 `import.depth_limit`, `mjcf.element_unsupported`, `mjcf.equality_unsupported`,
 `mjcf.tendon_wrap_approximated` and `mjcf.ellipsoid_collision_approximated`.
+Further codes: `mjcf.integer_range` (an integer attribute outside int32 was
+clamped), `mjcf.hfield_size`, `mjcf.unknown_class`, `mjcf.obj_first_object`
+(MuJoCo converts only the first object of an OBJ mesh asset),
+`mjcf.actuator_type_unsupported` (gain/bias/dynamics without an MjcPhysics
+token), `mjcf.equality_site_unsupported` (legacy profile only),
+`mjcf.inertia_convex_approximated`, `urdf.geometry_unsupported` (missing or
+unknown URDF geometry, skipped under `warn`), `dae.up_axis_ignored`,
+`dae.geometry_unsupported` and `dae.primitive_unsupported`.
 `import.failed` records the final failure.
+
+`counts.inferred_inertia_bodies` counts MJCF bodies whose mass properties were
+computed from their geoms (MuJoCo `inertiafromgeom`; see
+[USD physics](usd-physics.md#output-profiles)).
 The top-level `error` remains available if the diagnostic record budget is full.
 
 Each record collection has at most 1,024 entries. Their shared accounting quota

@@ -4,6 +4,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -304,6 +305,43 @@ void Large(size_t triangles, size_t comment_mib, bool parser_only, bool smoothin
   std::cout << "Generated in memory: bytes=" << obj.size() << " triangles=" << triangles
             << " vertices=" << triangles * 3 << " seconds=" << elapsed << '\n';
 }
+// A high-arity star polygon makes nearly every corner reflex-blocked, the
+// adversarial case for ear clipping. The tessellator's linear work budget must
+// keep it bounded and still emit n - 2 triangles.
+void HighArityTriangulation() {
+  const size_t n = 65536;
+  std::string obj;
+  obj.reserve(n * 40);
+  char buffer[96];
+  for (size_t i = 0; i < n; ++i) {
+    const double a = 6.283185307179586 * double(i) / double(n);
+    const double r = (i & 1) ? 1.0 : 0.25;
+    obj.append(buffer, size_t(std::snprintf(buffer, sizeof(buffer), "v %.9f %.9f 0\n",
+                                            r * std::cos(a), r * std::sin(a))));
+  }
+  obj += "f";
+  for (size_t i = 1; i <= n; ++i) {
+    obj += ' ';
+    obj += std::to_string(i);
+  }
+  obj += '\n';
+  auto config = tobj_default_config();
+  config.triangulate = true;
+  config.max_face_arity = n;
+  tobj_scene_f scene{};
+  const auto start = std::chrono::steady_clock::now();
+  Check(tobj_load_obj_from_memory_f(&scene, reinterpret_cast<const uint8_t*>(obj.data()),
+                                    obj.size(), &config, nullptr) == TOBJ_OK,
+        "high-arity polygon loads");
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  size_t triangles = 0;
+  for (size_t s = 0; s < scene.num_shapes; ++s) triangles += scene.shapes[s].mesh.num_faces;
+  tobj_scene_free_f(&scene);
+  Check(triangles == n - 2, "high-arity polygon emits n - 2 triangles");
+  // Unbudgeted clipping takes ~3 s at -O2 (far longer unoptimized); the
+  // budgeted path takes ~0.1 s.
+  Check(seconds < 5.0, "high-arity triangulation is bounded");
+}
 }  // namespace
 int main(int argc, char** argv) {
   size_t triangles = 10000, comment_mib = 1;
@@ -321,6 +359,7 @@ int main(int argc, char** argv) {
     }
   }
   Hardening();
+  HighArityTriangulation();
   GeneratedNormals();
   Large(triangles, comment_mib, parser_only, smoothing);
   std::cout << "OBJ memory, limits, malformed-input and allocation regressions passed\n";

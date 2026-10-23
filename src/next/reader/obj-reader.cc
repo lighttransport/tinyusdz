@@ -180,6 +180,11 @@ void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
   double ior = 1.5;
   if (ReadNumber(m, "ior", &ior))
     Set(ps, "inputs:ior", tn::Value(static_cast<float>(ior)), "float");
+  for (const char* key : {"clearcoat", "clearcoatRoughness"}) {
+    double v = 0.0;
+    if (ReadNumber(m, key, &v))
+      Set(ps, std::string("inputs:") + key, tn::Value(static_cast<float>(v)), "float");
+  }
   if (const Json* maps = JsonArray(m, "maps")) {
     for (size_t k = 0; k < maps->size(); k++) {
       const Json& map = (*maps)[k];
@@ -217,22 +222,32 @@ void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
               path + "_Transform.outputs:result");
       SetToken(texture, "inputs:wrapS", clamp ? "clamp" : "repeat");
       SetToken(texture, "inputs:wrapT", clamp ? "clamp" : "repeat");
-      SetToken(texture, "inputs:sourceColorSpace", color ? "sRGB" : "raw");
+      std::string color_space = JsonString(map, "colorSpace");
+      if (color_space == "linear") color_space = "raw";
+      if (color_space != "sRGB" && color_space != "raw") color_space = color ? "sRGB" : "raw";
+      SetToken(texture, "inputs:sourceColorSpace", color_space);
       if (input == "normal") {
-        Set(texture, "inputs:scale", tn::Value::MakeFloat4(2, 2, 2, 1),
-            "float4");
-        Set(texture, "inputs:bias", tn::Value::MakeFloat4(-1, -1, -1, 0),
-            "float4");
+        // MTL -bm scales the tangent-space XY of the normal map.
+        double bm = 1.0;
+        ReadNumber(map, "bumpMultiplier", &bm);
+        const float s2 = static_cast<float>(2.0 * bm), b1 = static_cast<float>(-bm);
+        Set(texture, "inputs:scale", tn::Value::MakeFloat4(s2, s2, 2, 1), "float4");
+        Set(texture, "inputs:bias", tn::Value::MakeFloat4(b1, b1, -1, 0), "float4");
       }
+      // -imfchan r|g|b|m|l|z: scalar maps read the selected channel (m is
+      // the matte/alpha channel; luminance and depth fall back to red).
+      const std::string channel = JsonString(map, "channel");
+      const std::string output = channel == "g" ? "g" : channel == "b" ? "b"
+                                 : channel == "m" ? "a" : "r";
       Declare(texture, "outputs:rgb", tn::TypeId::Float3, "float3");
-      Declare(texture, "outputs:r", tn::TypeId::Float, "float");
+      Declare(texture, "outputs:" + output, tn::TypeId::Float, "float");
       Connect(
           ps, "inputs:" + input,
           input == "normal"
               ? tn::TypeId::Normal3f
               : (vector_input ? tn::TypeId::Color3f : tn::TypeId::Float),
           input == "normal" ? "normal3f" : (vector_input ? "color3f" : "float"),
-          path + (vector_input ? ".outputs:rgb" : ".outputs:r"));
+          path + (vector_input ? ".outputs:rgb" : ".outputs:" + output));
     }
   }
 
@@ -248,7 +263,9 @@ void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
   if (!tex) return;
   SetToken(tex, "info:id", "UsdUVTexture", true);
   Set(tex, "inputs:file", tn::Value::MakeAssetPath(tex_file), "asset");
-  Connect(tex, "inputs:st", tn::TypeId::Texcoord2f, "texCoord2f",
+  // UsdUVTexture declares inputs:st as float2 (texCoord2f fails OpenUSD's
+  // MismatchedPropertyType validator).
+  Connect(tex, "inputs:st", tn::TypeId::Float2, "float2",
           mat_path + "/stReader.outputs:result");
   SetToken(tex, "inputs:wrapS", "repeat");
   SetToken(tex, "inputs:wrapT", "repeat");
@@ -287,7 +304,14 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
         Value(payload["unsupported"].dump()));
     layer->meta().customLayerData_set = true;
   }
-  Define(layer, "/World", "Xform");
+  PrimSpec* world = Define(layer, "/World", "Xform");
+  // Non-legacy profiles state the units explicitly (OBJ carries none; USD's
+  // fallback would be centimeters) and mark the asset root as a component.
+  if (JsonString(payload, "profile", "legacy") != "legacy") {
+    layer->meta().metersPerUnit = 1.0;
+    layer->meta().metersPerUnit_set = true;
+    if (world) world->meta().kind() = "component";
+  }
   Define(layer, "/World/Links", "Xform");
   Define(layer, "/World/Links/Geometry", "Xform");
   Scope scope{layer};

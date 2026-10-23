@@ -54,6 +54,10 @@ struct ImportReport {
 struct Options {
   std::string format = "auto";
   std::string up_axis = "Z";
+  // USD output profile: "newton" (Newton 1.8 / newton-usd-schemas 0.6 /
+  // MuJoCo 3.16 decoder parity), "openusd" (standard schemas only) or
+  // "legacy" (historical output). See doc/usd-physics.md.
+  std::string profile = "newton";
   bool allow_missing = false;
   bool tessellate_collision_shapes = false;
   UnsupportedPolicy unsupported_policy = UnsupportedPolicy::Warn;
@@ -142,6 +146,9 @@ Json Array(const std::vector<T>& values) {
 }
 bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
              bool triangulate, OBJ* obj, std::string* err);
+// COLLADA triangle meshes for URDF/MJCF assets (same layout as ReadOBJ).
+bool ReadDAE(std::string_view text, const std::string& source, Reader& reader,
+             OBJ* obj, std::string* err);
 // Typed geometry path for large OBJ inputs; Result carries only materials/assets.
 bool BuildOBJScene(std::string_view text, const std::string& source,
                    const Options& options, OBJ* obj, Result* result,

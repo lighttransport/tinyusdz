@@ -41,7 +41,11 @@ def test_obj_polygon_normals_uv_and_no_physics():
     np.testing.assert_allclose(np.asarray(m["normals"]), [[0, 0, -1]] * 4)
     np.testing.assert_allclose(np.asarray(m["primvars:st"]), [[0, 0], [1, 0], [1, 1], [0, 1]])
     assert not physics.inspect(stage).scenes
-    assert "metersPerUnit" not in stage.export_usda()
+    # OBJ has no units: the current profile states meters explicitly; the
+    # legacy profile leaves USD's fallback.
+    assert "metersPerUnit = 1" in stage.export_usda()
+    legacy = lightusd._import(data=OBJ, format="obj", profile="legacy")
+    assert "metersPerUnit" not in legacy.export_usda()
 
 
 @pytest.mark.parametrize("extension", ["obj", "OBJ"])
@@ -167,13 +171,27 @@ def test_mjcf_root_joint_gravity_and_roundtrip(tmp_path):
     assert stage.prim_at('/World/Joints/hinge').type_name == 'PhysicsRevoluteJoint'
     assert stage.prim_at('/World/PhysicsScene')['physics:gravityMagnitude'] == 3
     assert stage.prim_at('/World/PhysicsScene')['newton:timeStepsPerSecond'] == 200
-    assert stage.prim_at('/World/Links/tip')['mjc:freeJoint'] is True
-    assert stage.prim_at('/World/Actuators/drive')['newton:kp'] == 20
+    # A nested <freejoint> body is unjointed and roots its own articulation;
+    # only the legacy profile also records the historical mjc:freeJoint flag.
+    tip = stage.prim_at('/World/Links/tip')
+    assert 'PhysicsArticulationRootAPI' in tip.metadata('apiSchemas')
+    assert not any(j.relationships.get('physics:body1') == ('/World/Links/tip',)
+                   for j in physics.inspect(stage).joints)
+    legacy = lightusd._import(data=text, format='mjcf', profile='legacy')
+    assert legacy.prim_at('/World/Links/tip')['mjc:freeJoint'] is True
+    # <position kp kv> expands like MuJoCo's compiler: gain kp, affine bias
+    # (0, -kp, -kv); Newton maps this shape back to a joint-target drive.
+    drive = stage.prim_at('/World/MjcActuators/drive')
+    assert tuple(drive['mjc:gainPrm'])[:1] == (20,) and len(drive['mjc:gainPrm']) == 10
+    assert tuple(drive['mjc:biasPrm'])[:3] == (0, -20, -2)
+    assert drive['mjc:biasType'] == 'affine' and drive['mjc:forceRange:max'] == 3
     assert tydra.to_render_scene(stage).physics['joints']
     for ext in ('usda', 'usdc', 'usdz'):
         path = tmp_path / ('out.' + ext)
         stage.save(str(path))
-        assert physics.inspect(lightusd.load(path)).actuators[0].attributes['newton:kp'] == 20
+        assert physics.inspect(lightusd.load(path)).actuators[0].attributes['mjc:gainPrm'][0] == 20
+    legacy = lightusd._import(data=text, format='mjcf', profile='legacy')
+    assert legacy.prim_at('/World/Actuators/drive')['newton:kp'] == 20
 
 
 def test_xml_detection_includes_and_anchor(tmp_path):
@@ -236,10 +254,16 @@ def test_mjcf_motor_bounds_are_not_constant_commands():
     text = b'''<mujoco><worldbody><body name="b"><joint name="j"/>
     <geom type="sphere" size=".1"/></body></worldbody>
     <actuator><motor name="drive" joint="j" gear="2" ctrlrange="-1 1"/></actuator></mujoco>'''
-    actuator = lightusd.load_bytes(text, format='mjcf').prim_at('/World/Actuators/drive')
-    assert 'newton:constEffort' not in actuator
-    assert tuple(actuator['mjc:gear']) == (2,)
-    assert tuple(actuator['mjc:ctrlrange']) == (-1, 1)
+    actuator = lightusd.load_bytes(text, format='mjcf').prim_at('/World/MjcActuators/drive')
+    # A motor is a unit-gain force actuator: no PD gains, no bias.
+    assert tuple(actuator['mjc:gainPrm'])[:2] == (1, 0)
+    assert actuator['mjc:biasType'] == 'none' and actuator['mjc:gainType'] == 'fixed'
+    assert tuple(actuator['mjc:gear']) == (2, 0, 0, 0, 0, 0)
+    assert (actuator['mjc:ctrlRange:min'], actuator['mjc:ctrlRange:max']) == (-1, 1)
+    legacy = lightusd._import(data=text, format='mjcf', profile='legacy').prim_at('/World/Actuators/drive')
+    assert 'newton:constEffort' not in legacy
+    assert tuple(legacy['mjc:gear']) == (2,)
+    assert tuple(legacy['mjc:ctrlrange']) == (-1, 1)
 
 
 def test_reserved_world_name_and_filtered_pairs():
@@ -262,8 +286,22 @@ def test_visible_mjcf_geom_also_collides():
     assert len(data.colliders) == 1
     collider = data.colliders[0]
     assert collider.type_name == 'Sphere'
-    assert collider.attributes['mjc:geomFriction'] == pytest.approx((.6, .01, .02))
-    assert collider.attributes['mjc:geomContype'] == 2
+    assert collider.attributes['mjc:contype'] == 2
+    assert collider.attributes['mjc:conaffinity'] == 4
+    # Friction is a bound physics material (static == dynamic == mu[0]).
+    material_path = collider.relationships['material:binding:physics'][0]
+    material = stage.prim_at(material_path)
+    assert 'PhysicsMaterialAPI' in material.metadata('apiSchemas')
+    assert material['physics:staticFriction'] == pytest.approx(.6)
+    assert material['physics:dynamicFriction'] == pytest.approx(.6)
+    assert material['newton:torsionalFriction'] == pytest.approx(.01)
+    assert material['newton:rollingFriction'] == pytest.approx(.02)
+    assert 'mjc:geomFriction' not in collider.attributes
+    legacy = physics.inspect(lightusd._import(data=b'''<mujoco><worldbody><body name="b"><freejoint/>
+        <geom name="ball" type="sphere" size=".2" friction=".6 .01 .02" contype="2" conaffinity="4"/>
+        </body></worldbody></mujoco>''', format='mjcf', profile='legacy')).colliders[0]
+    assert legacy.attributes['mjc:geomFriction'] == pytest.approx((.6, .01, .02))
+    assert legacy.attributes['mjc:geomContype'] == 2
 
 
 def test_mjcf_actuator_default_class():
@@ -273,7 +311,8 @@ def test_mjcf_actuator_default_class():
       <geom type="sphere" size=".1"/></body></worldbody>
       <actuator><general name="motor" class="drive" joint="j"/></actuator></mujoco>''', format='mjcf')
     record = physics.inspect(stage).actuators[0]
-    assert record.attributes['mjc:gainPrm'] == (4, 5, 6)
+    assert record.attributes['mjc:gainPrm'][:3] == (4, 5, 6)
+    assert record.attributes['mjc:biasPrm'][:3] == (0, -4, -2)
 
 
 def test_mesh_subsets_survive_layer_growth(tmp_path):
@@ -319,13 +358,35 @@ def test_robot_mesh_preserves_skin(tmp_path):
     assert m.attribute('primvars:skel:jointWeights').metadata('elementSize') == 1
 
 
-def test_worldbody_and_unnamed_sites():
-    stage = lightusd.load_bytes(b'''<mujoco><worldbody><site name="fixed" pos="1 2 3"/>
-      <body name="b"><site pos="0 0 1"/><geom type="sphere" size=".1"/></body>
-      </worldbody></mujoco>''', format='mjcf')
+SITES_MJCF = b'''<mujoco><worldbody><site name="fixed" pos="1 2 3"/>
+  <body name="b" pos="1 0 0" euler="0 0 90"><site name="tip" pos="0 0 1"/>
+  <site pos="2 0 0"/><geom type="sphere" size=".1"/></body>
+  </worldbody></mujoco>'''
+
+
+def test_worldbody_and_unnamed_sites_legacy():
+    stage = lightusd._import(data=SITES_MJCF, format='mjcf', profile='legacy')
     sites = physics.inspect(stage).sites
-    assert len(sites) == 2
+    assert len(sites) == 3
     np.testing.assert_allclose(np.asarray(stage.prim_at('/World/Sites/fixed').local_transform())[3, :3], [1, 2, 3])
+
+
+def test_sites_are_rigid_body_descendants():
+    # Newton only loads sites below rigid bodies; world positions must survive.
+    stage = lightusd.load_bytes(SITES_MJCF, format='mjcf')
+    sites = physics.inspect(stage).sites
+    assert len(sites) == 3
+    with pytest.raises(KeyError):
+        stage.prim_at('/World/Sites')
+    fixed = stage.prim_at('/World/Links/__world/fixed')
+    tip = stage.prim_at('/World/Links/b/tip')
+    assert 'NewtonSiteAPI' in fixed.metadata('apiSchemas')
+    np.testing.assert_allclose(np.asarray(fixed.world_transform())[3, :3], [1, 2, 3], atol=1e-6)
+    np.testing.assert_allclose(np.asarray(tip.world_transform())[3, :3], [1, 0, 1], atol=1e-6)
+    np.testing.assert_allclose(np.asarray(tip.local_transform())[3, :3], [0, 0, 1], atol=1e-6)
+    unnamed = [s for s in sites if s.prim_path.startswith('/World/Links/b/') and not s.prim_path.endswith('tip')]
+    assert len(unnamed) == 1
+    np.testing.assert_allclose(np.asarray(stage.prim_at(unnamed[0].prim_path).world_transform())[3, :3], [1, 2, 0], atol=1e-6)
 
 
 def test_mjcf_merged_compiler_and_option(tmp_path):
@@ -387,3 +448,122 @@ def test_urdf_fixed_axis_rpy():
     tip = np.asarray(stage.prim_at('/World/Links/tip').local_transform())
     np.testing.assert_allclose(arm[:3, :3].T, rotation, atol=1e-6)
     np.testing.assert_allclose(tip[3, :3], rotation @ [1,2,3] + [.1,.2,.3], atol=1e-6)
+
+
+@pytest.mark.parametrize('xml,gain,bias,dyn,extra', [
+    ('<velocity joint="j"/>', (1,), (0, 0, -1), 'none', {}),
+    ('<velocity joint="j" kv="3"/>', (3,), (0, 0, -3), 'none', {}),
+    ('<position joint="j"/>', (1,), (0, -1, 0), 'none', {}),
+    ('<position joint="j" kp="5" dampratio=".7" timeconst=".1"/>', (5,), (0, -5, .7), 'filterexact', {}),
+    ('<intvelocity joint="j" kp="2" actrange="-1 1"/>', (2,), (0, -2, 0), 'integrator',
+     {'mjc:actLimited': 'true', 'mjc:actRange:max': 1}),
+    ('<damper joint="j" kv="4" ctrlrange="0 1"/>', (0, 0, -4), (), 'none', {'mjc:gainType': 'affine'}),
+    ('<cylinder joint="j" diameter="2" timeconst=".5"/>', (3.141592653589793,), (0, 0, 0), 'filter',
+     {'mjc:dynPrm': (.5, 0, 0, 0, 0, 0, 0, 0, 0, 0)}),
+])
+def test_mjcf_actuator_shortcut_expansion(xml, gain, bias, dyn, extra):
+    stage = lightusd.load_bytes(('<mujoco><worldbody><body name="b"><joint name="j"/>'
+        '<geom type="sphere" size=".1"/></body></worldbody><actuator>' + xml +
+        '</actuator></mujoco>').encode(), format='mjcf')
+    act = physics.inspect(stage).actuators[0].attributes
+    assert act['mjc:gainPrm'][:len(gain)] == pytest.approx(gain)
+    assert act['mjc:biasPrm'][:len(bias)] == pytest.approx(bias)
+    assert act['mjc:dynType'] == dyn
+    for key, value in extra.items():
+        assert act[key] == (pytest.approx(value) if not isinstance(value, str) else value)
+
+
+def test_mjcf_unsupported_actuator_gain_type_policy():
+    xml = (b'<mujoco><worldbody><body name="b"><joint name="j"/><geom type="sphere" size=".1"/>'
+           b'</body></worldbody><actuator><general joint="j" gaintype="dcmotor"/></actuator></mujoco>')
+    stage = lightusd.load_bytes(xml, format='mjcf')
+    assert not physics.inspect(stage).actuators
+    assert 'MjcPhysics token' in stage.warnings()
+    with pytest.raises(Exception):
+        lightusd._import(data=xml, format='mjcf', unsupported_policy='error')
+
+
+
+URDF_PLANAR = b'''<robot name="r"><link name="base"/><link name="slider">
+  <inertial><mass value="1"/><inertia ixx=".1" iyy=".1" izz=".1" ixy="0" ixz="0" iyz="0"/></inertial>
+  <visual><geometry><mesh filename="missing_geometry_type.xyz"/></geometry></visual>
+  <collision><geometry/></collision></link>
+  <link name="tip"/>
+  <joint name="plane" type="planar"><parent link="base"/><child link="slider"/><axis xyz="0 0 1"/></joint>
+  <joint name="weld" type="fixed"><parent link="slider"/><child link="tip"/><axis xyz="0 0 0"/></joint>
+</robot>'''
+
+
+def test_urdf_planar_fixed_zero_axis_and_missing_geometry(tmp_path):
+    (tmp_path / "missing_geometry_type.xyz").write_bytes(b"")
+    path = tmp_path / "r.urdf"
+    path.write_bytes(URDF_PLANAR.replace(b'<mesh filename="missing_geometry_type.xyz"/>', b''))
+    stage = lightusd.import_urdf(path)
+    plane = stage.prim_at('/World/Joints/plane')
+    assert plane.type_name == 'PhysicsJoint'
+    apis = set(plane.metadata('apiSchemas'))
+    assert {'PhysicsLimitAPI:transX', 'PhysicsLimitAPI:rotY', 'PhysicsLimitAPI:rotZ'} <= apis
+    assert plane['limit:rotY:physics:low'] > plane['limit:rotY:physics:high']
+    assert stage.prim_at('/World/Joints/weld').type_name == 'PhysicsFixedJoint'
+    assert 'no supported geometry' in stage.warnings()
+    with pytest.raises(Exception):
+        lightusd.import_urdf(path, unsupported_policy='error')
+    with pytest.raises(Exception):
+        lightusd.import_urdf(path, profile='legacy')
+
+
+def test_ascii_stl(tmp_path):
+    (tmp_path / "tri.stl").write_text("solid t\n facet normal 0 0 1\n  outer loop\n"
+        "   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\n"
+        " facet normal 0 0 1\n  outer loop\n   vertex 1 0 0\n   vertex 1 1 0\n   vertex 0 1 0\n"
+        "  endloop\n endfacet\nendsolid t\n")
+    (tmp_path / "r.urdf").write_text('<robot name="r"><link name="l"><visual><geometry>'
+        '<mesh filename="tri.stl"/></geometry></visual></link></robot>')
+    stage = lightusd.import_urdf(tmp_path / "r.urdf")
+    m = mesh(stage)
+    assert len(m["points"]) == 4 and len(m["faceVertexIndices"]) == 6
+
+
+DAE = '''<?xml version="1.0"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+<asset><unit meter="0.01"/><up_axis>Y_UP</up_axis></asset>
+<library_effects><effect id="red-fx"><profile_COMMON><technique sid="t"><phong>
+  <diffuse><color>1 0 0 1</color></diffuse></phong></technique></profile_COMMON></effect></library_effects>
+<library_materials><material id="red" name="Red"><instance_effect url="#red-fx"/></material></library_materials>
+<library_geometries><geometry id="quad"><mesh>
+  <source id="p"><float_array id="pa" count="12">0 0 0 100 0 0 100 100 0 0 100 0</float_array>
+    <technique_common><accessor source="#pa" count="4" stride="3"/></technique_common></source>
+  <vertices id="v"><input semantic="POSITION" source="#p"/></vertices>
+  <polylist material="sym" count="1"><input semantic="VERTEX" source="#v" offset="0"/>
+    <vcount>4</vcount><p>0 1 2 3</p></polylist>
+</mesh></geometry></library_geometries>
+<library_visual_scenes><visual_scene id="s"><node><translate>0 0 200</translate>
+  <instance_geometry url="#quad"><bind_material><technique_common>
+    <instance_material symbol="sym" target="#red"/></technique_common></bind_material></instance_geometry>
+</node></visual_scene></library_visual_scenes>
+<scene><instance_visual_scene url="#s"/></scene></COLLADA>'''
+
+
+def test_collada_mesh_units_transform_and_material(tmp_path):
+    (tmp_path / "quad.dae").write_text(DAE)
+    (tmp_path / "r.urdf").write_text('<robot name="r"><link name="l"><visual><geometry>'
+        '<mesh filename="quad.dae"/></geometry></visual></link></robot>')
+    stage = lightusd.import_urdf(tmp_path / "r.urdf")
+    m = mesh(stage)
+    points = np.asarray(m["points"])
+    # unit meter=0.01 scales the node translate and the vertices; up_axis is
+    # reported, not applied (urdf-usd-converter / ROS convention).
+    assert points.max(axis=0) == pytest.approx([1, 1, 2])
+    assert points.min(axis=0) == pytest.approx([0, 0, 2])
+    assert len(m["faceVertexIndices"]) == 6  # quad fan-triangulated
+    assert "up_axis Y_UP is not applied" in stage.warnings()
+    surfaces = [p for p in stage.prims_of_type("Shader") if p.get("info:id") == "UsdPreviewSurface"]
+    assert any(tuple(s.get("inputs:diffuseColor") or ())[:3] == pytest.approx((1, 0, 0)) for s in surfaces)
+
+
+def test_collada_rejects_bad_indices(tmp_path):
+    (tmp_path / "bad.dae").write_text(DAE.replace("<p>0 1 2 3</p>", "<p>0 1 2 9</p>"))
+    (tmp_path / "r.urdf").write_text('<robot name="r"><link name="l"><visual><geometry>'
+        '<mesh filename="bad.dae"/></geometry></visual></link></robot>')
+    with pytest.raises(Exception, match="out of range"):
+        lightusd.import_urdf(tmp_path / "r.urdf")

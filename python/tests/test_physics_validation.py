@@ -175,3 +175,77 @@ def test_ellipsoid_collision_policy_and_mesh_profile():
 def test_oversized_solver_array_is_rejected():
     with pytest.raises(lightusd.UsdError, match="Too many MJCF solver values"):
         lightusd.load_bytes(b'<mujoco><worldbody><body><geom type="sphere" size=".1" solref="1 2 3"/></body></worldbody></mujoco>', format="mjcf")
+
+
+JOINT_LIMITS = VALID + '''
+def Xform "Base" {}
+def PhysicsJoint "D6" (prepend apiSchemas = ["PhysicsLimitAPI:rotX", "PhysicsLimitAPI:transY"]) {
+    rel physics:body0 = </Base>
+    rel physics:body1 = </Body>
+    float limit:rotX:physics:low = %s
+    float limit:rotX:physics:high = 30
+    float limit:transY:physics:low = 1
+    float limit:transY:physics:high = -1
+}
+def PhysicsScene "Scene" { vector3f physics:gravityDirection = (0, 0, 0) }
+'''
+
+
+def test_zero_gravity_direction_means_negative_up_axis():
+    report = physics.validate(lightusd.loads(JOINT_LIMITS % "-30"))
+    assert not any(i.rule_id == "physics.scene.gravity" for i in report.issues)
+
+
+def test_standard_limit_names_are_validated():
+    report = physics.validate(lightusd.loads(JOINT_LIMITS % "-inf"))
+    # -inf is the unlimited fallback; low > high is a locked transY axis.
+    assert report.valid, [(i.rule_id, i.message) for i in report.issues if i.severity == "error"]
+    assert not [i for i in report.issues if i.rule_id == "physics.limit.range"]
+    nan = physics.validate(lightusd.loads(JOINT_LIMITS % "nan"))
+    assert any(i.rule_id == "physics.limit.range" and i.severity == "error" for i in nan.issues)
+
+
+def test_historical_limit_names_are_flagged():
+    text = VALID + '''
+def PhysicsRevoluteJoint "Hinge" (prepend apiSchemas = ["PhysicsLimitAPI:rotX"]) {
+    rel physics:body1 = </Body>
+    float physics:limit:rotX:low = -1
+    float physics:limit:rotX:high = 1
+}
+'''
+    report = physics.validate(lightusd.loads(text))
+    flagged = [i for i in report.issues if i.rule_id == "physics.property.nonStandardName"]
+    assert len(flagged) == 2 and all(i.severity == "warning" for i in flagged)
+
+
+@pytest.mark.parametrize("profile", ["newton", "openusd"])
+def test_profile_outputs_validate_without_schema_mismatches(profile):
+    xml = b'''<mujoco><worldbody><body name="a" pos="0 0 1"><freejoint/>
+      <geom type="box" size=".1 .1 .1" density="300"/>
+      <body name="b" pos="0 0 -.3"><joint name="j" type="hinge" axis="0 1 0" range="-30 45"
+        damping="2" armature=".1" frictionloss=".3" ref="5" springref="10" stiffness="4"/>
+      <joint name="k" type="slide" axis="1 0 0" range="-.1 .1"/>
+      <geom type="capsule" size=".05 .2" friction=".7 .01 .001"/><site name="s" pos="0 0 .1"/>
+      </body></body></worldbody>
+      <tendon><fixed name="t" limited="false" range="0 1"><joint joint="j" coef="1"/></fixed></tendon>
+      <actuator><motor name="m" joint="j" gear="2"/></actuator></mujoco>'''
+    stage = lightusd._import(data=xml, format="mjcf", profile=profile)
+    report = physics.validate(stage)
+    bad = [(i.rule_id, i.location, i.message) for i in report.issues
+           if i.severity == "error" or i.rule_id.startswith("core.schema")
+           or i.rule_id == "physics.property.nonStandardName"]
+    assert not bad, bad
+
+
+def test_schema_variability_mismatch_is_reported():
+    # Historical output authored joint frames/limits as uniform; the generated
+    # UsdPhysics descriptors declare them varying.
+    xml = b'''<mujoco><worldbody><body name="a"><freejoint/><geom type="sphere" size=".1"/>
+      <body name="b"><joint name="j" range="-30 45"/><geom type="sphere" size=".1"/></body>
+      </body></worldbody></mujoco>'''
+    legacy = physics.validate(lightusd._import(data=xml, format="mjcf", profile="legacy"))
+    mismatched = {i.location.rsplit(".", 1)[-1] for i in legacy.issues
+                  if i.rule_id == "core.schema.variability"}
+    assert {"physics:localPos0", "physics:localRot1", "physics:lowerLimit"} <= mismatched
+    current = physics.validate(lightusd._import(data=xml, format="mjcf"))
+    assert not any(i.rule_id == "core.schema.variability" for i in current.issues)

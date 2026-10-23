@@ -2379,6 +2379,42 @@ for focused retries. A conversion pass does not claim simulator equivalence;
 inspect `reference_checks` and warnings in the JSON report as well.
 See [OBJ mapping and skinning](usdobj.md) for supported records and binding rules.
 
+### Downstream Newton and OpenUSD checks
+
+`tests/next/run-newton-compare.py` builds two Newton models per MJCF file in
+one process: `ModelBuilder.add_mjcf` on the source and `add_usd` (with
+`SchemaResolverMjc` and `SchemaResolverNewton`) on LightUSD's output for each
+`--profile`. It compares DOF, collider, site and body counts, per-body mass,
+COM and inertia, joint types and per-DOF limits, armature, damping and
+friction, and sorted shape friction. When `mujoco` is importable its compiled
+model arbitrates: a body or collider count where LightUSD matches MuJoCo but
+Newton's own MJCF importer does not is recorded under `reference_differs`.
+Newton needs `warp-lang`, `mujoco`, `mujoco-warp`, `usd-core` and
+`newton-usd-schemas`; CPU is sufficient.
+
+```sh
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" "$NEWTON_PYTHON" tests/next/run-newton-compare.py \
+  --menagerie "$MENAGERIE_ROOT" --profile newton --out newton-compare.json
+```
+
+At Menagerie `cda5236f` with Newton 1.8.0.dev0 (`3ab62ae9`), warp 1.18 and
+MuJoCo 3.15 (Newton's pin), 52 of 56 compared first models pass in the `newton`
+profile (13 more were skipped because Newton's `add_mjcf` needed Pillow, which
+the test venv lacked). Remaining: `shadow_hand/keyframes.xml` is a fragment
+picked as a model, thin-shell `ms_human_700` rib masses (within 1.2% of MuJoCo),
+an all-zero authored `ufactory_lite6` base inertia that is left unauthored
+(as mujoco-usd-converter does), and `robotiq_2f85_v4` (not yet investigated).
+
+`tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
+registered OpenUSD `UsdValidation` validators (including
+`usdPhysicsValidators:*`) and reports what `UsdPhysics.LoadUsdPhysicsFromRange`
+recovers. It exits nonzero on any validator issue.
+
+The urdf-usd-converter test corpus (`tests/data/*.urdf`, 81 files) is a useful
+URDF sweep: all non-`error_*` files except those referencing deliberately
+missing meshes (strict by default; use `allow_missing`) convert, including the
+COLLADA, planar-joint, ghost-link and ASCII-STL cases.
+
 The URDF frontend also tests noncommuting fixed-axis RPY rotations against the
 `Rz(yaw) * Ry(pitch) * Rx(roll)` convention used by
 [urdfdom](https://github.com/ros/urdfdom_headers/blob/rolling/include/urdf_model/pose.hpp).
