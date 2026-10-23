@@ -40,6 +40,10 @@ struct ParseOptions {
   /// env read so the library takes no implicit process-environment input.
   int num_threads = 0;
 
+  /// Inputs below this byte size parse serially (0 leaves the hint unchanged).
+  /// Useful when an outer loader reserves parallel parsing for large layers.
+  size_t min_parallel_parse_bytes = 0;
+
   /// Parse captured simple numeric arrays (attribute defaults AND timeSample
   /// values) on the parser worker pool, batched, while the main thread keeps
   /// lexing; payloads are filled in place and joined before finalize.

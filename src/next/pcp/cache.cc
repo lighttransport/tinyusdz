@@ -1117,12 +1117,6 @@ auto Cache::Impl::StartArcLayerPrefetch(ArcLayerPrefetch *pf, int nt) -> void {
                           !options.payload_policy_with_prim &&
                           load_rules_.empty();
     LayerLoadOptions load_opts = ArcLayerLoadOptions();
-    // These loads already run in an outer pool. Auto must not multiply that
-    // pool by a parser arena per file; explicit parser counts remain honored.
-    if (load_opts.parse_num_threads <= 0) {
-      load_opts.parse_num_threads = 1;
-      load_opts.usda_parse_options.num_threads = 1;
-    }
     std::vector<ArcLayerPrefetch::Item> seeds;
     const LayerStack &root_stack = layer_stacks[0];
     for (size_t i = 0; i < root_stack.layers.size(); ++i) {
@@ -1134,6 +1128,20 @@ auto Cache::Impl::StartArcLayerPrefetch(ArcLayerPrefetch *pf, int nt) -> void {
     }
     EnqueueArcLayerTargets(pf, &seeds);
     if (pf->queue.empty()) return;
+    size_t n = std::min<size_t>(static_cast<size_t>(nt), pf->queue.size());
+    if (load_opts.parse_num_threads <= 0) {
+      // Divide the loading budget between files and each file's parser.
+      // All-serial readers strand cores behind a large layer; an automatic
+      // arena per outer worker would multiply the budget instead.
+      n = std::min(n, static_cast<size_t>(std::max(1, nt / 4)));
+      const int parse_threads = std::min(8, nt / static_cast<int>(n));
+      load_opts.parse_num_threads = parse_threads;
+      load_opts.usda_parse_options.num_threads = parse_threads;
+      load_opts.min_parallel_parse_bytes = size_t{64} << 20;
+    }
+    if (options.enable_timing)
+      LIGHTUSD_LOG_I("[next_prefetch] workers=" + UIntToStr(n) +
+                    " parse_threads=" + IntToStr(load_opts.parse_num_threads));
     auto worker = [this, pf, payloads, load_opts]() {
       for (;;) {
         ArcLayerPrefetch::Item item;
@@ -1170,8 +1178,6 @@ auto Cache::Impl::StartArcLayerPrefetch(ArcLayerPrefetch *pf, int nt) -> void {
         pf->cv.notify_all();
       }
     };
-    const size_t n = std::min<size_t>(static_cast<size_t>(nt),
-                                      std::max<size_t>(1, pf->queue.size()));
     pf->threads.reserve(n);
     for (size_t t = 0; t < n; ++t) pf->threads.emplace_back(worker);
   }

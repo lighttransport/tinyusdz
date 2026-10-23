@@ -327,6 +327,12 @@ bool AsciiParser::Impl::ParsePrimMaybeParallel() {
 
 bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
                                        std::shared_ptr<LazyArraySource> source) {
+  struct RestoreThreads {
+    int& threads;
+    int saved;
+    ~RestoreThreads() { threads = saved; }
+  } restore_threads{options_.num_threads, options_.num_threads};
+  if (length < options_.min_parallel_parse_bytes) options_.num_threads = 1;
   source_ = std::move(source);
   used_fast_path_ = false;
 #if defined(LIGHTUSD_ENABLE_THREAD)

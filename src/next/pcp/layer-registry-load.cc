@@ -106,6 +106,8 @@ ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {
   }
   popts.num_threads = options.parse_num_threads > 0 ? options.parse_num_threads
                                                     : popts.num_threads;
+  popts.min_parallel_parse_bytes = std::max(
+      popts.min_parallel_parse_bytes, options.min_parallel_parse_bytes);
   popts.max_file_size = MinNonZero(popts.max_file_size, options.max_memory);
   return popts;
 }
@@ -187,6 +189,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
+    lopts.crate_options.min_parallel_parse_bytes = options.min_parallel_parse_bytes;
     lopts.crate_options.enable_timing = options.enable_timing;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
@@ -311,6 +314,9 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     lopts.parse_options.num_threads =
         options.parse_num_threads > 0 ? options.parse_num_threads
                                      : lopts.parse_options.num_threads;
+    lopts.parse_options.min_parallel_parse_bytes = std::max(
+        lopts.parse_options.min_parallel_parse_bytes,
+        options.min_parallel_parse_bytes);
     lopts.parse_options.max_file_size =
         MinNonZero(lopts.parse_options.max_file_size, options.max_memory);
     return ConvertLoadedUSDA(LoadUSDAFromFile(resolved_path, lopts),
@@ -326,6 +332,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
+    lopts.crate_options.min_parallel_parse_bytes = options.min_parallel_parse_bytes;
     lopts.crate_options.enable_timing = options.enable_timing;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
@@ -716,6 +723,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
+    lopts.crate_options.min_parallel_parse_bytes = options.min_parallel_parse_bytes;
     lopts.crate_options.enable_timing = options.enable_timing;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
@@ -790,6 +798,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     lopts.crate_options.max_array_elements = options.max_array_elements;
     lopts.crate_options.progress_callback = options.progress_callback;
     lopts.crate_options.num_threads = options.parse_num_threads;
+    lopts.crate_options.min_parallel_parse_bytes = options.min_parallel_parse_bytes;
     lopts.crate_options.enable_timing = options.enable_timing;
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =

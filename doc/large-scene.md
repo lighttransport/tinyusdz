@@ -2529,3 +2529,91 @@ RSS ratios 1.001, 1.000 and 1.005. Its matching rewrite hashes are USDC
 (3,537,903,797 bytes) and USDA
 `5ca18bdadea9d1f009ce54a01eed4bb967115b091faa1df31890e5b208880819`
 (10,039,453,727 bytes). The rewritten crate reopens with next and OpenUSD.
+
+## 9. Automatic arc-layer reader budget follow-up
+
+This pass targets the automatic-parser penalty above. Its baseline is the
+completed implementation in `02bc4deed`, rather than the pre-optimization
+baseline in §8. Explicit parser hints keep their existing behavior.
+
+Automatic background arc prefetch divides its loading budget between files
+and parsers. It starts at most `max(1, composition_threads / 4)` file workers
+(also limited by the initial queue), and assigns each at most eight parser
+threads, with `file_workers * parser_threads <= composition_threads`. Inputs
+smaller than 64 MiB stay serial. Other composition warm workers retain serial
+automatic parsing. This bounds the prefetch requests; it is not a global cap
+across concurrent namespace workers, foreground loads and prefetch.
+
+The size gate uses the actual reader input/source length, with no additional
+filesystem query. It covers native files, borrowed/owned buffers and individual
+USDZ entries; archive container bytes do not determine an entry's policy.
+`min_parallel_parse_bytes` defaults to zero in the USDA, crate and layer-load
+options, preserving ordinary reader hints. Composition supplies the threshold
+only for automatic background prefetch. The USDA parser restores its original
+hint after every parse, including failure, so a reused parser can alternate
+between small serial and large parallel inputs. Security and memory limits
+remain unchanged.
+
+Two earlier versions were rejected. Lending parser workers to every prefetched
+layer raised the Caldera district peak from 15,671,604 to 22,170,512 KiB. A
+filesystem-query size gate passed the three-pair scene run but failed the
+extended composition-only check with maximum RSS ratio 1.070. The reader-source
+revision below was requalified separately; rejected measurements are not mixed
+into its result.
+
+The accepted run uses one warmup and three alternating measured pairs,
+automatic parse/compose/write hints, normal teardown and `/dev/null` output.
+Caldera runs first, followed by Island and merged ALab. Times are medians; RSS
+is the median process peak. All seven maximum-peak RSS comparisons pass the
+5% gate (ratios 0.996, 0.977, 0.980, 0.996, 0.988, 1.004 and 1.009):
+
+| Case | Process, baseline → candidate | Load + compose | Median peak RSS, GiB |
+|---|---:|---:|---:|
+| Caldera proxy → USDC | 2.84 → 2.91 s | 0.833 → 0.837 s | 1.638 → 1.640 |
+| Caldera district → USDC | 29.06 → 27.88 s | 11.420 → 10.915 s | 16.96 → 17.01 |
+| Caldera district → USDA | 15.63 → 15.35 s | 10.272 → 10.017 s | 16.53 → 16.03 |
+| Island → USDC | 15.74 → 15.40 s | 5.010 → 3.955 s | 4.495 → 4.483 |
+| Island → USDA | 10.92 → 9.52 s | 5.090 → 3.892 s | 5.213 → 5.165 |
+| Merged ALab → USDC | 1.37 → 1.39 s | 0.596 → 0.570 s | 0.987 → 0.988 |
+| Merged ALab → USDA | 1.46 → 1.46 s | 0.580 → 0.572 s | 1.943 → 1.951 |
+
+Island's automatic load/composition time falls by 21.1% for the USDC case and
+23.5% for USDA; process time falls by 2.2% and 12.8%. ALab remains effectively
+flat. These results do not establish a writer speedup: the Island crate-write
+medians are 9.126 → 9.670 s, while USDA write medians are 3.718 → 3.677 s.
+Earlier explicit-parser samples in §8 use different runs/settings and are not
+a paired comparison with this automatic policy.
+
+The separate seven-pair Caldera composition-only check measures process
+medians of 15.49 → 15.45 s and load/composition of 9.941 → 9.865 s. Load ranges
+are 9.219–11.139 s and 9.788–10.802 s. Maximum RSS ratio is 1.000714; the gate
+passes. Treat Caldera as effectively neutral in this follow-up rather than
+claiming an additional speedup from the three-pair output sample.
+
+Validation explicitly selects `--parse-threads 0` and reproduces the exact §8
+USDC hashes for proxy, district, Island and merged ALab, and the §8 USDA hashes
+for district, Island and merged ALab. Each retained validation crate reopens
+with next and OpenUSD. Throughput output stays on `/dev/null`; validation uses
+task-owned `/dev/shm` files below the aggregate 48 GB cap, promptly removed,
+and streaming hashes for text. The all-45-district Caldera and separate baked
+frame 1004 scale checks were not repeated in this follow-up; their results
+remain those of §8. No new raw-parser/writer throughput win is claimed.
+
+The final candidate SHA-256 is
+`c784552326968f5d6b09e4ea264997abe95cc8fc8b8038a6e66291b07a8c0e20`.
+Standalone Debug completes 66 checks with two optional AOUSD checks skipped.
+Four affected reader/PCP checks pass in each thread-disabled, ASan/UBSan and
+TSan build. The new synthetic test compares serial and size-gated USDA/USDC
+loads through files, borrowed memory, owned memory and USDZ entries, and checks
+USDA fast-path selection across threshold boundaries, reuse and failed parses.
+LeakSanitizer remains disabled in this traced environment. The pinned OpenUSD
+flatten differential completes 718 inputs with no unexpected differences or
+next errors (681 pass, 18 intentional, 11 oracle skips and eight fixture skips).
+
+Both fresh WASM32 products build. The Node 24 regression profile reports 55
+successful entries and two failures, matching the earlier URDF parity gaps in
+§8: missing mesh extents in the schema utility test and the same URDF USDA-hash
+difference in the variant-overload suite. The profile initially skips generic
+native/WASM validation because its default CLI path is absent; running that
+gate separately against the existing native Release CLI passes all six inputs.
+Browser and physics profiles were not repeated in this follow-up.

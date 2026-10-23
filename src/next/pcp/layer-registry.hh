@@ -58,6 +58,11 @@ struct LayerLoadOptions {
   /// USDA/USDC parser worker hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
 
+  /// Keep smaller inputs serial when a bounded outer loader lends workers to
+  /// large parsers. 0 applies the parser hint at every input size. Composition
+  /// uses this only for automatic parsing, leaving explicit hints unchanged.
+  size_t min_parallel_parse_bytes = 0;
+
   /// Opt-in parser phase diagnostics through the library logger.
   bool enable_timing = false;
   /// Dependency reader for foreign layers (OBJ MTL/textures). No filesystem

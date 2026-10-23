@@ -33,9 +33,11 @@
 
 #include "next/layer/layer.hh"
 #include "next/pcp/cache.hh"
+#include "next/parser/ascii-parser.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/usdz-writer.hh"
 
 using namespace lightusd::next;
 
@@ -456,6 +458,100 @@ static void test_parallel_same_asset_parse_once() {
   std::cout << "  OK" << std::endl;
 }
 
+// Size-gated readers must agree across file, borrowed/owned memory and package
+// dispatch. In particular, an archive's size must not replace its entry size.
+static void test_size_gated_layer_parsing() {
+  std::cout << "test_size_gated_layer_parsing..." << std::endl;
+  Layer source;
+  LayerBuilder builder(source);
+  builder.begin_prim("Root", "Xform");
+  for (size_t i = 0; i < 4096; ++i) {
+    builder.begin_prim("Child" + std::to_string(i), "Mesh");
+    builder.add_property("points", Value::MakeFloat3Array({1, 2, 3, 4, 5, 6}));
+    builder.end_prim();
+  }
+  builder.end_prim();
+  builder.finalize();
+  const std::string ascii = WriteLayerToString(source);
+  ParseOptions parse_options;
+  parse_options.num_threads = 4;
+  parse_options.min_parallel_parse_bytes = ascii.size() + 1;
+  AsciiParser parser(parse_options);
+  auto parse = [&](const std::string& text) {
+    return parser.Parse(text.data(), text.size());
+  };
+  assert(parse(ascii) && !parser.UsedFastPath());
+  assert(parse(ascii + "\n"));
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  assert(parser.UsedFastPath());
+#endif
+  assert(!parse("#usda 1.0\ndef"));
+  assert(parse(ascii + "\n"));
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  assert(parser.UsedFastPath());  // a small failed parse must restore the hint
+#endif
+  assert(parse(ascii) && !parser.UsedFastPath());
+  std::vector<uint8_t> crate, zip_ascii, zip_crate;
+  const auto crate_result = WriteLayerToUSDCMemory(crate, source);
+  const auto ascii_zip_result = WriteUSDZFromUSDAAndAssetsToMemory(zip_ascii,
+      reinterpret_cast<const uint8_t*>(ascii.data()), ascii.size(), {});
+  const auto crate_zip_result =
+      WriteUSDZFromUSDCToMemory(zip_crate, crate.data(), crate.size());
+  assert(crate_result.success && ascii_zip_result.success &&
+         crate_zip_result.success);
+
+  std::string directory = "/tmp";
+#if defined(__unix__) || defined(__APPLE__)
+  char pattern[] = "/tmp/next-parse-size-XXXXXX";
+  char* created = ::mkdtemp(pattern);
+  assert(created);
+  directory = created;
+#endif
+  const std::vector<std::pair<std::string, std::string>> inputs = {
+      {"layer.usda", ascii},
+      {"layer.usdc", std::string(crate.begin(), crate.end())},
+      {"ascii.usdz", std::string(zip_ascii.begin(), zip_ascii.end())},
+      {"crate.usdz", std::string(zip_crate.begin(), zip_crate.end())}};
+  for (const auto& input : inputs) {
+    const std::string path = directory + "/" + input.first;
+    {
+      std::ofstream file(path, std::ios::binary);
+      file.write(input.second.data(), static_cast<std::streamsize>(input.second.size()));
+      assert(file.good());
+    }
+    pcp::LayerLoadOptions serial;
+    serial.parse_num_threads = 1;
+    std::string warn, err;
+    auto reference = pcp::LoadLayerFromMemory(input.first,
+        reinterpret_cast<const uint8_t*>(input.second.data()),
+        input.second.size(), &warn, &err, serial);
+    assert(reference && err.empty());
+    const std::string expected = WriteLayerToString(*reference);
+    // Between the entry and archive sizes exercises entry-based gating too.
+    for (size_t minimum : {size_t{0}, size_t{1}, input.second.size() - 1,
+                           input.second.size() + 1}) {
+      pcp::LayerLoadOptions options;
+      options.parse_num_threads = 4;
+      options.min_parallel_parse_bytes = minimum;
+      auto check = [&](const std::shared_ptr<Layer>& layer) {
+        assert(layer && err.empty());
+        assert(WriteLayerToString(*layer) == expected);
+      };
+      check(pcp::LoadLayerFromFile(path, &warn, &err, options));
+      check(pcp::LoadLayerFromMemory(input.first,
+          reinterpret_cast<const uint8_t*>(input.second.data()),
+          input.second.size(), &warn, &err, options));
+      check(pcp::LoadLayerFromMemoryOwned(input.first,
+          std::string(input.second), &warn, &err, options));
+    }
+    std::remove(path.c_str());
+  }
+#if defined(__unix__) || defined(__APPLE__)
+  std::remove(directory.c_str());
+#endif
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_file_layer_reclamation() {
   std::cout << "test_file_layer_reclamation..." << std::endl;
   // Two independent file layers cross the parallel teardown threshold. The
@@ -613,6 +709,7 @@ int main() {
   test_parallel_load_rules_match_serial();
   test_stress_parallel();
   test_parallel_same_asset_parse_once();
+  test_size_gated_layer_parsing();
   test_file_layer_reclamation();
   test_layer_registry_inflight_failure_diagnostics();
   std::cout << "All next/pcp parallel tests passed." << std::endl;

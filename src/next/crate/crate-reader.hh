@@ -56,6 +56,10 @@ struct CrateReadOptions : CrateLimits {
   /// small crates always build serially. Ignored without LIGHTUSD_ENABLE_THREAD.
   int num_threads = 0;
 
+  /// Sources below this byte size build serially (0 leaves the hint unchanged).
+  /// The retained source size is used; no extra filesystem probe is needed.
+  size_t min_parallel_parse_bytes = 0;
+
   /// When reading from a file path, memory-map the crate read-only instead of
   /// copying it into an owned heap buffer (Phase 8.3). Falls back to the owned
   /// path automatically when mmap is unavailable (non-posix / WASM) or the

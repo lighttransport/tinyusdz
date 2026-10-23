@@ -575,6 +575,7 @@ void CrateReader::Impl::MergeDecodeCtx(ThreadDecodeCtx& ctx) {
 
 int CrateReader::Impl::ResolveBuildThreads() const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
+  if (source_ && source_->size() < options_.min_parallel_parse_bytes) return 1;
   int nt = ClampExecutionThreads(options_.num_threads);
   if (nt <= 0) {
     nt = static_cast<int>(std::thread::hardware_concurrency());

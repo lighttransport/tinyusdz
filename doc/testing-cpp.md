@@ -2169,9 +2169,17 @@ teardown is included; `--fast-exit` is diagnostic only.
 The CLI accepts independent `--parse-threads`, `--compose-threads`, and
 `--write-threads` hints, `--compose-only`, and `--output-format usda|usdc`.
 `--rewrite-layer` preserves authored composition arcs for either format;
-`-f` composes them. Automatic parsing stays serial inside an outer composition
-loading pool to avoid multiplying worker pools. Explicit parser hints remain
-honored. Timing is opt-in through options in the library and
+`-f` composes them. Automatic arc-layer prefetch divides its loading budget
+between files and parsers: small inputs stay serial, while inputs of at least
+64 MiB can use up to eight parser threads. The product of prefetch workers and
+their parser hints stays within the composition thread budget. Other warm
+workers keep automatic parsing serial; explicit parser hints remain honored.
+`LayerLoadOptions::min_parallel_parse_bytes` applies the size gate to files,
+memory buffers and individual USDZ entries (default 0 leaves normal hints
+unchanged). The USDA and crate reader options expose the same threshold and
+use their actual input/source length without an extra filesystem probe. The
+USDA hint is restored after successful and failed parses for parser reuse.
+Timing is opt-in through options in the library and
 `LIGHTUSD_NEXT_TIMING=1` in the CLI.
 
 Qualify Caldera proxy, one full district, then all 45 full districts before
