@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 #include <cstdio>
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <thread>

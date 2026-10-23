@@ -151,15 +151,36 @@ Cache::MemoryStats Cache::GetMemoryStats() const {
     add_transient(safe::saturating_mul(
         entry.second->GetStrengthOrder().capacity(), sizeof(uint16_t)));
   }
-  impl_->sources_cache.for_each([&](const std::string &key,
-                                    std::vector<Src> &srcs) {
-    add_transient(safe::saturating_add(key.capacity(),
-                                      sizeof(std::vector<Src>)));
+  // Stats must not restore owned copies of borrowed source keys. A const
+  // Cache still owns a mutable Impl, so select the const traversal explicitly.
+  const SrcCache &sources = impl_->sources_cache;
+  add_transient(safe::saturating_mul(sources.slots_.capacity(),
+                                    sizeof(SrcCache::Slot)));
+  add_transient(sources.live_.capacity());
+  for (const std::string &key : sources.keys_) {
+    add_transient(safe::saturating_add(sizeof(key), key.capacity()));
+  }
+  sources.for_each([&](const std::string &, const std::vector<Src> &srcs) {
+    add_transient(sizeof(srcs));
     add_transient(safe::saturating_mul(srcs.capacity(), sizeof(Src)));
     for (const Src &source : srcs) {
       add_transient(source.site.capacity());
     }
   });
+  for (const StackSpecCache &specs : impl_->spec_cache_by_stack_) {
+    add_transient(safe::saturating_mul(specs.slots_.capacity(),
+                                      sizeof(StackSpecCache::Slot)));
+    for (const std::string &key : specs.keys_) {
+      add_transient(safe::saturating_add(sizeof(key), key.capacity()));
+    }
+    for (const std::vector<SpecRef> &refs : specs.vals_) {
+      add_transient(sizeof(refs));
+      add_transient(safe::saturating_mul(refs.capacity(), sizeof(SpecRef)));
+    }
+  }
+  for (const PathHashFilter &filter : impl_->path_filter_by_stack_) {
+    add_transient(safe::saturating_mul(filter.words.capacity(), sizeof(uint64_t)));
+  }
   for (const auto &entry : impl_->composed_cache_) {
     add_transient(safe::saturating_add(sizeof(entry),
                                       entry.first.capacity()));
@@ -737,9 +758,55 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       // Namespace resolution is complete. fill_ borrows the source vectors,
       // not their lookup keys: keep those vectors address-stable while freeing
       // the large path-key/hash index before it overlaps the finished stage.
+      // Prime every spec memo before discarding its lookup index. The fill
+      // reads only these resolved vectors; keeping their deque storage in a
+      // separate owner lets the large path keys and hash tables die first.
+      // Declare this owner before fill_sources so source memos die first too.
+      std::vector<std::deque<std::vector<SpecRef>>> fill_specs;
       std::deque<std::vector<Src>> fill_sources;
-      if (options.release_build_sources)
+      if (options.release_build_sources) {
+        for (const auto &record : fill_) {
+          if (!record.second) continue;
+          for (const Src &source : *record.second) {
+            if (!source.variant && !source.suppress_site_specs) SpecsFor(source);
+          }
+        }
+        fill_specs.reserve(spec_cache_by_stack_.size());
+        for (StackSpecCache &cache : spec_cache_by_stack_) {
+          fill_specs.push_back(cache.take_values());
+        }
         fill_sources = sources_cache.take_values();
+
+        // Namespace, activation and instance keys are final. ComposeOpinions
+        // skips empty/suppressed sources, so their strings and vector capacity
+        // need not overlap the output's property storage. Retire lookup keys
+        // first: some keys borrowed the first Src's site, which can move here.
+        const auto compact_start = std::chrono::steady_clock::now();
+        size_t discarded = 0, vector_bytes_released = 0;
+        for (const auto &record : fill_) {
+          if (!record.second) continue;
+          auto &sources = *const_cast<std::vector<Src> *>(record.second);
+          const size_t before_capacity = sources.capacity();
+          const size_t removed = CompactOpinionSources(sources);
+          if (options.enable_timing && removed) {
+            discarded = safe::saturating_add(discarded, removed);
+            if (before_capacity > sources.capacity()) {
+              vector_bytes_released = safe::saturating_add(
+                  vector_bytes_released,
+                  safe::saturating_mul(before_capacity - sources.capacity(),
+                                       sizeof(Src)));
+            }
+          }
+        }
+        if (options.enable_timing) {
+          const double compact_ms =
+              std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - compact_start).count();
+          LIGHTUSD_LOG_I("[next_fill] discarded_sources=" + UIntToStr(discarded) +
+              " source_vector_bytes_released=" + UIntToStr(vector_bytes_released) +
+              " compact=" + FormatMilliseconds(compact_ms) + "ms");
+        }
+      }
       if (options.enable_timing) LIGHTUSD_LOG_I("[next_fill] lookup_released=1");
       FillOpinions(out.get());
       std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(fill_);

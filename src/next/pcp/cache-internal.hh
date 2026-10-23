@@ -51,7 +51,16 @@ using ArcChain = std::vector<std::pair<uint32_t, uint32_t>>;
 struct SpecRef {
   const PrimSpec *spec = nullptr;
   const Layer *layer = nullptr;
-  std::string layer_id;
+  // Layer stacks are append-only deques, and their identifier vectors are
+  // complete before publication. Borrow that immutable string instead of
+  // allocating the same identifier for every positive spec-cache entry.
+  // Worker spec caches remain worker-local; MergeSources resets their memos.
+  const std::string *layer_identifier = nullptr;
+  const std::string &layer_id() const {
+    if (layer_identifier) return *layer_identifier;
+    static const std::string empty;
+    return empty;
+  }
   // Time offset of the owning layer within its stack (sublayer offsets),
   // relative to the stack root. Identity for the root layer.
   LayerOffset layer_offset;
@@ -110,6 +119,10 @@ struct StackSpecCache {
                                std::vector<SpecRef> &&v) ;
 
   void clear() ;
+
+  // Keep resolved spec vectors address-stable for opinion fill while dropping
+  // their now-unused lookup keys/index. This cache becomes empty and reusable.
+  std::deque<std::vector<SpecRef>> take_values();
 
  private:
   void place(uint64_t h, uint32_t vi) ;
@@ -349,6 +362,13 @@ struct SrcCache {
     }
   }
 
+  template <typename Fn>
+  void for_each(Fn fn) const {
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (live_[vi]) fn(key_at(vi), vals_[vi]);
+    }
+  }
+
  private:
   const std::string &key_at(size_t index) const;
   void own_key(size_t index);
@@ -356,6 +376,10 @@ struct SrcCache {
                                bool was_tomb) ;
   void rehash() ;
 };
+
+// Fill-only compaction after namespace/instancing work and lookup retirement.
+// Retain vector object addresses and resolved spec memos for the fill's readers.
+size_t CompactOpinionSources(std::vector<Src> &sources);
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
 struct Site {

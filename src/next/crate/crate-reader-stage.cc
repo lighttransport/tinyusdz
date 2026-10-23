@@ -275,7 +275,7 @@ bool CrateReader::Impl::BuildStage() {
       if (!is_prim && !is_variant) continue;
 
       if (spec.path_index.value >= paths_.size()) continue;
-      std::string full_path = paths_.str(spec.path_index.value);
+      const std::string_view full_path = paths_.view(spec.path_index.value);
       if (full_path.empty() || full_path == "/") continue;
       const bool bracketed = full_path.find('{') != std::string::npos;
       // Only real (non-bracketed) Prim specs carry a variantSelection.
@@ -287,12 +287,12 @@ bool CrateReader::Impl::BuildStage() {
       if (bracketed && full_path.back() == '}') {
         size_t lb = full_path.rfind("/{");
         if (lb != std::string::npos) {
-          const std::string nm = full_path.substr(lb + 2,
-                                                  full_path.size() - lb - 3);
+          const std::string nm(full_path.substr(lb + 2,
+                                                full_path.size() - lb - 3));
           size_t eq = nm.find('=');
           if (eq != std::string::npos && eq + 1 < nm.size() &&
               nm.find('{') == std::string::npos) {
-            out.opts.push_back(VariantOptRecord{full_path.substr(0, lb),
+            out.opts.push_back(VariantOptRecord{std::string(full_path.substr(0, lb)),
                                                 nm.substr(0, eq),
                                                 nm.substr(eq + 1)});
           }
@@ -310,7 +310,8 @@ bool CrateReader::Impl::BuildStage() {
             if (DecodeVariantSelectionMap(f.second, sels)) {
               // Create the entry even for an authored-EMPTY selection map so
               // the authored bit survives the round trip.
-              out.sels.push_back(VariantSelRecord{full_path, std::move(sels)});
+              out.sels.push_back(VariantSelRecord{std::string(full_path),
+                                                   std::move(sels)});
             }
             break;
           }
@@ -318,13 +319,13 @@ bool CrateReader::Impl::BuildStage() {
       }
 
       size_t last_slash = full_path.rfind('/');
-      std::string prim_name = (last_slash != std::string::npos && last_slash < full_path.size() - 1)
-                              ? full_path.substr(last_slash + 1) : full_path;
+      std::string prim_name((last_slash != std::string::npos && last_slash < full_path.size() - 1)
+                              ? full_path.substr(last_slash + 1) : full_path);
       if (prim_name.empty()) continue;
 
       PrimEntry entry;
       entry.full_path = full_path;
-      entry.name = prim_name;
+      entry.name = std::move(prim_name);
       entry.fieldset_index = spec.fieldset_index.value;
       entry.path_index = spec.path_index.value;
 
@@ -444,7 +445,7 @@ bool CrateReader::Impl::BuildStage() {
   // Owning prim path -> entry index (the first entry on a duplicate path).
   // Property specs attach to the entry whose path equals their prim part;
   // specs of prims with no entry are dropped, as before. Keys view the
-  // entries' path strings, which are not moved from here on.
+  // immutable PATHS pool, which remains alive throughout reconstruction.
   std::unordered_map<std::string_view, uint32_t> entry_by_path;
   entry_by_path.reserve(prim_entries.size());
   for (size_t i = 0; i < prim_entries.size(); ++i) {
@@ -634,7 +635,7 @@ bool CrateReader::Impl::BuildStage() {
     for (size_t entry_index = 0; entry_index < prim_entries.size();
          ++entry_index) {
       if (!children_order[entry_index].empty()) {
-        prim_children_order[prim_entries[entry_index].full_path] =
+        prim_children_order[std::string(prim_entries[entry_index].full_path)] =
             std::move(children_order[entry_index]);
       }
     }

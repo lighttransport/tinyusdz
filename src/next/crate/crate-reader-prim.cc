@@ -32,7 +32,7 @@ void CrateReader::Impl::EmitPrimBody(
     auto& entry = prim_entries[entry_index];
     if (entry_prim[entry_index] == kSkipEntry) {
       AddWarning("Ignoring malformed non-absolute prim path: " +
-                 entry.full_path);
+                 std::string(entry.full_path));
       return;
     }
     PrimSpec* ps = layer.prim(entry_prim[entry_index]);
@@ -686,8 +686,13 @@ void CrateReader::Impl::EmitPrimBody(
     // and the option NAMES (as empty PrimVariantData entries — the compositor
     // ignores option entries without content/properties and grafts the
     // bracketed holder prims instead, which hold the variant CONTENT).
-    auto sel = variant_sel.find(entry.full_path);
-    auto opt = variant_opts.find(entry.full_path);
+    // Most layers have no variant maps. Avoid allocating a lookup string for
+    // every prim in those layers while retaining the owning variant records.
+    const std::string variant_path = variant_sel.empty() && variant_opts.empty()
+                                         ? std::string()
+                                         : std::string(entry.full_path);
+    auto sel = variant_sel.find(variant_path);
+    auto opt = variant_opts.find(variant_path);
     if (ps && (sel != variant_sel.end() || opt != variant_opts.end())) {
       // Union of set names from selections and holder specs.
       std::map<std::string, PrimVariantSetData> sets;

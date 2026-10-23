@@ -530,8 +530,7 @@
       }
 
       // Record fieldset
-      uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
-      fieldsets_.push_back(std::move(fieldset));
+      const uint32_t fs_idx = AddFieldset(fieldset);
       // consume_values: every field referencing this prim's values is now
       // built (their blocks interned), and no later writer pass reads property
       // values -- release them so the layer shrinks as value blocks accumulate
@@ -877,8 +876,7 @@
         }
       }
 
-      uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
-      fieldsets_.push_back(std::move(fieldset));
+      const uint32_t fs_idx = AddFieldset(fieldset);
 
       CrateSpec spec;
       spec.path_index.value = InternPath("/");

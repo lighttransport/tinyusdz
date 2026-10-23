@@ -139,7 +139,9 @@ class PathPool {
 };
 
   struct PrimEntry {
-    std::string full_path;
+    // ReadPaths has finished before reconstruction starts. Its immutable pool
+    // outlives every entry; LayerBuilder publishes independently owned paths.
+    std::string_view full_path;
     std::string name;
     std::string type_name;
     PrimSpecifier specifier;

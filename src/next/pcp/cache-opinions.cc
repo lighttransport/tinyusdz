@@ -40,7 +40,7 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
         for (const auto& spec : impl_->SpecsFor(source)) {
           std::string suffix;
           if (locate(locate, spec.spec->meta().variantSets(), &suffix, 0)) {
-            item.layer_identifier = spec.layer_id;
+            item.layer_identifier = spec.layer_id();
             item.prim_path += suffix;
             break;
           }
@@ -61,7 +61,7 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
       const auto* slot = spec.spec->property(property);
       if (!slot) continue;
       PropertyOpinion item;
-      item.layer_identifier = spec.layer_id;
+      item.layer_identifier = spec.layer_id();
       item.prim_path = spec.spec->path().str();
       item.arc = ArcTypeName(source.arc_kind);
       const LayerOffset time = source.offset.Compose(spec.layer_offset);
@@ -387,7 +387,7 @@ auto Cache::Impl::MergeArcField(
     std::vector<std::pair<std::string, std::string>> result;
     for (auto it = specs.rbegin(); it != specs.rend(); ++it) {
       const PrimMetadata &m = it->spec->meta();
-      const std::string &lid = it->layer_id;
+      const std::string &lid = it->layer_id();
       const ArcListOp *e = SelectArcEdit(m, f);
       const std::vector<std::string> &inl = SelectInlineArc(m, f);
       if ((!e || !e->authored) && inl.empty()) {
@@ -588,9 +588,9 @@ auto Cache::Impl::ComputePrimIndex_locked(const Path &prim_path,
       if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;
         for (const SpecRef &sr : specs) {
-          sites.push_back(Site{sr.layer_id.empty()
+          sites.push_back(Site{sr.layer_id().empty()
                                    ? layer_stacks[s.stack_idx].identifier
-                                   : sr.layer_id,
+                                   : sr.layer_id(),
                                s.site});
         }
       }

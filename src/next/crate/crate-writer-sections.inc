@@ -83,14 +83,8 @@
     uint64_t num_fields = fields_.size();
     out.write_u64(num_fields);
 
-    // Encode token indices using Usd_IntegerCompression (delta + LZ4)
-    {
-      std::vector<uint32_t> indices(num_fields);
-      for (size_t i = 0; i < num_fields; i++) {
-        indices[i] = fields_[i].token_index.value;
-      }
-      WriteCompressedDeltaU32(out, indices.data(), num_fields);
-    }
+    // Encode the retained token column directly (delta + LZ4).
+    WriteCompressedDeltaU32(out, fields_.tokens.data(), num_fields);
 
     // Write compressed value reps (TfFastCompression LZ4 format)
     size_t value_rep_bytes = 0;
@@ -98,32 +92,22 @@
       *error = "Field value-rep byte size overflow";
       return false;
     }
-    std::vector<uint8_t> raw_reps(value_rep_bytes);
-    for (size_t i = 0; i < num_fields; i++) {
-      uint64_t v = fields_[i].value_rep.raw();
-      std::memcpy(raw_reps.data() + i * 8, &v, 8);
-    }
-    WriteCompressedBytes(out, raw_reps.data(), raw_reps.size());
+    static_assert(sizeof(ValueRep) == sizeof(uint64_t) &&
+                      std::is_trivially_copyable<ValueRep>::value,
+                  "ValueRep must retain its raw 64-bit object representation");
+    WriteCompressedBytes(out,
+        reinterpret_cast<const uint8_t*>(fields_.reps.data()), value_rep_bytes);
     return true;
   }
 
   void BuildFieldsetsSectionPayload(std::vector<uint8_t>* payload) {
     StreamWriter out(*payload);
-    // Build flat array: for each fieldset, write its field indices then a
-    // 0xFFFFFFFF sentinel (matching pxrUSD and the old lightusd writer).
-    size_t flat_size = 0;
-    for (const auto& fieldset : fieldsets_) flat_size += fieldset.size() + 1;
-    std::vector<uint32_t> flat;
-    flat.reserve(flat_size);
-    for (const auto& fieldset : fieldsets_) {
-      flat.insert(flat.end(), fieldset.begin(), fieldset.end());
-      flat.push_back(0xFFFFFFFF);  // sentinel
-    }
-
-    uint64_t flat_count = flat.size();
+    // The construction pass already retains indices and sentinels in exactly
+    // this order. Compress in place without a second full-size flat copy.
+    const uint64_t flat_count = flat_fieldsets_.size();
     out.write_u64(flat_count);
     // Use Usd_IntegerCompression (delta + LZ4)
-    WriteCompressedDeltaU32(out, flat.data(), static_cast<size_t>(flat_count));
+    WriteCompressedDeltaU32(out, flat_fieldsets_.data(), static_cast<size_t>(flat_count));
   }
 
   // Pre-order rank of a path character: the structural separators sort below
@@ -374,35 +358,29 @@
     uint64_t num_specs = specs_.size();
     out.write_u64(num_specs);
 
-    // Convert fieldset numbers to flat array offsets (matching pxrUSD format).
-    // Build offset mapping: for each fieldset, its offset in the flat array
-    // is the sum of all prior fieldsets' sizes (including sentinels).
-    std::vector<uint32_t> fieldset_number_to_offset;
-    {
-      uint32_t current_offset = 0;
-      for (const auto& fs : fieldsets_) {
-        fieldset_number_to_offset.push_back(current_offset);
-        current_offset += static_cast<uint32_t>(fs.size() + 1); // +1 for sentinel
-      }
-    }
-
-    // Write 3 compressed integer arrays (delta+LZ4 Usd_IntegerCompression)
-    std::vector<uint32_t> path_indices(num_specs);
-    std::vector<uint32_t> fieldset_indices(num_specs);
-    std::vector<uint32_t> spec_types(num_specs);
+    // Compress each column before reusing its storage for the next. Keeping
+    // all three columns live together costs eight extra bytes per spec and
+    // provides no benefit to the independent, ordered codec calls below.
+    std::vector<uint32_t> indices(num_specs);
     for (size_t i = 0; i < num_specs; i++) {
-      path_indices[i] = specs_[i].path_index.value;
+      indices[i] = specs_[i].path_index.value;
+    }
+    WriteCompressedDeltaU32(out, indices.data(), num_specs);
+
+    // Offsets were recorded when each fieldset was appended.
+    for (size_t i = 0; i < num_specs; i++) {
       // Convert fieldset number → flat array offset
       uint32_t fs_num = specs_[i].fieldset_index.value;
-      fieldset_indices[i] = (fs_num < fieldset_number_to_offset.size())
-                            ? fieldset_number_to_offset[fs_num]
-                            : 0;
-      spec_types[i] = static_cast<uint32_t>(specs_[i].spec_type);
+      indices[i] = (fs_num < fieldset_offsets_.size())
+                       ? fieldset_offsets_[fs_num]
+                       : 0;
     }
+    WriteCompressedDeltaU32(out, indices.data(), num_specs);
 
-    WriteCompressedDeltaU32(out, path_indices.data(), num_specs);
-    WriteCompressedDeltaU32(out, fieldset_indices.data(), num_specs);
-    WriteCompressedDeltaU32(out, spec_types.data(), num_specs);
+    for (size_t i = 0; i < num_specs; i++) {
+      indices[i] = static_cast<uint32_t>(specs_[i].spec_type);
+    }
+    WriteCompressedDeltaU32(out, indices.data(), num_specs);
   }
 
   void _PatchTimeSamplesBlock(uint64_t data_idx) {
@@ -522,11 +500,11 @@
     }
 
     // Patch all field ValueReps with actual file offsets (absolute).
-    for (auto& field : fields_) {
-      if (field.value_rep.is_inlined()) continue;
+    for (ValueRep& field : fields_.reps) {
+      if (field.is_inlined()) continue;
 
-      CrateTypeId type = field.value_rep.type_id();
-      uint64_t data_idx = field.value_rep.payload();
+      CrateTypeId type = field.type_id();
+      uint64_t data_idx = field.payload();
 
       // payload 0 (non-inlined) is the empty-array marker (block 0 is reserved
       // and never referenced) — leave it as 0 so it is not relocated.
@@ -534,10 +512,10 @@
 
       if (data_idx < value_data_.size() && data_idx < value_offsets_.size()) {
         uint64_t offset = value_start_offset_ + value_offsets_[data_idx];
-        field.value_rep = ValueRep::Make(type, offset,
-                                         field.value_rep.is_array(), false,
-                                         field.value_rep.is_compressed(),
-                                         field.value_rep.is_array_edit());
+        field = ValueRep::Make(type, offset,
+                               field.is_array(), false,
+                               field.is_compressed(),
+                               field.is_array_edit());
       }
       // Patch embedded ValueReps in TimeSamples data blocks
       if (type == CrateTypeId::TimeSamples) {

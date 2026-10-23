@@ -382,7 +382,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
         }
         for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
           ApplyVariantOption(src, frame, *sv.set_name, sv.vd, *spec, 0,
-                             sr.layer_id, out, spec_out, sels, chain, warn, err);
+                             sr.layer_id(), out, spec_out, sels, chain, warn, err);
         }
         // A variantSet whose selection is authored at a WEAKER site (not yet
         // expanded) cannot graft now, but its opinions must compose at THIS
@@ -395,7 +395,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
           if (sels->count(vss.name) || FallbackSelection(vss)) continue;
           deferred_variants_.push_back(DeferredVariant{
               out, spec_out, out->size(), spec_out->size(), src, spec,
-              vss.name, sr.layer_id, chain});
+              vss.name, sr.layer_id(), chain});
         }
 
         // Crate representation: pxr-authored crates store variant content as
@@ -432,7 +432,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
       // References. Anchor relative asset paths to THIS spec's authoring layer.
       for (const std::string &ref_str : spec->meta().references) {
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
-                   frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
+                   frame, out, spec_out, sels, chain, warn, err, sr.layer_id());
       }
 
       // Payloads (deferrable, weaker than references). See the merge path:
@@ -447,7 +447,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
             continue;  // deferred: contributes no opinions.
           }
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
-                     chain, warn, err, sr.layer_id);
+                     chain, warn, err, sr.layer_id());
         }
         if (any_deferred) {
           deferred_payload_prims.insert(root_prim_path);
@@ -459,7 +459,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
       // Specializes (globally weakest; routed into spec_out by ProcessArc).
       for (const std::string &s : spec->meta().specializes) {
         ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                   frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
+                   frame, out, spec_out, sels, chain, warn, err, sr.layer_id());
       }
     }
 
@@ -485,7 +485,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
           // anchor required to stat relative payload asset paths correctly.
           const PrimSpec *policy_owner = specs.front().spec;
           for (const SpecRef &candidate : specs) {
-            if (candidate.layer_id == pl.second) {
+            if (candidate.layer_id() == pl.second) {
               policy_owner = candidate.spec;
               break;
             }

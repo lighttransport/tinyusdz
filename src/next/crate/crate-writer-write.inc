@@ -70,7 +70,8 @@
     path_slots_.clear();
     path_owned_.clear();
     fields_.clear();
-    fieldsets_.clear();
+    fieldset_offsets_.clear();
+    flat_fieldsets_.clear();
     specs_.clear();
     value_data_.clear();
     value_offsets_.clear();
@@ -106,7 +107,13 @@
       const size_t nspec = nprim + nprop + 16;
       ReservePaths(nspec);
       specs_.reserve(nspec);
-      fieldsets_.reserve(nspec);
+      fieldset_offsets_.reserve(nspec);
+      // Replace the old per-spec vector-header reservation with the smaller
+      // offsets plus an estimated three fields and one sentinel per spec.
+      size_t flat_capacity = 0;
+      if (safe::mul(nspec, size_t(4), &flat_capacity)) {
+        flat_fieldsets_.reserve(flat_capacity);
+      }
       fields_.reserve(nspec * 3);
       if (!(sink && patch && *patch)) {
         // Staged VALUE blocks (the streaming write keeps none).
@@ -244,7 +251,7 @@
       bool prepared = false;
 #if defined(LIGHTUSD_ENABLE_THREAD)
       if (ResolveThreads() > 1 &&
-          tokens_.size() + fields_.size() + fieldsets_.size() + specs_.size() >=
+          tokens_.size() + fields_.size() + fieldset_offsets_.size() + specs_.size() >=
               4096) {
         std::thread th_fields(build_fields);
         std::thread th_fieldsets(build_fieldsets);

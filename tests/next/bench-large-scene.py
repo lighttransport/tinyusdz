@@ -51,7 +51,8 @@ def sample_child_memory(pid):
         proc = Path(f"/proc/{children[0]}")
         status = (proc / "status").read_text().splitlines()
         sample = {line.split(':')[0]: int(line.split()[1]) for line in status
-                  if line.startswith(("VmRSS:", "VmHWM:", "VmSwap:", "Threads:"))}
+                  if line.startswith(("VmRSS:", "VmHWM:", "VmSwap:", "Threads:",
+                                      "RssAnon:", "RssFile:", "RssShmem:"))}
         # The command name may contain spaces or parentheses. Fields after
         # its final ')' start with state (field 3 in proc_pid_stat(5)).
         stat = (proc / "stat").read_text().rsplit(')', 1)[1].split()
@@ -140,6 +141,12 @@ def run_one(binary, case, legacy, args, label, sequence):
                     sample.update(elapsed=now - started, log_bytes=log.tell())
                     memory_log.write(json.dumps(sample) + "\n")
                     memory_log.flush()
+                    max_swap_mib = getattr(args, "max_process_swap_mib", 0)
+                    if (max_swap_mib > 0 and
+                            sample.get("VmSwap", 0) > max_swap_mib * 1024):
+                        raise RuntimeError(
+                            f"child swap exceeds {max_swap_mib:g} MiB; "
+                            "paging invalidates the timed comparison")
                     next_sample = now + 1
                 if now - started > args.timeout:
                     raise RuntimeError("benchmark timeout")
@@ -182,11 +189,16 @@ def main():
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=10800)
     parser.add_argument("--min-available-gib", type=float, default=16)
+    parser.add_argument("--max-process-swap-mib", type=float, default=0,
+                        help="stop when sampled child swap exceeds this limit "
+                             "(0 disables the limit)")
     parser.add_argument("--max-rss-growth", type=float, default=0.05,
                         help="maximum allowed growth of the largest measured peak RSS")
     args = parser.parse_args()
     if args.repeat < 1 or args.warmup < 0:
         parser.error("repeat must be positive and warmup nonnegative")
+    if args.max_process_swap_mib < 0:
+        parser.error("max-process-swap-mib must be nonnegative")
     args.output.mkdir(parents=True, exist_ok=False)
     (args.output / "null.usdc").symlink_to("/dev/null")
     cases = json.loads(args.manifest.read_text())
@@ -195,6 +207,9 @@ def main():
                 for name, path in binaries.items()}
     metadata.update(manifest=cases, repeat=args.repeat, warmup=args.warmup,
                     malloc_conf=os.environ.get("MALLOC_CONF", ""),
+                    min_available_gib=args.min_available_gib,
+                    max_process_swap_mib=args.max_process_swap_mib,
+                    max_rss_growth=args.max_rss_growth,
                     clock_ticks_per_second=os.sysconf("SC_CLK_TCK"))
     (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     records = []

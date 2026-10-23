@@ -622,14 +622,13 @@
 
   void EmitPropertySpec(uint32_t path_index, SpecType st,
                         const std::vector<CrateField>& field_list) {
-    std::vector<uint32_t> fs;
-    fs.reserve(field_list.size());
+    const uint32_t fs_idx = BeginFieldset(field_list.size());
+    if (!result_.error.empty()) return;
     for (const auto& f : field_list) {
-      fs.push_back(static_cast<uint32_t>(fields_.size()));
+      flat_fieldsets_.push_back(static_cast<uint32_t>(fields_.size()));
       fields_.push_back(f);
     }
-    uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
-    fieldsets_.push_back(std::move(fs));
+    flat_fieldsets_.push_back(UINT32_MAX);
     CrateSpec spec;
     spec.path_index.value = path_index;
     spec.fieldset_index.value = fs_idx;

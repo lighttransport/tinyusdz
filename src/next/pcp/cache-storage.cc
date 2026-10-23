@@ -156,7 +156,8 @@ auto Cache::Impl::FindSpecs(const LayerStack &st,
         SpecRef r;
         r.spec = s;
         r.layer = lp.get();
-        if (i < st.layer_identifiers.size()) r.layer_id = st.layer_identifiers[i];
+        if (i < st.layer_identifiers.size())
+          r.layer_identifier = &st.layer_identifiers[i];
         if (i < st.layer_offsets.size()) r.layer_offset = st.layer_offsets[i];
         refs.push_back(std::move(r));
       }
@@ -666,6 +667,48 @@ auto cache_detail::StackSpecCache::clear() -> void {
     vals_.clear();
     count_ = 0;
   }
+
+auto cache_detail::StackSpecCache::take_values()
+    -> std::deque<std::vector<SpecRef>> {
+    std::deque<std::vector<SpecRef>> values;
+    values.swap(vals_);
+    std::vector<Slot>().swap(slots_);
+    std::deque<std::string>().swap(keys_);
+    count_ = 0;
+    return values;
+  }
+
+namespace cache_detail {
+size_t CompactOpinionSources(std::vector<Src> &sources) {
+    const auto contributes = [](const Src &source) {
+      // Match ComposeOpinions' variant-before-suppression ordering. An
+      // unresolved memo is conservatively retained; callers normally prime all
+      // non-variant, non-suppressed sources before retiring the lookup index.
+      return source.variant ||
+             (!source.suppress_site_specs &&
+              (!source.specs_.p || !source.specs_.p->empty()));
+    };
+    size_t keep = 0;
+    for (const Src &source : sources) {
+      if (contributes(source)) ++keep;
+    }
+    const size_t removed = sources.size() - keep;
+    if (!removed) return 0;
+
+    std::vector<Src> compact;
+    compact.reserve(keep);
+    for (Src &source : sources) {
+      if (!contributes(source)) continue;
+      const auto *memo = source.specs_.p;
+      compact.push_back(std::move(source));
+      // Src's normal move resets a cross-site/cross-Impl memo. This move keeps
+      // the exact site and owning Impl, and its spec vectors remain pinned.
+      compact.back().specs_.p = memo;
+    }
+    sources.swap(compact);
+    return removed;
+  }
+}  // namespace cache_detail
 
 auto cache_detail::StackSpecCache::place(uint64_t h, uint32_t vi) -> void {
     const size_t mask = slots_.size() - 1;

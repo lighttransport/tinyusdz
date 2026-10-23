@@ -54,8 +54,43 @@ private:
   std::deque<std::string> path_owned_;  // copies of transient path strings
 
   // Fields and fieldsets
-  std::vector<CrateField> fields_;
-  std::vector<std::vector<uint32_t>> fieldsets_;
+  // The two FIELDS columns are compressed independently. Retaining them in
+  // column order avoids CrateField padding and full-column extraction copies.
+  struct FieldColumns {
+    std::vector<uint32_t> tokens;
+    std::vector<ValueRep> reps;
+    size_t size() const { return reps.size(); }
+    void clear() { tokens.clear(); reps.clear(); }
+    void reserve(size_t count) { tokens.reserve(count); reps.reserve(count); }
+    void push_back(const CrateField& field) {
+      tokens.push_back(field.token_index.value);
+      reps.push_back(field.value_rep);
+    }
+  } fields_;
+  // Retain fieldsets in their final flat order, including the sentinel. Each
+  // spec needs only an offset instead of an allocated vector of field indices.
+  std::vector<uint32_t> fieldset_offsets_;
+  std::vector<uint32_t> flat_fieldsets_;
+
+  uint32_t BeginFieldset(size_t field_count) {
+    const size_t limit = (std::numeric_limits<uint32_t>::max)();
+    if (fieldset_offsets_.size() >= limit || flat_fieldsets_.size() >= limit ||
+        field_count > limit - flat_fieldsets_.size() - 1) {
+      result_.error = "Crate fieldset index limit exceeded";
+      return 0;
+    }
+    const uint32_t number = static_cast<uint32_t>(fieldset_offsets_.size());
+    fieldset_offsets_.push_back(static_cast<uint32_t>(flat_fieldsets_.size()));
+    return number;
+  }
+
+  uint32_t AddFieldset(const std::vector<uint32_t>& indices) {
+    const uint32_t number = BeginFieldset(indices.size());
+    if (!result_.error.empty()) return 0;
+    flat_fieldsets_.insert(flat_fieldsets_.end(), indices.begin(), indices.end());
+    flat_fieldsets_.push_back(UINT32_MAX);
+    return number;
+  }
 
   // Specs
   std::vector<CrateSpec> specs_;

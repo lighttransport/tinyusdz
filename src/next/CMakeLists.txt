@@ -596,6 +596,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp_parallel.cc
     )
     target_link_libraries(test_pcp_parallel PRIVATE lightusd_next)
+    # This test inspects private cache storage; match the Impl lock layout.
+    if(LIGHTUSD_NEXT_FINE_LOCKS)
+        target_compile_definitions(test_pcp_parallel PRIVATE LIGHTUSD_NEXT_FINE_LOCKS)
+    endif()
 
     add_executable(test_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_writer.cc
